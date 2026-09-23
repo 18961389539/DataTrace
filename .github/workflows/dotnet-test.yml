@@ -37,3 +37,7 @@ jobs:
         run: dotnet test tests/DataTrace.E2E.Tests/DataTrace.E2E.Tests.csproj -c Release --no-build --nologo
         env:
           DATATRACE_APP_DLL: ${{ github.workspace }}\src\DataTrace.Web\bin\Release\net8.0\DataTrace.Web.dll
+          # 像素基线是在某台机器的 Edge 上录的，runner 上的 Edge 版本不同会在抗锯齿上抖出假红，
+          # 所以 CI 先只跑几何断言（那部分与渲染器无关）。想在 CI 上用像素比对：
+          # 在 windows-latest 上以 DATATRACE_E2E_GOLDEN=update 录一批基线并提交，再把这里改成 compare。
+          DATATRACE_E2E_GOLDEN: off
