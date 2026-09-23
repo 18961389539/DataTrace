@@ -266,6 +266,16 @@ public sealed class AuthE2ECollection : ICollectionFixture<AuthWebAppFixture>, I
 {
 }
 
+/// <summary>
+/// 视觉回归单独一个集合。像素基线录的是配置页这类"有值"的界面，
+/// 跟界面用例共用实例就会被它们改过的配置污染（扫描周期曾经把基线录成 80，
+/// 换一下执行顺序就红），所以给它一个全新的应用实例与数据目录。
+/// </summary>
+[CollectionDefinition("e2e-visual")]
+public sealed class VisualE2ECollection : ICollectionFixture<WebAppFixture>, ICollectionFixture<BrowserFixture>
+{
+}
+
 /// <summary>E2E 用例基类：每个用例一个全新上下文，互不串 cookie。</summary>
 [Collection("e2e")]
 public abstract class E2ETestBase : IAsyncLifetime

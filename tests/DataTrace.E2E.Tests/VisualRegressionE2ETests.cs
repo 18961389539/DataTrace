@@ -13,7 +13,7 @@ namespace DataTrace.E2E.Tests;
 /// （CI 设 DATATRACE_E2E_GOLDEN=off，理由见 <see cref="VisualGolden"/>）。
 /// 截图只挑没有实时数据的外壳区域：看板上每几秒就刷新一次时间，那种图每次都不同。
 /// </remarks>
-[Collection("e2e")]
+[Collection("e2e-visual")]
 public class VisualRegressionE2ETests : E2ETestBase
 {
     private const int DesktopWidth = 1280;
