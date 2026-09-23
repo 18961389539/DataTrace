@@ -118,6 +118,9 @@ public class SpcServiceTests
         Assert.Equal(20d, before!.UpperLimit!.Value);
         Assert.Equal("", before.RecipeCode);
 
+        // 采集时落库的规格限就是这一套，所以没有点被重算。
+        Assert.Equal(0, before.SamplesRejudgedByNewLimits);
+
         // 切到 A100：同一批数据按收紧后的上限 16 评估 —— 报表口径必须跟着判定口径走。
         var recipe = harness.Snapshot.Recipes.Single(r => r.Code == "A100");
         await harness.ConfigRepository.SetActiveRecipeAsync(recipe.Id);
@@ -127,5 +130,9 @@ public class SpcServiceTests
         Assert.Equal("A100", after.RecipeCode);
         // 上限收紧 → 上侧余量变小 → Cpu 必然下降（与均值落在哪一侧无关）。
         Assert.True(after.Summary.Cpu < before.Summary.Cpu);
+
+        // 但这 6 个点是按上限 20 判废之后采的：换型号重估的同时必须说清重算了多少点，
+        // 否则屏幕上的 Cpk 和托盘上的判定结果对不上，还没人知道。
+        Assert.Equal(6, after.SamplesRejudgedByNewLimits);
     }
 }

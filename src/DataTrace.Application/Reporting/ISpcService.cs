@@ -17,6 +17,13 @@ public sealed class ProcessCapabilityReport
     /// <summary>计算能力指数所用的产品型号编码；空串表示按点位默认限值。</summary>
     public string RecipeCode { get; init; } = "";
 
+    /// <summary>
+    /// 采集时生效的规格限与本次计算所用规格限不一致的样本数。
+    /// 限值改过之后的窗口里，这些点是按旧规格判的废、却按新规格算的 Cpk，
+    /// 数字本身没错，但必须让看的人知道口径换过。0 表示两边一致。
+    /// </summary>
+    public int SamplesRejudgedByNewLimits { get; init; }
+
     /// <summary>按时间升序排列的采样值。</summary>
     public IReadOnlyList<TrendPoint> Samples { get; init; } = [];
 

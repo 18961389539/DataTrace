@@ -79,12 +79,19 @@ public sealed class TagIssuePoint
     public string TagCode { get; init; } = "";
 }
 
-/// <summary>趋势统计的窄投影：只要某个点位自身的数值、时间与托盘码。</summary>
+/// <summary>
+/// 趋势统计的窄投影：只要某个点位自身的数值、时间与托盘码。
+/// </summary>
 public sealed class TagTrendPoint
 {
     public DateTime Time { get; init; }
     public double Value { get; init; }
     public string PalletCode { get; init; } = "";
+
+    /// <summary>采集当时生效的规格限，与 <see cref="Value"/> 同源；改动前的历史行为 null。</summary>
+    public double? LowerLimit { get; init; }
+
+    public double? UpperLimit { get; init; }
 }
 
 /// <summary>

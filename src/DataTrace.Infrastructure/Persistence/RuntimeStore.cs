@@ -354,7 +354,9 @@ public sealed class RuntimeStore : IRuntimeStore
                 {
                     Time = x.record.TriggerTime,
                     Value = x.tag.NumericValue!.Value,
-                    PalletCode = x.record.PalletCode
+                    PalletCode = x.record.PalletCode,
+                    LowerLimit = x.tag.LowerLimit,
+                    UpperLimit = x.tag.UpperLimit
                 })
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);

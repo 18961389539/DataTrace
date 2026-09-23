@@ -44,6 +44,13 @@ public sealed class SpcService : ISpcService
         // 必须用生效限值（点位默认限值 + 当前型号覆盖），否则会出现
         // "采集按型号限值判废、报表按点位默认限值算 Cpk"这种口径不一致。
         var limits = RecipeLimitResolver.Resolve(tag, snapshot.ActiveRecipe);
+
+        // 落在窗口里的点很可能是改限值之前采的。Cpk 统一按当前规格算（换型号后重估是既有口径），
+        // 但差多少个点要报出来，否则没人知道这张图的规格限和托盘上的判定不是同一套。
+        // 老数据没有限值列（两列都是 null），那属于"无从对比"，不能算成口径不一致。
+        var rejudged = points.Count(p => (p.LowerLimit is not null || p.UpperLimit is not null)
+            && (p.LowerLimit != limits.Lower || p.UpperLimit != limits.Upper));
+
         var summary = SpcCalculator.Compute(values, limits.Lower, limits.Upper, limits.Target);
         var violations = SpcRuleEvaluator.Evaluate(values, summary);
 
@@ -57,6 +64,7 @@ public sealed class SpcService : ISpcService
             UpperLimit = limits.Upper,
             TargetValue = limits.Target,
             RecipeCode = snapshot.ActiveRecipe?.Code ?? "",
+            SamplesRejudgedByNewLimits = rejudged,
             Samples = points
                 .Select(p => new TrendPoint { Time = p.Time, Value = p.Value, PalletCode = p.PalletCode })
                 .ToList(),

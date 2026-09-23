@@ -222,6 +222,10 @@
 
                 <MudText Typo="Typo.caption" Class="dt-muted dt-kpi mb-3">
                     规格限 @LimitPair(_spc.LowerLimit, _spc.UpperLimit) @_spc.Unit
+                    @if (_spc.SamplesRejudgedByNewLimits > 0)
+                    {
+                        <span class="dt-text-warning">（@_spc.SamplesRejudgedByNewLimits 点是改规格限之前采的，已按当前规格限重算）</span>
+                    }
                     · 目标值 @(_spc.TargetValue?.ToString("0.###") ?? "未配置")
                     · 实测范围 @SpcCalculator.Format(_spc.Summary.Min, "0.###") ~ @SpcCalculator.Format(_spc.Summary.Max, "0.###")
                     · σ 总体 @SpcCalculator.Format(_spc.Summary.OverallStdDev, "0.####")

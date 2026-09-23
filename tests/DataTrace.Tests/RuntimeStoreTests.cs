@@ -493,6 +493,11 @@ public class RuntimeStoreTests
         Assert.Equal("P0001", trend[0].PalletCode);
         Assert.True(trend.Zip(trend.Skip(1)).All(p => p.First.Time <= p.Second.Time));
         Assert.Empty(await env.Store.QueryTagTrendAsync(Day1, Day1.AddDays(30), tagId + 99));
+
+        // 规格限那两列是后加的：老行读出来必须是 null，不能兜成 0——
+        // 兜成 0 会让"按当前规格限重算了多少点"的比对把每条老数据都算成口径不一致。
+        Assert.All(trend, p => Assert.Null(p.LowerLimit));
+        Assert.All(trend, p => Assert.Null(p.UpperLimit));
     }
 
     [Fact]
