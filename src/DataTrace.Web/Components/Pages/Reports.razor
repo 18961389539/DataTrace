@@ -157,8 +157,8 @@
                 <MudText Typo="Typo.h6">过程能力</MudText>
                 @if (_spc is not null)
                 {
-                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@VerdictColor(_spc.Summary.Verdict)">
-                        @VerdictLabel(_spc.Summary.Verdict)
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@VerdictColor(_spc.Verdict)">
+                        @VerdictLabel(_spc.Verdict)
                     </MudChip>
                     <MudText Typo="Typo.caption" Class="dt-muted">
                         @_spc.TagCode @_spc.TagName · 与上方「参数趋势」同一点位
@@ -174,73 +174,121 @@
             }
             else
             {
-                @if (!string.IsNullOrEmpty(_spc.Summary.Note))
+                @if (_spc.SpecChangedInWindow)
                 {
                     <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mb-3">
-                        @_spc.Summary.Note
+                        区间内规格限变更 @(_spc.Segments.Count - 1) 次，已按变更点分段计算：
+                        跨两套规格限算出来的 Cpk 没有意义，而且改限值常与换刀、调机同时发生，
+                        那个台阶会把移动极差抬高、控制限跟着失真。
                     </MudAlert>
+                    <MudTable Items="_spc.Segments" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-1">
+                        <HeaderContent>
+                            <MudTh>段</MudTh>
+                            <MudTh>时间范围</MudTh>
+                            <MudTh>规格限</MudTh>
+                            <MudTh>点数</MudTh>
+                            <MudTh>Cp</MudTh>
+                            <MudTh>Cpk</MudTh>
+                            <MudTh>Ppk</MudTh>
+                            <MudTh>结论</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="段">@context.Number</MudTd>
+                            <MudTd DataLabel="时间范围">@SegmentRangeText(context)</MudTd>
+                            <MudTd DataLabel="规格限">@LimitPair(context.LowerLimit, context.UpperLimit)@(context.LimitsFromConfig ? " *" : "")</MudTd>
+                            <MudTd DataLabel="点数">@context.Count</MudTd>
+                            <MudTd DataLabel="Cp">@SpcCalculator.Format(context.Summary.Cp)</MudTd>
+                            <MudTd DataLabel="Cpk">@SpcCalculator.Format(context.Summary.Cpk)</MudTd>
+                            <MudTd DataLabel="Ppk">@SpcCalculator.Format(context.Summary.Ppk)</MudTd>
+                            <MudTd DataLabel="结论">@VerdictLabel(context.Summary.Verdict)</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                    @if (_spc.Segments.Any(s => s.LimitsFromConfig))
+                    {
+                        <MudText Typo="Typo.caption" Class="dt-muted mb-2">
+                            带 * 的段没有落库规格限（那批数据早于"限值随记录落库"），按当前配置估计。
+                        </MudText>
+                    }
                 }
 
-                <MudGrid Class="mb-2">
-                    <MudItem xs="6" sm="4" md="3" lg="2">
-                        <div class="dt-metric">
-                            <div class="dt-metric-label">样本数</div>
-                            <div class="dt-metric-value">@_spc.Summary.Count</div>
-                        </div>
-                    </MudItem>
-                    <MudItem xs="6" sm="4" md="3" lg="2">
-                        <div class="dt-metric">
-                            <div class="dt-metric-label">均值</div>
-                            <div class="dt-metric-value">@SpcCalculator.Format(_spc.Summary.Mean, "0.###")</div>
-                        </div>
-                    </MudItem>
-                    <MudItem xs="6" sm="4" md="3" lg="2">
-                        <div class="dt-metric">
-                            <div class="dt-metric-label">Cp</div>
-                            <div class="dt-metric-value">@SpcCalculator.Format(_spc.Summary.Cp)</div>
-                        </div>
-                    </MudItem>
-                    <MudItem xs="6" sm="4" md="3" lg="2">
-                        <div class="dt-metric">
-                            <div class="dt-metric-label">Cpk（组内）</div>
-                            <div class="dt-metric-value">@SpcCalculator.Format(_spc.Summary.Cpk)</div>
-                        </div>
-                    </MudItem>
-                    <MudItem xs="6" sm="4" md="3" lg="2">
-                        <div class="dt-metric">
-                            <div class="dt-metric-label">Ppk（总体）</div>
-                            <div class="dt-metric-value">@SpcCalculator.Format(_spc.Summary.Ppk)</div>
-                        </div>
-                    </MudItem>
-                    <MudItem xs="6" sm="4" md="3" lg="2">
-                        <div class="dt-metric">
-                            <div class="dt-metric-label">σ 组内</div>
-                            <div class="dt-metric-value">@SpcCalculator.Format(_spc.Summary.WithinStdDev, "0.####")</div>
-                        </div>
-                    </MudItem>
-                </MudGrid>
-
-                <MudText Typo="Typo.caption" Class="dt-muted dt-kpi mb-3">
-                    规格限 @LimitPair(_spc.LowerLimit, _spc.UpperLimit) @_spc.Unit
-                    @if (_spc.SamplesRejudgedByNewLimits > 0)
-                    {
-                        <span class="dt-text-warning">（@_spc.SamplesRejudgedByNewLimits 点是改规格限之前采的，已按当前规格限重算）</span>
-                    }
-                    · 目标值 @(_spc.TargetValue?.ToString("0.###") ?? "未配置")
-                    · 实测范围 @SpcCalculator.Format(_spc.Summary.Min, "0.###") ~ @SpcCalculator.Format(_spc.Summary.Max, "0.###")
-                    · σ 总体 @SpcCalculator.Format(_spc.Summary.OverallStdDev, "0.####")
-                    · 控制限 @SpcCalculator.Format(_spc.Summary.LowerControlLimit, "0.###") ~ @SpcCalculator.Format(_spc.Summary.UpperControlLimit, "0.###")
-                    @if (_spc.Summary.MeanOffsetInSigma is { } offset)
-                    {
-                        <text>· 均值偏离基准 @SpcCalculator.Format(offset, "+0.00;-0.00;0.00") σ</text>
-                    }
-                </MudText>
-
-                @if (_spc.Samples.Count > 0)
+                @for (var index = 0; index < _spc.Segments.Count; index++)
                 {
-                    <LineChart Series="_spcSeries" Height="260" SeriesAxisName="采样点"
-                               XStartText="@_trendFromText" XEndText="@_trendToText"
-                               ShowPoints="_spc.Samples.Count <= 120" />
+                    var segment = _spc.Segments[index];
+                    @if (_spc.SpecChangedInWindow)
+                    {
+                        <MudText Typo="Typo.subtitle2" Class="mt-4 mb-1">
+                            段 @segment.Number · @SegmentRangeText(segment) · 规格限 @LimitPair(segment.LowerLimit, segment.UpperLimit) @_spc.Unit
+                        </MudText>
+                    }
+
+                    @if (!string.IsNullOrEmpty(segment.Summary.Note))
+                    {
+                        <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+                            @segment.Summary.Note
+                        </MudAlert>
+                    }
+
+                    <MudGrid Class="mb-2">
+                        <MudItem xs="6" sm="4" md="3" lg="2">
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">样本数</div>
+                                <div class="dt-metric-value">@segment.Summary.Count</div>
+                            </div>
+                        </MudItem>
+                        <MudItem xs="6" sm="4" md="3" lg="2">
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">均值</div>
+                                <div class="dt-metric-value">@SpcCalculator.Format(segment.Summary.Mean, "0.###")</div>
+                            </div>
+                        </MudItem>
+                        <MudItem xs="6" sm="4" md="3" lg="2">
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">Cp</div>
+                                <div class="dt-metric-value">@SpcCalculator.Format(segment.Summary.Cp)</div>
+                            </div>
+                        </MudItem>
+                        <MudItem xs="6" sm="4" md="3" lg="2">
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">Cpk（组内）</div>
+                                <div class="dt-metric-value">@SpcCalculator.Format(segment.Summary.Cpk)</div>
+                            </div>
+                        </MudItem>
+                        <MudItem xs="6" sm="4" md="3" lg="2">
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">Ppk（总体）</div>
+                                <div class="dt-metric-value">@SpcCalculator.Format(segment.Summary.Ppk)</div>
+                            </div>
+                        </MudItem>
+                        <MudItem xs="6" sm="4" md="3" lg="2">
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">σ 组内</div>
+                                <div class="dt-metric-value">@SpcCalculator.Format(segment.Summary.WithinStdDev, "0.####")</div>
+                            </div>
+                        </MudItem>
+                    </MudGrid>
+
+                    <MudText Typo="Typo.caption" Class="dt-muted dt-kpi mb-3">
+                        规格限 @LimitPair(segment.LowerLimit, segment.UpperLimit) @_spc.Unit
+                        @if (segment.LimitsFromConfig)
+                        {
+                            <span class="dt-text-warning">（未落库，按当前配置估计）</span>
+                        }
+                        · 目标值 @(_spc.TargetValue?.ToString("0.###") ?? "未配置")
+                        · 实测范围 @SpcCalculator.Format(segment.Summary.Min, "0.###") ~ @SpcCalculator.Format(segment.Summary.Max, "0.###")
+                        · σ 总体 @SpcCalculator.Format(segment.Summary.OverallStdDev, "0.####")
+                        · 控制限 @SpcCalculator.Format(segment.Summary.LowerControlLimit, "0.###") ~ @SpcCalculator.Format(segment.Summary.UpperControlLimit, "0.###")
+                        @if (segment.Summary.MeanOffsetInSigma is { } offset)
+                        {
+                            <text> · 均值偏离基准 @SpcCalculator.Format(offset, "+0.00;-0.00;0.00") σ</text>
+                        }
+                    </MudText>
+
+                    @if (segment.Count > 0)
+                    {
+                        <LineChart Series="@_spcCharts[index]" Height="260" SeriesAxisName="采样点"
+                                   XStartText="@ShortTime(segment.StartTime)" XEndText="@ShortTime(segment.EndTime)"
+                                   ShowPoints="@(segment.Count <= 120)" />
+                    }
                 }
 
                 @if (_spc.Violations.Count == 0)
@@ -252,12 +300,20 @@
                     <MudText Typo="Typo.subtitle2" Class="mt-4 mb-2">判异 @_spc.Violations.Count 条</MudText>
                     <MudTable Items="_spc.Violations" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
                         <HeaderContent>
+                            @if (_spc.SpecChangedInWindow)
+                            {
+                                <MudTh>段</MudTh>
+                            }
                             <MudTh>规则</MudTh>
                             <MudTh>说明</MudTh>
                             <MudTh>采样点</MudTh>
                             <MudTh>时间</MudTh>
                         </HeaderContent>
                         <RowTemplate>
+                            @if (_spc.SpecChangedInWindow)
+                            {
+                                <MudTd DataLabel="段">@_spc.SegmentNumberOf(context.StartIndex)</MudTd>
+                            }
                             <MudTd DataLabel="规则">@RuleLabel(context.Rule)</MudTd>
                             <MudTd DataLabel="说明">@context.Description</MudTd>
                             <MudTd DataLabel="采样点">@(context.StartIndex + 1) ~ @(context.EndIndex + 1)</MudTd>
@@ -267,6 +323,7 @@
                     <MudText Typo="Typo.caption" Class="dt-muted mt-2">
                         已实现 Nelson 规则 1–5：超 3σ、同侧连续 9 点、连续 6 点趋势、连续 14 点振荡、连续 3 点中 2 点超 2σ。
                         其余三条（4/5 点超 1σ、15 点在 1σ 内、8 点在 1σ 外）误报偏多，暂未启用。
+                        分段之后规则只在段内连续判定，不会跨过规格限变更点。
                     </MudText>
                 }
             }
@@ -286,7 +343,9 @@
     private IReadOnlyList<IssueTopItem> _defects = [];
     private IReadOnlyList<IssueTopItem> _warnings = [];
     private ProcessCapabilityReport? _spc;
-    private IReadOnlyList<LineSeries> _spcSeries = [];
+
+    /// <summary>与 _spc.Segments 一一对应的控制图序列：分段之后每段各画一张图。</summary>
+    private IReadOnlyList<IReadOnlyList<LineSeries>> _spcCharts = [];
     private IReadOnlyList<TrendPoint> _trend = [];
     private IReadOnlyList<LineSeries> _trendSeries = [];
     private string _trendAverage = "-";
@@ -366,7 +425,7 @@
             _spc = _tagId != 0
                 ? await SpcService.GetProcessCapabilityAsync(_tagId, from, to)
                 : null;
-            _spcSeries = BuildSpcSeries();
+            _spcCharts = _spc?.Segments.Select(BuildSpcSeries).ToList() ?? [];
         }
         catch (Exception ex)
         {
@@ -387,7 +446,7 @@
         _defects = [];
         _warnings = [];
         _spc = null;
-        _spcSeries = [];
+        _spcCharts = [];
         _trend = [];
         _trendSeries = [];
         _trendAverage = _trendMin = _trendMax = "-";
@@ -493,24 +552,31 @@
     }
 
     /// <summary>
-    /// 控制图：实测序列 + 三条常量序列（UCL / CL / LCL）。
+    /// 一段的控制图：该段实测序列 + 该段自己的三条常量线（UCL / CL / LCL）。
     /// 常量序列参与量程计算，因此控制限一定落在可视范围内，不会被裁掉。
     /// </summary>
-    private IReadOnlyList<LineSeries> BuildSpcSeries()
+    private IReadOnlyList<LineSeries> BuildSpcSeries(ProcessCapabilitySegment segment)
     {
-        if (_spc is null || _spc.Samples.Count == 0)
+        if (_spc is null)
         {
             return [];
         }
 
-        var values = _spc.Samples.Select(p => (float)p.Value).ToArray();
-        var summary = _spc.Summary;
+        var values = _spc.Samples.Skip(segment.StartIndex).Take(segment.Count)
+            .Select(p => (float)p.Value).ToArray();
+        if (values.Length == 0)
+        {
+            return [];
+        }
+
+        var summary = segment.Summary;
+        var name = $"实测 {_spc.TagName}{(_spc.SpecChangedInWindow ? $" 段 {segment.Number}" : "")}";
 
         return
         [
             new LineSeries
             {
-                Name = $"实测 {_spc.TagName}",
+                Name = name,
                 Values = values,
                 Color = ChartColors.Primary,
                 Unit = _spc.Unit
@@ -545,6 +611,11 @@
 
     private string TimeText(int sampleIndex)
         => _spc?.TimeAt(sampleIndex) is { } time ? time.ToString("MM-dd HH:mm:ss") : "-";
+
+    private static string ShortTime(DateTime time) => time.ToString("MM-dd HH:mm");
+
+    private static string SegmentRangeText(ProcessCapabilitySegment segment)
+        => $"{ShortTime(segment.StartTime)} ~ {ShortTime(segment.EndTime)}";
 
     private static string LimitPair(double? lower, double? upper)
     {

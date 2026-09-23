@@ -252,7 +252,9 @@ internal class FakeRuntimeStore : IRuntimeStore
                     {
                         Time = x.Record.TriggerTime,
                         Value = t.NumericValue!.Value,
-                        PalletCode = x.Record.PalletCode
+                        PalletCode = x.Record.PalletCode,
+                        LowerLimit = t.LowerLimit,
+                        UpperLimit = t.UpperLimit
                     }))
                 .ToList());
 

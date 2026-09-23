@@ -39,20 +39,43 @@ public sealed class SpcService : ISpcService
             .OrderBy(p => p.Time)
             .ToList();
 
-        var values = points.Select(p => p.Value).ToList();
+        // 配置里的生效限值（点位默认 + 当前型号覆盖）。它有两个用途：
+        // 目标值（没有随记录落库），以及给"限值列还是 null"的老数据兜底。
+        var configLimits = RecipeLimitResolver.Resolve(tag, snapshot.ActiveRecipe);
 
-        // 必须用生效限值（点位默认限值 + 当前型号覆盖），否则会出现
-        // "采集按型号限值判废、报表按点位默认限值算 Cpk"这种口径不一致。
-        var limits = RecipeLimitResolver.Resolve(tag, snapshot.ActiveRecipe);
+        // 按采集时落库的规格限切连续段：限值一动就断，每段各自算能力指数与控制限。
+        var runs = new List<(double? Lower, double? Upper, bool FromConfig, List<TagTrendPoint> Points)>();
+        foreach (var point in points)
+        {
+            // 两列都没值 = 那批数据还没有"限值随记录落库"，只能按当前配置估；
+            // 相邻的同类点归同一段，因为它们本来就是同一个口径。
+            var fromConfig = point.LowerLimit is null && point.UpperLimit is null;
+            var lower = fromConfig ? configLimits.Lower : point.LowerLimit;
+            var upper = fromConfig ? configLimits.Upper : point.UpperLimit;
 
-        // 落在窗口里的点很可能是改限值之前采的。Cpk 统一按当前规格算（换型号后重估是既有口径），
-        // 但差多少个点要报出来，否则没人知道这张图的规格限和托盘上的判定不是同一套。
-        // 老数据没有限值列（两列都是 null），那属于"无从对比"，不能算成口径不一致。
-        var rejudged = points.Count(p => (p.LowerLimit is not null || p.UpperLimit is not null)
-            && (p.LowerLimit != limits.Lower || p.UpperLimit != limits.Upper));
+            if (runs.Count > 0 && runs[^1].Lower == lower && runs[^1].Upper == upper && runs[^1].FromConfig == fromConfig)
+            {
+                runs[^1].Points.Add(point);
+            }
+            else
+            {
+                runs.Add((lower, upper, fromConfig, [point]));
+            }
+        }
 
-        var summary = SpcCalculator.Compute(values, limits.Lower, limits.Upper, limits.Target);
-        var violations = SpcRuleEvaluator.Evaluate(values, summary);
+        var segments = new List<ProcessCapabilitySegment>();
+        var start = 0;
+        foreach (var run in runs)
+        {
+            segments.Add(BuildSegment(segments.Count + 1, start, run, configLimits));
+            start += run.Points.Count;
+        }
+
+        if (segments.Count == 0)
+        {
+            // 空区间也要有一段，界面才能照旧显示"区间内没有采样数据"而不是空白。
+            segments.Add(BuildEmptySegment(configLimits, from, to));
+        }
 
         return new ProcessCapabilityReport
         {
@@ -60,16 +83,58 @@ public sealed class SpcService : ISpcService
             TagCode = tag.Code,
             TagName = tag.Name,
             Unit = tag.Unit,
-            LowerLimit = limits.Lower,
-            UpperLimit = limits.Upper,
-            TargetValue = limits.Target,
+            TargetValue = configLimits.Target,
             RecipeCode = snapshot.ActiveRecipe?.Code ?? "",
-            SamplesRejudgedByNewLimits = rejudged,
             Samples = points
                 .Select(p => new TrendPoint { Time = p.Time, Value = p.Value, PalletCode = p.PalletCode })
                 .ToList(),
+            Segments = segments
+        };
+    }
+
+    private static ProcessCapabilitySegment BuildSegment(
+        int number,
+        int startIndex,
+        (double? Lower, double? Upper, bool FromConfig, List<TagTrendPoint> Points) run,
+        TagLimits configLimits)
+    {
+        var values = run.Points.Select(p => p.Value).ToList();
+        var summary = SpcCalculator.Compute(values, run.Lower, run.Upper, configLimits.Target);
+
+        return new ProcessCapabilitySegment
+        {
+            Number = number,
+            StartIndex = startIndex,
+            Count = run.Points.Count,
+            StartTime = run.Points[0].Time,
+            EndTime = run.Points[^1].Time,
+            LowerLimit = run.Lower,
+            UpperLimit = run.Upper,
+            LimitsFromConfig = run.FromConfig,
             Summary = summary,
-            Violations = violations
+            // 判异序号是段内 0 起的，必须换算成全窗口序号，否则界面点托盘会点到别的段上。
+            Violations = SpcRuleEvaluator.Evaluate(values, summary)
+                .Select(v => v with
+                {
+                    StartIndex = v.StartIndex + startIndex,
+                    EndIndex = v.EndIndex + startIndex
+                })
+                .ToList()
+        };
+    }
+
+    private static ProcessCapabilitySegment BuildEmptySegment(TagLimits configLimits, DateTime from, DateTime to)
+    {
+        var summary = SpcCalculator.Compute([], configLimits.Lower, configLimits.Upper, configLimits.Target);
+        return new ProcessCapabilitySegment
+        {
+            Number = 1,
+            StartTime = from,
+            EndTime = to,
+            LowerLimit = configLimits.Lower,
+            UpperLimit = configLimits.Upper,
+            LimitsFromConfig = true,
+            Summary = summary
         };
     }
 }

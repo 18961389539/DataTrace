@@ -188,6 +188,26 @@ public class UiRegressionE2ETests : E2ETestBase
         Assert.DoesNotContain("未配置", body);
     }
 
+    /// <summary>
+    /// 过程能力那块曾经只由单测背书：报表页改一版布局（分段渲染）就可能整个不出现，
+    /// 而单测照样全绿。这里补一条"界面真的画出来了"的兜底。
+    /// </summary>
+    [Fact]
+    public async Task CapabilitySectionRendersCardsAndChartForTheSelectedTag()
+    {
+        await Page.GotoAsync($"{App.BaseUrl}/reports");
+        await WaitBodyContainsAsync("过程能力");
+        await WaitBodyContainsAsync("Cpk（组内）");
+
+        // LineChart 的 svg 自己带 dt-chart 类，不是 .dt-chart 的子元素。
+        await Page.Locator("svg.dt-chart").First.WaitForAsync();
+
+        // 演示实例没改过规格限，只应该有一段：分段提示与分段表都不该出现。
+        var body = await Page.InnerTextAsync("body");
+        Assert.DoesNotContain("区间内规格限变更", body);
+        Assert.Equal(0, await Page.Locator("th", new() { HasText = "时间范围" }).CountAsync());
+    }
+
     [Fact]
     public async Task SettingsWarnsAboutUnsavedEditsAndClearsItAfterSaving()
     {
