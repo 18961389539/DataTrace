@@ -1,6 +1,7 @@
 ﻿using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
+using DataTrace.Domain.Evaluation;
 using DataTrace.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -724,6 +725,106 @@ public class ConfigRepositoryTests
         var fallback = await repo.GetSnapshotAsync();
         Assert.Single(fallback.Recipes);
         Assert.Null(fallback.ActiveRecipe);
+    }
+
+    [Fact]
+    public async Task Saving_a_tag_with_contradictory_limits_is_refused_and_nothing_is_written()
+    {
+        var (workspace, db, plc) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = new ConfigRepository(db);
+        var station = plc.Stations.First();
+
+        var before = await repo.GetSnapshotAsync();
+
+        // 黄线跑到红线外侧：采集端只会默默收敛，所以必须在写库这一步就拒绝。
+        var bad = new TagDefinition
+        {
+            StationId = station.Id,
+            Code = "ST010_P9",
+            Name = "压力2",
+            Address = "D1190",
+            DataType = PlcDataType.Float,
+            LowerLimit = 5,
+            UpperLimit = 20,
+            WarningLowerLimit = 2
+        };
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => repo.SaveTagAsync(bad));
+        Assert.Contains("ST010_P9", error.Message);
+        Assert.Contains("预警下限不能低于规格下限", error.Message);
+
+        var after = await repo.GetSnapshotAsync();
+        Assert.Equal(before.Stations.Sum(s => s.Tags.Count), after.Stations.Sum(s => s.Tags.Count));
+        Assert.DoesNotContain(after.Stations.SelectMany(s => s.Tags), t => t.Code == "ST010_P9");
+
+        // 自洽的一套必须能存 —— 否则就是校验本身写错了。
+        bad.WarningLowerLimit = 6;
+        await repo.SaveTagAsync(bad);
+        Assert.Contains((await repo.GetSnapshotAsync()).Stations.SelectMany(s => s.Tags), t => t.Code == "ST010_P9");
+    }
+
+    [Fact]
+    public async Task Recipe_override_is_checked_after_merging_with_the_tag_defaults()
+    {
+        var (workspace, db, plc) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = new ConfigRepository(db);
+        var tag = plc.Stations.First().Tags.First();
+        tag.LowerLimit = 5;
+        tag.UpperLimit = 20;
+        await repo.SaveTagAsync(tag);
+
+        // 单看这条覆盖行毫无问题（只有黄线，没有红线），但它是要和点位的红线 20 合并生效的。
+        var alone = TagLimits.From(new RecipeLimit { TagId = tag.Id, WarningUpperLimit = 90 });
+        Assert.Null(alone.ConsistencyError());
+
+        var recipe = new Recipe
+        {
+            Code = "F600",
+            Name = "型号 F600",
+            Limits = [new RecipeLimit { TagId = tag.Id, WarningUpperLimit = 90 }]
+        };
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => repo.SaveRecipeAsync(recipe));
+        Assert.Contains("F600", error.Message);
+        Assert.Contains("预警上限不能高于规格上限", error.Message);
+        Assert.Empty(db.Recipes.ToList());
+
+        // 收紧到红线内侧就能存，且留空字段仍然是"沿用点位默认值"而不是"清空"。
+        recipe.Limits.Single().WarningUpperLimit = 16;
+        await repo.SaveRecipeAsync(recipe);
+
+        var snapshot = await repo.GetSnapshotAsync();
+        var effective = RecipeLimitResolver.Resolve(
+            snapshot.Stations.SelectMany(s => s.Tags).Single(t => t.Id == tag.Id),
+            snapshot.Recipes.Single());
+        Assert.Equal(5d, effective.Lower);
+        Assert.Equal(20d, effective.Upper);
+        Assert.Equal(16d, effective.WarningUpper);
+    }
+
+    [Fact]
+    public async Task Override_row_pointing_at_a_deleted_tag_does_not_lock_the_recipe()
+    {
+        var (workspace, db, _) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = new ConfigRepository(db);
+
+        // 点位已经不在配置库里（删点位留下的残留覆盖行）：不能因此把型号编辑器锁死，
+        // 这种行没有可比对的默认值，跳过即可。
+        var recipe = new Recipe
+        {
+            Code = "G700",
+            Name = "型号 G700",
+            Limits = [new RecipeLimit { TagId = 999_999, WarningUpperLimit = 90 }]
+        };
+
+        await repo.SaveRecipeAsync(recipe);
+        Assert.Single(db.Recipes.ToList());
     }
 
     [Fact]

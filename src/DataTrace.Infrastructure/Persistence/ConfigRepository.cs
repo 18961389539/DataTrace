@@ -1,5 +1,6 @@
 using DataTrace.Application.Configuration;
 using DataTrace.Domain.Entities;
+using DataTrace.Domain.Evaluation;
 using Microsoft.EntityFrameworkCore;
 
 namespace DataTrace.Infrastructure.Persistence;
@@ -173,6 +174,13 @@ public sealed class ConfigRepository : IConfigRepository
             tag.PositionIndex = 1;
         }
 
+        // 对话框里也校验这一条，但那只是 UI：从 MES 或其它入口直接写库照样能留下自相矛盾的限值，
+        // 而采集端只会默默把黄线收敛进红线，明细页上显示的预警限就跟实际判据不是一回事了。
+        if (TagLimits.From(tag).ConsistencyError() is { } error)
+        {
+            throw new InvalidOperationException($"点位 {tag.Code} 的限值互相矛盾：{error}");
+        }
+
         if (tag.Id == 0)
         {
             _db.Tags.Add(tag);
@@ -321,6 +329,8 @@ public sealed class ConfigRepository : IConfigRepository
         recipe.Code = recipe.Code.Trim();
         recipe.Name = recipe.Name.Trim();
 
+        await EnsureRecipeLimitsConsistentAsync(recipe, cancellationToken).ConfigureAwait(false);
+
         if (recipe.Id == 0)
         {
             // 先只落型号行，拿到主键后再同步限值 —— 与更新路径走同一套增量逻辑，
@@ -362,6 +372,40 @@ public sealed class ConfigRepository : IConfigRepository
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 覆盖行必须与点位默认值<b>合并后</b>自洽：只查覆盖行自己是不成立的，
+    /// 留空字段沿用点位默认值，"黄线跑到红线外"往往是改红线和改黄线各改了一半造成的。
+    /// 与 <c>RecipeLimitDialog</c> 校验的是同一套口径（都走 <see cref="TagLimits.ConsistencyError"/>）。
+    /// </summary>
+    private async Task EnsureRecipeLimitsConsistentAsync(Recipe recipe, CancellationToken cancellationToken)
+    {
+        if (recipe.Limits.Count == 0)
+        {
+            return;
+        }
+
+        var tagIds = recipe.Limits.Select(x => x.TagId).Distinct().ToList();
+        var tags = await _db.Tags.AsNoTracking()
+            .Where(t => tagIds.Contains(t.Id))
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        foreach (var limit in recipe.Limits)
+        {
+            var tag = tags.FirstOrDefault(t => t.Id == limit.TagId);
+            if (tag is null)
+            {
+                // 点位已经不在配置库里：交给限值同步逻辑处理，这里不重复报同一个错。
+                continue;
+            }
+
+            if (TagLimits.From(tag).Override(TagLimits.From(limit)).ConsistencyError() is { } error)
+            {
+                throw new InvalidOperationException($"型号 {recipe.Code} 的点位 {tag.Code} 限值互相矛盾：{error}");
+            }
+        }
     }
 
     public async Task DeleteRecipeAsync(int id, CancellationToken cancellationToken = default)

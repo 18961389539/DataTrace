@@ -362,6 +362,27 @@ public class CollectPipelineTests
     }
 
     [Fact]
+    public async Task Seeded_demo_line_limits_satisfy_the_write_path_rule()
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+
+        // 演示数据是 Seeder 直接写 EF 的，绕开仓储里那道限值一致性校验；而现场第一眼看到、
+        // 照着改的就是这套数据 —— 它自己黄线压红线，等于把脏配置当范例发出去。
+        foreach (var tag in harness.Stations.SelectMany(s => s.Tags))
+        {
+            Assert.Null(TagLimits.From(tag).ConsistencyError());
+        }
+
+        foreach (var recipe in harness.Snapshot.Recipes)
+        {
+            foreach (var tag in harness.Stations.SelectMany(s => s.Tags))
+            {
+                Assert.Null(RecipeLimitResolver.Resolve(tag, recipe).ConsistencyError());
+            }
+        }
+    }
+
+    [Fact]
     public async Task Tag_scale_and_offset_are_applied_when_decoding()
     {
         await using var harness = await CollectHarness.CreateAsync();
