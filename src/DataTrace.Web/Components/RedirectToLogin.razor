@@ -3,6 +3,8 @@
 @code {
     protected override void OnInitialized()
     {
-        Nav.NavigateTo($"/login?returnUrl={Uri.EscapeDataString(Nav.Uri)}", true);
+        // PathAndQuery 而不是 Nav.Uri：回跳目标必须是站内根相对路径，绝对地址会被登录端点拒掉。
+        var target = new Uri(Nav.Uri).PathAndQuery;
+        Nav.NavigateTo($"/login?ReturnUrl={Uri.EscapeDataString(target)}", true);
     }
 }

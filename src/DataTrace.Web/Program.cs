@@ -6,6 +6,7 @@ using DataTrace.Infrastructure.Seeding;
 using DataTrace.Plc;
 using DataTrace.Plc.Drivers.IoTClient;
 using DataTrace.Web.Components;
+using DataTrace.Web.Services;
 using Microsoft.AspNetCore.Identity;
 using MudBlazor;
 using MudBlazor.Services;
@@ -114,7 +115,7 @@ app.Use(async (context, next) =>
     if (!isAuthEndpoint && context.User.Identity?.IsAuthenticated == true
         && path.Equals("/login", StringComparison.OrdinalIgnoreCase))
     {
-        context.Response.Redirect("/");
+        context.Response.Redirect(ReturnUrl.AfterSignIn(context.Request.Query[ReturnUrl.QueryKey].ToString()));
         return;
     }
 
@@ -127,10 +128,11 @@ app.MapPost("/account/login", async (HttpContext http, SignInManager<Application
     var form = await http.Request.ReadFormAsync();
     var userName = form["UserName"].ToString();
     var password = form["Password"].ToString();
+    var returnUrl = form[ReturnUrl.QueryKey].ToString();
     var result = await signIn.PasswordSignInAsync(userName, password, isPersistent: true, lockoutOnFailure: false);
     return result.Succeeded
-        ? Results.Redirect("/")
-        : Results.Redirect("/login?error=1");
+        ? Results.Redirect(ReturnUrl.AfterSignIn(returnUrl))
+        : Results.Redirect(ReturnUrl.AfterSignInFailed(returnUrl));
 }).AllowAnonymous().DisableAntiforgery();
 app.MapGet("/account/logout", async (SignInManager<ApplicationUser> signIn) =>
 {

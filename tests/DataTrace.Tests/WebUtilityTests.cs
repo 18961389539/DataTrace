@@ -371,3 +371,52 @@ public class DisplayLabelsTests
     public void LimitRange_formats_invariantly()
         => Assert.Equal("0.5 ~ 1234.568", DisplayLabels.LimitRange(0.5, 1234.5678));
 }
+
+/// <summary>登录后回跳：目标地址来自查询串/表单，属于用户可控输入，必须挡住站外地址。</summary>
+public class ReturnUrlTests
+{
+    [Theory]
+    [InlineData("/query")]
+    [InlineData("/query?size=100")]
+    [InlineData("/record/123")]
+    public void Accepts_root_relative_paths(string url)
+        => Assert.True(ReturnUrl.IsLocal(url));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("query")]
+    [InlineData("//evil.example/x")]
+    [InlineData(@"/\evil.example/x")]
+    [InlineData("http://evil.example/x")]
+    [InlineData("https://evil.example")]
+    [InlineData("javascript:alert(1)")]
+    public void Rejects_anything_that_is_not_a_same_site_path(string? url)
+        => Assert.False(ReturnUrl.IsLocal(url));
+
+    [Fact]
+    public void Successful_sign_in_goes_to_the_target_or_the_dashboard()
+    {
+        Assert.Equal("/query?size=100", ReturnUrl.AfterSignIn("/query?size=100"));
+        Assert.Equal("/", ReturnUrl.AfterSignIn(null));
+        Assert.Equal("/", ReturnUrl.AfterSignIn("//evil.example"));
+    }
+
+    [Fact]
+    public void Failed_sign_in_re_carries_the_target_so_the_retry_does_not_lose_it()
+    {
+        // 目标里的 ? 与 & 必须转义，否则第二次提交时 ReturnUrl 会在第一个 & 处被截断。
+        Assert.Equal("/login?error=1&ReturnUrl=%2Fquery%3Fsize%3D100",
+            ReturnUrl.AfterSignInFailed("/query?size=100"));
+        Assert.Equal("/login?error=1", ReturnUrl.AfterSignInFailed(null));
+        Assert.Equal("/login?error=1", ReturnUrl.AfterSignInFailed("//evil.example"));
+    }
+
+    [Fact]
+    public void Round_trips_a_target_that_itself_carries_a_query()
+    {
+        var failed = ReturnUrl.AfterSignInFailed("/query?size=100");
+        var value = failed.Split("ReturnUrl=")[1];
+        Assert.Equal("/query?size=100", Uri.UnescapeDataString(value));
+    }
+}

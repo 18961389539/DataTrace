@@ -77,6 +77,42 @@ public sealed class AuthE2ETests : AuthE2ETestBase
     }
 
     [Fact]
+    public async Task SignInReturnsUserToTheDeepLinkThatTriggeredTheChallenge()
+    {
+        await Page.GotoAsync($"{App.BaseUrl}/query?size=100");
+        Assert.Equal("/login?ReturnUrl=%2Fquery%3Fsize%3D100", CurrentPath());
+
+        await PostLoginFormAsync("admin", "Admin@123");
+
+        // 光"能登录"不够：操作工从 MES 拷的是带参数的记录地址，落到看板就等于没进来。
+        Assert.Equal("/query?size=100", CurrentPath());
+    }
+
+    [Fact]
+    public async Task FailedSignInKeepsTheDeepLinkForTheRetry()
+    {
+        await Page.GotoAsync($"{App.BaseUrl}/users");
+
+        await PostLoginFormAsync("viewer", "wrong-password");
+        Assert.Equal("/login?error=1&ReturnUrl=%2Fusers", CurrentPath());
+        Assert.Equal("/users", await Page.GetAttributeAsync("input[name=ReturnUrl]", "value") ?? "");
+
+        await PostLoginFormAsync("admin", "Admin@123");
+        Assert.Equal("/users", CurrentPath());
+    }
+
+    [Fact]
+    public async Task ForeignReturnUrlIsIgnoredAndLandsOnTheDashboard()
+    {
+        await Page.GotoAsync($"{App.BaseUrl}/login?ReturnUrl={Uri.EscapeDataString("//evil.example/steal")}");
+
+        await PostLoginFormAsync("admin", "Admin@123");
+
+        Assert.Equal("/", CurrentPath());
+        Assert.DoesNotContain("evil.example", Page.Url);
+    }
+
+    [Fact]
     public async Task SignedInUserIsBouncedOffTheLoginPage()
     {
         await SubmitLoginAsync("engineer", "Engineer@123");

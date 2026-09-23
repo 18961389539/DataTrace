@@ -7,6 +7,9 @@
     <p class="login-hint">产线数据采集与追溯。请使用工程师分配的账号登录。</p>
     <form method="post" action="/account/login" data-enhance="false" data-enhance-nav="false">
         <AntiforgeryToken />
+        @* 回跳目标原样带回表单：Cookie 认证的挑战与 RedirectToLogin 都把它放在查询串上，
+           这里是唯一一处能把它续到 POST 里的地方。端点只接受站内路径。 *@
+        <input type="hidden" name="ReturnUrl" value="@ReturnUrl" />
         <label class="login-label" for="dt-user">用户名</label>
         <input class="login-input" id="dt-user" name="UserName" autocomplete="username" autofocus />
         <label class="login-label" for="dt-pass">密码</label>
@@ -22,4 +25,8 @@
 @code {
     [SupplyParameterFromQuery(Name = "error")]
     public string? Error { get; set; }
+
+    /// <summary>挑战地址带上来的目标页；登录后回这一页，而不是把人都扔到看板。</summary>
+    [SupplyParameterFromQuery(Name = "ReturnUrl")]
+    public string? ReturnUrl { get; set; }
 }

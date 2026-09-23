@@ -22,6 +22,7 @@
     <!-- Web 层纯函数（CSV 导出、SVG 图表计算）直接以源码链接进测试，避免为单测引用整个 Blazor 应用及其 UI 依赖 -->
     <Compile Include="..\..\src\DataTrace.Web\Services\CsvExporter.cs" Link="Linked\CsvExporter.cs" />
     <Compile Include="..\..\src\DataTrace.Web\Services\DisplayLabels.cs" Link="Linked\DisplayLabels.cs" />
+    <Compile Include="..\..\src\DataTrace.Web\Services\ReturnUrl.cs" Link="Linked\ReturnUrl.cs" />
     <Compile Include="..\..\src\DataTrace.Web\Components\Shared\DtColors.cs" Link="Linked\DtColors.cs" />
     <Compile Include="..\..\src\DataTrace.Web\Components\Shared\ChartUtil.cs" Link="Linked\ChartUtil.cs" />
   </ItemGroup>

@@ -304,18 +304,29 @@ public abstract class AuthE2ETestBase : E2ETestBase
     {
     }
 
+    /// <summary>从登录页提交（不带回跳目标）。</summary>
+    protected async Task SubmitLoginAsync(string userName, string password)
+    {
+        await Page.GotoAsync($"{App.BaseUrl}/login");
+        await PostLoginFormAsync(userName, password);
+    }
+
     /// <summary>
-    /// 填好登录表并提交，等跳转落地（成败都算落地，由用例断言最终 URL）。
+    /// 在当前这个登录页上提交 —— 被挑战跳过来的地址带着 ReturnUrl，
+    /// 从 /login 重新进就会丢掉它，所以回跳用例必须走这里。
     /// </summary>
     /// <remarks>
     /// 赋值与提交放在同一个 JS 任务里，不能拆成 FillAsync + ClickAsync：登录表在预渲染的
     /// DOM 上，circuit 起来后第一次渲染会把这一段重建，把先前填进去的值一起抹掉，
     /// 于是服务端收到的是空用户名空密码。真人手打碰不到这个窗口，自动化必撞。
     /// </remarks>
-    protected async Task SubmitLoginAsync(string userName, string password)
+    protected async Task PostLoginFormAsync(string userName, string password)
     {
-        await Page.GotoAsync($"{App.BaseUrl}/login");
         await Page.WaitForSelectorAsync("form[action='/account/login'] input[name=UserName]");
+
+        // 只等"地址变了"：被挑战过来的登录页本身就满足"不是裸 /login"，
+        // 按 URL 形状等会立刻返回，断言就读到还没跳转的旧地址。
+        var from = Page.Url;
         await Page.EvaluateAsync(
             @"([userName, password]) => {
                   const form = document.querySelector('form[action=""/account/login""]');
@@ -325,9 +336,7 @@ public abstract class AuthE2ETestBase : E2ETestBase
               }",
             new[] { userName, password });
 
-        // 成功的去处不止一个（/ 或带 ReturnUrl 的目标），失败会停在 /login?error=1；
-        // 只有"离开裸 /login"是两种结局共有的确定信号。
-        await Page.WaitForURLAsync(url => !url.EndsWith("/login", StringComparison.Ordinal));
+        await Page.WaitForURLAsync(url => url != from);
     }
 
     /// <summary>浏览器直接跟随服务端跳转，Page.Url 就是最终落点。</summary>
