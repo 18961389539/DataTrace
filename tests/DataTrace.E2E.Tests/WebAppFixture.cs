@@ -31,6 +31,18 @@ public abstract class WebAppHost : IDisposable
 
     public string BaseUrl { get; private set; } = "";
 
+    /// <summary>应用自己的目录（也就是内容根应该落到的地方）。</summary>
+    public string AppDirectory { get; private set; } = "";
+
+    /// <summary>数据目录：夹具退出时整个删掉。</summary>
+    protected string DataRoot => _dataRoot ?? "";
+
+    /// <summary>
+    /// 进程的工作目录。默认跟应用同目录（相当于 `cd 安装目录 && 启动`），
+    /// 需要模拟"工作目录不是安装目录"的用例可以改写这里。
+    /// </summary>
+    protected virtual string ResolveWorkingDirectory(string appDirectory) => appDirectory;
+
     public int Port { get; private set; }
 
     public Task Started => _start ??= StartAsync();
@@ -38,6 +50,7 @@ public abstract class WebAppHost : IDisposable
     private async Task StartAsync()
     {
         var appDll = LocateAppDll();
+        AppDirectory = Path.GetDirectoryName(appDll)!;
         Port = GetFreePort();
         BaseUrl = $"http://127.0.0.1:{Port}";
         _dataRoot = Path.Combine(Path.GetTempPath(), "datatrace-e2e", Guid.NewGuid().ToString("N"));
@@ -45,7 +58,7 @@ public abstract class WebAppHost : IDisposable
 
         var startInfo = new ProcessStartInfo("dotnet", $"\"{appDll}\"")
         {
-            WorkingDirectory = Path.GetDirectoryName(appDll)!,
+            WorkingDirectory = ResolveWorkingDirectory(AppDirectory),
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -193,6 +206,17 @@ public sealed class AuthWebAppFixture : WebAppHost
     public AuthWebAppFixture()
         : base("Staging")
     {
+    }
+
+    /// <summary>
+    /// 故意在一个空目录里拉起进程，模拟 Windows 服务（工作目录 = System32）的形态：
+    /// 内容根必须是应用自己的目录，否则 appsettings.json 根本不会被读到。
+    /// </summary>
+    protected override string ResolveWorkingDirectory(string appDirectory)
+    {
+        var cwd = Path.Combine(DataRoot, "cwd");
+        Directory.CreateDirectory(cwd);
+        return cwd;
     }
 }
 

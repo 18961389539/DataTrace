@@ -635,16 +635,36 @@ public class RuntimeStoreTests
     public async Task Failed_save_rolls_back_transaction_leaving_no_record()
     {
         await using var env = await RuntimeEnv.CreateAsync();
-        await env.Store.SaveAsync(FirstStation("202609", "P0001", "S-UNIQUE", Day1));
+
+        var first = FirstStation("202609", "P0001", "S-UNIQUE", Day1, withCurve: true);
+        await env.Store.SaveAsync(first);
+        var keptFile = CurveFile(env, first);
+        Assert.True(File.Exists(keptFile));
 
         // 会话序列号在月份库内有唯一索引，重复写入必须整体回滚。
-        var duplicate = FirstStation("202609", "P0002", "S-UNIQUE", Day1.AddMinutes(1));
+        // 曲线代码换个名字：文件名里带序列号，两次写的是同一个序列号，
+        // 不换代码的话两条曲线会落在同一个路径上，看不出回滚只清了自己写的那个。
+        var duplicate = FirstStation("202609", "P0002", "S-UNIQUE", Day1.AddMinutes(1), withCurve: true);
+        duplicate.Curves[0].Record.CurveCode = "ST010_PD2";
         await Assert.ThrowsAnyAsync<Exception>(() => env.Store.SaveAsync(duplicate));
 
         Assert.Equal(0, (await env.Store.QueryAsync(Query(pallet: "P0002"))).Total);
         Assert.Equal(1, (await env.Store.QueryAsync(Query(pallet: "P0001"))).Total);
         Assert.Null(await env.Sessions.FindByPalletAsync("P0002"));
+
+        // 回滚还得把已经落盘的曲线文件收回去：曲线写在 CurveFileStore 的根目录下，
+        // 而不是"工作目录/data/curves"——Windows 服务的工作目录是 System32，
+        // 按后者拼路径的话这条清理会静默失效，只剩孤儿文件。
+        Assert.NotEmpty(duplicate.Curves[0].Record.RelativePath!);
+        Assert.False(File.Exists(CurveFile(env, duplicate)));
+
+        // 且只删自己刚写的那个。
+        Assert.True(File.Exists(keptFile));
     }
+
+    private static string CurveFile(RuntimeEnv env, CollectSaveRequest request)
+        => Path.Combine(env.CurveRoot,
+            request.Curves[0].Record.RelativePath!.Replace('/', Path.DirectorySeparatorChar));
 
     [Fact]
     public async Task Active_session_index_is_upserted_per_pallet()

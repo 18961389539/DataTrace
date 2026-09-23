@@ -104,19 +104,14 @@ public sealed class RuntimeStore : IRuntimeStore
         }
         catch
         {
+            // 曲线文件必须由写它的那个存储来删：只有它知道自己的根目录。
+            // 以前这里自己拼 cwd + "data/curves"，Windows 服务的工作目录是 System32，
+            // 而且 DataRoot 也可能指到别处，两种情况下回滚都静默失效、留下孤儿文件。
             foreach (var relative in writtenFiles)
             {
                 try
                 {
-                    var full = Path.Combine(
-                        Directory.GetCurrentDirectory(),
-                        "data",
-                        "curves",
-                        relative.Replace('/', Path.DirectorySeparatorChar));
-                    if (File.Exists(full))
-                    {
-                        File.Delete(full);
-                    }
+                    await _curves.DeleteFileAsync(relative, cancellationToken).ConfigureAwait(false);
                 }
                 catch
                 {

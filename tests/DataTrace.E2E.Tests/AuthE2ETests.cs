@@ -20,6 +20,15 @@ public sealed class AuthE2ETests : AuthE2ETestBase
     }
 
     [Fact]
+    public void AppTreatsItsOwnDirectoryAsTheContentRoot()
+    {
+        // 这组用例的进程是在一个空目录下被拉起来的，等同 Windows 服务的工作目录（System32）。
+        // 内容根必须是应用自己所在的目录：否则 appsettings.json 读不到，端口悄悄退回 5000、
+        // 日志级别与 DataRoot 一起失效，而现场看到的只是"服务连不上"。
+        Assert.Contains($"Content root path: {App.AppDirectory}", App.Output);
+    }
+
+    [Fact]
     public async Task UnauthenticatedDeepLinkIsChallengedToLoginWithReturnUrl()
     {
         await Page.GotoAsync($"{App.BaseUrl}/query");

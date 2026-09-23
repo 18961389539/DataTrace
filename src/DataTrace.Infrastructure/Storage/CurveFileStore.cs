@@ -60,6 +60,17 @@ public sealed class CurveFileStore : ICurveFileStore
         return Deserialize(output.ToArray());
     }
 
+    public Task DeleteFileAsync(string relativePath, CancellationToken cancellationToken = default)
+    {
+        var full = Path.Combine(_root, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        if (File.Exists(full))
+        {
+            File.Delete(full);
+        }
+
+        return Task.CompletedTask;
+    }
+
     public Task DeleteMonthAsync(string yyyy, string mm, CancellationToken cancellationToken = default)
     {
         var dir = Path.Combine(_root, yyyy, mm);

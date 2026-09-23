@@ -24,12 +24,19 @@ dotnet run
 
 ## Windows 服务
 
+先发布，再把整个目录拷到工控机（例如 `C:\DataTrace`）：
+
 ```bat
+dotnet publish src\DataTrace.Web -c Release -o publish
 sc create DataTrace binPath= "C:\DataTrace\DataTrace.Web.exe" start= auto
 sc start DataTrace
 ```
 
 监听 `http://0.0.0.0:5080`，工控机与平板可通过局域网 IP 访问。
+
+服务的工作目录是 `C:\Windows\System32`，不是安装目录；应用的**内容根固定取 exe 所在目录**，
+所以 `appsettings.json`、`wwwroot` 都能正常读到（若按工作目录找，端口会悄悄退回 5000、
+日志级别与 `DataRoot` 一起失效）。因此 `sc create` 不需要额外指定工作目录。
 
 换端口时别只改 `ASPNETCORE_URLS`：`appsettings.json` 里的 `Kestrel:Endpoints:Http:Url`
 优先级更高，会**静默**把它覆盖掉（现象是服务照样起在 5080，日志里没有任何提示）。
@@ -46,6 +53,9 @@ set Kestrel__Endpoints__Http__Url=http://0.0.0.0:5100
 `data/curves/` 曲线文件  
 `data/spool/` 写库失败补传  
 `data/logs/` 日志  
+
+`DataRoot` 可以指到别的盘（相对路径按 exe 目录解析），**日志也一起跟着走**——
+装在 `C:\Program Files` 下时服务对安装目录通常没有写权限。
 
 保留策略默认 3 年，按整月删除。
 

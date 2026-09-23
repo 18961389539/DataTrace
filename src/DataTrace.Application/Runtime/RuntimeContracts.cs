@@ -183,6 +183,10 @@ public interface ICurveFileStore
         CancellationToken cancellationToken = default);
 
     Task<CurvePayload> ReadAsync(string relativePath, CancellationToken cancellationToken = default);
+
+    /// <summary>删掉某个已写入的曲线文件（相对路径由 <see cref="WriteAsync"/> 给出）。文件不在时静默返回。</summary>
+    Task DeleteFileAsync(string relativePath, CancellationToken cancellationToken = default);
+
     Task DeleteMonthAsync(string yyyy, string mm, CancellationToken cancellationToken = default);
 }
 

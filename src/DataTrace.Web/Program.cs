@@ -12,22 +12,19 @@ using MudBlazor;
 using MudBlazor.Services;
 using Serilog;
 
-var builder = WebApplication.CreateBuilder(args);
+// 内容根目录固定为程序所在目录：Windows 服务（sc create）启动时工作目录是 System32，
+// 按工作目录找 appsettings.json 会一无所获 —— 端口、日志级别、DataRoot 全部静默回落到默认值，
+// 现象只是"服务起不来"或"监听在 5000"，看不出原因。
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory
+});
 
 // 界面全部为中文产线场景：统一区域文化，日期选择器与数字格式跟随中文习惯。
 var culture = new CultureInfo("zh-CN");
 CultureInfo.DefaultThreadCurrentCulture = culture;
 CultureInfo.DefaultThreadCurrentUICulture = culture;
-
-builder.Host.UseWindowsService();
-builder.Host.UseSerilog((ctx, log) =>
-{
-    var logDir = Path.Combine(AppContext.BaseDirectory, "data", "logs");
-    Directory.CreateDirectory(logDir);
-    log.ReadFrom.Configuration(ctx.Configuration)
-        .WriteTo.Console()
-        .WriteTo.File(Path.Combine(logDir, "datatrace-.log"), rollingInterval: RollingInterval.Day);
-});
 
 var dataRoot = builder.Configuration["DataRoot"];
 if (string.IsNullOrWhiteSpace(dataRoot))
@@ -39,6 +36,18 @@ if (!Path.IsPathRooted(dataRoot))
 {
     dataRoot = Path.Combine(AppContext.BaseDirectory, dataRoot);
 }
+
+builder.Host.UseWindowsService();
+builder.Host.UseSerilog((ctx, log) =>
+{
+    // 日志跟着 DataRoot 走：数据盘和系统盘分开时，滚动日志写满安装目录会把服务拖死，
+    // 而装在 Program Files 下的实例通常对安装目录根本没有写权限。
+    var logDir = Path.Combine(dataRoot, "logs");
+    Directory.CreateDirectory(logDir);
+    log.ReadFrom.Configuration(ctx.Configuration)
+        .WriteTo.Console()
+        .WriteTo.File(Path.Combine(logDir, "datatrace-.log"), rollingInterval: RollingInterval.Day);
+});
 
 builder.Services.AddDataTraceInfrastructure(dataRoot);
 builder.Services.AddDataTracePlc();
