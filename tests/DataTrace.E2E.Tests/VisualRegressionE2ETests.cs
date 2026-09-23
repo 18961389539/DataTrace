@@ -42,7 +42,7 @@ public class VisualRegressionE2ETests : E2ETestBase
         await Page.GotoAsync($"{App.BaseUrl}{path}");
         await WaitForAsync(".mud-layout");
 
-        Assert.Equal(0, await HorizontalOverflowAsync());
+        await AssertNoHorizontalOverflow(path);
     }
 
     [Fact]
@@ -56,7 +56,7 @@ public class VisualRegressionE2ETests : E2ETestBase
             await WaitForAsync(".mud-layout");
 
             // 表格允许自己横向滚（.dt-scroll-x 就是干这个的），整页不允许。
-            Assert.True(await HorizontalOverflowAsync() == 0, $"{path} 在 {TabletWidth}px 下把整页撑出了横向滚动");
+            await AssertNoHorizontalOverflow($"{path} @ {TabletWidth}px");
         }
     }
 
@@ -236,9 +236,19 @@ public class VisualRegressionE2ETests : E2ETestBase
                 : $"{selector} 的包围盒一直不稳定，最后 {previous.Width}x{previous.Height}");
     }
 
+    /// <summary>
+    /// 整页不许有横向滚动。留 1px 容差：字体度量的细微差别就能把 scrollWidth 顶出 1，
+    /// 那是渲染差异不是布局事故，真溢出都是几十像素起步。
+    /// </summary>
     private async Task<int> HorizontalOverflowAsync()
         => await Page.EvaluateAsync<int>(
             "() => document.documentElement.scrollWidth - document.documentElement.clientWidth");
+
+    private async Task AssertNoHorizontalOverflow(string where)
+    {
+        var overflow = await HorizontalOverflowAsync();
+        Assert.True(overflow <= 1, $"{where} 出现整页横向滚动（溢出 {overflow}px）");
+    }
 
     public static TheoryData<string> RoutesForDesktop()
     {

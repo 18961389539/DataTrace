@@ -17,6 +17,12 @@
     <ProjectReference Include="..\..\src\DataTrace.Web\DataTrace.Web.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- 三个集合各自要起一个应用实例和一个浏览器；CI runner 只有 4 核，
+         并行会把依赖采集时序的 journey 用例饿到超时（本机也观察到同样现象），
+         所以集合之间串行跑，集合内部仍然并行。 -->
+    <None Update="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <Using Include="Xunit" />
     <Using Include="Microsoft.Playwright" />
   </ItemGroup>
