@@ -1,0 +1,89 @@
+@* 时间区间筛选：预设按钮 + 起止日期，全站共用一套语义与一套选中态。
+   不用 MudGrid 的 12 栏切宽度：日期控件被压到 168px 时 "2026/9/21" 会裁成 "2026/9/2"。 *@
+<div class="dt-range">
+    <div class="dt-range-presets">
+        <MudText Typo="Typo.caption" Class="dt-muted">快捷区间</MudText>
+        <div class="dt-range-buttons">
+            @foreach (var preset in Presets)
+            {
+                var range = preset.Range();
+                var selected = IsSelected(range);
+                <MudButton Size="Size.Small"
+                           Variant="@(selected ? Variant.Filled : Variant.Outlined)"
+                           Color="@(selected ? Color.Primary : Color.Default)"
+                           aria-label="@($"时间区间 {preset.Label}")"
+                           OnClick="@(() => SelectAsync(range))">@preset.Label</MudButton>
+            }
+        </div>
+    </div>
+
+    <MudDatePicker Class="dt-range-date" Label="开始日期" Date="From" DateChanged="SetFromAsync" />
+    <MudDatePicker Class="dt-range-date" Label="结束日期" Date="To" DateChanged="SetToAsync"
+                   Error="@Invalid" ErrorText="@ReversedRangeMessage" />
+</div>
+
+@code {
+    /// <summary>含今天在内的最近 N 天；"昨天"是完整的昨天一天。</summary>
+    private static readonly (string Label, Func<(DateTime From, DateTime To)> Range)[] Presets =
+    [
+        ("今天", () => (DateTime.Today, DateTime.Today)),
+        ("昨天", () => (DateTime.Today.AddDays(-1), DateTime.Today.AddDays(-1))),
+        ("近 7 天", () => (DateTime.Today.AddDays(-6), DateTime.Today)),
+        ("近 30 天", () => (DateTime.Today.AddDays(-29), DateTime.Today)),
+        ("本月", () => (new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1), DateTime.Today)),
+    ];
+
+    [Parameter] public DateTime? From { get; set; }
+    [Parameter] public EventCallback<DateTime?> FromChanged { get; set; }
+    [Parameter] public DateTime? To { get; set; }
+    [Parameter] public EventCallback<DateTime?> ToChanged { get; set; }
+
+    /// <summary>区间一变就回调，页面在这里发起查询：改了日期忘了点按钮是最容易踩的坑。</summary>
+    [Parameter] public EventCallback OnRangeChanged { get; set; }
+
+    /// <summary>倒置区间的提示语，唯一出处。</summary>
+    public const string ReversedRangeMessage = "开始日期不能晚于结束日期";
+
+    /// <summary>
+    /// 区间是否倒置。组件把结束日期标红，页面在发起查询前也该挡同一道 ——
+    /// 这句校验曾经在三个页面各抄了一遍。
+    /// </summary>
+    public static bool IsReversed(DateTime? from, DateTime? to)
+        => from is { } f && to is { } t && f.Date > t.Date;
+
+    /// <summary>区间起点（含）。留空取 fallback，fallback 也留空则取今天。</summary>
+    public static DateTime StartOf(DateTime? value, DateTime? fallback = null)
+        => (value ?? fallback ?? DateTime.Today).Date;
+
+    /// <summary>区间终点当天的最后一刻（含）：按日期筛选却要吃掉整个自然日时才用得上。</summary>
+    public static DateTime EndOfInclusive(DateTime? value, DateTime? fallback = null)
+        => StartOf(value, fallback).AddDays(1).AddTicks(-1);
+
+    /// <summary>页头统计位上那句 "2026-09-15 ~ 2026-09-21"。</summary>
+    public static string Format(DateTime? from, DateTime? to)
+        => $"{StartOf(from):yyyy-MM-dd} ~ {StartOf(to):yyyy-MM-dd}";
+
+    private bool Invalid => IsReversed(From, To);
+
+    private bool IsSelected((DateTime From, DateTime To) range)
+        => From?.Date == range.From && To?.Date == range.To;
+
+    private async Task SelectAsync((DateTime From, DateTime To) range)
+    {
+        await FromChanged.InvokeAsync(range.From);
+        await ToChanged.InvokeAsync(range.To);
+        await OnRangeChanged.InvokeAsync();
+    }
+
+    private async Task SetFromAsync(DateTime? value)
+    {
+        await FromChanged.InvokeAsync(value);
+        await OnRangeChanged.InvokeAsync();
+    }
+
+    private async Task SetToAsync(DateTime? value)
+    {
+        await ToChanged.InvokeAsync(value);
+        await OnRangeChanged.InvokeAsync();
+    }
+}

@@ -1,0 +1,25 @@
+@page "/login"
+@layout EmptyLayout
+@attribute [AllowAnonymous]
+
+<div class="login-card">
+    <h1 class="login-title">登录 DataTrace</h1>
+    <p class="login-hint">产线数据采集与追溯。请使用工程师分配的账号登录。</p>
+    <form method="post" action="/account/login" data-enhance="false" data-enhance-nav="false">
+        <AntiforgeryToken />
+        <label class="login-label" for="dt-user">用户名</label>
+        <input class="login-input" id="dt-user" name="UserName" autocomplete="username" autofocus />
+        <label class="login-label" for="dt-pass">密码</label>
+        <input class="login-input" id="dt-pass" name="Password" type="password" autocomplete="current-password" />
+        <button type="submit" class="login-btn">登录</button>
+        @if (Error == "1")
+        {
+            <p class="login-error" role="alert">用户名或密码错误。</p>
+        }
+    </form>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "error")]
+    public string? Error { get; set; }
+}

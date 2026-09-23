@@ -1,0 +1,73 @@
+﻿@inherits LayoutComponentBase
+@using Microsoft.AspNetCore.Components.Authorization
+@inject NavigationManager Nav
+@implements IDisposable
+
+<MudThemeProvider Theme="DataTraceTheme.Current" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <MudAppBar Elevation="1" Color="Color.Dark">
+        <MudTooltip Text="展开/收起菜单">
+            <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
+                           aria-label="展开或收起菜单" OnClick="@Toggle" />
+        </MudTooltip>
+        <MudText Typo="Typo.subtitle1">DataTrace 产线采集</MudText>
+        <MudText Typo="Typo.subtitle2" Class="dt-crumb">/ @_title</MudText>
+        <MudSpacer />
+        <AuthorizeView>
+            <Authorized>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="mr-3 dt-appbar-chip">
+                    @RoleLabel(context.User)
+                </MudChip>
+                <MudIcon Icon="@Icons.Material.Filled.AccountCircle" Class="mr-1" aria-label="@context.User.Identity?.Name" />
+                <MudText Class="mr-4 d-none d-sm-flex">@context.User.Identity?.Name</MudText>
+                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="/account/logout"
+                           StartIcon="@Icons.Material.Filled.Logout">退出</MudButton>
+            </Authorized>
+        </AuthorizeView>
+    </MudAppBar>
+    <MudDrawer @bind-Open="_open" Variant="DrawerVariant.Responsive" Breakpoint="Breakpoint.Md"
+               ClipMode="DrawerClipMode.Always" Elevation="2">
+        <NavMenu />
+    </MudDrawer>
+    <MudMainContent Class="dt-main">
+        @Body
+    </MudMainContent>
+</MudLayout>
+
+@code {
+    private bool _open = true;
+    private string _title = "实时看板";
+
+    protected override void OnInitialized()
+    {
+        _title = ResolveTitle(Nav.ToBaseRelativePath(Nav.Uri));
+        Nav.LocationChanged += OnLocationChanged;
+    }
+
+    private void Toggle() => _open = !_open;
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs args)
+    {
+        _title = ResolveTitle(Nav.ToBaseRelativePath(args.Location));
+        StateHasChanged();
+    }
+
+    /// <summary>顶栏显示当前页面名，避免多标签页时分不清在哪个界面。名字表在 DisplayLabels，与"权限不足"页共用。</summary>
+    private static string ResolveTitle(string relativePath)
+        => DisplayLabels.PageTitle(relativePath) ?? "DataTrace";
+
+    private static string RoleLabel(System.Security.Claims.ClaimsPrincipal user)
+    {
+        if (user.IsInRole(AppRoles.Administrator)) return "管理员";
+        if (user.IsInRole(AppRoles.Engineer)) return "工程师";
+        if (user.IsInRole(AppRoles.Operator)) return "操作员";
+        if (user.IsInRole(AppRoles.Viewer)) return "访客";
+        return "未分配角色";
+    }
+
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+}

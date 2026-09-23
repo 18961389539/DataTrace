@@ -1,0 +1,16 @@
+﻿@page "/Error"
+@attribute [AllowAnonymous]
+
+<MudPaper Class="pa-6" Style="max-width:640px;margin:6vh auto">
+    <MudText Typo="Typo.h5" Class="mb-2">系统发生错误</MudText>
+    <MudText Typo="Typo.body2" Class="mb-3">
+        当前操作没有完成。可以先返回看板重试一次；如果反复出现，请把发生时间告诉维护工程师。
+    </MudText>
+    <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-4">
+        日志文件：程序目录下 data/logs/datatrace-yyyyMMdd.log（记录完整堆栈与时间）
+    </MudAlert>
+    <MudStack Row="true" Spacing="2">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/">回到实时看板</MudButton>
+        <MudButton Variant="Variant.Outlined" Href="/query">数据查询</MudButton>
+    </MudStack>
+</MudPaper>

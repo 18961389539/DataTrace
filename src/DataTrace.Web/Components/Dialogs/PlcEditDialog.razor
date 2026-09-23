@@ -1,0 +1,167 @@
+﻿@using DataTrace.Domain.Entities
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(IsNew ? "新增 PLC 连接" : $"编辑 PLC · {Model.Name}")</MudText>
+    </TitleContent>
+    <DialogContent>
+        @* 用真 form 包住：在输入框里按回车即可保存，与查询页一致；按钮在 form 外，不会重复提交。 *@
+        <form @onsubmit="Submit" @onsubmit:preventDefault="true">
+        <MudGrid>
+            <MudItem xs="12" md="6">
+                <MudTextField @bind-Value="_draft.Name" @bind-Value:after="Revalidate" Label="名称" Required="true" Immediate="true"
+                              Placeholder="如：一号线主 PLC"
+                              Error="@(_nameError is not null)" ErrorText="@_nameError" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudSelect T="PlcBrand" @bind-Value="_draft.Brand" Label="品牌">
+                    @foreach (var brand in Enum.GetValues<PlcBrand>())
+                    {
+                        <MudSelectItem T="PlcBrand" Value="brand">@BrandText(brand)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField @bind-Value="_draft.Host" @bind-Value:after="Revalidate" Label="IP 地址" Required="true"
+                              Immediate="true" Placeholder="192.168.1.10"
+                              Error="@(_hostError is not null)" ErrorText="@_hostError" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudNumericField @bind-Value="_draft.Port" @bind-Value:after="Revalidate" Label="端口" Min="1" Max="65535"
+                                 Error="@(_portError is not null)" ErrorText="@_portError"
+                                 HelperText="@PortHint(_draft.Brand)" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudNumericField @bind-Value="_draft.TimeoutMs" Label="超时 (ms)" Min="200" Max="30000" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudSelect T="FloatWordOrder" @bind-Value="_draft.FloatWordOrder" Label="Float 字序"
+                           HelperText="需与 PLC 侧浮点寄存器顺序一致；A 为最高字节，读到的值差几个数量级通常是这里不对">
+                    @foreach (var order in Enum.GetValues<FloatWordOrder>())
+                    {
+                        <MudSelectItem T="FloatWordOrder" Value="order">@DisplayLabels.WordOrder(order)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField @bind-Value="HeartbeatAddress" Label="心跳地址" Immediate="true"
+                              HelperText="留空表示不写心跳" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudNumericField @bind-Value="HeartbeatIntervalMs" Label="心跳周期 (ms)" Min="100" Max="60000" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudNumericField @bind-Value="_draft.MergeGapWords" Label="合并间隙字数" Min="1" Max="512"
+                                 HelperText="地址间隔小于该值时会合并成一次批量读取" />
+            </MudItem>
+            <MudItem xs="12" md="6" Class="d-flex align-center">
+                <MudSwitch @bind-Value="_draft.StringHighByteFirst" Label="字符串高字节在前" Color="Color.Primary" />
+                <MudSwitch @bind-Value="_draft.Enabled" Label="启用" Color="Color.Primary" />
+            </MudItem>
+        </MudGrid>
+        </form>
+    </DialogContent>
+    <DialogActions>
+        <MudText Typo="Typo.caption" Class="dt-muted align-self-center mr-auto">输入框内按回车即可保存</MudText>
+        <MudButton OnClick="Cancel">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save"
+                   OnClick="Submit">保存</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance? MudDialog { get; set; }
+
+    [Parameter] public PlcConnection Model { get; set; } = new();
+
+    [Parameter] public bool IsNew { get; set; }
+
+    [Parameter] public string HeartbeatAddress { get; set; } = "D0";
+
+    [Parameter] public int HeartbeatIntervalMs { get; set; } = 1000;
+
+    private string? _nameError;
+    private string? _hostError;
+    private string? _portError;
+
+    /// <summary>
+    /// 编辑副本。直接绑调用方实体的话，用户点「取消」后父页表格里仍留着改到一半的名称和 IP
+    /// （PlcConfig 取消时不重载），所以进来先克隆，只有确定才把副本交回去。
+    /// </summary>
+    private PlcConnection _draft = new();
+
+    protected override void OnInitialized() => _draft = CloneForEdit(Model);
+
+    private static PlcConnection CloneForEdit(PlcConnection source) => new()
+    {
+        Id = source.Id,
+        Name = source.Name,
+        Brand = source.Brand,
+        Host = source.Host,
+        Port = source.Port,
+        TimeoutMs = source.TimeoutMs,
+        FloatWordOrder = source.FloatWordOrder,
+        StringHighByteFirst = source.StringHighByteFirst,
+        MergeGapWords = source.MergeGapWords,
+        Enabled = source.Enabled,
+        Extra = source.Extra,
+        Stations = source.Stations,
+        Heartbeat = source.Heartbeat is null
+            ? null
+            : new HeartbeatSettings
+            {
+                Id = source.Heartbeat.Id,
+                PlcConnectionId = source.Heartbeat.PlcConnectionId,
+                Address = source.Heartbeat.Address,
+                IntervalMs = source.Heartbeat.IntervalMs,
+                Mode = source.Heartbeat.Mode,
+                Enabled = source.Heartbeat.Enabled
+            }
+    };
+
+    private static string BrandText(PlcBrand brand) => brand switch
+    {
+        PlcBrand.Simulator => "模拟器（内置）",
+        PlcBrand.MitsubishiMc3E => "三菱 MC 3E",
+        PlcBrand.SiemensS7 => "西门子 S7",
+        PlcBrand.ModbusTcp => "Modbus TCP",
+        PlcBrand.OmronFins => "欧姆龙 FINS",
+        _ => brand.ToString()
+    };
+
+    private static string PortHint(PlcBrand brand) => brand switch
+    {
+        PlcBrand.ModbusTcp => "Modbus TCP 常用 502",
+        PlcBrand.Simulator => "模拟器默认 6000",
+        _ => "三菱/西门子/欧姆龙常用 5000 段"
+    };
+
+    private void Cancel() => MudDialog?.Cancel();
+
+    private bool Validate()
+    {
+        // 错误标在各自字段下方：这份表单有十来个输入框，底部一条汇总提示很容易被看成说的不是自己刚改的那格。
+        _nameError = string.IsNullOrWhiteSpace(_draft.Name) ? "请填写连接名称" : null;
+        _hostError = string.IsNullOrWhiteSpace(_draft.Host) ? "请填写 PLC 的 IP 地址" : null;
+        _portError = _draft.Port is <= 0 or > 65535 ? "端口需在 1–65535 之间" : null;
+        return _nameError is null && _hostError is null && _portError is null;
+    }
+
+    /// <summary>给输入框的 change 回调用的无返回值版本（@bind-Value:after 不接受带值的委托）。</summary>
+    private void Revalidate() => Validate();
+
+    private void Submit()
+    {
+        if (!Validate())
+        {
+            return;
+        }
+
+        _draft.Name = _draft.Name.Trim();
+        _draft.Host = _draft.Host.Trim();
+        _draft.Heartbeat ??= new HeartbeatSettings();
+        _draft.Heartbeat.Address = (HeartbeatAddress ?? "").Trim();
+        _draft.Heartbeat.IntervalMs = HeartbeatIntervalMs;
+        _draft.Heartbeat.Enabled = !string.IsNullOrWhiteSpace(_draft.Heartbeat.Address);
+        MudDialog?.Close(DialogResult.Ok(_draft));
+    }
+}

@@ -1,0 +1,19 @@
+@page "/denied"
+@attribute [AllowAnonymous]
+
+<AuthorizeView>
+    <Authorized>
+        <DeniedPanel UserName="@context.User.Identity?.Name" RequestedPath="@Requested" />
+    </Authorized>
+    <NotAuthorized>
+        <DeniedPanel RequestedPath="@Requested" />
+    </NotAuthorized>
+</AuthorizeView>
+
+@code {
+    /// <summary>Cookie 认证按 AccessDeniedPath 跳转时会带上被拒绝的地址。</summary>
+    [SupplyParameterFromQuery(Name = "ReturnUrl")]
+    public string? ReturnUrl { get; set; }
+
+    private string? Requested => string.IsNullOrWhiteSpace(ReturnUrl) ? null : ReturnUrl.TrimStart('/');
+}

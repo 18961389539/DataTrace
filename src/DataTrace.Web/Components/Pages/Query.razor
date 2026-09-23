@@ -1,0 +1,464 @@
+@page "/query"
+@attribute [Authorize]
+@using DataTrace.Application.Configuration
+@using DataTrace.Application.Runtime
+@inject IRuntimeStore Store
+@inject IConfigRepository Config
+@inject DtToast Toast
+@inject IJSRuntime Js
+@inject NavigationManager Nav
+
+<PageHeader Title="数据查询">
+    <Actions>
+        <MudText Typo="Typo.caption" Class="dt-muted">
+            区间 @DateRangeFilter.Format(_from, _to)　共 @_total 条
+        </MudText>
+    </Actions>
+</PageHeader>
+
+<MudPaper Class="dt-filter-card mb-3">
+    <form @onsubmit="OnSubmit" @onsubmit:preventDefault="true">
+        <DateRangeFilter @bind-From="_from" @bind-To="_to" OnRangeChanged="Search" />
+
+        <MudGrid Class="dt-filters">
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                <MudTextField @bind-Value="_pallet" Label="托盘码" Placeholder="支持模糊匹配"
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.QrCode" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                <MudTextField @bind-Value="_serialNo" Label="流水号"
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Tag" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                <MudSelect T="int?" @bind-Value="_stationId" Label="工站" Clearable="true">
+                    @foreach (var s in _stations)
+                    {
+                        <MudSelectItem T="int?" Value="@s.Id">@s.Code @s.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                <MudSelect T="Judgement?" @bind-Value="_judgement" Label="判定" Clearable="true">
+                    <MudSelectItem T="Judgement?" Value="Judgement.Ok">OK（合格）</MudSelectItem>
+                    <MudSelectItem T="Judgement?" Value="Judgement.Ng">NG（不合格）</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+        </MudGrid>
+
+        <MudStack Row="true" Spacing="2" Class="mt-1 mb-2 flex-wrap">
+            <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Search" Disabled="_loading">
+                @(_loading ? "查询中…" : "查询")
+            </MudButton>
+            <MudButton Variant="Variant.Outlined" OnClick="Reset" StartIcon="@Icons.Material.Filled.RestartAlt">
+                重置
+            </MudButton>
+            <MudButton Variant="Variant.Outlined" OnClick="ExportCsv" Disabled="_exporting || _total == 0"
+                       StartIcon="@Icons.Material.Filled.FileDownload">
+                @(_exporting ? "导出中…" : $"导出 CSV（最多 {ExportLimit:N0} 条）")
+            </MudButton>
+            <MudText Typo="Typo.caption" Class="dt-muted align-self-center">在输入框内按回车即查询</MudText>
+        </MudStack>
+    </form>
+</MudPaper>
+
+@* 表头吸附：一页最多 100 行，滚下去就没有列名可对。高度用 --dt-grid-height 统一约定，
+   不写在这里是因为它和页头/筛选卡/分页条的实际高度有关，只该有一处真相。 *@
+<MudTable Items="_items" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm"
+          Loading="_loading" LoadingProgressColor="Color.Info"
+          FixedHeader="true" Height="var(--dt-grid-height)"
+          Class="dt-clickable" OnRowClick="@((TableRowClickEventArgs<CollectRecordListItem> args) => OnRowClicked(args))">
+    <HeaderContent>
+        <MudTh Class="dt-nowrap">时间</MudTh>
+        <MudTh>流水号</MudTh>
+        <MudTh>托盘码</MudTh>
+        <MudTh>工站</MudTh>
+        <MudTh>判定</MudTh>
+        <MudTh Class="dt-nowrap">结果码</MudTh>
+        <MudTh Class="dt-right">操作</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="时间" Class="dt-nowrap">@context.Record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+        <MudTd DataLabel="流水号" Class="dt-nowrap">@context.Record.SerialNo</MudTd>
+        <MudTd DataLabel="托盘码" Class="dt-nowrap">@context.Record.PalletCode</MudTd>
+        <MudTd DataLabel="工站">@context.Record.StationCode</MudTd>
+        <MudTd DataLabel="判定">
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                     Color="@(context.Record.Judgement == Judgement.Ng ? Color.Error : Color.Success)">
+                @(context.Record.Judgement == Judgement.Ng ? "NG" : "OK")
+            </MudChip>
+        </MudTd>
+        <MudTd DataLabel="结果码">
+            <MudTooltip Text="@($"结果码 {context.Record.ResultCode}")">
+                <span>@ResultCodes.Describe(context.Record.ResultCode)</span>
+            </MudTooltip>
+        </MudTd>
+        <MudTd Class="dt-right">
+            @* 复制放在操作列而不是托盘码单元格里：整行可点进明细时，
+               行中间的任何小控件都会抢走"点行"这一下，尤其在小屏上。 *@
+            <MudTooltip Text="复制托盘码">
+                <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small"
+                               aria-label="复制托盘码"
+                               OnClick="@(() => CopyPallet(context.Record.PalletCode))" />
+            </MudTooltip>
+            <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
+                       Href="@DetailUrl(context)">明细</MudButton>
+        </MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText Typo="Typo.body2" Class="dt-muted py-3">
+            @(_loading ? "正在查询…" : "没有符合条件的记录。可放宽时间范围、清空托盘码/流水号后重试。")
+        </MudText>
+    </NoRecordsContent>
+</MudTable>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mt-3 flex-wrap" Spacing="3">
+    @* 加载期间禁用：光有 Load 的守卫会让用户点了没反应，禁掉才是说得通的反馈。 *@
+    <MudPagination Count="_pages" Selected="_page" SelectedChanged="OnPage" BoundaryCount="1" MiddleCount="3"
+                   Disabled="_loading" />
+    <MudSelect T="int" Value="_pageSize" ValueChanged="OnPageSizeChanged" Dense="true"
+               Disabled="_loading" Class="dt-pagesize" Label="每页条数">
+        @foreach (var size in PageSizes)
+        {
+            <MudSelectItem T="int" Value="size">@size 条/页</MudSelectItem>
+        }
+    </MudSelect>
+    <MudText Typo="Typo.caption" Class="dt-muted">
+        第 @_page / @_pages 页，共 @_total 条
+    </MudText>
+</MudStack>
+
+@code {
+    private static readonly int[] PageSizes = [20, 50, 100];
+    private const int ExportLimit = 10000;
+
+    private DateTime? _from = DateTime.Today;
+    private DateTime? _to = DateTime.Today;
+    private string? _pallet;
+    private string? _serialNo;
+    private int? _stationId;
+    private Judgement? _judgement;
+    private IReadOnlyList<Station> _stations = [];
+    private IReadOnlyList<CollectRecordListItem> _items = [];
+    private int _total;
+    private int _page = 1;
+    private int _pages = 1;
+    private int _pageSize = 20;
+    private bool _loading;
+    private bool _exporting;
+
+    /// <summary>支持 /query?pallet=XXX&days=30 直达，便于从明细页或工单跳转。</summary>
+    [SupplyParameterFromQuery(Name = "pallet")]
+    public string? PalletQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "serial")]
+    public string? SerialQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "days")]
+    public int? DaysQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "from")]
+    public string? FromQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "to")]
+    public string? ToQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "station")]
+    public int? StationQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "judge")]
+    public string? JudgeQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "page")]
+    public int? PageQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "size")]
+    public int? SizeQuery { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(PalletQuery))
+        {
+            _pallet = PalletQuery.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(SerialQuery))
+        {
+            _serialNo = SerialQuery.Trim();
+        }
+
+        if (DaysQuery is { } days && days > 0)
+        {
+            _from = DateTime.Today.AddDays(-(days - 1));
+            _to = DateTime.Today;
+        }
+
+        // 显式起止日期覆盖 days，深链接里两者都给时以日期为准。
+        if (DateTime.TryParse(FromQuery, out var from))
+        {
+            _from = from.Date;
+        }
+
+        if (DateTime.TryParse(ToQuery, out var to))
+        {
+            _to = to.Date;
+        }
+
+        if (StationQuery is { } station && station > 0)
+        {
+            _stationId = station;
+        }
+
+        if (Enum.TryParse<Judgement>(JudgeQuery, ignoreCase: true, out var judgement))
+        {
+            _judgement = judgement;
+        }
+
+        if (SizeQuery is { } size && PageSizes.Contains(size))
+        {
+            _pageSize = size;
+        }
+
+        if (PageQuery is { } page && page > 0)
+        {
+            _page = page;
+        }
+
+        _stations = await Config.GetStationsAsync();
+        await Load();
+    }
+
+    private CollectQueryRequest BuildRequest(int skip, int take) => new()
+    {
+        From = DateRangeFilter.StartOf(_from),
+        To = DateRangeFilter.EndOfInclusive(_to),
+        PalletCode = string.IsNullOrWhiteSpace(_pallet) ? null : _pallet.Trim(),
+        SerialNo = string.IsNullOrWhiteSpace(_serialNo) ? null : _serialNo.Trim(),
+        StationId = _stationId,
+        Judgement = _judgement,
+        Skip = skip,
+        Take = take
+    };
+
+    private async Task OnSubmit() => await Search();
+
+    private async Task Search()
+    {
+        if (DateRangeFilter.IsReversed(_from, _to))
+        {
+            Toast.Add(DateRangeFilter.ReversedRangeMessage, Severity.Warning);
+            return;
+        }
+
+        _page = 1;
+        await Load();
+    }
+
+    private async Task OnPage(int page)
+    {
+        _page = page;
+        await Load();
+    }
+
+    private async Task OnPageSizeChanged(int size)
+    {
+        _pageSize = size;
+        _page = 1;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        // 改日期即查询之后，并发窗口是这里开的：不加守卫时两个 Load 谁后完成谁覆盖，
+        // 而先完成的那个已经把 _loading 关了，界面看着"好了"其实是被推翻的旧结果。
+        if (_loading)
+        {
+            return;
+        }
+
+        _loading = true;
+        try
+        {
+            var result = await Store.QueryAsync(BuildRequest((_page - 1) * _pageSize, _pageSize));
+            _items = result.Items;
+            _total = result.Total;
+            _pages = Math.Max(1, (int)Math.Ceiling(_total / (double)_pageSize));
+            if (_page > _pages)
+            {
+                _page = _pages;
+                result = await Store.QueryAsync(BuildRequest((_page - 1) * _pageSize, _pageSize));
+                _items = result.Items;
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"查询失败：{ex.Message}", Severity.Error);
+            _items = [];
+            _total = 0;
+        }
+        finally
+        {
+            _loading = false;
+            SyncUrl();
+        }
+    }
+
+    /// <summary>
+    /// 把当前条件写回地址栏（默认值不写，保持 /query 干净）。
+    /// 这样刷新和转发链接都还在同一批结果上，「重置」也不会留下 ?pallet=X 让条件幽灵回填。
+    /// </summary>
+    private void SyncUrl()
+    {
+        var target = CurrentListUrl();
+        if (Nav.ToBaseRelativePath(Nav.Uri) == target)
+        {
+            return;
+        }
+
+        Nav.NavigateTo(target, replace: true);
+    }
+
+    /// <summary>当前列表页的相对地址，明细页的「返回查询」也用它，避免回去后条件全丢。</summary>
+    private string CurrentListUrl()
+    {
+        var parts = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(_pallet))
+        {
+            parts.Add($"pallet={Uri.EscapeDataString(_pallet.Trim())}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(_serialNo))
+        {
+            parts.Add($"serial={Uri.EscapeDataString(_serialNo.Trim())}");
+        }
+
+        if (_from is { } from && from.Date != DateTime.Today)
+        {
+            parts.Add($"from={from:yyyy-MM-dd}");
+        }
+
+        if (_to is { } to && to.Date != DateTime.Today)
+        {
+            parts.Add($"to={to:yyyy-MM-dd}");
+        }
+
+        if (_stationId is { } station)
+        {
+            parts.Add($"station={station}");
+        }
+
+        if (_judgement is { } judgement)
+        {
+            parts.Add($"judge={judgement}");
+        }
+
+        if (_pageSize != 20)
+        {
+            parts.Add($"size={_pageSize}");
+        }
+
+        if (_page > 1)
+        {
+            parts.Add($"page={_page}");
+        }
+
+        return parts.Count == 0 ? "query" : $"query?{string.Join("&", parts)}";
+    }
+
+    private async Task Reset()
+    {
+        _pallet = null;
+        _serialNo = null;
+        _stationId = null;
+        _judgement = null;
+        _from = DateTime.Today;
+        _to = DateTime.Today;
+        _pageSize = 20;
+        Toast.Add("筛选条件已重置", Severity.Info);
+        await Search();
+    }
+
+    private string DetailUrl(CollectRecordListItem item)
+        => $"/query/{item.MonthKey}/{item.Record.Id}?back={Uri.EscapeDataString(CurrentListUrl())}";
+
+    private void OnRowClicked(TableRowClickEventArgs<CollectRecordListItem> args)
+    {
+        if (args.Item is null)
+        {
+            return;
+        }
+
+        Nav.NavigateTo(DetailUrl(args.Item));
+    }
+
+    private async Task CopyPallet(string palletCode)
+    {
+        if (string.IsNullOrWhiteSpace(palletCode))
+        {
+            return;
+        }
+
+        try
+        {
+            var copied = await Js.InvokeAsync<bool>("dtCopy", palletCode);
+            // 浏览器拒绝剪贴板时不能照样报"已复制"：操作工拿着这条提示去贴单，结果是空码上机。
+            Toast.Add(copied ? $"已复制 {palletCode}" : "复制失败：浏览器不允许写入剪贴板，请手动选中复制",
+                copied ? Severity.Success : Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"复制失败：{ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task ExportCsv()
+    {
+        if (_exporting)
+        {
+            return;
+        }
+
+        _exporting = true;
+        try
+        {
+            var result = await Store.QueryAsync(BuildRequest(0, ExportLimit));
+            if (result.Items.Count == 0)
+            {
+                Toast.Add("没有可导出的记录", Severity.Warning);
+                return;
+            }
+
+            var csv = CsvExporter.Build(
+                ["触发时间", "流水号", "托盘码", "工站", "判定", "结果码", "结果说明"],
+                result.Items.Select(item => new[]
+                {
+                    item.Record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                    item.Record.SerialNo ?? "",
+                    item.Record.PalletCode ?? "",
+                    item.Record.StationCode ?? "",
+                    item.Record.Judgement.ToString(),
+                    item.Record.ResultCode.ToString(),
+                    ResultCodes.Describe(item.Record.ResultCode)
+                }));
+
+            await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName("datatrace_query"), CsvExporter.ToBase64(csv));
+            if (result.Total > result.Items.Count)
+            {
+                Toast.Add($"共命中 {result.Total} 条，已导出前 {result.Items.Count} 条", Severity.Warning);
+            }
+            else
+            {
+                Toast.Add($"已导出 {result.Items.Count} 条", Severity.Success);
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"导出失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _exporting = false;
+        }
+    }
+}

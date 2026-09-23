@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="8.0.1" />
+    <PackageReference Include="xunit" Version="2.5.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DataTrace.Domain\DataTrace.Domain.csproj" />
+    <ProjectReference Include="..\..\src\DataTrace.Plc\DataTrace.Plc.csproj" />
+    <ProjectReference Include="..\..\src\DataTrace.Collector\DataTrace.Collector.csproj" />
+    <ProjectReference Include="..\..\src\DataTrace.Infrastructure\DataTrace.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\DataTrace.Plc.Drivers.IoTClient\DataTrace.Plc.Drivers.IoTClient.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Web 层纯函数（CSV 导出、SVG 图表计算）直接以源码链接进测试，避免为单测引用整个 Blazor 应用及其 UI 依赖 -->
+    <Compile Include="..\..\src\DataTrace.Web\Services\CsvExporter.cs" Link="Linked\CsvExporter.cs" />
+    <Compile Include="..\..\src\DataTrace.Web\Services\DisplayLabels.cs" Link="Linked\DisplayLabels.cs" />
+    <Compile Include="..\..\src\DataTrace.Web\Components\Shared\DtColors.cs" Link="Linked\DtColors.cs" />
+    <Compile Include="..\..\src\DataTrace.Web\Components\Shared\ChartUtil.cs" Link="Linked\ChartUtil.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>

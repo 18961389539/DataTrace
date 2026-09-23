@@ -1,0 +1,270 @@
+@page "/config/recipes"
+@attribute [Authorize(Roles = "Administrator,Engineer")]
+@using DataTrace.Application.Configuration
+@using DataTrace.Domain.Evaluation
+@inject IConfigRepository Config
+@inject DtToast Toast
+@inject IDialogService DialogService
+
+<PageHeader Title="产品型号"
+            Description="同一批生产数据，换型号就换一套限值 —— 不再需要为了换型去改动点位定义。切换在界面上手工完成，保存后立即下发给采集器。">
+    <ChildContent>
+        @if (_active is null)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">未选择型号</MudChip>
+        }
+        else
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled">
+                当前：@_active.Code @_active.Name
+            </MudChip>
+        }
+    </ChildContent>
+</PageHeader>
+
+<MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+    型号里的限值是<b>覆盖值</b>：留空的字段沿用点位默认限值（不是「不判」）。
+    当前没有选择型号时，全部点位按自身默认限值判定。
+    <b>曲线判据暂不随型号切换</b>，仍按曲线定义全型号共用。
+</MudAlert>
+
+<MudPaper Class="pa-4">
+    <MudTable Items="_recipes" Dense="true" Hover="true" Loading="_loading" Breakpoint="Breakpoint.Sm">
+        <HeaderContent>
+            <MudTh>编码</MudTh>
+            <MudTh>名称</MudTh>
+            <MudTh>覆盖点位</MudTh>
+            <MudTh>启用</MudTh>
+            <MudTh>当前</MudTh>
+            <MudTh>备注</MudTh>
+            <MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="编码">@context.Code</MudTd>
+            <MudTd DataLabel="名称">@context.Name</MudTd>
+            <MudTd DataLabel="覆盖点位">
+                @if (Overrides(context) == 0)
+                {
+                    <MudText Typo="Typo.caption" Class="dt-muted">未覆盖</MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.caption">@Overrides(context) 个点位</MudText>
+                }
+            </MudTd>
+            <MudTd DataLabel="启用">
+                <MudSwitch T="bool" Value="context.Enabled" ValueChanged="v => ToggleEnabled(context, v)"
+                           Color="Color.Primary" Size="Size.Small" Disabled="_saving" />
+            </MudTd>
+            <MudTd DataLabel="当前">
+                @if (context.Id == _active?.Id)
+                {
+                    <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small"
+                             Color="Color.Success" aria-label="当前型号" />
+                }
+            </MudTd>
+            <MudTd DataLabel="备注">@context.Remark</MudTd>
+            <MudTd Class="dt-nowrap">
+                @if (context.Id == _active?.Id)
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_saving" OnClick="ClearActive">取消选择</MudButton>
+                }
+                else
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary"
+                               Disabled="_saving || !context.Enabled" OnClick="@(() => SetActive(context))">设为当前</MudButton>
+                }
+                <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_saving"
+                           OnClick="@(() => EditLimits(context))">限值</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error" Disabled="_saving"
+                           OnClick="@(() => DeleteRecipe(context))">删除</MudButton>
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText Typo="Typo.body2" Class="dt-muted py-3">还没有型号。用下方表单添加第一个型号，再点「限值」设定它的覆盖值。</MudText>
+        </NoRecordsContent>
+    </MudTable>
+
+    <MudGrid Class="mt-3">
+        <MudItem xs="12" md="2">
+            <MudTextField @bind-Value="_newCode" @bind-Value:after="ValidateCode" Label="型号编码" Immediate="true"
+                          Error="@(_codeError is not null)" ErrorText="@_codeError" />
+        </MudItem>
+        <MudItem xs="12" md="3"><MudTextField @bind-Value="_newName" Label="型号名称" /></MudItem>
+        <MudItem xs="12" md="4"><MudTextField @bind-Value="_newRemark" Label="备注" /></MudItem>
+        <MudItem xs="12" md="3">
+            <MudButton Class="mt-1" Variant="Variant.Outlined" OnClick="AddRecipe" Disabled="_saving"
+                       StartIcon="@(_saving ? Icons.Material.Filled.Sync : Icons.Material.Filled.Add)">
+                @(_saving ? "新增中…" : "新增型号")
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+@code {
+    private IReadOnlyList<Recipe> _recipes = [];
+    private IReadOnlyList<Station> _stations = [];
+    private Recipe? _active;
+    private string _newCode = "";
+    private string _newName = "";
+    private string _newRemark = "";
+    private string? _codeError;
+    private bool _loading;
+    private bool _saving;
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        _loading = true;
+        try
+        {
+            var snapshot = await Config.GetSnapshotAsync();
+            _recipes = snapshot.Recipes;
+            _stations = snapshot.Stations;
+            // 停用的型号不会被解析成生效型号，这里以快照口径为准。
+            _active = snapshot.ActiveRecipe;
+        }
+        catch (Exception ex)
+        {
+            // 读配置失败也要说清楚，否则表格直接空掉，看起来像"没人配过型号"。
+            Toast.Add($"加载型号失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static int Overrides(Recipe recipe) => RecipeLimitResolver.CountOverrides(recipe);
+
+    /// <summary>
+    /// 改型号配置的出口：写库期间锁住本页动作，并把异常转成提示条。
+    /// 配置库写失败直接抛给 Blazor 会断掉 circuit，现场只会看到页面卡死。
+    /// </summary>
+    private async Task Write(string what, Func<Task> action)
+    {
+        if (_saving)
+        {
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            await action();
+        }
+        catch (InvalidOperationException ex)
+        {
+            // 业务规则拒绝（比如把停用的型号设为当前）是提示，不是故障。
+            Toast.Add(ex.Message, Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"{what}失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private void ValidateCode()
+        => _codeError = string.IsNullOrWhiteSpace(_newCode) ? "型号编码不能为空"
+            : CodeTaken(_newCode) ? $"型号编码 {_newCode.Trim()} 已存在"
+            : null;
+
+    private bool CodeTaken(string code) => _recipes.Any(r => string.Equals(r.Code, code.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private Task AddRecipe() => Write("新增型号", async () =>
+    {
+        ValidateCode();
+        if (_codeError is not null)
+        {
+            return;
+        }
+
+        var code = _newCode.Trim();
+        await Config.SaveRecipeAsync(new Recipe
+        {
+            Code = code,
+            Name = string.IsNullOrWhiteSpace(_newName) ? code : _newName.Trim(),
+            Remark = string.IsNullOrWhiteSpace(_newRemark) ? null : _newRemark.Trim()
+        });
+
+        _newCode = _newName = _newRemark = "";
+        _codeError = null;
+        await Reload();
+        Toast.Add($"型号 {code} 已新增（尚未激活，先用「限值」设定覆盖值）", Severity.Success);
+    });
+
+    private async Task EditLimits(Recipe recipe)
+    {
+        var parameters = new DialogParameters
+        {
+            ["Recipe"] = recipe,
+            ["Stations"] = _stations
+        };
+        var dialog = await DialogService.ShowAsync<RecipeLimitDialog>($"型号限值 · {recipe.Code}", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseOnEscapeKey = true });
+        var result = await dialog.Result;
+        if (result is null || result.Canceled || result.Data is not IReadOnlyList<RecipeLimit> limits)
+        {
+            return;
+        }
+
+        await Write("保存型号限值", async () =>
+        {
+            // 覆盖行整体交给仓储做按主键增量同步。
+            // 这里的 recipe 来自 AsNoTracking 的快照，是游离实体，替换它的集合不会触发 EF 导航修正。
+            recipe.Limits = limits.ToList();
+            await Config.SaveRecipeAsync(recipe);
+            await Reload();
+            Toast.Add(
+                limits.Count == 0
+                    ? $"型号 {recipe.Code} 已清空全部覆盖，全部按点位默认限值判定"
+                    : $"型号 {recipe.Code} 已保存 {limits.Count} 个点位的覆盖值",
+                Severity.Success);
+        });
+    }
+
+    private Task ToggleEnabled(Recipe recipe, bool enabled) => Write("切换型号启用状态", async () =>
+    {
+        recipe.Enabled = enabled;
+        await Config.SaveRecipeAsync(recipe);
+        await Reload();
+        Toast.Add(
+            enabled ? $"型号 {recipe.Code} 已启用" : $"型号 {recipe.Code} 已停用（若为当前型号会自动取消选择）",
+            Severity.Success);
+    });
+
+    private Task SetActive(Recipe recipe) => Write("切换当前型号", async () =>
+    {
+        await Config.SetActiveRecipeAsync(recipe.Id);
+        await Reload();
+        Toast.Add($"当前型号已切换为 {recipe.Code}，采集器下一轮即按新限值判定", Severity.Success);
+    });
+
+    private Task ClearActive() => Write("取消型号选择", async () =>
+    {
+        await Config.SetActiveRecipeAsync(null);
+        await Reload();
+        Toast.Add("已取消型号选择，全部点位按默认限值判定", Severity.Success);
+    });
+
+    private Task DeleteRecipe(Recipe recipe) => Write("删除型号", async () =>
+    {
+        var confirmed = await DialogService.ShowMessageBox(
+            "删除型号",
+            $"确定删除「{recipe.Code} {recipe.Name}」？它的 {Overrides(recipe)} 条限值覆盖会一并删除，历史记录不受影响。",
+            yesText: "删除", cancelText: "取消");
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        await Config.DeleteRecipeAsync(recipe.Id);
+        await Reload();
+        Toast.Add($"型号 {recipe.Code} 已删除", Severity.Success);
+    });
+}

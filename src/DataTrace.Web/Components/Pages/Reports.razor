@@ -1,0 +1,580 @@
+@page "/reports"
+@attribute [Authorize]
+@using System.Globalization
+@using DataTrace.Application.Configuration
+@using DataTrace.Application.Reporting
+@using DataTrace.Domain.Evaluation
+@inject IReportService ReportService
+@inject ISpcService SpcService
+@inject IConfigRepository Config
+@inject DtToast Toast
+@inject IJSRuntime Js
+
+<PageHeader Title="报表">
+    <Actions>
+        <MudText Typo="Typo.caption" Class="dt-muted">@DateRangeFilter.Format(_from, _to) 　共 @_fpy.Sum(x => x.Total) 条记录</MudText>
+    </Actions>
+</PageHeader>
+
+<MudPaper Class="dt-filter-card mb-3">
+    @* 统计要串行动四段查询，期间下面的图表还是上一轮的值；没有这根进度条就是"看着有数、其实是旧的"。 *@
+    @if (_loading)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-2" />
+    }
+    <form @onsubmit="OnSubmit" @onsubmit:preventDefault="true">
+        <DateRangeFilter @bind-From="_from" @bind-To="_to" OnRangeChanged="Load" />
+
+        <MudGrid Class="dt-filters">
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                <MudSelect T="int?" Value="_stationId" ValueChanged="OnStationChanged" Label="工站" Clearable="true"
+                           Disabled="_loading" HelperText="不选表示全部工站">
+                    @foreach (var s in _stations)
+                    {
+                        <MudSelectItem T="int?" Value="@s.Id">@s.Code @s.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+        </MudGrid>
+        <MudStack Row="true" Spacing="2" Class="mt-1 mb-2 flex-wrap">
+            <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Refresh" Disabled="_loading">
+                @(_loading ? "统计中…" : "刷新报表")
+            </MudButton>
+            <MudButton Variant="Variant.Outlined" OnClick="ExportTrend" Disabled="_exporting || _trend.Count == 0"
+                       StartIcon="@(_exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)">
+                @(_exporting ? "导出中…" : "导出趋势")
+            </MudButton>
+        </MudStack>
+    </form>
+</MudPaper>
+
+<MudGrid>
+    <MudItem xs="12" md="6">
+        <MudPaper Class="pa-4 dt-fill">
+            <MudText Typo="Typo.h6" Class="mb-2">直通率</MudText>
+            <MudTable Items="_fpy" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading">
+                <HeaderContent>
+                    <MudTh>日期</MudTh>
+                    <MudTh Class="dt-num">总数</MudTh>
+                    <MudTh Class="dt-num">OK</MudTh>
+                    <MudTh Class="dt-num">NG</MudTh>
+                    <MudTh Class="dt-num">直通率</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="日期">@context.Day.ToString("yyyy-MM-dd")</MudTd>
+                    <MudTd DataLabel="总数" Class="dt-num">@context.Total</MudTd>
+                    <MudTd DataLabel="OK" Class="dt-num">@context.Ok</MudTd>
+                    <MudTd DataLabel="NG" Class="dt-num">
+                        @if (context.Ng > 0)
+                        {
+                            <strong class="dt-text-error">@context.Ng</strong>
+                        }
+                        else
+                        {
+                            @context.Ng
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="直通率" Class="dt-num">
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@YieldColor(context.FirstPassYield)">
+                            @context.FirstPassYield.ToString("P1")
+                        </MudChip>
+                    </MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body2" Class="dt-muted py-3">所选区间没有生产记录。</MudText>
+                </NoRecordsContent>
+            </MudTable>
+            @if (_fpy.Count > 0)
+            {
+                <MudText Typo="Typo.caption" Class="dt-muted mt-2">
+                    区间合计：@_fpy.Sum(x => x.Total) 条，OK @_fpy.Sum(x => x.Ok) 条，
+                    平均直通率 @AverageYield().ToString("P1")
+                </MudText>
+            }
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" md="6">
+        <MudPaper Class="pa-4 dt-fill">
+            <MudText Typo="Typo.h6" Class="mb-2">不良 Top N</MudText>
+            <IssueTopTable Items="_defects" Loading="_loading" Share="DefectShare"
+                           EmptyText="区间内没有不良记录，设备状态良好。" />
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12">
+        <MudPaper Class="pa-4">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                <MudText Typo="Typo.h6">预警 Top N</MudText>
+                <MudSpacer />
+                <MudText Typo="Typo.caption" Class="dt-muted">
+                    落在黄区、尚未判废。这里先热起来，说明趋势正在往限值漂。
+                </MudText>
+            </MudStack>
+            <IssueTopTable Items="_warnings" Loading="_loading" Share="WarningShare"
+                           EmptyText="区间内没有任何点位进入预警带。若这里长期为空，也可能说明预警限还没配。" />
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12">
+        <MudPaper Class="pa-4">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Class="flex-wrap mb-2">
+                <MudText Typo="Typo.h6">参数趋势</MudText>
+                <MudSpacer />
+                <MudSelect T="int" Value="_tagId" ValueChanged="OnTagChanged" Dense="true" Label="点位"
+                           Disabled="_loading" Style="min-width:240px">
+                    @foreach (var tag in _tags)
+                    {
+                        <MudSelectItem T="int" Value="@tag.Id">@tag.Code @tag.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudStack>
+
+            @if (_tags.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="dt-muted py-3">当前工站没有可画趋势的数值点位。</MudText>
+            }
+            else if (_trend.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="dt-muted py-3">所选区间内该点位没有采集数据。</MudText>
+            }
+            else
+            {
+                <MudStack Row="true" Spacing="3" Class="mb-2 flex-wrap">
+                    <MudText Typo="Typo.caption" Class="dt-muted dt-kpi">采样点 @_trend.Count</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted dt-kpi">均值 @_trendAverage</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted dt-kpi">最小 @_trendMin</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted dt-kpi">最大 @_trendMax</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted">@_trendRangeText</MudText>
+                </MudStack>
+                <LineChart Series="_trendSeries" Height="280" SeriesAxisName="时间"
+                           XStartText="@_trendFromText" XEndText="@_trendToText"
+                           ShowPoints="_trend.Count <= 120" />
+            }
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12">
+        <MudPaper Class="pa-4">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Class="flex-wrap mb-2">
+                <MudText Typo="Typo.h6">过程能力</MudText>
+                @if (_spc is not null)
+                {
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@VerdictColor(_spc.Summary.Verdict)">
+                        @VerdictLabel(_spc.Summary.Verdict)
+                    </MudChip>
+                    <MudText Typo="Typo.caption" Class="dt-muted">
+                        @_spc.TagCode @_spc.TagName · 与上方「参数趋势」同一点位
+                    </MudText>
+                }
+                <MudSpacer />
+                <MudText Typo="Typo.caption" Class="dt-muted">I-MR 单值移动极差控制图</MudText>
+            </MudStack>
+
+            @if (_spc is null)
+            {
+                <MudText Typo="Typo.body2" Class="dt-muted py-3">请先在上方「参数趋势」里选择一个数值点位。</MudText>
+            }
+            else
+            {
+                @if (!string.IsNullOrEmpty(_spc.Summary.Note))
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+                        @_spc.Summary.Note
+                    </MudAlert>
+                }
+
+                <MudGrid Class="mb-2">
+                    <MudItem xs="6" sm="4" md="3" lg="2">
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">样本数</div>
+                            <div class="dt-metric-value">@_spc.Summary.Count</div>
+                        </div>
+                    </MudItem>
+                    <MudItem xs="6" sm="4" md="3" lg="2">
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">均值</div>
+                            <div class="dt-metric-value">@SpcCalculator.Format(_spc.Summary.Mean, "0.###")</div>
+                        </div>
+                    </MudItem>
+                    <MudItem xs="6" sm="4" md="3" lg="2">
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">Cp</div>
+                            <div class="dt-metric-value">@SpcCalculator.Format(_spc.Summary.Cp)</div>
+                        </div>
+                    </MudItem>
+                    <MudItem xs="6" sm="4" md="3" lg="2">
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">Cpk（组内）</div>
+                            <div class="dt-metric-value">@SpcCalculator.Format(_spc.Summary.Cpk)</div>
+                        </div>
+                    </MudItem>
+                    <MudItem xs="6" sm="4" md="3" lg="2">
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">Ppk（总体）</div>
+                            <div class="dt-metric-value">@SpcCalculator.Format(_spc.Summary.Ppk)</div>
+                        </div>
+                    </MudItem>
+                    <MudItem xs="6" sm="4" md="3" lg="2">
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">σ 组内</div>
+                            <div class="dt-metric-value">@SpcCalculator.Format(_spc.Summary.WithinStdDev, "0.####")</div>
+                        </div>
+                    </MudItem>
+                </MudGrid>
+
+                <MudText Typo="Typo.caption" Class="dt-muted dt-kpi mb-3">
+                    规格限 @LimitPair(_spc.LowerLimit, _spc.UpperLimit) @_spc.Unit
+                    · 目标值 @(_spc.TargetValue?.ToString("0.###") ?? "未配置")
+                    · 实测范围 @SpcCalculator.Format(_spc.Summary.Min, "0.###") ~ @SpcCalculator.Format(_spc.Summary.Max, "0.###")
+                    · σ 总体 @SpcCalculator.Format(_spc.Summary.OverallStdDev, "0.####")
+                    · 控制限 @SpcCalculator.Format(_spc.Summary.LowerControlLimit, "0.###") ~ @SpcCalculator.Format(_spc.Summary.UpperControlLimit, "0.###")
+                    @if (_spc.Summary.MeanOffsetInSigma is { } offset)
+                    {
+                        <text>· 均值偏离基准 @SpcCalculator.Format(offset, "+0.00;-0.00;0.00") σ</text>
+                    }
+                </MudText>
+
+                @if (_spc.Samples.Count > 0)
+                {
+                    <LineChart Series="_spcSeries" Height="260" SeriesAxisName="采样点"
+                               XStartText="@_trendFromText" XEndText="@_trendToText"
+                               ShowPoints="_spc.Samples.Count <= 120" />
+                }
+
+                @if (_spc.Violations.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="dt-muted mt-3">当前区间内没有触发任何判异准则。</MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.subtitle2" Class="mt-4 mb-2">判异 @_spc.Violations.Count 条</MudText>
+                    <MudTable Items="_spc.Violations" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+                        <HeaderContent>
+                            <MudTh>规则</MudTh>
+                            <MudTh>说明</MudTh>
+                            <MudTh>采样点</MudTh>
+                            <MudTh>时间</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="规则">@RuleLabel(context.Rule)</MudTd>
+                            <MudTd DataLabel="说明">@context.Description</MudTd>
+                            <MudTd DataLabel="采样点">@(context.StartIndex + 1) ~ @(context.EndIndex + 1)</MudTd>
+                            <MudTd DataLabel="时间">@TimeText(context.StartIndex) ~ @TimeText(context.EndIndex)</MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                    <MudText Typo="Typo.caption" Class="dt-muted mt-2">
+                        已实现 Nelson 规则 1–5：超 3σ、同侧连续 9 点、连续 6 点趋势、连续 14 点振荡、连续 3 点中 2 点超 2σ。
+                        其余三条（4/5 点超 1σ、15 点在 1σ 内、8 点在 1σ 外）误报偏多，暂未启用。
+                    </MudText>
+                }
+            }
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    // 默认区间与「近 7 天」预设取齐（含今天共 7 天），否则进页面时没有一个预设是选中态。
+    private DateTime? _from = DateTime.Today.AddDays(-6);
+    private DateTime? _to = DateTime.Today;
+    private int? _stationId;
+    private int _tagId;
+    private IReadOnlyList<Station> _stations = [];
+    private List<TagDefinition> _tags = [];
+    private IReadOnlyList<DailyThroughput> _fpy = [];
+    private IReadOnlyList<IssueTopItem> _defects = [];
+    private IReadOnlyList<IssueTopItem> _warnings = [];
+    private ProcessCapabilityReport? _spc;
+    private IReadOnlyList<LineSeries> _spcSeries = [];
+    private IReadOnlyList<TrendPoint> _trend = [];
+    private IReadOnlyList<LineSeries> _trendSeries = [];
+    private string _trendAverage = "-";
+    private string _trendMin = "-";
+    private string _trendMax = "-";
+    private string _trendRangeText = "";
+    private string _trendFromText = "";
+    private string _trendToText = "";
+    private bool _loading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _stations = await Config.GetStationsAsync();
+        RefreshTags();
+        await Load();
+    }
+
+    private async Task OnSubmit() => await Load();
+
+    private void RefreshTags()
+    {
+        _tags = _stations
+            .Where(s => _stationId is null || s.Id == _stationId)
+            .SelectMany(s => s.Tags)
+            .Where(t => t.DataType != PlcDataType.String)
+            .OrderBy(t => t.Code)
+            .ToList();
+        if (_tags.All(t => t.Id != _tagId))
+        {
+            _tagId = _tags.Count > 0 ? _tags[0].Id : 0;
+        }
+    }
+
+    private async Task OnStationChanged(int? stationId)
+    {
+        _stationId = stationId;
+        RefreshTags();
+        await Load();
+    }
+
+    private async Task OnTagChanged(int tagId)
+    {
+        _tagId = tagId;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        if (_loading)
+        {
+            return;
+        }
+
+        if (DateRangeFilter.IsReversed(_from, _to))
+        {
+            Toast.Add(DateRangeFilter.ReversedRangeMessage, Severity.Warning);
+            return;
+        }
+
+        _loading = true;
+        try
+        {
+            var from = DateRangeFilter.StartOf(_from);
+            var to = DateRangeFilter.EndOfInclusive(_to);
+            _fpy = await ReportService.GetThroughputAsync(from, to, _stationId);
+            _defects = await ReportService.GetDefectTopAsync(from, to);
+            _warnings = await ReportService.GetWarningTopAsync(from, to);
+            _trend = _tagId != 0
+                ? await ReportService.GetTrendAsync(from, to, _tagId)
+                : [];
+            _trendSeries = BuildTrendSeries();
+            RefreshTrendStats();
+
+            // 过程能力与趋势用同一点位、同一区间：趋势看单点、能力看整段分布。
+            // 这里会各自查一次窄投影（同 TagId、同列集）。刻意保留两次调用：
+            // 统计服务不该成为取趋势的唯一入口，而两次窄投影的量级远小于原先的整图加载。
+            _spc = _tagId != 0
+                ? await SpcService.GetProcessCapabilityAsync(_tagId, from, to)
+                : null;
+            _spcSeries = BuildSpcSeries();
+        }
+        catch (Exception ex)
+        {
+            // 失败时把上一轮结果清掉：进度条一消失还留着旧数字，就是"看着有数、其实是旧的"。
+            // Query 页失败时本来就会清 _items/_total，两页不该不一致。
+            ClearResults();
+            Toast.Add($"统计失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void ClearResults()
+    {
+        _fpy = [];
+        _defects = [];
+        _warnings = [];
+        _spc = null;
+        _spcSeries = [];
+        _trend = [];
+        _trendSeries = [];
+        _trendAverage = _trendMin = _trendMax = "-";
+        _trendRangeText = _trendFromText = _trendToText = "";
+    }
+
+    private IReadOnlyList<LineSeries> BuildTrendSeries()
+    {
+        if (_trend.Count == 0)
+        {
+            return [];
+        }
+
+        var name = _tags.FirstOrDefault(t => t.Id == _tagId)?.Name ?? "数值";
+        return
+        [
+            new LineSeries
+            {
+                Name = name,
+                Values = [.. _trend.Select(p => (float)p.Value)],
+                Color = ChartColors.Primary
+            }
+        ];
+    }
+
+    /// <summary>趋势统计：均值/极值一次算好，模板里不再写 lambda。</summary>
+    private void RefreshTrendStats()
+    {
+        if (_trend.Count == 0)
+        {
+            _trendAverage = _trendMin = _trendMax = "-";
+            _trendRangeText = "";
+            _trendFromText = "";
+            _trendToText = "";
+            return;
+        }
+
+        var values = _trend.Select(p => p.Value).ToList();
+        _trendAverage = values.Average().ToString("0.###", CultureInfo.InvariantCulture);
+        _trendMin = values.Min().ToString("0.###", CultureInfo.InvariantCulture);
+        _trendMax = values.Max().ToString("0.###", CultureInfo.InvariantCulture);
+        _trendRangeText = $"{_trend[0].Time:MM-dd HH:mm} ~ {_trend[^1].Time:MM-dd HH:mm}";
+        _trendFromText = _trend[0].Time.ToString("MM-dd HH:mm");
+        _trendToText = _trend[^1].Time.ToString("MM-dd HH:mm");
+    }
+
+    private double AverageYield()
+    {
+        var total = _fpy.Sum(x => x.Total);
+        return total == 0 ? 0 : (double)_fpy.Sum(x => x.Ok) / total;
+    }
+
+    private double DefectShare(int count)
+    {
+        var total = _defects.Sum(x => x.Count);
+        return total == 0 ? 0 : (double)count / total;
+    }
+
+    private double WarningShare(int count)
+    {
+        var total = _warnings.Sum(x => x.Count);
+        return total == 0 ? 0 : (double)count / total;
+    }
+
+    private static Color YieldColor(double yield) => yield switch
+    {
+        >= 0.99 => Color.Success,
+        >= 0.95 => Color.Warning,
+        _ => Color.Error
+    };
+
+    private bool _exporting;
+
+    private async Task ExportTrend()
+    {
+        if (_exporting)
+        {
+            return;
+        }
+
+        _exporting = true;
+        try
+        {
+            var rows = _trend.Select(p => new[]
+            {
+                p.Time.ToString("yyyy-MM-dd HH:mm:ss"),
+                p.Value.ToString("0.####", CultureInfo.InvariantCulture),
+                p.PalletCode
+            });
+            var csv = CsvExporter.Build(["时间", "数值", "托盘码"], rows);
+            await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName("datatrace_trend"), CsvExporter.ToBase64(csv));
+            Toast.Add($"已导出 {_trend.Count} 个趋势点", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            // JS 互操失败（连接断了、浏览器拦下下载）抛出去会断掉整条 circuit，页面直接卡死。
+            Toast.Add($"导出失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _exporting = false;
+        }
+    }
+
+    /// <summary>
+    /// 控制图：实测序列 + 三条常量序列（UCL / CL / LCL）。
+    /// 常量序列参与量程计算，因此控制限一定落在可视范围内，不会被裁掉。
+    /// </summary>
+    private IReadOnlyList<LineSeries> BuildSpcSeries()
+    {
+        if (_spc is null || _spc.Samples.Count == 0)
+        {
+            return [];
+        }
+
+        var values = _spc.Samples.Select(p => (float)p.Value).ToArray();
+        var summary = _spc.Summary;
+
+        return
+        [
+            new LineSeries
+            {
+                Name = $"实测 {_spc.TagName}",
+                Values = values,
+                Color = ChartColors.Primary,
+                Unit = _spc.Unit
+            },
+            new LineSeries
+            {
+                Name = "UCL",
+                Values = Repeated((float)summary.UpperControlLimit, values.Length),
+                Color = ChartColors.Alert
+            },
+            new LineSeries
+            {
+                Name = "CL",
+                Values = Repeated((float)summary.CenterLine, values.Length),
+                Color = ChartColors.Secondary
+            },
+            new LineSeries
+            {
+                Name = "LCL",
+                Values = Repeated((float)summary.LowerControlLimit, values.Length),
+                Color = ChartColors.Alert
+            }
+        ];
+    }
+
+    private static float[] Repeated(float value, int count)
+    {
+        var array = new float[count];
+        Array.Fill(array, value);
+        return array;
+    }
+
+    private string TimeText(int sampleIndex)
+        => _spc?.TimeAt(sampleIndex) is { } time ? time.ToString("MM-dd HH:mm:ss") : "-";
+
+    private static string LimitPair(double? lower, double? upper)
+    {
+        if (lower is null && upper is null)
+        {
+            return "未配置";
+        }
+
+        return $"{lower?.ToString("0.###", CultureInfo.InvariantCulture) ?? "-"} ~ {upper?.ToString("0.###", CultureInfo.InvariantCulture) ?? "-"}";
+    }
+
+    private static string VerdictLabel(SpcVerdict verdict) => verdict switch
+    {
+        SpcVerdict.Capable => "过程能力达标 Cpk ≥ 1.33",
+        SpcVerdict.Marginal => "过程能力勉强 1.00 ≤ Cpk < 1.33",
+        SpcVerdict.Incapable => "过程能力不足 Cpk < 1.00",
+        _ => "数据不足，不下结论"
+    };
+
+    private static Color VerdictColor(SpcVerdict verdict) => verdict switch
+    {
+        SpcVerdict.Capable => Color.Success,
+        SpcVerdict.Marginal => Color.Warning,
+        SpcVerdict.Incapable => Color.Error,
+        _ => Color.Default
+    };
+
+    private static string RuleLabel(SpcRule rule) => rule switch
+    {
+        SpcRule.BeyondControlLimit => "规则 1 · 超 3σ",
+        SpcRule.NineOnOneSide => "规则 2 · 同侧连续",
+        SpcRule.SixMonotonic => "规则 3 · 持续趋势",
+        SpcRule.FourteenAlternating => "规则 4 · 系统性振荡",
+        SpcRule.TwoOfThreeBeyondTwoSigma => "规则 5 · 2/3 超 2σ",
+        _ => rule.ToString()
+    };
+}

@@ -1,0 +1,238 @@
+@page "/logs"
+@attribute [Authorize]
+@using DataTrace.Application.Configuration
+@inject IAuditLogger Audit
+@inject IJSRuntime Js
+@inject DtToast Toast
+
+<PageHeader Title="审计日志">
+    <Actions>
+        <MudText Typo="Typo.caption" Class="dt-muted">
+            @if (_all.Count >= QueryLimit)
+            {
+                <text>最近 @QueryLimit 条配置改动（已达读取上限，更早的改动请看 data/logs 日志文件）</text>
+            }
+            else
+            {
+                <text>最近 @_all.Count 条配置改动记录</text>
+            }
+        </MudText>
+    </Actions>
+</PageHeader>
+
+<MudPaper Class="dt-filter-card mb-3">
+    <MudGrid Class="dt-filters">
+        <MudItem xs="12" sm="6" md="4">
+            <MudTextField @bind-Value="_keyword" @bind-Value:after="OnFilterChanged" Label="关键字"
+                          Placeholder="用户 / 对象 / 键 / 变更内容"
+                          Immediate="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" />
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudSelect T="string" @bind-Value="_action" @bind-Value:after="OnFilterChanged" Label="动作" Clearable="true">
+                @foreach (var action in _actions)
+                {
+                    <MudSelectItem T="string" Value="action">@DisplayLabels.AuditAction(action)</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudSelect T="int" @bind-Value="_rangeDays" @bind-Value:after="OnFilterChanged" Label="时间范围">
+                <MudSelectItem T="int" Value="0">全部</MudSelectItem>
+                <MudSelectItem T="int" Value="1">近 24 小时</MudSelectItem>
+                <MudSelectItem T="int" Value="7">近 7 天</MudSelectItem>
+                <MudSelectItem T="int" Value="30">近 30 天</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="2" Class="d-flex align-center gap-2">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Reload"
+                       StartIcon="@Icons.Material.Filled.Refresh" Disabled="_loading" Class="mt-1">刷新</MudButton>
+            <MudButton Variant="Variant.Outlined" OnClick="ExportCsv" Disabled="_exporting || _filtered.Count == 0"
+                       StartIcon="@(_exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)"
+                       Class="mt-1">@(_exporting ? "导出中…" : "导出")</MudButton>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+<MudTable Items="_pageItems" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm" Loading="_loading">
+    <HeaderContent>
+        <MudTh>时间</MudTh>
+        <MudTh>用户</MudTh>
+        <MudTh>动作</MudTh>
+        <MudTh>对象</MudTh>
+        <MudTh>键</MudTh>
+        <MudTh>变更</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="时间">@context.Time.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+        <MudTd DataLabel="用户">@context.UserName</MudTd>
+        <MudTd DataLabel="动作">
+            <MudTooltip Text="@($"原始动作码 {context.Action}")">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@ActionColor(context.Action)">
+                    @DisplayLabels.AuditAction(context.Action)
+                </MudChip>
+            </MudTooltip>
+        </MudTd>
+        <MudTd DataLabel="对象">@DisplayLabels.EntityType(context.EntityType)</MudTd>
+        <MudTd DataLabel="键">@context.EntityKey</MudTd>
+        <MudTd DataLabel="变更">
+            @if (string.IsNullOrEmpty(context.OldValue) && string.IsNullOrEmpty(context.NewValue))
+            {
+                <span class="dt-muted">-</span>
+            }
+            else
+            {
+                <span class="dt-muted">@(string.IsNullOrEmpty(context.OldValue) ? "新增" : context.OldValue)</span>
+                <MudIcon Icon="@Icons.Material.Filled.ArrowRightAlt" Size="Size.Small" Class="mx-1" />
+                <span>@context.NewValue</span>
+            }
+        </MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText Class="dt-muted py-4">
+            @(_loading ? "正在加载…" : "没有符合条件的日志，可清空关键字或放宽时间范围。")
+        </MudText>
+    </NoRecordsContent>
+</MudTable>
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mt-3" Spacing="3">
+    <MudPagination Count="_pages" Selected="_page" SelectedChanged="OnPage" BoundaryCount="1" MiddleCount="3" />
+    <MudText Typo="Typo.caption" Class="dt-muted">
+        第 @_page / @_pages 页，命中 @_filtered.Count 条
+    </MudText>
+</MudStack>
+
+@code {
+    private const int PageSize = 50;
+
+    /// <summary>一次最多读多少条。页面上必须说清楚这是上限，否则用户以为看到的就是全量。</summary>
+    private const int QueryLimit = 500;
+    private List<AuditLog> _all = [];
+    private List<AuditLog> _filtered = [];
+    private List<AuditLog> _pageItems = [];
+    private List<string> _actions = [];
+    private string? _keyword;
+    private string _action = "";
+    private int _rangeDays;
+    private int _page = 1;
+    private int _pages = 1;
+    private bool _loading;
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    /// <summary>筛选条件变化时立刻重算，不需要额外点按钮。</summary>
+    private void OnFilterChanged()
+    {
+        _page = 1;
+        Apply();
+    }
+
+    private async Task Reload()
+    {
+        _loading = true;
+        try
+        {
+            var items = await Audit.QueryAsync(QueryLimit);
+            _all = items.OrderByDescending(x => x.Time).ToList();
+            _actions = _all.Select(x => x.Action).Where(a => !string.IsNullOrWhiteSpace(a))
+                .Distinct().OrderBy(a => a).ToList();
+            Apply();
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"加载日志失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void Apply()
+    {
+        var keyword = _keyword?.Trim();
+        var floor = _rangeDays switch
+        {
+            1 => DateTime.Now.AddDays(-1),
+            7 => DateTime.Now.AddDays(-7),
+            30 => DateTime.Now.AddDays(-30),
+            _ => DateTime.MinValue
+        };
+
+        _filtered = _all.Where(item =>
+                item.Time >= floor
+                && (string.IsNullOrEmpty(_action) || item.Action == _action)
+                && (string.IsNullOrEmpty(keyword) || Matches(item, keyword)))
+            .ToList();
+        _pages = Math.Max(1, (int)Math.Ceiling(_filtered.Count / (double)PageSize));
+        _page = Math.Min(_page, _pages);
+        _pageItems = _filtered.Skip((_page - 1) * PageSize).Take(PageSize).ToList();
+    }
+
+    /// <summary>界面显示的是中文，所以按中文搜也要能命中；原始码同样保留可搜。</summary>
+    private static bool Matches(AuditLog item, string keyword)
+        => Contains(item.UserName, keyword)
+           || Contains(item.EntityType, keyword)
+           || Contains(DisplayLabels.EntityType(item.EntityType), keyword)
+           || Contains(item.Action, keyword)
+           || Contains(DisplayLabels.AuditAction(item.Action), keyword)
+           || Contains(item.EntityKey, keyword)
+           || Contains(item.OldValue, keyword)
+           || Contains(item.NewValue, keyword);
+
+    private static bool Contains(string? source, string keyword)
+        => source is not null && source.Contains(keyword, StringComparison.OrdinalIgnoreCase);
+
+    private static Color ActionColor(string action) => action switch
+    {
+        var a when a.StartsWith("Delete", StringComparison.OrdinalIgnoreCase) => Color.Error,
+        var a when a.StartsWith("Save", StringComparison.OrdinalIgnoreCase) => Color.Success,
+        var a when a.StartsWith("Login", StringComparison.OrdinalIgnoreCase) => Color.Info,
+        _ => Color.Default
+    };
+
+    private async Task OnPage(int page)
+    {
+        _page = page;
+        Apply();
+        await Task.CompletedTask;
+    }
+
+    private bool _exporting;
+
+    private async Task ExportCsv()
+    {
+        if (_exporting)
+        {
+            return;
+        }
+
+        _exporting = true;
+        try
+        {
+            var csv = CsvExporter.Build(
+                ["时间", "用户", "动作", "对象", "键", "变更前", "变更后"],
+                _filtered.Select(item => new[]
+                {
+                    item.Time.ToString("yyyy-MM-dd HH:mm:ss"),
+                    item.UserName,
+                    DisplayLabels.AuditAction(item.Action),
+                    DisplayLabels.EntityType(item.EntityType),
+                    item.EntityKey ?? "",
+                    item.OldValue ?? "",
+                    item.NewValue ?? ""
+                }));
+
+            await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName("datatrace_audit"), CsvExporter.ToBase64(csv));
+            Toast.Add($"已导出 {_filtered.Count} 条日志", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            // JS 互操失败（连接断了、浏览器拦下下载）抛出去会断掉整条 circuit，页面直接卡死。
+            Toast.Add($"导出失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _exporting = false;
+        }
+    }
+}

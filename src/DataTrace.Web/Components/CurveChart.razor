@@ -1,0 +1,143 @@
+@using System.Globalization
+@using DataTrace.Application.Runtime
+@inject DtToast Toast
+@inject IJSRuntime Js
+
+@if (Payload is null || Payload.Series.Count == 0)
+{
+    <MudText Typo="Typo.body2" Class="dt-muted py-3">该记录没有曲线数据（可能曲线文件缺失）。</MudText>
+}
+else
+{
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-1 flex-wrap">
+        <MudText Typo="Typo.caption" Class="dt-muted">@Summary()</MudText>
+        <MudSpacer />
+        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="Export" Disabled="_exporting"
+                   StartIcon="@(_exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)">
+            @(_exporting ? "导出中…" : "导出数据")
+        </MudButton>
+    </MudStack>
+    <LineChart Series="_series" Height="300" SeriesAxisName="@_axisName"
+               XStartText="@_xStartText" XEndText="@_xEndText" EmptyText="曲线点数为空" />
+}
+
+@code {
+    [Parameter] public CurvePayload? Payload { get; set; }
+
+    private IReadOnlyList<LineSeries> _series = [];
+    private string _axisName = "序号";
+    private string _xStartText = "";
+    private string _xEndText = "";
+    private string? _xName;
+    private string? _yName;
+    private float[]? _xValues;
+    private float[]? _yValues;
+
+    protected override void OnParametersSet() => Rebuild();
+
+    private void Rebuild()
+    {
+        _series = [];
+        _xValues = null;
+        _yValues = null;
+        _xName = null;
+        _yName = null;
+        _xStartText = "";
+        _xEndText = "";
+        _axisName = "序号";
+
+        if (Payload is null || Payload.Series.Count == 0)
+        {
+            return;
+        }
+
+        var x = Payload.Series.FirstOrDefault(s => s.Role == SeriesRole.X);
+        var y = Payload.Series.FirstOrDefault(s => s.Role == SeriesRole.Y);
+
+        // 有位移与压力两路（点数一致）时，画真正的位移-压力曲线；否则按序号画多路折线。
+        if (x is not null && y is not null && x.Values.Length > 1 && x.Values.Length == y.Values.Length)
+        {
+            _xName = x.Name;
+            _yName = y.Name;
+            _xValues = x.Values;
+            _yValues = y.Values;
+            _axisName = x.Name;
+            _series =
+            [
+                new LineSeries
+                {
+                    Name = y.Name,
+                    Values = y.Values,
+                    XValues = x.Values,
+                    Color = ChartColors.Primary
+                }
+            ];
+            _xStartText = $"{x.Name} {ChartUtil.Label(x.Values.Min())}";
+            _xEndText = $"{x.Name} {ChartUtil.Label(x.Values.Max())}";
+            return;
+        }
+
+        _series = Payload.Series.Select((s, i) => new LineSeries
+        {
+            Name = s.Name,
+            Values = s.Values,
+            Color = ChartColors.ByIndex(i)
+        }).ToList();
+        _xStartText = "起始";
+        _xEndText = "结束";
+    }
+
+    private string Summary()
+    {
+        if (_xValues is null || _yValues is null)
+        {
+            var points = Payload?.Series.FirstOrDefault()?.Values.Length ?? 0;
+            return $"{points} 个采样点 · 按采样序号绘制";
+        }
+
+        return $"{_yValues.Length} 个采样点 · {_xName} {ChartUtil.Label(_xValues.Min())}~{ChartUtil.Label(_xValues.Max())}"
+               + $" · {_yName} {ChartUtil.Label(_yValues.Min())}~{ChartUtil.Label(_yValues.Max())}";
+    }
+
+    private bool _exporting;
+
+    private async Task Export()
+    {
+        if (_exporting)
+        {
+            return;
+        }
+
+        if (_xValues is null || _yValues is null)
+        {
+            Toast.Add("该曲线没有可导出的成对数据", Severity.Warning);
+            return;
+        }
+
+        var rows = new List<string[]>(_yValues.Length);
+        for (var i = 0; i < _yValues.Length; i++)
+        {
+            rows.Add([
+                _xValues[i].ToString("0.####", CultureInfo.InvariantCulture),
+                _yValues[i].ToString("0.####", CultureInfo.InvariantCulture)
+            ]);
+        }
+
+        _exporting = true;
+        try
+        {
+            var csv = CsvExporter.Build([_xName ?? "X", _yName ?? "Y"], rows);
+            await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName("datatrace_curve"), CsvExporter.ToBase64(csv));
+            Toast.Add($"已导出 {rows.Count} 个采样点", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            // JS 互操失败（连接断了、浏览器拦下下载）如果抛出去，整条 circuit 会断，页面直接卡死。
+            Toast.Add($"导出失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _exporting = false;
+        }
+    }
+}

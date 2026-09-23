@@ -1,0 +1,31 @@
+﻿<MudNavMenu Class="pb-6">
+    <MudText Typo="Typo.overline" Class="dt-nav-group">运行监控</MudText>
+    <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">实时看板</MudNavLink>
+    <MudNavLink Href="/logs" Icon="@Icons.Material.Filled.History">审计日志</MudNavLink>
+
+    <MudText Typo="Typo.overline" Class="dt-nav-group">生产数据</MudText>
+    <MudNavLink Href="/query" Icon="@Icons.Material.Filled.Search">数据查询</MudNavLink>
+    <MudNavLink Href="/reports" Icon="@Icons.Material.Filled.Assessment">报表</MudNavLink>
+    <MudNavLink Href="/curve-baseline" Icon="@Icons.Material.Filled.Timeline">波形基线</MudNavLink>
+
+    <AuthorizeView Roles="Administrator,Engineer">
+        <Authorized>
+            <MudText Typo="Typo.overline" Class="dt-nav-group">系统配置</MudText>
+            <MudNavLink Href="/config/plc" Icon="@Icons.Material.Filled.SettingsInputComponent">PLC 连接</MudNavLink>
+            <MudNavLink Href="/config/stations" Icon="@Icons.Material.Filled.PrecisionManufacturing">工站配置</MudNavLink>
+            <MudNavLink Href="/config/recipes" Icon="@Icons.Material.Filled.Category">产品型号</MudNavLink>
+            <MudNavLink Href="/config/settings" Icon="@Icons.Material.Filled.Tune">系统设置</MudNavLink>
+            <MudNavLink Href="/simulate" Icon="@Icons.Material.Filled.Science">PLC 仿真</MudNavLink>
+        </Authorized>
+    </AuthorizeView>
+
+    <AuthorizeView Roles="Administrator">
+        <Authorized>
+            <MudText Typo="Typo.overline" Class="dt-nav-group">账户</MudText>
+            <MudNavLink Href="/users" Icon="@Icons.Material.Filled.People">用户</MudNavLink>
+        </Authorized>
+    </AuthorizeView>
+
+    <MudDivider Class="my-3" />
+    <MudText Typo="Typo.caption" Class="px-4 dt-muted">配置改动即时下发给采集器</MudText>
+</MudNavMenu>

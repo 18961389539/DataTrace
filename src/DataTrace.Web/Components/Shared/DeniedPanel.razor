@@ -1,0 +1,28 @@
+@* 角色不足时的说明。两处共用：
+   - Routes.razor 的 NotAuthorized：circuit 层的拒绝（例如登录期间角色被改）；
+   - /denied 页：端点层的拒绝，Cookie 认证按 AccessDeniedPath 跳到这里。
+   以前 AccessDeniedPath 也指向 /login，而已登录访问 /login 会被跳回首页，
+   于是这段界面在角色越权时永远不可达 —— 用户只看到"无声地被扔回看板"，
+   不知道自己去的是哪一页、为什么不让看。 *@
+<MudPaper Class="pa-6">
+    <MudText Typo="Typo.h5" Class="mb-2">没有权限访问该页面</MudText>
+    <MudText Typo="Typo.body2" Class="dt-muted mb-4">
+        @if (!string.IsNullOrWhiteSpace(UserName))
+        {
+            <text>当前账号 @UserName 的角色不足。</text>
+        }
+        @if (DisplayLabels.PageTitle(RequestedPath) is { } title)
+        {
+            <text>你想打开的「@title」需要更高的角色权限。</text>
+        }
+        配置类页面需要工程师或管理员权限，用户管理需要管理员权限。
+    </MudText>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/">回到实时看板</MudButton>
+</MudPaper>
+
+@code {
+    [Parameter] public string? UserName { get; set; }
+
+    /// <summary>被拒绝的那个路由（相对路径，不含查询串）。</summary>
+    [Parameter] public string? RequestedPath { get; set; }
+}

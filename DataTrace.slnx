@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DataTrace.Application/DataTrace.Application.csproj" />
+    <Project Path="src/DataTrace.Collector/DataTrace.Collector.csproj" />
+    <Project Path="src/DataTrace.Domain/DataTrace.Domain.csproj" />
+    <Project Path="src/DataTrace.Infrastructure/DataTrace.Infrastructure.csproj" />
+    <Project Path="src/DataTrace.Plc.Drivers.IoTClient/DataTrace.Plc.Drivers.IoTClient.csproj" />
+    <Project Path="src/DataTrace.Plc/DataTrace.Plc.csproj" />
+    <Project Path="src/DataTrace.Web/DataTrace.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DataTrace.Tests/DataTrace.Tests.csproj" />
+    <Project Path="tests/DataTrace.Web.Tests/DataTrace.Web.Tests.csproj" />
+    <Project Path="tests/DataTrace.E2E.Tests/DataTrace.E2E.Tests.csproj" />
+  </Folder>
+</Solution>

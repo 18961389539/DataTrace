@@ -1,0 +1,225 @@
+@* 统一折线图：坐标轴 + 网格 + 图例 + 悬停数值，各页面复用。
+   坐标文字用 MarkupString 输出：Razor 把 <text> 当作内置标签，不能带属性。 *@
+@using System.Globalization
+@using System.Text
+@if (_plots.Count == 0)
+{
+    <MudText Typo="Typo.body2" Class="dt-muted py-3">@EmptyText</MudText>
+}
+else
+{
+    @if (ShowLegend)
+    {
+        <div class="dt-legend">
+            @foreach (var plot in _plots)
+            {
+                <span class="dt-legend-item">
+                    <span class="dt-legend-swatch" style="@($"background:{plot.Color}")"></span>
+                    <span>@LegendText(plot)</span>
+                    <span class="dt-muted">@ChartUtil.Label(plot.Min) ~ @ChartUtil.Label(plot.Max)</span>
+                </span>
+            }
+        </div>
+    }
+
+    <div class="dt-chart-box">
+        <svg class="dt-chart" viewBox="@($"0 0 {ViewWidth} {Height}")" style="height:auto"
+             preserveAspectRatio="xMidYMid meet">
+            @((MarkupString)_axisMarkup)
+            @((MarkupString)_seriesMarkup)
+        </svg>
+    </div>
+}
+
+@code {
+    [Parameter] public IReadOnlyList<LineSeries> Series { get; set; } = [];
+
+    /// <summary>SVG 逻辑宽度；实际宽度由 CSS 100% 决定，等比缩放不变形。</summary>
+    [Parameter] public int ViewWidth { get; set; } = 900;
+
+    [Parameter] public int Height { get; set; } = 260;
+
+    [Parameter] public bool ShowAxis { get; set; } = true;
+
+    [Parameter] public bool ShowLegend { get; set; } = true;
+
+    [Parameter] public bool ShowPoints { get; set; } = true;
+
+    [Parameter] public int MaxPoints { get; set; } = 600;
+
+    [Parameter] public string XStartText { get; set; } = "";
+
+    [Parameter] public string XEndText { get; set; } = "";
+
+    /// <summary>X 轴含义，用于悬停提示文案（位移 / 时间 / 序号）。</summary>
+    [Parameter] public string SeriesAxisName { get; set; } = "X";
+
+    [Parameter] public string EmptyText { get; set; } = "暂无曲线数据";
+
+    private readonly List<Plot> _plots = [];
+    private ChartBox _box = new(900, 260);
+    private double _xMin;
+    private double _xMax;
+    private double _yMin;
+    private double _yMax;
+    private IReadOnlyList<double> _yTicks = [];
+    private IReadOnlyList<double> _xTicks = [];
+    private bool _annotated;
+    private string _axisMarkup = "";
+    private string _seriesMarkup = "";
+
+    protected override void OnParametersSet() => Rebuild();
+
+    private void Rebuild()
+    {
+        _plots.Clear();
+        _axisMarkup = "";
+        _seriesMarkup = "";
+        // 首尾标注与刻度文字各占一行，只有一行留白时两者会叠成一团
+        _annotated = ShowAxis && (!string.IsNullOrEmpty(XStartText) || !string.IsNullOrEmpty(XEndText));
+        _box = new ChartBox(ViewWidth, Height, ShowAxis ? 58 : 4, 14, ShowAxis ? 12 : 4,
+            ShowAxis ? (_annotated ? 48 : 30) : 4);
+
+        foreach (var series in Series.Where(s => s.Values.Length > 0))
+        {
+            var (xs, ys, min, max) = Prepare(series);
+            _plots.Add(new Plot(series.Name, series.Color, series.Unit, xs, ys, min, max));
+        }
+
+        if (_plots.Count == 0)
+        {
+            return;
+        }
+
+        var yMin = _plots.Min(p => p.Min);
+        var yMax = _plots.Max(p => p.Max);
+        var pad = (yMax - yMin) * 0.05;
+        _yMin = yMin - pad;
+        _yMax = yMax + pad;
+
+        _xMin = _plots.Min(p => p.X.Length == 0 ? 0 : p.X.Min());
+        _xMax = _plots.Max(p => p.X.Length == 0 ? 0 : p.X.Max());
+        if (Math.Abs(_xMax - _xMin) < 1e-9)
+        {
+            _xMin -= 0.5;
+            _xMax += 0.5;
+        }
+
+        _yTicks = ChartUtil.Ticks(_yMin, _yMax, ShowAxis ? 5 : 2);
+        _xTicks = ShowAxis ? ChartUtil.Ticks(_xMin, _xMax, 5) : [];
+        BuildMarkup();
+    }
+
+    private void BuildMarkup()
+    {
+        var axis = new StringBuilder();
+        if (ShowAxis)
+        {
+            foreach (var tick in _yTicks)
+            {
+                var y = F(MapY(tick));
+                axis.Append($"<line x1=\"{F(_box.Left)}\" y1=\"{y}\" x2=\"{F(_box.Left + _box.PlotWidth)}\" ")
+                    .Append($"y2=\"{y}\" stroke=\"var(--dt-chart-grid)\" stroke-width=\"1\" />");
+                axis.Append($"<text x=\"{F(_box.Left - 6)}\" y=\"{F(MapY(tick) + 4)}\" text-anchor=\"end\" ")
+                    .Append($"font-size=\"12\" fill=\"var(--dt-chart-axis)\">{Esc(ChartUtil.Label(tick))}</text>");
+            }
+
+            foreach (var tick in _xTicks)
+            {
+                var x = F(MapX(tick));
+                axis.Append($"<line x1=\"{x}\" y1=\"{F(_box.Top)}\" x2=\"{x}\" ")
+                    .Append($"y2=\"{F(_box.Top + _box.PlotHeight)}\" stroke=\"var(--dt-chart-grid)\" stroke-width=\"1\" />");
+                // 最左刻度居中会与 Y 轴末位标签撞在一起，改成从轴角起排
+                var anchor = tick <= _xMin + 1e-9 ? "start" : "middle";
+                axis.Append($"<text x=\"{x}\" y=\"{F(_box.Top + _box.PlotHeight + 17)}\" text-anchor=\"{anchor}\" ")
+                    .Append($"font-size=\"12\" fill=\"var(--dt-chart-axis)\">{Esc(ChartUtil.Label(tick))}</text>");
+            }
+
+            var baseline = F(_box.Top + _box.PlotHeight);
+            axis.Append($"<line x1=\"{F(_box.Left)}\" y1=\"{baseline}\" x2=\"{F(_box.Left + _box.PlotWidth)}\" ")
+                .Append($"y2=\"{baseline}\" stroke=\"var(--dt-chart-axis)\" stroke-width=\"1\" />");
+
+            if (!string.IsNullOrEmpty(XStartText) || !string.IsNullOrEmpty(XEndText))
+            {
+                var textY = F(Height - 4);
+                axis.Append($"<text x=\"{F(_box.Left)}\" y=\"{textY}\" font-size=\"12\" ")
+                    .Append($"fill=\"var(--dt-chart-axis)\">{Esc(XStartText)}</text>");
+                axis.Append($"<text x=\"{F(_box.Left + _box.PlotWidth)}\" y=\"{textY}\" text-anchor=\"end\" ")
+                    .Append($"font-size=\"12\" fill=\"var(--dt-chart-axis)\">{Esc(XEndText)}</text>");
+            }
+        }
+
+        _axisMarkup = axis.ToString();
+
+        var body = new StringBuilder();
+        foreach (var plot in _plots)
+        {
+            body.Append($"<polyline fill=\"none\" stroke=\"{plot.Color}\" stroke-width=\"2\" ")
+                .Append($"stroke-linejoin=\"round\" points=\"{Polyline(plot)}\" />");
+
+            if (!ShowPoints || plot.X.Length > 120)
+            {
+                continue;
+            }
+
+            for (var i = 0; i < plot.X.Length; i++)
+            {
+                var unit = string.IsNullOrEmpty(plot.Unit) ? "" : " " + plot.Unit;
+                var tip = $"{plot.Name}：{SeriesAxisName} {ChartUtil.Label(plot.X[i])} → {ChartUtil.Label(plot.Y[i])}{unit}";
+                body.Append($"<circle class=\"dt-point\" r=\"3.5\" cx=\"{F(MapX(plot.X[i]))}\" cy=\"{F(MapY(plot.Y[i]))}\" ")
+                    .Append($"style=\"color:{plot.Color}\" stroke=\"currentColor\" stroke-width=\"1\"><title>{Esc(tip)}</title></circle>");
+            }
+        }
+
+        _seriesMarkup = body.ToString();
+    }
+
+    /// <summary>抽稀与量程计算交给 <see cref="ChartUtil.SampleEnvelope"/>，那里才是能直接单测的地方。</summary>
+    private (float[] X, float[] Y, double Min, double Max) Prepare(LineSeries series)
+    {
+        var values = series.Values;
+        var xs = new float[values.Length];
+        for (var i = 0; i < values.Length; i++)
+        {
+            xs[i] = series.XValues is { Length: > 0 } custom && i < custom.Length ? custom[i] : i;
+        }
+
+        return ChartUtil.SampleEnvelope(values, xs, MaxPoints);
+    }
+
+    private double MapX(double x)
+        => _box.Left + (x - _xMin) / (_xMax - _xMin) * _box.PlotWidth;
+
+    private double MapY(double y) => _box.Y(y, _yMin, _yMax);
+
+    private string Polyline(Plot plot)
+    {
+        var builder = new StringBuilder();
+        for (var i = 0; i < plot.X.Length; i++)
+        {
+            if (i > 0)
+            {
+                builder.Append(' ');
+            }
+
+            builder.Append(F(MapX(plot.X[i])));
+            builder.Append(',');
+            builder.Append(F(MapY(plot.Y[i])));
+        }
+
+        return builder.ToString();
+    }
+
+    private static string F(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
+
+    /// <summary>拼接 SVG 文本前统一转义，点位/曲线名来自配置，可能含特殊字符。</summary>
+    private static string Esc(string? text)
+        => string.IsNullOrEmpty(text)
+            ? ""
+            : text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
+
+    private static string LegendText(Plot plot)
+        => string.IsNullOrEmpty(plot.Unit) ? plot.Name : $"{plot.Name}（{plot.Unit}）";
+
+    private sealed record Plot(string Name, string Color, string? Unit, float[] X, float[] Y, double Min, double Max);
+}

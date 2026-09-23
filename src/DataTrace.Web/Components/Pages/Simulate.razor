@@ -1,0 +1,286 @@
+@page "/simulate"
+@attribute [Authorize(Roles = "Administrator,Engineer")]
+@implements IDisposable
+@using DataTrace.Application.Configuration
+@using DataTrace.Collector
+@using DataTrace.Domain.Entities
+@using DataTrace.Plc.Simulator
+@inject IConfigRepository Config
+@inject ILineSimulator Simulator
+@inject SimulatorCatalog Simulators
+@inject IDialogService DialogService
+@inject DtToast Toast
+
+<PageHeader Title="PLC 仿真"
+             Description="模拟 PLC 内存与产线节拍：自动生成托盘码、点位、位移压力曲线，按工站顺序触发并等待上位机回写 2–8。" />
+
+<MudGrid>
+    <MudItem xs="12" md="4">
+        <MudPaper Class="pa-4">
+            <MudSwitch T="bool" Value="_auto" ValueChanged="OnAutoChanged" Label="自动跑线" Color="Color.Primary" />
+            <MudNumericField @bind-Value="_interval" Label="托盘间隔(ms)" Min="500" Max="30000" />
+            <MudNumericField @bind-Value="_ng" Label="NG 比例(%)" Min="0" Max="100" />
+            <MudNumericField @bind-Value="_pool" Label="托盘池数量(复用)" Min="1" Max="500" />
+            <MudButton Class="mt-2" Variant="Variant.Outlined" OnClick="SaveOptions" Disabled="_saving"
+                       StartIcon="@(_saving ? Icons.Material.Filled.Sync : Icons.Material.Filled.Save)">
+                @(_saving ? "保存中…" : "保存参数")
+            </MudButton>
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" md="8">
+        <MudPaper Class="pa-4">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3">
+                <MudText Typo="Typo.subtitle1">状态</MudText>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Filled"
+                         Color="@(_status.Running ? Color.Success : Color.Default)">
+                    @(_status.Running ? "自动跑线中" : "已停止")
+                </MudChip>
+                <MudSpacer />
+                <MudText Typo="Typo.caption" Class="dt-muted">
+                    最近触发：@(_status.LastTriggerTime?.ToString("HH:mm:ss") ?? "-")
+                </MudText>
+            </MudStack>
+
+            <MudGrid Spacing="2">
+                <MudItem xs="6" sm="3">
+                    <div class="dt-metric">
+                        <div class="dt-metric-label">当前托盘</div>
+                        <div class="dt-metric-value">@(_status.CurrentPallet ?? "-")</div>
+                    </div>
+                </MudItem>
+                <MudItem xs="6" sm="3">
+                    <div class="dt-metric">
+                        <div class="dt-metric-label">当前工站</div>
+                        <div class="dt-metric-value">@(_status.CurrentStation ?? "-")</div>
+                    </div>
+                </MudItem>
+                <MudItem xs="6" sm="3">
+                    <div class="dt-metric">
+                        <div class="dt-metric-label">最近回写</div>
+                        <div class="dt-metric-value">@(_status.LastResultCode is { } c ? ResultCodes.Describe(c) : "-")</div>
+                    </div>
+                </MudItem>
+                <MudItem xs="6" sm="3">
+                    <div class="dt-metric">
+                        <div class="dt-metric-label">累计托盘 / 工站</div>
+                        <div class="dt-metric-value">@_status.CompletedPallets / @_status.CompletedStations</div>
+                    </div>
+                </MudItem>
+            </MudGrid>
+            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-2">@_status.LastMessage</MudText>
+
+            <MudDivider Class="my-3" />
+
+            <MudTextField @bind-Value="_pallet" @bind-Value:after="ValidatePallet" Label="指定托盘码"
+                          HelperText="走完整条线时用这个码，留空则不执行" Immediate="true"
+                          Error="@(_palletError is not null)" ErrorText="@_palletError" />
+
+            @if (_running || _triggering is not null)
+            {
+                <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mt-3" />
+                <MudText Typo="Typo.caption" Class="dt-muted">
+                    @(_running ? $"正在走完 {_pallet} 的整条线（逐站触发并等待回写）…" : $"正在触发 {_triggering}…")
+                </MudText>
+            }
+
+            <MudButton Class="ma-1 mt-2" Variant="Variant.Filled" Color="Color.Primary" OnClick="RunOne"
+                       Disabled="_busy" StartIcon="@(_running ? Icons.Material.Filled.Sync : Icons.Material.Filled.PlayArrow)">
+                @(_running ? "走线中…" : "走完一条线")
+            </MudButton>
+            @foreach (var station in _stations)
+            {
+                <MudButton Class="ma-1 mt-2" Variant="Variant.Outlined" OnClick="@(() => Trigger(station))"
+                           Disabled="@(_busy || _triggering == station.Code)"
+                           StartIcon="@(_triggering == station.Code ? Icons.Material.Filled.Sync : Icons.Material.Filled.Bolt)">
+                    触发 @station.Code
+                </MudButton>
+            }
+            @if (_stations.Count == 0)
+            {
+                <MudText Typo="Typo.caption" Class="dt-muted d-block mt-2">
+                    还没有启用的工站，先到「工站配置」创建设备后再来仿真。
+                </MudText>
+            }
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private IReadOnlyList<Station> _stations = [];
+    private Dictionary<int, PlcConnection> _plcs = new();
+    private string _pallet = "P0001";
+    private string? _palletError;
+    private bool _auto;
+    private int _interval = 2500;
+    private int _ng = 8;
+    private int _pool = 20;
+    private bool _saving;
+    private bool _running;
+    private bool _disposed;
+    private string? _triggering;
+    private LineSimulatorStatus _status = new();
+
+    /// <summary>三个动作共用同一条模拟产线，任一在跑时全部按钮都锁住，避免交错触发把状态机搅乱。</summary>
+    private bool _busy => _saving || _running || _triggering is not null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // 先订阅再 await。反过来写时，用户在加载那一下秒退，Dispose 会跑在 += 之前，
+        // 单例模拟器上就留下一条永远不会被取消的订阅，之后每次推送都对已释放组件 InvokeAsync。
+        Simulator.Changed += OnChanged;
+
+        var snapshot = await Config.GetSnapshotAsync();
+        _stations = snapshot.Stations.Where(s => s.Enabled).OrderBy(s => s.Sequence).ToList();
+        _plcs = snapshot.PlcConnections.ToDictionary(x => x.Id);
+        _auto = snapshot.Settings.SimulatorAutoRun || Simulator.Status.Running;
+        _interval = snapshot.Settings.SimulatorIntervalMs;
+        _ng = snapshot.Settings.SimulatorNgPercent;
+        _pool = snapshot.Settings.SimulatorPalletPool;
+        _status = Simulator.Status;
+    }
+
+    private void OnChanged()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _ = InvokeAsync(() =>
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _status = Simulator.Status;
+            _auto = _status.Running;
+            StateHasChanged();
+        });
+    }
+
+    private async Task OnAutoChanged(bool value)
+    {
+        // 打开就会往运行时库里写仿真记录，关掉没有副作用，所以只在"打开"这个方向上拦一道。
+        if (value)
+        {
+            var confirmed = await DialogService.ShowMessageBox(
+                "启动自动跑线",
+                "启动后仿真器会按工站顺序持续产生记录并写入运行时库。" +
+                "如果这台机器接的是真实 PLC，请先确认采集已停用。确定启动？",
+                yesText: "启动", cancelText: "取消");
+            if (confirmed != true)
+            {
+                return;
+            }
+        }
+
+        _auto = value;
+        Simulator.SetRunning(value);
+        await SaveOptions();
+    }
+
+    private void ValidatePallet()
+        => _palletError = string.IsNullOrWhiteSpace(_pallet) ? "托盘码不能为空"
+            : _pallet.Trim().Length > 64 ? "托盘码最长 64 个字符"
+            : null;
+
+    private async Task SaveOptions()
+    {
+        if (_saving)
+        {
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            var settings = (await Config.GetSnapshotAsync()).Settings;
+            settings.SimulatorAutoRun = _auto;
+            settings.SimulatorIntervalMs = _interval;
+            settings.SimulatorNgPercent = _ng;
+            settings.SimulatorPalletPool = _pool;
+            await Config.SaveSettingsAsync(settings);
+            Toast.Add("仿真参数已保存", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            // 配置库写入失败如果抛给 Blazor，整条 circuit 会断掉，现场只看到页面卡死。
+            Toast.Add($"保存仿真参数失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task RunOne()
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        ValidatePallet();
+        if (_palletError is not null)
+        {
+            return;
+        }
+
+        _running = true;
+        try
+        {
+            await Simulator.RunOnePalletAsync(_pallet.Trim());
+            Toast.Add($"托盘 {_pallet.Trim()} 已仿真走线", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add(ex.Message, Severity.Error);
+        }
+        finally
+        {
+            _running = false;
+        }
+    }
+
+    private async Task Trigger(Station station)
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        if (!_plcs.TryGetValue(station.PlcConnectionId, out var plc) || plc.Brand != PlcBrand.Simulator)
+        {
+            Toast.Add("该工站未绑定模拟 PLC", Severity.Warning);
+            return;
+        }
+
+        _triggering = station.Code;
+        try
+        {
+            var driver = Simulators.Get(plc.Id);
+            if (!driver.IsConnected)
+            {
+                await driver.ConnectAsync();
+            }
+
+            SimulatorScenario.LoadStationCycle(driver, plc, station, _pallet.Trim());
+            Toast.Add($"已触发 {station.Code}", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"触发 {station.Code} 失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _triggering = null;
+        }
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        Simulator.Changed -= OnChanged;
+    }
+}

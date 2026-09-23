@@ -1,0 +1,28 @@
+@* 不良 / 预警 Top N 共用表：两张表的列定义、密度、窄屏折叠方式完全一样，
+   只有数据源、占比分母和空状态文案不同。分开写就会像之前那样一张有 Breakpoint 一张没有。 *@
+<MudTable Items="Items" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="Loading">
+    <HeaderContent>
+        <MudTh>项目</MudTh>
+        <MudTh Class="dt-num">次数</MudTh>
+        <MudTh Class="dt-num">占比</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="项目">@context.Name</MudTd>
+        <MudTd DataLabel="次数" Class="dt-num">@context.Count</MudTd>
+        <MudTd DataLabel="占比" Class="dt-num">@Share(context.Count).ToString("P1")</MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText Typo="Typo.body2" Class="dt-muted py-3">@EmptyText</MudText>
+    </NoRecordsContent>
+</MudTable>
+
+@code {
+    [Parameter] public IReadOnlyList<IssueTopItem> Items { get; set; } = [];
+
+    [Parameter] public bool Loading { get; set; }
+
+    /// <summary>占比算法由调用方给：不良按不良总数分，预警按预警总数分。</summary>
+    [Parameter] public Func<int, double> Share { get; set; } = _ => 0;
+
+    [Parameter] public string EmptyText { get; set; } = "";
+}

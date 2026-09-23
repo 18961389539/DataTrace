@@ -1,0 +1,311 @@
+@page "/"
+@attribute [Authorize]
+@using DataTrace.Application.Configuration
+@using DataTrace.Application.Realtime
+@using DataTrace.Domain.Constants
+@using DataTrace.Domain.Enums
+@implements IDisposable
+@inject IRuntimeStatusHub Status
+@inject IConfigRepository Config
+
+<PageHeader Title="实时看板">
+    <ChildContent>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_stations.Count 台设备</MudChip>
+        <MudTooltip Text="最近一次工站完成的时间。产线本就没料时变慢不算异常。">
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@CadenceColor">
+                最近节拍 @CadenceText
+            </MudChip>
+        </MudTooltip>
+    </ChildContent>
+    <Actions>
+        <MudText Typo="Typo.caption" Class="dt-muted">
+            PLC @_plcs.Count(p => p.Connected)/@_plcs.Count
+            · 采集中 @_stations.Count(s => s.State == StationRuntimeState.Busy)
+            · @_now.ToString("HH:mm:ss")
+        </MudText>
+    </Actions>
+</PageHeader>
+
+@if (!_collectEnabled)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
+        「启用采集」当前是关闭的：PLC 不再被扫描，看板数值与「最近采集」都不会再变化。需要恢复请到「系统设置」打开。
+    </MudAlert>
+}
+
+@foreach (var plc in _plcs.Where(p => !p.Connected || !string.IsNullOrEmpty(p.LastError)))
+{
+    <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3" Variant="Variant.Outlined">
+        @plc.Name 断开@(string.IsNullOrEmpty(plc.LastError) ? "" : $"：{plc.LastError}")
+    </MudAlert>
+}
+
+@if (_stations.Count == 0)
+{
+    <MudPaper Class="pa-6">
+        <MudText Typo="Typo.h6" Class="mb-2">还没有可监控的设备</MudText>
+        <MudText Typo="Typo.body2" Class="dt-muted mb-4">
+            先到「PLC 连接」新增一台 PLC（也可先用内置模拟器），再到「工站配置」创建工站并配好触发地址、点位与曲线，
+            看板就会实时显示每台设备的节拍与最近一次判定。
+        </MudText>
+        <MudStack Row="true" Spacing="2">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" Href="/config/plc">
+                去配置 PLC
+            </MudButton>
+            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Science" Href="/simulate">
+                用模拟器跑一遍
+            </MudButton>
+        </MudStack>
+    </MudPaper>
+}
+else
+{
+    <MudGrid>
+        @foreach (var station in _stations)
+        {
+            <MudItem xs="12" md="6" lg="4">
+                <MudPaper Class="@CardClass(station)">
+                    <MudStack Row="true" AlignItems="AlignItems.Start">
+                        <div>
+                            <MudText Typo="Typo.subtitle1">@station.StationCode @station.StationName</MudText>
+                            <MudText Typo="Typo.caption" Class="dt-muted dt-flash" @key="@BeatKey(station)">
+                                @(string.IsNullOrWhiteSpace(station.LastPalletCode) ? "等待托盘" : station.LastPalletCode)
+                                · @(station.LastSerialNo ?? "-")
+                                · @Relative(station.LastCompleteTime)
+                            </MudText>
+                        </div>
+                        <MudSpacer />
+                        <MudChip T="string" Size="Size.Small" Color="@StateColor(station)">@StateLabel(station)</MudChip>
+                    </MudStack>
+
+                    @if (station.LastTags.Count == 0 && station.LastCurves.Count == 0)
+                    {
+                        <MudText Typo="Typo.body2" Class="dt-muted mt-4">本站还没有采集数据</MudText>
+                    }
+                    else
+                    {
+                        <div class="dash-tags">
+                            @foreach (var tag in station.LastTags)
+                            {
+                                @* 状态说明写成可见文字而不是 title：平板没有 hover，
+                                   而"这条到底为什么变红"正是操作工要看的那一句。 *@
+                                <div class="@TagClass(tag)">
+                                    <span>
+                                        @if (tag.OutOfLimit)
+                                        {
+                                            <MudIcon Icon="@Icons.Material.Filled.ErrorOutline" Size="Size.Small" Class="mr-1" />
+                                        }
+                                        else if (tag.Warning)
+                                        {
+                                            <MudIcon Icon="@Icons.Material.Filled.WarningAmber" Size="Size.Small" Class="mr-1" />
+                                        }
+                                        @tag.Name
+                                        @if (tag.OutOfLimit)
+                                        {
+                                            <span class="dt-tag-state dt-text-error">超出规格限，判废</span>
+                                        }
+                                        else if (tag.Warning)
+                                        {
+                                            <span class="dt-tag-state dt-text-warning">落在预警带，尚未判废</span>
+                                        }
+                                    </span>
+                                    <span class="dash-tag-value dt-flash" @key="@tag.Display">@tag.Display @tag.Unit</span>
+                                </div>
+                            }
+                        </div>
+                        @foreach (var curve in station.LastCurves)
+                        {
+                            <MudText Typo="Typo.caption" Class="dt-muted mt-3 mb-1">@curve.Name</MudText>
+                            <LineChart Series="SparkSeries(station, curve)" ViewWidth="240" Height="56"
+                                       ShowAxis="false" ShowLegend="false" ShowPoints="false" MaxPoints="80"
+                                       EmptyText="无曲线点" />
+                        }
+                    }
+
+                    @if (!string.IsNullOrEmpty(station.LastError))
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error" Class="mt-2">@station.LastError</MudText>
+                    }
+                    @if (station.LastRecordId is > 0 && !string.IsNullOrEmpty(station.LastMonthKey))
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Class="mt-1 pa-0" EndIcon="@Icons.Material.Filled.ChevronRight"
+                                   Href="@($"/query/{station.LastMonthKey}/{station.LastRecordId}")">本站明细</MudButton>
+                    }
+                </MudPaper>
+            </MudItem>
+        }
+    </MudGrid>
+}
+
+<MudText Typo="Typo.h6" Class="mt-5 mb-2">最近采集</MudText>
+<MudTable Items="_recent" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+    <HeaderContent>
+        <MudTh Class="dt-nowrap">完成时间</MudTh>
+        <MudTh>工站</MudTh>
+        <MudTh>托盘码</MudTh>
+        <MudTh>流水号</MudTh>
+        <MudTh>判定</MudTh>
+        <MudTh Class="dt-num">耗时</MudTh>
+        <MudTh></MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="完成时间" Class="dt-nowrap">
+            @* 格子里只放时分秒，完整时间戳（含日期与毫秒）用 tooltip：
+               平板没有 hover，原生 title 等于把诊断要用的精度藏起来。 *@
+            <MudTooltip Text="@context.CompleteTime.ToString("yyyy-MM-dd HH:mm:ss.fff")">
+                <span>@context.CompleteTime.ToString("HH:mm:ss")</span>
+            </MudTooltip>
+        </MudTd>
+        <MudTd DataLabel="工站">@context.StationCode</MudTd>
+        <MudTd DataLabel="托盘码">@context.PalletCode</MudTd>
+        <MudTd DataLabel="流水号">@context.SerialNo</MudTd>
+        <MudTd DataLabel="判定">
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                     Color="@(context.Judgement == Judgement.Ng ? Color.Error : Color.Success)">
+                @(context.Judgement == Judgement.Ng ? "NG" : "OK")
+            </MudChip>
+            @if (!string.IsNullOrEmpty(context.Error))
+            {
+                <MudText Typo="Typo.caption" Color="Color.Error">@context.Error</MudText>
+            }
+        </MudTd>
+        <MudTd DataLabel="耗时" Class="dt-num dt-nowrap">@context.DurationMs ms</MudTd>
+        <MudTd>
+            <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
+                       Href="@($"/query/{context.MonthKey}/{context.RecordId}")">明细</MudButton>
+        </MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText Typo="Typo.body2" Class="dt-muted py-3">
+            还没有采集记录。可在「PLC 仿真」页触发一条走线，快速验证采集链路是否通畅。
+        </MudText>
+    </NoRecordsContent>
+</MudTable>
+
+@code {
+    private IReadOnlyList<PlcRuntimeStatus> _plcs = [];
+    private IReadOnlyList<StationRuntimeStatus> _stations = [];
+    private IReadOnlyList<CollectFeedItem> _recent = [];
+    private DateTime _now = DateTime.Now;
+    private Timer? _clock;
+    private bool _collectEnabled = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Refresh();
+        Status.Changed += OnChanged;
+        _clock = new Timer(_ => InvokeAsync(() =>
+        {
+            _now = DateTime.Now;
+            StateHasChanged();
+        }), null, 1000, 1000);
+
+        try
+        {
+            // 采集开关被关掉时看板会静静停住，不写出来的话很容易被当成页面死掉或采集故障。
+            _collectEnabled = (await Config.GetSnapshotAsync()).Settings.CollectEnabled;
+        }
+        catch
+        {
+            // 配置读不出来就不下结论：漏一条提示比给一条假提示好。
+        }
+    }
+
+    private void OnChanged() => InvokeAsync(() => { Refresh(); StateHasChanged(); });
+
+    private void Refresh()
+    {
+        _plcs = Status.Plcs;
+        _stations = Status.Stations;
+        _recent = Status.Recent;
+    }
+
+    /// <summary>托盘码与流水号一起作 key：换工件时 Blazor 重建元素，CSS 闪动动画才会重放。</summary>
+    private static string BeatKey(StationRuntimeStatus station)
+        => $"{station.LastPalletCode}|{station.LastSerialNo}";
+
+    private DateTime? LastBeat => _stations.Select(s => s.LastCompleteTime).Max();
+
+    private string CadenceText => Relative(LastBeat);
+
+    /// <summary>节拍新鲜度：绿=30 秒内，黄=5 分钟内，其余灰。空闲待料不该报红。</summary>
+    private Color CadenceColor
+    {
+        get
+        {
+            if (LastBeat is not { } beat) return Color.Default;
+            var idle = _now - beat;
+            if (idle < TimeSpan.FromSeconds(30)) return Color.Success;
+            return idle < TimeSpan.FromMinutes(5) ? Color.Warning : Color.Default;
+        }
+    }
+
+    private static string CardClass(StationRuntimeStatus station)
+    {
+        if (station.State == StationRuntimeState.Disabled) return "dash-station disabled";
+        if (station.State == StationRuntimeState.Fault) return "dash-station fault";
+        if (station.State == StationRuntimeState.Busy) return "dash-station busy";
+        if (station.LastJudgement == Judgement.Ng) return "dash-station ng";
+        if (station.LastJudgement == Judgement.Ok) return "dash-station ok";
+        return "dash-station";
+    }
+
+    /// <summary>点位行样式：红区（超规格）优先于黄区（预警带）。</summary>
+    private static string TagClass(StationLiveTag tag)
+        => tag.OutOfLimit ? "dash-tag out" : tag.Warning ? "dash-tag warn" : "dash-tag";
+
+    private static Color StateColor(StationRuntimeStatus station)
+    {
+        if (station.State == StationRuntimeState.Busy) return Color.Info;
+        if (station.State == StationRuntimeState.Fault) return Color.Error;
+        if (station.State == StationRuntimeState.Disabled) return Color.Dark;
+        if (station.LastJudgement == Judgement.Ng) return Color.Error;
+        if (station.LastJudgement == Judgement.Ok) return Color.Success;
+        return Color.Default;
+    }
+
+    private static string StateLabel(StationRuntimeStatus station)
+    {
+        if (station.State == StationRuntimeState.Busy) return "采集中";
+        if (station.State == StationRuntimeState.Fault) return "故障";
+        if (station.State == StationRuntimeState.Disabled) return "停用";
+        if (station.LastJudgement == Judgement.Ng) return "NG";
+        if (station.LastJudgement == Judgement.Ok) return "OK";
+        return "空闲";
+    }
+
+    private static IReadOnlyList<LineSeries> SparkSeries(StationRuntimeStatus station, StationLiveCurve curve)
+    {
+        if (curve.Values.Length == 0)
+        {
+            return [];
+        }
+
+        return
+        [
+            new LineSeries
+            {
+                Name = curve.Name,
+                Values = curve.Values,
+                Color = station.LastJudgement == Judgement.Ng ? ChartColors.Alert : ChartColors.Primary
+            }
+        ];
+    }
+
+
+    private string Relative(DateTime? time)
+    {
+        if (time is null) return "尚无节拍";
+        var span = _now - time.Value;
+        if (span.TotalSeconds < 5) return "刚刚";
+        if (span.TotalSeconds < 60) return $"{(int)span.TotalSeconds} 秒前";
+        if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes} 分前";
+        return time.Value.ToString("HH:mm:ss");
+    }
+
+    public void Dispose()
+    {
+        Status.Changed -= OnChanged;
+        _clock?.Dispose();
+    }
+}

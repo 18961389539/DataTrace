@@ -1,0 +1,31 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN" data-enhance-nav="false">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link href="_content/MudBlazor/MudBlazor.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <HeadOutlet @rendermode="InteractiveServer" />
+    <title>DataTrace</title>
+</head>
+<body>
+    <Routes @rendermode="InteractiveServer" />
+    @* Blazor Server 掉线时页面只会静静停住，产线上极易被误读成"采集停了"。
+       提供自定义节点后由 blazor.web.js 切换 show/failed 类，样式见 app.css。 *@
+    <div id="components-reconnect-modal" class="components-reconnect-hide">
+        <div class="dt-reconnect try">
+            <b>与页面的连接已中断，正在重连…</b>
+            看板数值此刻不会刷新，服务端采集不受影响。
+        </div>
+        <div class="dt-reconnect dead">
+            <b>重连失败</b>
+            刷新页面即可恢复查看；采集与判定在后台照常运行。
+        </div>
+    </div>
+    <script src="_content/MudBlazor/MudBlazor.min.js"></script>
+    <script src="js/datatrace.js"></script>
+    <script src="_framework/blazor.web.js"></script>
+</body>
+</html>

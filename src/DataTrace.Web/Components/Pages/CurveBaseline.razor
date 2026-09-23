@@ -1,0 +1,502 @@
+@page "/curve-baseline"
+@attribute [Authorize]
+@using System.Globalization
+@using DataTrace.Application.Configuration
+@using DataTrace.Application.Evaluation
+@using DataTrace.Application.Reporting
+@using DataTrace.Domain.Entities
+@using DataTrace.Domain.Enums
+@using DataTrace.Domain.Evaluation
+@inject ICurveTemplateService TemplateService
+@inject IConfigRepository Config
+@inject ICurveBaselineCache BaselineCache
+@inject DtToast Toast
+
+<PageHeader Title="波形基线" Description="用历史合格波形建立基线，再对新波形做多维度偏离打分">
+    <ChildContent>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Info">
+            @(_recipeCode == "" ? "未选型号（默认限值）" : $"型号 {_recipeCode}")
+        </MudChip>
+        <MudTooltip Text="采集流水线用它给每条新波形打分（只记录，不参与判定）">
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                     Color="@(BaselineCache.Current is null ? Color.Default : Color.Success)">
+                在线基线 @CacheText()
+            </MudChip>
+        </MudTooltip>
+    </ChildContent>
+</PageHeader>
+
+<MudPaper Class="dt-filter-card mb-3">
+    <DateRangeFilter @bind-From="_from" @bind-To="_to" OnRangeChanged="Load" />
+
+    <MudGrid Class="dt-filters">
+        <MudItem xs="12" sm="6" md="4" lg="3">
+            <MudSelect T="int?" Value="_stationId" ValueChanged="OnStationChanged" Label="工站">
+                @foreach (var s in _stations)
+                {
+                    <MudSelectItem T="int?" Value="@s.Id">@s.Code @s.Name</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="4" lg="3">
+            <MudSelect T="int" Value="_curveId" ValueChanged="OnCurveChanged" Label="曲线">
+                @foreach (var c in _curves)
+                {
+                    <MudSelectItem T="int" Value="@c.Id">@c.Code @c.Name</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="4" lg="3">
+            <MudSelect T="string" Value="_seriesName" ValueChanged="OnSeriesChanged" Label="序列"
+                       HelperText="主序列 = 优先 Y 角色">
+                <MudSelectItem T="string" Value="@PrimarySeries">（主序列）</MudSelectItem>
+                @foreach (var name in _seriesNames)
+                {
+                    <MudSelectItem T="string" Value="@name">@name</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+    </MudGrid>
+    <MudStack Row="true" Spacing="2" Class="mt-3">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Load" Disabled="_loading"
+                   StartIcon="@Icons.Material.Filled.Refresh">
+            @(_loading ? "分析中…" : "重新分析")
+        </MudButton>
+    </MudStack>
+</MudPaper>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-3" />
+}
+
+@if (_report is null)
+{
+    <MudPaper Class="pa-6">
+        <MudText Typo="Typo.body2" Class="dt-muted">请选择工站与曲线。</MudText>
+    </MudPaper>
+}
+else
+{
+    <MudGrid>
+        <MudItem xs="12">
+            <MudPaper Class="pa-4">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                    <MudText Typo="Typo.h6">@_report.CurveCode @_report.CurveName · @_report.SeriesName</MudText>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@TemplateColor(_report.Template.IsReliable)">
+                        @(_report.Template.IsReliable ? "基线可用" : "基线不可用")
+                    </MudChip>
+                    <MudSpacer />
+                    <MudText Typo="Typo.caption" Class="dt-muted">
+                        @(string.IsNullOrEmpty(_report.Unit) ? "" : $"单位 {_report.Unit} 　")
+                        取到 @_report.TotalSampleCount 条样本（不合格 @_report.NgCount 条）
+                    </MudText>
+                </MudStack>
+
+                @if (!string.IsNullOrEmpty(_report.EmptyReason))
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">@_report.EmptyReason</MudAlert>
+                }
+
+                <MudGrid Class="dt-kpi mb-3">
+                    <MudItem xs="6" sm="4" md="2">
+                        <div class="dt-metric"><div class="dt-metric-label">基线样本</div><div class="dt-metric-value">@_report.BaselineSampleCount</div></div>
+                    </MudItem>
+                    <MudItem xs="6" sm="4" md="2">
+                        <div class="dt-metric"><div class="dt-metric-label">可比对维度</div><div class="dt-metric-value">@_report.Template.ScorableDimensionCount</div></div>
+                    </MudItem>
+                    <MudItem xs="6" sm="4" md="2">
+                        <div class="dt-metric"><div class="dt-metric-label">参与打分</div><div class="dt-metric-value">@_report.Recent.Count</div></div>
+                    </MudItem>
+                    <MudItem xs="6" sm="4" md="2">
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">异常</div>
+                            <div class="dt-metric-value" style="@(_report.AbnormalCount > 0 ? "color:var(--mud-palette-error)" : "")">@_report.AbnormalCount</div>
+                        </div>
+                    </MudItem>
+                    <MudItem xs="6" sm="4" md="2">
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">可疑</div>
+                            <div class="dt-metric-value" style="@(_report.SuspiciousCount > 0 ? "color:var(--mud-palette-warning)" : "")">@_report.SuspiciousCount</div>
+                        </div>
+                    </MudItem>
+                    <MudItem xs="6" sm="4" md="2">
+                        <div class="dt-metric"><div class="dt-metric-label">型号不匹配</div><div class="dt-metric-value">@_report.MismatchedRecipeCount</div></div>
+                    </MudItem>
+                </MudGrid>
+
+                @if (!string.IsNullOrEmpty(_report.Template.Note))
+                {
+                    <MudText Typo="Typo.caption" Class="dt-muted mb-2">@_report.Template.Note</MudText>
+                }
+
+                <MudText Typo="Typo.subtitle2" Class="mt-2 mb-1">基线（中位数 / 稳健离散度）</MudText>
+                <MudTable Items="_report.Template.Dimensions" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+                    <HeaderContent>
+                        <MudTh>维度</MudTh>
+                        <MudTh>基线</MudTh>
+                        <MudTh>离散度 σ</MudTh>
+                        <MudTh>正常范围（±3σ）</MudTh>
+                        <MudTh>历史范围</MudTh>
+                        <MudTh>离群样本</MudTh>
+                        <MudTh>状态</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd>@CurveFeatureDimensions.Label(context.Dimension)</MudTd>
+                        <MudTd>@Num(context.Center)</MudTd>
+                        <MudTd>@(context.IsConstant ? "—" : Num(context.Sigma))</MudTd>
+                        <MudTd>@(context.IsConstant ? "—" : $"{Num(context.LowerBound)} ~ {Num(context.UpperBound)}")</MudTd>
+                        <MudTd>@Num(context.Min) ~ @Num(context.Max)</MudTd>
+                        <MudTd>@(context.OutlierCount > 0 ? context.OutlierCount.ToString() : "—")</MudTd>
+                        <MudTd>
+                            @if (context.IsConstant)
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Default">恒定</MudChip>
+                            }
+                            else if (context.IsScorable)
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Success">参与</MudChip>
+                            }
+                            else
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Default">不参与</MudChip>
+                            }
+                        </MudTd>
+                    </RowTemplate>
+                </MudTable>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12">
+            <MudPaper Class="pa-4">
+                <MudText Typo="Typo.h6" Class="mb-2">最近 @_report.Recent.Count 条波形的偏离</MudText>
+                @if (_report.Recent.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="dt-muted py-3">该区间内没有可打分的样本。</MudText>
+                }
+                else
+                {
+                    <MudTable T="CurveTemplateScore" Items="_report.Recent" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm"
+                              @bind-SelectedItem="_selected" MultiSelection="false">
+                        <HeaderContent>
+                            <MudTh>时间</MudTh>
+                            <MudTh>托盘码</MudTh>
+                            <MudTh>判定</MudTh>
+                            <MudTh>综合偏离（RMS z）</MudTh>
+                            <MudTh>最大偏离</MudTh>
+                            <MudTh>偏离维度</MudTh>
+                            <MudTh>结论</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd>@context.Time.ToString("MM-dd HH:mm:ss")</MudTd>
+                            <MudTd>@context.PalletCode</MudTd>
+                            <MudTd>
+                                @if (context.IsNg)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Error">NG</MudChip>
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.caption" Class="dt-muted">OK</MudText>
+                                }
+                            </MudTd>
+                            <MudTd>@Num(context.RmsZ, "0.00")</MudTd>
+                            <MudTd>@Num(context.MaxAbsZ, "0.00") σ</MudTd>
+                            <MudTd>
+                                @if (context.WorstDimension is { } worst)
+                                {
+                                    @CurveFeatureDimensions.Label(worst)
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.caption" Class="dt-muted">—</MudText>
+                                }
+                                @if (context.ConstantBreachCount > 0)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                                             Class="ml-1">恒定维变化 @context.ConstantBreachCount</MudChip>
+                                }
+                            </MudTd>
+                            <MudTd>
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@VerdictColor(context.Verdict)">
+                                    @VerdictLabel(context.Verdict)
+                                </MudChip>
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+
+                    @if (_selected is not null)
+                    {
+                        <MudDivider Class="my-3" />
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                            <MudText Typo="Typo.subtitle2">
+                                @_selected.PalletCode 的偏离明细
+                            </MudText>
+                            <MudText Typo="Typo.caption" Class="dt-muted">
+                                参与比对 @_selected.ScoredDimensionCount 个维度，仅列出偏离 ≥ @CurveTemplateMatcher.SuspiciousZ.ToString("0.#")σ 的项
+                            </MudText>
+                        </MudStack>
+                        @if (_selected.Deviations.Count == 0)
+                        {
+                            <MudText Typo="Typo.body2" Class="dt-muted">所有维度都在基线范围内。</MudText>
+                        }
+                        else
+                        {
+                            <MudTable Items="_selected.Deviations" Dense="true" Breakpoint="Breakpoint.Sm">
+                                <HeaderContent>
+                                    <MudTh>维度</MudTh>
+                                    <MudTh>实测值</MudTh>
+                                    <MudTh>基线</MudTh>
+                                    <MudTh>离散度 σ</MudTh>
+                                    <MudTh>偏离倍数</MudTh>
+                                    <MudTh>类型</MudTh>
+                                </HeaderContent>
+                                <RowTemplate>
+                                    <MudTd>@CurveFeatureDimensions.Label(context.Dimension)</MudTd>
+                                    <MudTd>@Num(context.Value)</MudTd>
+                                    <MudTd>@Num(context.BaselineCenter)</MudTd>
+                                    <MudTd>@(context.IsConstantBreach ? "0（恒定）" : Num(context.BaselineSigma))</MudTd>
+                                    <MudTd>
+                                        @if (context.ZScore is { } z)
+                                        {
+                                            <span style="@(Math.Abs(z) >= CurveTemplateMatcher.AbnormalMaxZ ? "color:var(--mud-palette-error);font-weight:600" : "")">
+                                                @z.ToString("+0.00;-0.00", CultureInfo.InvariantCulture) σ
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span style="color:var(--mud-palette-warning)">历史上从未变化</span>
+                                        }
+                                    </MudTd>
+                                    <MudTd>@(context.IsConstantBreach ? "恒定维被打破" : "超出范围")</MudTd>
+                                </RowTemplate>
+                            </MudTable>
+                        }
+                    }
+                }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12">
+            <MudPaper Class="pa-4">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                    <MudText Typo="Typo.h6">影子模式对照</MudText>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Info">
+                        偏离分不影响判定
+                    </MudChip>
+                </MudStack>
+                <MudText Typo="Typo.caption" Class="dt-muted">
+                    把「偏离分判为异常」与「实际判废」交叉。
+                    决定这个算法能不能从"只记录"升级成"预警"的是<b>误报</b>这一格 ——
+                    产线上天天乱响的报警会让人把整个面板关掉，那时再准也没用。
+                </MudText>
+
+                @if (_report.Shadow.Checked == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="dt-muted mt-3">
+                        该区间内没有拿到偏离结论的样本（基线不可用，或全部样本都不合格）。
+                    </MudText>
+                }
+                else
+                {
+                    <MudGrid Class="dt-kpi mt-3 mb-2">
+                        <MudItem xs="6" sm="4" md="2">
+                            <div class="dt-metric"><div class="dt-metric-label">已比对</div><div class="dt-metric-value">@_report.Shadow.Checked</div></div>
+                        </MudItem>
+                        <MudItem xs="6" sm="4" md="2">
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">检出</div>
+                                <div class="dt-metric-value" style="@(_report.Shadow.TruePositive > 0 ? "color:var(--mud-palette-success)" : "")">@_report.Shadow.TruePositive</div>
+                            </div>
+                        </MudItem>
+                        <MudItem xs="6" sm="4" md="2">
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">误报</div>
+                                <div class="dt-metric-value" style="@(_report.Shadow.FalsePositive > 0 ? "color:var(--mud-palette-warning)" : "")">@_report.Shadow.FalsePositive</div>
+                            </div>
+                        </MudItem>
+                        <MudItem xs="6" sm="4" md="2">
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">漏报</div>
+                                <div class="dt-metric-value" style="@(_report.Shadow.FalseNegative > 0 ? "color:var(--mud-palette-error)" : "")">@_report.Shadow.FalseNegative</div>
+                            </div>
+                        </MudItem>
+                        <MudItem xs="6" sm="4" md="2">
+                            <div class="dt-metric"><div class="dt-metric-label">一致正常</div><div class="dt-metric-value">@_report.Shadow.TrueNegative</div></div>
+                        </MudItem>
+                        <MudItem xs="6" sm="4" md="2">
+                            <div class="dt-metric"><div class="dt-metric-label">误报率</div><div class="dt-metric-value">@Ratio(_report.Shadow.FalsePositiveRate)</div></div>
+                        </MudItem>
+                    </MudGrid>
+                    <MudText Typo="Typo.caption" Class="dt-muted">
+                        准确率（报警中真有问题）@Ratio(_report.Shadow.Precision) ·
+                        召回率（不良中被抓到）@Ratio(_report.Shadow.Recall)
+                        （检出 = 偏离异常且判废；误报 = 偏离异常但合格；漏报 = 偏离正常但判废）
+                    </MudText>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    /// <summary>序列下拉里"主序列"那一项的值：留空即由服务层落到 Y 优先序列。</summary>
+    /// <summary>不能取空串：MudSelect 把 "" 当作"未选择"，会把标签和选项文字叠在一起画。</summary>
+    private const string PrimarySeries = "@primary";
+
+    private IReadOnlyList<Station> _stations = [];
+    private IReadOnlyList<CurveDefinition> _curves = [];
+    private IReadOnlyList<string> _seriesNames = [];
+
+    private int? _stationId;
+    private int _curveId;
+    private string _seriesName = PrimarySeries;
+    /// <summary>
+    /// 默认区间起点，与「近 7 天」预设取齐。字段初始化和查询兜底共用这一处 ——
+    /// 之前是两个各写一遍的 -6，改默认区间时很容易只改到其中一个。
+    /// 用计算属性而不是静态字段，免得服务长跑后停在启动那天。
+    /// </summary>
+    private static DateTime DefaultFrom => DateTime.Today.AddDays(-6);
+
+    private DateTime? _from = DefaultFrom;
+    private DateTime? _to = DateTime.Today;
+
+    private CurveBaselineReport? _report;
+    private CurveTemplateScore? _selected;
+    private string _recipeCode = "";
+    private bool _loading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var snapshot = await Config.GetSnapshotAsync();
+        _stations = snapshot.Stations;
+        _recipeCode = snapshot.ActiveRecipe?.Code ?? "";
+
+        if (_stations.Count > 0)
+        {
+            _stationId = _stations[0].Id;
+            RefreshCurves();
+        }
+
+        await Load();
+    }
+
+    private void RefreshCurves()
+    {
+        _curves = _stations.FirstOrDefault(s => s.Id == _stationId)?.Curves.ToList() ?? [];
+        if (_curves.All(c => c.Id != _curveId))
+        {
+            _curveId = _curves.Count > 0 ? _curves[0].Id : 0;
+        }
+
+        RefreshSeries();
+    }
+
+    private void RefreshSeries()
+    {
+        _seriesNames = _curves.FirstOrDefault(c => c.Id == _curveId)?.Series
+            .Select(s => s.Name)
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .ToList() ?? [];
+
+        if (_seriesName != PrimarySeries && !_seriesNames.Contains(_seriesName))
+        {
+            _seriesName = PrimarySeries;
+        }
+    }
+
+    private async Task OnStationChanged(int? stationId)
+    {
+        _stationId = stationId;
+        RefreshCurves();
+        await Load();
+    }
+
+    private async Task OnCurveChanged(int curveId)
+    {
+        _curveId = curveId;
+        RefreshSeries();
+        await Load();
+    }
+
+    private async Task OnSeriesChanged(string seriesName)
+    {
+        _seriesName = seriesName ?? PrimarySeries;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        if (DateRangeFilter.IsReversed(_from, _to))
+        {
+            Toast.Add(DateRangeFilter.ReversedRangeMessage, Severity.Warning);
+            return;
+        }
+
+        if (_curveId == 0)
+        {
+            _report = null;
+            return;
+        }
+
+        _loading = true;
+        try
+        {
+            var from = DateRangeFilter.StartOf(_from, DefaultFrom);
+            var to = DateRangeFilter.EndOfInclusive(_to);
+
+            _report = await TemplateService.GetBaselineAsync(
+                _curveId,
+                _seriesName == PrimarySeries ? null : _seriesName,
+                from,
+                to);
+
+            // 换了曲线/序列之后旧的选中项就不再属于当前结果集了。
+            _selected = null;
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"波形基线分析失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string VerdictLabel(CurveTemplateVerdict verdict) => verdict switch
+    {
+        CurveTemplateVerdict.Normal => "正常",
+        CurveTemplateVerdict.Suspicious => "可疑",
+        CurveTemplateVerdict.Abnormal => "异常",
+        _ => "基线不可用"
+    };
+
+    private static Color VerdictColor(CurveTemplateVerdict verdict) => verdict switch
+    {
+        CurveTemplateVerdict.Normal => Color.Success,
+        CurveTemplateVerdict.Suspicious => Color.Warning,
+        CurveTemplateVerdict.Abnormal => Color.Error,
+        _ => Color.Default
+    };
+
+    private static Color TemplateColor(bool reliable) => reliable ? Color.Success : Color.Warning;
+
+    private static string Num(double value, string format = "0.####")
+        => value.ToString(format, CultureInfo.InvariantCulture);
+
+    private static string Num(double? value, string format = "0.####")
+        => value is { } v ? Num(v, format) : "—";
+
+    private static string Ratio(double? value)
+        => value is { } v ? v.ToString("P0", CultureInfo.InvariantCulture) : "—";
+
+    /// <summary>在线基线的状态：后台服务每 5 分钟重建一次，这里只读它当前生效的那一份。</summary>
+    private string CacheText()
+    {
+        var snapshot = BaselineCache.Current;
+        return snapshot is null
+            ? "尚未建立"
+            : $"{snapshot.Count} 条序列 · {snapshot.RefreshedAt:HH:mm:ss}";
+    }
+}

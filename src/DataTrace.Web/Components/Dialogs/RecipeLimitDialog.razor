@@ -1,0 +1,176 @@
+﻿@using DataTrace.Domain.Evaluation
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">型号限值 · @Recipe.Code @Recipe.Name</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+            这里填的是<b>本型号的覆盖值</b>，留空的项沿用点位默认限值（不是「不判」）。
+            五个字段全部留空的点位等于没有覆盖，保存时会被丢弃。
+        </MudAlert>
+
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            @* 报错放在最上方：这个表格可以拉到几十行，错误写在底部时用户点「保存」只会看到什么都没发生。 *@
+            <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">@_error</MudAlert>
+        }
+
+        @if (_rows.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Class="dt-muted py-3">还没有配置任何点位，请先到「工站配置」里添加点位。</MudText>
+        }
+        else
+        {
+            <MudText Typo="Typo.caption" Class="dt-muted mb-2">
+                共 @_rows.Count 个点位，其中 @_rows.Count(r => r.IsOverridden) 个被本型号覆盖。
+            </MudText>
+            @* 限值矩阵刻意不折叠成卡片：五个字段并排才能横向比对；窄屏改为整表横向滚动。 *@
+            <div class="dt-scroll-x">
+                <MudTable Items="_rows" Dense="true" Hover="true" Breakpoint="Breakpoint.None"
+                           RowClassFunc="@((row, _) => row.Error is null ? "" : "dt-row-error")">
+                <HeaderContent>
+                    <MudTh>点位</MudTh>
+                    <MudTh>点位默认限值</MudTh>
+                    <MudTh>规格下限</MudTh>
+                    <MudTh>规格上限</MudTh>
+                    <MudTh>预警下限</MudTh>
+                    <MudTh>预警上限</MudTh>
+                    <MudTh>目标值</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd Class="dt-nowrap">
+                        @context.StationCode · @context.Tag.Code
+                        <MudText Typo="Typo.caption" Class="dt-muted">@context.Tag.Name</MudText>
+                        @if (context.Error is not null)
+                        {
+                            <MudText Typo="Typo.caption" Class="dt-text-error">@context.Error</MudText>
+                        }
+                    </MudTd>
+                    <MudTd Class="dt-nowrap">
+                        <MudText Typo="Typo.caption" Class="dt-muted">
+                            规格 @DisplayLabels.LimitRange(context.Tag.LowerLimit, context.Tag.UpperLimit)
+                            · 预警 @DisplayLabels.LimitRange(context.Tag.WarningLowerLimit, context.Tag.WarningUpperLimit)
+                            · 目标 @(context.Tag.TargetValue?.ToString("0.###") ?? "-")
+                        </MudText>
+                    </MudTd>
+                    <MudTd><MudNumericField @bind-Value="context.Lower" @bind-Value:after="@(() => context.Error = null)" Placeholder="默认" Variant="Variant.Outlined"
+                                             Margin="Margin.Dense" Class="dt-limit-field" /></MudTd>
+                    <MudTd><MudNumericField @bind-Value="context.Upper" @bind-Value:after="@(() => context.Error = null)" Placeholder="默认" Variant="Variant.Outlined"
+                                             Margin="Margin.Dense" Class="dt-limit-field" /></MudTd>
+                    <MudTd><MudNumericField @bind-Value="context.WarningLower" @bind-Value:after="@(() => context.Error = null)" Placeholder="默认" Variant="Variant.Outlined"
+                                             Margin="Margin.Dense" Class="dt-limit-field" /></MudTd>
+                    <MudTd><MudNumericField @bind-Value="context.WarningUpper" @bind-Value:after="@(() => context.Error = null)" Placeholder="默认" Variant="Variant.Outlined"
+                                             Margin="Margin.Dense" Class="dt-limit-field" /></MudTd>
+                    <MudTd><MudNumericField @bind-Value="context.Target" @bind-Value:after="@(() => context.Error = null)" Placeholder="默认" Variant="Variant.Outlined"
+                                             Margin="Margin.Dense" Class="dt-limit-field" /></MudTd>
+                </RowTemplate>
+                </MudTable>
+            </div>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save"
+                   OnClick="Submit">保存</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance? MudDialog { get; set; }
+
+    [Parameter] public Recipe Recipe { get; set; } = new();
+
+    [Parameter] public IReadOnlyList<Station> Stations { get; set; } = [];
+
+    private readonly List<Row> _rows = [];
+    private string? _error;
+
+    protected override void OnInitialized()
+    {
+        foreach (var station in Stations.OrderBy(s => s.Sequence))
+        {
+            foreach (var tag in station.Tags.Where(t => t.Enabled && t.DataType != PlcDataType.String))
+            {
+                var existing = RecipeLimitResolver.FindOverride(Recipe, tag.Id);
+                _rows.Add(new Row
+                {
+                    Tag = tag,
+                    StationCode = station.Code,
+                    LimitId = existing?.Id ?? 0,
+                    Lower = existing?.LowerLimit,
+                    Upper = existing?.UpperLimit,
+                    WarningLower = existing?.WarningLowerLimit,
+                    WarningUpper = existing?.WarningUpperLimit,
+                    Target = existing?.TargetValue
+                });
+            }
+        }
+    }
+
+    private void Cancel() => MudDialog?.Cancel();
+
+    private void Submit()
+    {
+        var result = _rows.Where(r => !r.IsBlank).Select(r => r.ToLimit()).ToList();
+
+        // 一次把所有行都判完并就地标红：表格可能拉到几十行，只报第一条的话
+        // 用户看到顶部一句提示，根本不知道是哪一格拦住了保存。
+        var bad = 0;
+        foreach (var row in _rows)
+        {
+            // 规则本身在 TagLimits.ConsistencyError()：工站配置页与这里必须共用一份。
+            // 校验对象是"生效限值"（覆盖值合并点位默认值），否则只改黄线时
+            // 会因为看不到默认红线而漏判。
+            row.Error = row.IsBlank
+                ? null
+                : TagLimits.From(row.Tag).Override(row.ToLimits()).ConsistencyError();
+            if (row.Error is not null)
+            {
+                bad++;
+            }
+        }
+
+        if (bad > 0)
+        {
+            _error = $"{bad} 个点位的限值互相矛盾，已在表中标红。";
+            return;
+        }
+
+        _error = null;
+        MudDialog?.Close(DialogResult.Ok(result));
+    }
+
+    private sealed class Row
+    {
+        public required TagDefinition Tag { get; init; }
+        public required string StationCode { get; init; }
+        public int LimitId { get; init; }
+        public double? Lower { get; set; }
+        public double? Upper { get; set; }
+        public double? WarningLower { get; set; }
+        public double? WarningUpper { get; set; }
+        public double? Target { get; set; }
+
+        /// <summary>整行的一致性校验结果。黄线红线是跨字段的关系，所以标在行上而不是某个输入框上。</summary>
+        public string? Error { get; set; }
+
+        /// <summary>五个字段全空 = 不覆盖，保存时丢弃。</summary>
+        public bool IsBlank
+            => Lower is null && Upper is null && WarningLower is null && WarningUpper is null && Target is null;
+
+        public bool IsOverridden => !IsBlank;
+
+        public TagLimits ToLimits() => new(Lower, Upper, WarningLower, WarningUpper, Target);
+
+        public RecipeLimit ToLimit() => new()
+        {
+            Id = LimitId,
+            TagId = Tag.Id,
+            LowerLimit = Lower,
+            UpperLimit = Upper,
+            WarningLowerLimit = WarningLower,
+            WarningUpperLimit = WarningUpper,
+            TargetValue = Target
+        };
+    }
+}

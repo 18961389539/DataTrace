@@ -1,0 +1,242 @@
+@inject IDialogService Dialogs
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">波形判据 · @Curve.Code @Curve.Name</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+            留空的项不参与判定。一条判据只作用于一个序列；序列选「主序列」时自动跟随该曲线的主序列（优先 Y 角色）。
+            不配置任何判据时，这条曲线只做点位限值判定。
+        </MudAlert>
+
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            @* 报错放在最上方：判据卡片可以叠很多条，错误写在底部时用户点「保存」只会看到什么都没发生。 *@
+            <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">@_error</MudAlert>
+        }
+
+        @if (_items.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Class="dt-muted py-3">
+                还没有判据。点下方「新增判据」，可对峰值、均值、面积、上升/保压段斜率等波形指标设上下限。
+            </MudText>
+        }
+
+        @foreach (var item in _items)
+        {
+            <MudPaper Outlined="true" Class="pa-3 mb-3">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-1">
+                    <MudSelect T="string" Value="@SeriesToUi(item.SeriesName)" ValueChanged="@(name => SeriesFromUi(item, name))"
+                               Label="作用序列" Dense="true"
+                               Margin="Margin.Dense" Style="max-width:220px" Disabled="!item.Enabled">
+                        <MudSelectItem T="string" Value="@AutoSeries">主序列（Y 优先）</MudSelectItem>
+                        @foreach (var series in Curve.Series)
+                        {
+                            <MudSelectItem T="string" Value="@series.Name">@series.Name（@series.Role）</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSwitch @bind-Value="item.Enabled" Label="启用" Color="Color.Primary" />
+                    <MudSpacer />
+                    <MudTooltip Text="删除这条判据">
+                        <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline" Color="Color.Error" Size="Size.Small"
+                                       aria-label="删除判据"
+                                       OnClick="@(() => RemoveAsync(item))" />
+                    </MudTooltip>
+                </MudStack>
+
+                <MudText Typo="Typo.caption" Class="dt-muted">峰值与均值</MudText>
+                <MudGrid Class="dt-filters">
+                    <MudItem xs="6" md="3">
+                        <MudNumericField @bind-Value="item.PeakMin" Label="峰值下限" HelperText="峰值不够大" Disabled="!item.Enabled" />
+                    </MudItem>
+                    <MudItem xs="6" md="3">
+                        <MudNumericField @bind-Value="item.PeakMax" Label="峰值上限" HelperText="压力过高" Disabled="!item.Enabled" />
+                    </MudItem>
+                    <MudItem xs="6" md="3">
+                        <MudNumericField @bind-Value="item.MeanMin" Label="均值下限" Disabled="!item.Enabled" />
+                    </MudItem>
+                    <MudItem xs="6" md="3">
+                        <MudNumericField @bind-Value="item.MeanMax" Label="均值上限" Disabled="!item.Enabled" />
+                    </MudItem>
+                </MudGrid>
+
+                <MudText Typo="Typo.caption" Class="dt-muted">面积与波动</MudText>
+                <MudGrid Class="dt-filters">
+                    <MudItem xs="6" md="3">
+                        <MudNumericField @bind-Value="item.AreaMin" Label="面积下限" HelperText="做功不足" Disabled="!item.Enabled" />
+                    </MudItem>
+                    <MudItem xs="6" md="3">
+                        <MudNumericField @bind-Value="item.AreaMax" Label="面积上限" Disabled="!item.Enabled" />
+                    </MudItem>
+                    <MudItem xs="6" md="3">
+                        <MudNumericField @bind-Value="item.StdDevMax" Label="标准差上限" HelperText="波动过大" Disabled="!item.Enabled" />
+                    </MudItem>
+                    <MudItem xs="6" md="3">
+                        <MudNumericField @bind-Value="item.OscillationMax" Label="振荡次数上限" HelperText="抖动/爬行" Disabled="!item.Enabled" />
+                    </MudItem>
+                </MudGrid>
+
+                <MudText Typo="Typo.caption" Class="dt-muted">分段斜率</MudText>
+                <MudGrid Class="dt-filters">
+                    <MudItem xs="6" md="3">
+                        <MudNumericField @bind-Value="item.RiseSlopeMin" Label="上升斜率下限" HelperText="爬升无力" Disabled="!item.Enabled" />
+                    </MudItem>
+                    <MudItem xs="6" md="3">
+                        <MudNumericField @bind-Value="item.RiseSlopeMax" Label="上升斜率上限" HelperText="冲击过大" Disabled="!item.Enabled" />
+                    </MudItem>
+                    <MudItem xs="6" md="3">
+                        <MudNumericField @bind-Value="item.HoldSlopeMin" Label="保压斜率下限" HelperText="保持不住，取负值" Disabled="!item.Enabled" />
+                    </MudItem>
+                    <MudItem xs="6" md="3">
+                        <MudNumericField @bind-Value="item.HoldSlopeMax" Label="保压斜率上限" HelperText="未卸压" Disabled="!item.Enabled" />
+                    </MudItem>
+                </MudGrid>
+
+                <MudText Typo="Typo.caption" Class="dt-muted">波形形状</MudText>
+                <MudGrid Class="dt-filters">
+                    <MudItem xs="6" md="3">
+                        <MudNumericField @bind-Value="item.FallRatioMax" Label="回落比例上限" HelperText="0.5 即 50%" Disabled="!item.Enabled" />
+                    </MudItem>
+                    <MudItem xs="6" md="3">
+                        <MudNumericField @bind-Value="item.MaxStepMax" Label="单步跳变上限" HelperText="突变/丢点" Disabled="!item.Enabled" />
+                    </MudItem>
+                </MudGrid>
+            </MudPaper>
+        }
+
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" OnClick="AddItem">新增判据</MudButton>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save"
+                   OnClick="Submit">保存</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance? MudDialog { get; set; }
+
+    [Parameter] public CurveDefinition Curve { get; set; } = new();
+
+    /// <summary>
+    /// 库里用空串表示"跟随曲线主序列"，但 MudSelect 把空串当作"未选择"，
+    /// 会把标签和选项文字叠在一起画，所以界面上换一个非空哨兵，进出时互转。
+    /// </summary>
+    private const string AutoSeries = "@auto";
+
+    private static string SeriesToUi(string? stored)
+        => string.IsNullOrWhiteSpace(stored) ? AutoSeries : stored;
+
+    private static void SeriesFromUi(CurveCriterion item, string? picked)
+        => item.SeriesName = picked == AutoSeries || string.IsNullOrWhiteSpace(picked) ? "" : picked;
+
+    /// <summary>删掉一条判据会连带丢掉十几个阈值，所以先确认。</summary>
+    private async Task RemoveAsync(CurveCriterion item)
+    {
+        var confirmed = await Dialogs.ShowMessageBox(
+            "删除判据",
+            $"确定删除作用序列「{(string.IsNullOrWhiteSpace(item.SeriesName) ? "主序列" : item.SeriesName)}」的这条判据？已填写的阈值会一并丢失。",
+            yesText: "删除", cancelText: "取消");
+        if (confirmed == true)
+        {
+            _items.Remove(item);
+        }
+    }
+
+    /// <summary>
+    /// 编辑的是克隆体：用户取消时不会在跟踪上下文里留下脏实体，
+    /// 否则后续任意一次 SaveChanges 都可能把被取消的改动写进配置库。
+    /// </summary>
+    private readonly List<CurveCriterion> _items = [];
+
+    private string? _error;
+
+    protected override void OnInitialized()
+    {
+        foreach (var criterion in Curve.Criteria)
+        {
+            _items.Add(Clone(criterion));
+        }
+    }
+
+    private void AddItem() => _items.Add(new CurveCriterion());
+
+    private void Cancel() => MudDialog?.Cancel();
+
+    private void Submit()
+    {
+        for (var i = 0; i < _items.Count; i++)
+        {
+            var item = _items[i];
+            if (!item.Enabled)
+            {
+                continue;
+            }
+
+            if (IsEmpty(item))
+            {
+                _error = $"第 {i + 1} 条判据没有设置任何阈值。留空的项不判定，请至少填写一项，或删除该条判据。";
+                return;
+            }
+
+            var rangeError = ValidateRanges(item);
+            if (rangeError is not null)
+            {
+                _error = $"第 {i + 1} 条判据：{rangeError}";
+                return;
+            }
+        }
+
+        _error = null;
+        // 已关闭的判据直接丢弃，避免在配置库里留下永不生效的行。
+        MudDialog?.Close(DialogResult.Ok(_items.Where(x => x.Enabled).ToList()));
+    }
+
+    private static bool IsEmpty(CurveCriterion c)
+        => c.PeakMin is null && c.PeakMax is null
+           && c.MeanMin is null && c.MeanMax is null
+           && c.AreaMin is null && c.AreaMax is null
+           && c.RiseSlopeMin is null && c.RiseSlopeMax is null
+           && c.HoldSlopeMin is null && c.HoldSlopeMax is null
+           && c.FallRatioMax is null && c.MaxStepMax is null
+           && c.StdDevMax is null && c.OscillationMax is null;
+
+    private static string? ValidateRanges(CurveCriterion c)
+    {
+        if (Descending(c.PeakMin, c.PeakMax)) return "峰值上限需要大于下限";
+        if (Descending(c.MeanMin, c.MeanMax)) return "均值上限需要大于下限";
+        if (Descending(c.AreaMin, c.AreaMax)) return "面积上限需要大于下限";
+        if (Descending(c.RiseSlopeMin, c.RiseSlopeMax)) return "上升段斜率上限需要大于下限";
+        if (Descending(c.HoldSlopeMin, c.HoldSlopeMax)) return "保压段斜率上限需要大于下限";
+        if (c.FallRatioMax is < 0) return "回落比例上限不能为负";
+        if (c.MaxStepMax is < 0) return "单步跳变上限不能为负";
+        if (c.StdDevMax is < 0) return "标准差上限不能为负";
+        if (c.OscillationMax is < 0) return "振荡次数上限不能为负";
+        return null;
+
+        static bool Descending(double? lower, double? upper)
+            => lower is { } lo && upper is { } hi && hi <= lo;
+    }
+
+    private static CurveCriterion Clone(CurveCriterion source) => new()
+    {
+        Id = source.Id,
+        CurveDefinitionId = source.CurveDefinitionId,
+        SeriesName = source.SeriesName,
+        Enabled = source.Enabled,
+        PeakMin = source.PeakMin,
+        PeakMax = source.PeakMax,
+        MeanMin = source.MeanMin,
+        MeanMax = source.MeanMax,
+        AreaMin = source.AreaMin,
+        AreaMax = source.AreaMax,
+        RiseSlopeMin = source.RiseSlopeMin,
+        RiseSlopeMax = source.RiseSlopeMax,
+        HoldSlopeMin = source.HoldSlopeMin,
+        HoldSlopeMax = source.HoldSlopeMax,
+        FallRatioMax = source.FallRatioMax,
+        MaxStepMax = source.MaxStepMax,
+        StdDevMax = source.StdDevMax,
+        OscillationMax = source.OscillationMax
+    };
+}

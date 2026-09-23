@@ -1,0 +1,648 @@
+@page "/config/stations"
+@attribute [Authorize(Roles = "Administrator,Engineer")]
+@using DataTrace.Application.Configuration
+@using DataTrace.Domain.Entities
+@using DataTrace.Domain.Evaluation
+@inject IConfigRepository Config
+@inject DtToast Toast
+@inject IDialogService DialogService
+
+<PageHeader Title="工站配置" Description="左侧选设备，右侧按页签改握手、点位和曲线。改动保存后立即下发给采集器。" />
+
+@if (_plcs.Count == 0)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">
+        还没有 PLC 连接，请先到「PLC 连接」页新增，再回来新增设备。
+    </MudAlert>
+}
+
+<MudGrid>
+    <MudItem xs="12" md="3">
+        <MudPaper Class="pa-3 station-pane">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3">
+                <MudText Typo="Typo.subtitle1">设备 @_stations.Count</MudText>
+                <MudSpacer />
+                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@(_busy ? Icons.Material.Filled.Sync : Icons.Material.Filled.Add)"
+                           OnClick="AddDevice" Disabled="_busy">@(_busy ? "处理中…" : "新增")</MudButton>
+            </MudStack>
+            @if (_stations.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="dt-muted">暂无设备，点上方「新增」创建第一台。</MudText>
+            }
+            @foreach (var station in _stations)
+            {
+                var selected = station.Id == _current?.Id;
+                <div class="@(selected ? "station-list-item active" : "station-list-item")" @onclick="() => Select(station)">
+                    <MudStack Row="true" AlignItems="AlignItems.Start">
+                        <div>
+                            <MudText Typo="Typo.subtitle2">@station.Code</MudText>
+                            <MudText Typo="Typo.body2">@station.Name</MudText>
+                            <MudText Typo="Typo.caption">
+                                @RoleLabel(station) · @PlcName(station.PlcConnectionId) · 点位 @station.Tags.Count · 曲线 @station.Curves.Count
+                            </MudText>
+                        </div>
+                        <MudSpacer />
+                        <span @onclick:stopPropagation="true">
+                            <MudTooltip Text="删除设备">
+                                <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline" Color="Color.Error" Size="Size.Small"
+                                               aria-label="@($"删除设备 {station.Code}")"
+                                               Disabled="_busy" OnClick="@(() => DeleteDevice(station))" />
+                            </MudTooltip>
+                        </span>
+                    </MudStack>
+                </div>
+            }
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" md="9">
+        @if (_current is null)
+        {
+            <MudPaper Class="pa-6 station-pane">
+                <MudText>还没有设备。点左侧「新增」创建第一台。</MudText>
+            </MudPaper>
+        }
+        else
+        {
+            <MudPaper Class="pa-4 station-pane">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3">
+                    <MudText Typo="Typo.h6">@_current.Code @_current.Name</MudText>
+                    <MudSpacer />
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveStation" Disabled="_busy"
+                               StartIcon="@(_busy ? Icons.Material.Filled.Sync : Icons.Material.Filled.Save)">
+                        @(_busy ? "保存中…" : $"保存 {_current.Code}")
+                    </MudButton>
+                </MudStack>
+                <MudGrid Class="mb-2">
+                    <MudItem xs="12" sm="6" md="3">
+                        <MudTextField @bind-Value="_current.Code" @bind-Value:after="ValidateStation" Label="编码"
+                                      Immediate="true" Error="@(_codeError is not null)" ErrorText="@_codeError" />
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="3">
+                        <MudTextField @bind-Value="_current.Name" @bind-Value:after="ValidateStation" Label="设备名称"
+                                      Immediate="true" Error="@(_nameError is not null)" ErrorText="@_nameError" />
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="3">
+                        <MudSelect T="int" @bind-Value="_current.PlcConnectionId" Label="所属 PLC"
+                                   Error="@(_plcError is not null)" ErrorText="@_plcError">
+                            @foreach (var plc in _plcs)
+                            {
+                                <MudSelectItem T="int" Value="plc.Id">@plc.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="3"><MudNumericField @bind-Value="_current.Sequence" Label="产线顺序" /></MudItem>
+                </MudGrid>
+                <MudTabs Elevation="0" Rounded="true" PanelClass="pt-4" @bind-ActivePanelIndex="_tab">
+                    <MudTabPanel Text="握手">
+                        <MudGrid>
+                            <MudItem xs="12" md="4">
+                                <MudTextField @bind-Value="_current.TriggerAddress" @bind-Value:after="ValidateStation"
+                                              Label="触发 / 回写地址" Immediate="true"
+                                              Error="@(_triggerError is not null)" ErrorText="@_triggerError" />
+                            </MudItem>
+                            <MudItem xs="12" md="4"><MudNumericField @bind-Value="_current.TriggerValue" Label="触发值（完成后回写 2–8）" /></MudItem>
+                            <MudItem xs="12" md="4"><MudTextField @bind-Value="_current.PalletCodeAddress" Label="托盘码地址" /></MudItem>
+                            <MudItem xs="12" md="4"><MudNumericField @bind-Value="_current.PalletCodeLength" Label="托盘码长度" /></MudItem>
+                            <MudItem xs="12" md="8" Class="d-flex align-center gap-4">
+                                <MudSwitch @bind-Value="_current.IsFirstStation" Label="首站" Color="Color.Primary" />
+                                <MudSwitch @bind-Value="_current.IsLastStation" Label="末站" Color="Color.Primary" />
+                                <MudSwitch @bind-Value="_current.Enabled" Label="启用" Color="Color.Primary" />
+                            </MudItem>
+                        </MudGrid>
+                    </MudTabPanel>
+                    <MudTabPanel Text="@($"点位 {_current.Tags.Count}")">
+                        <MudTable Items="_current.Tags.OrderBy(t => t.Code).ToList()" Dense="true" Breakpoint="Breakpoint.Sm">
+                            <HeaderContent>
+                                <MudTh>编码</MudTh>
+                                <MudTh>名称</MudTh>
+                                <MudTh>地址</MudTh>
+                                <MudTh>类型</MudTh>
+                                <MudTh>规格限</MudTh>
+                                <MudTh>预警限</MudTh>
+                                <MudTh>目标</MudTh>
+                                <MudTh></MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="编码" Class="dt-nowrap">@context.Code</MudTd>
+                                <MudTd DataLabel="名称" Class="dt-nowrap">@context.Name</MudTd>
+                                <MudTd DataLabel="地址" Class="dt-nowrap">@context.Address</MudTd>
+                                <MudTd DataLabel="类型">@DisplayLabels.DataType(context.DataType)</MudTd>
+                                <MudTd DataLabel="规格限" Class="dt-nowrap">@DisplayLabels.LimitRange(context.LowerLimit, context.UpperLimit)</MudTd>
+                                <MudTd DataLabel="预警限" Class="dt-nowrap">@DisplayLabels.LimitRange(context.WarningLowerLimit, context.WarningUpperLimit)</MudTd>
+                                <MudTd DataLabel="目标">@context.TargetValue</MudTd>
+                                <MudTd>
+                                    <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Text" Disabled="_busy"
+                                               OnClick="@(() => DeleteTag(context))">删除</MudButton>
+                                </MudTd>
+                            </RowTemplate>
+                            <NoRecordsContent>
+                                <MudText Typo="Typo.body2" Class="dt-muted py-3">还没有点位，用下方表单添加（如压力、保压时间）。</MudText>
+                            </NoRecordsContent>
+                        </MudTable>
+                        <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mt-3">
+                            <b>规格限</b>是红线，超出即判废并让 PLC 收到 NG；
+                            <b>预警限</b>是黄线，落在黄区只在看板提示、计入「预警 Top N」，<b>不影响判定与响应码</b>。
+                            黄线必须落在红线内侧，目标值仅用于统计。
+                        </MudAlert>
+                        <MudGrid Class="mt-3">
+                            <MudItem xs="12" md="2">
+                                <MudTextField @bind-Value="_tag.Code" @bind-Value:after="ValidateTag" Label="编码"
+                                              Immediate="true" Error="@(_tagCodeError is not null)" ErrorText="@_tagCodeError" />
+                            </MudItem>
+                            <MudItem xs="12" md="2"><MudTextField @bind-Value="_tag.Name" Label="名称" /></MudItem>
+                            <MudItem xs="12" md="2">
+                                <MudTextField @bind-Value="_tag.Address" @bind-Value:after="ValidateTag" Label="地址"
+                                              Immediate="true" Error="@(_tagAddressError is not null)" ErrorText="@_tagAddressError" />
+                            </MudItem>
+                            <MudItem xs="12" md="2">
+                                <MudSelect T="PlcDataType" @bind-Value="_tag.DataType" Label="类型">
+                                    @foreach (var t in Enum.GetValues<PlcDataType>())
+                                    {
+                                        <MudSelectItem Value="t">@DisplayLabels.DataType(t)</MudSelectItem>
+                                    }
+                                </MudSelect>
+                            </MudItem>
+                            <MudItem xs="6" md="1"><MudNumericField @bind-Value="_tag.LowerLimit" @bind-Value:after="ValidateTag" Label="规格下限" HelperText="留空不判定" /></MudItem>
+                            <MudItem xs="6" md="1"><MudNumericField @bind-Value="_tag.UpperLimit" @bind-Value:after="ValidateTag" Label="规格上限" HelperText="留空不判定" /></MudItem>
+                            <MudItem xs="6" md="1"><MudNumericField @bind-Value="_tag.WarningLowerLimit" @bind-Value:after="ValidateTag" Label="预警下限" HelperText="不判废" /></MudItem>
+                            <MudItem xs="6" md="1"><MudNumericField @bind-Value="_tag.WarningUpperLimit" @bind-Value:after="ValidateTag" Label="预警上限" HelperText="不判废" /></MudItem>
+                            <MudItem xs="6" md="1"><MudNumericField @bind-Value="_tag.TargetValue" @bind-Value:after="ValidateTag" Label="目标值" HelperText="仅统计" /></MudItem>
+                            <MudItem xs="12" md="2">
+                                <MudButton Class="mt-4" Variant="Variant.Outlined" OnClick="AddTag" Disabled="_busy"
+                                           StartIcon="@(_busy ? Icons.Material.Filled.Sync : Icons.Material.Filled.Add)">
+                                    @(_busy ? "提交中…" : "添加")
+                                </MudButton>
+                            </MudItem>
+                            @if (_tagLimitError is not null)
+                            {
+                                <MudItem xs="12">
+                                    <MudText Typo="Typo.body2" Color="Color.Error">@_tagLimitError</MudText>
+                                </MudItem>
+                            }
+                        </MudGrid>
+                    </MudTabPanel>
+                    <MudTabPanel Text="@($"曲线 {_current.Curves.Count}")">
+                        <MudTable Items="_current.Curves.OrderBy(c => c.Code).ToList()" Dense="true" Breakpoint="Breakpoint.Sm">
+                            <HeaderContent>
+                                <MudTh>编码</MudTh>
+                                <MudTh>名称</MudTh>
+                                <MudTh>点数</MudTh>
+                                <MudTh>Y 起始</MudTh>
+                                <MudTh>X 起始</MudTh>
+                                <MudTh>判据</MudTh>
+                                <MudTh></MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="编码">@context.Code</MudTd>
+                                <MudTd DataLabel="名称">@context.Name</MudTd>
+                                <MudTd DataLabel="点数">@context.PointCount</MudTd>
+                                <MudTd DataLabel="Y 起始">@YStart(context)</MudTd>
+                                <MudTd DataLabel="X 起始">@XStart(context)</MudTd>
+                                <MudTd DataLabel="判据" Class="dt-nowrap">
+                                    @if (context.Criteria.Count == 0)
+                                    {
+                                        <MudText Typo="Typo.caption" Class="dt-muted">未配置</MudText>
+                                    }
+                                    else
+                                    {
+                                        <MudText Typo="Typo.caption">@context.Criteria.Count 条</MudText>
+                                    }
+                                </MudTd>
+                                <MudTd Class="dt-nowrap">
+                                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary"
+                                               OnClick="@(() => EditCriteria(context))">波形判据</MudButton>
+                                    <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Text" OnClick="@(() => DeleteCurve(context))">删除</MudButton>
+                                </MudTd>
+                            </RowTemplate>
+                            <NoRecordsContent>
+                                <MudText Typo="Typo.body2" Class="dt-muted py-3">还没有曲线，用下方表单添加（如位移-压力曲线）。</MudText>
+                            </NoRecordsContent>
+                        </MudTable>
+                        <MudText Typo="Typo.caption" Class="dt-muted mt-2">
+                            「波形判据」对整段波形设阈值（峰值、面积、上升/保压段斜率…），能拦住「点位值在限内但波形异常」的漏检。
+                        </MudText>
+                        <MudGrid Class="mt-3">
+                            <MudItem xs="12" md="2">
+                                <MudTextField @bind-Value="_curve.Code" @bind-Value:after="ValidateCurve" Label="曲线编码"
+                                              Immediate="true" Error="@(_curveCodeError is not null)" ErrorText="@_curveCodeError" />
+                            </MudItem>
+                            <MudItem xs="12" md="2"><MudTextField @bind-Value="_curve.Name" Label="名称" /></MudItem>
+                            <MudItem xs="12" md="1">
+                                <MudNumericField @bind-Value="_curve.PointCount" @bind-Value:after="ValidateCurve" Label="点数"
+                                                 Error="@(_curveCountError is not null)" ErrorText="@_curveCountError" />
+                            </MudItem>
+                            <MudItem xs="12" md="2">
+                                <MudTextField @bind-Value="_yAddress" @bind-Value:after="ValidateCurve" Label="Y起始(压力)"
+                                              Immediate="true" Error="@(_yAddressError is not null)" ErrorText="@_yAddressError" />
+                            </MudItem>
+                            <MudItem xs="12" md="2">
+                                <MudTextField @bind-Value="_xAddress" @bind-Value:after="ValidateCurve" Label="X起始(位移)"
+                                              Immediate="true" Error="@(_xAddressError is not null)" ErrorText="@_xAddressError" />
+                            </MudItem>
+                            <MudItem xs="12" md="3">
+                                <MudButton Class="mt-4" Variant="Variant.Outlined" OnClick="AddCurve" Disabled="_busy"
+                                           StartIcon="@(_busy ? Icons.Material.Filled.Sync : Icons.Material.Filled.Add)">
+                                    @(_busy ? "提交中…" : "添加曲线")
+                                </MudButton>
+                            </MudItem>
+                        </MudGrid>
+                    </MudTabPanel>
+                </MudTabs>
+            </MudPaper>
+        }
+    </MudItem>
+</MudGrid>
+
+@code {
+    private IReadOnlyList<Station> _stations = [];
+    private IReadOnlyList<PlcConnection> _plcs = [];
+    private Station? _current;
+    private int _tab;
+    private TagDefinition _tag = NewTag();
+    private CurveDefinition _curve = NewCurve();
+    private string _yAddress = "D2000";
+    private string _xAddress = "D2400";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadList();
+        if (_stations.Count > 0)
+        {
+            await Select(_stations[0]);
+        }
+    }
+
+    private int _depth;
+    private bool _busy;
+
+    private string? _codeError;
+    private string? _nameError;
+    private string? _plcError;
+    private string? _triggerError;
+    private string? _tagCodeError;
+    private string? _tagAddressError;
+    private string? _tagLimitError;
+    private string? _curveCodeError;
+    private string? _curveCountError;
+    private string? _yAddressError;
+    private string? _xAddressError;
+
+    /// <summary>
+    /// 配置库读写全走这里：SQLite 写失败（占用、磁盘满）如果直接抛给 Blazor，整条 circuit 会断掉，
+    /// 现场只看到页面卡死且没有任何说明，因此统一转成可读的提示条。
+    /// 嵌套调用（如保存后重读列表）不再重复报错，异常交给最外层提示一次。
+    /// </summary>
+    private async Task Guard(string what, Func<Task> action)
+    {
+        if (_depth > 0)
+        {
+            await action();
+            return;
+        }
+
+        _depth++;
+        try
+        {
+            await action();
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"{what}失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _depth--;
+        }
+    }
+
+    /// <summary>
+    /// 改配置的动作用这层：写库期间锁住本页的提交按钮，连点不会重复下发，
+    /// 也避免"上一个保存还没落库就改下一台设备"造成的互相覆盖。
+    /// </summary>
+    private async Task Run(string what, Func<Task> action)
+    {
+        if (_busy)
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            await Guard(what, action);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    /// <summary>字段级校验：错误直接标在输入框上，不等提交时才弹提示。</summary>
+    private void ValidateStation()
+    {
+        if (_current is null)
+        {
+            return;
+        }
+
+        _codeError = string.IsNullOrWhiteSpace(_current.Code) ? "设备编码不能为空"
+            : CodeTaken(_current.Code, _current.Id) ? $"设备编码 {_current.Code.Trim()} 已被占用"
+            : null;
+        _nameError = string.IsNullOrWhiteSpace(_current.Name) ? "设备名称不能为空" : null;
+        _plcError = _plcs.Any(p => p.Id == _current.PlcConnectionId) ? null : "请选择所属 PLC";
+        _triggerError = string.IsNullOrWhiteSpace(_current.TriggerAddress) ? "触发 / 回写地址不能为空" : null;
+    }
+
+    private bool CodeTaken(string code, int selfId) => _stations.Any(s => s.Id != selfId
+        && string.Equals(s.Code?.Trim(), code.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private bool StationValid
+    {
+        get
+        {
+            ValidateStation();
+            return _codeError is null && _nameError is null && _plcError is null && _triggerError is null;
+        }
+    }
+
+    private void ValidateTag()
+    {
+        _tagCodeError = string.IsNullOrWhiteSpace(_tag.Code) ? "点位编码不能为空"
+            : _current?.Tags.Any(t => string.Equals(t.Code?.Trim(), _tag.Code.Trim(), StringComparison.OrdinalIgnoreCase)) == true
+                ? $"点位编码 {_tag.Code.Trim()} 已存在"
+                : null;
+        _tagAddressError = string.IsNullOrWhiteSpace(_tag.Address) ? "PLC 地址不能为空" : null;
+        _tagLimitError = TagLimits.From(_tag).ConsistencyError();
+    }
+
+    private bool TagValid
+    {
+        get
+        {
+            ValidateTag();
+            return _tagCodeError is null && _tagAddressError is null && _tagLimitError is null;
+        }
+    }
+
+    private void ValidateCurve()
+    {
+        _curveCodeError = string.IsNullOrWhiteSpace(_curve.Code) ? "曲线编码不能为空"
+            : _current?.Curves.Any(c => string.Equals(c.Code?.Trim(), _curve.Code.Trim(), StringComparison.OrdinalIgnoreCase)) == true
+                ? $"曲线编码 {_curve.Code.Trim()} 已存在"
+                : null;
+        _curveCountError = _curve.PointCount < 2 ? "曲线点数至少为 2" : null;
+        _yAddressError = string.IsNullOrWhiteSpace(_yAddress) ? "Y 起始地址不能为空" : null;
+        _xAddressError = string.IsNullOrWhiteSpace(_xAddress) ? "X 起始地址不能为空" : null;
+    }
+
+    private bool CurveValid
+    {
+        get
+        {
+            ValidateCurve();
+            return _curveCodeError is null && _curveCountError is null && _yAddressError is null && _xAddressError is null;
+        }
+    }
+
+    private Task ReloadList() => Guard("加载工站配置", async () =>
+    {
+        _plcs = await Config.GetPlcConnectionsAsync();
+        _stations = await Config.GetStationsAsync();
+    });
+
+    private string PlcName(int id) => _plcs.FirstOrDefault(p => p.Id == id)?.Name ?? "-";
+
+    private static string RoleLabel(Station station)
+    {
+        if (station.IsFirstStation) return "首站";
+        if (station.IsLastStation) return "末站";
+        return "中间站";
+    }
+
+    private static string YStart(CurveDefinition curve)
+        => curve.Series.FirstOrDefault(s => s.Role == SeriesRole.Y)?.StartAddress ?? "-";
+
+    private static string XStart(CurveDefinition curve)
+        => curve.Series.FirstOrDefault(s => s.Role == SeriesRole.X)?.StartAddress ?? "-";
+
+    private Task Select(Station? station)
+    {
+        if (station is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        ClearErrors();
+        var id = station.Id;
+        return Guard("读取工站", async () => _current = await Config.GetStationAsync(id));
+    }
+
+    /// <summary>换设备或重新加载后，上一台的校验残留必须清掉，否则会错标在新设备上。</summary>
+    private void ClearErrors()
+    {
+        _codeError = _nameError = _plcError = _triggerError = null;
+        _tagCodeError = _tagAddressError = _tagLimitError = null;
+        _curveCodeError = _curveCountError = _yAddressError = _xAddressError = null;
+    }
+
+    private Task AddDevice() => Run("新增设备", async () =>
+    {
+        var plc = _plcs.FirstOrDefault(p => p.Enabled) ?? _plcs.FirstOrDefault();
+        if (plc is null)
+        {
+            Toast.Add("请先在 PLC 连接里添加一台 PLC", Severity.Warning);
+            return;
+        }
+
+        var seq = _stations.Count == 0 ? 10 : _stations.Max(s => s.Sequence) + 10;
+        var baseAddr = seq * 100;
+        var station = new Station
+        {
+            PlcConnectionId = plc.Id,
+            Code = $"ST{seq:000}",
+            Name = $"设备{seq}",
+            Sequence = seq,
+            TriggerAddress = $"D{baseAddr}",
+            TriggerValue = 1,
+            PalletCodeAddress = $"D{baseAddr + 10}",
+            PalletCodeLength = 16,
+            PositionCount = 1,
+            Enabled = true
+        };
+        await Config.SaveStationAsync(station);
+        await ReloadList();
+        await Select(station);
+        _tab = 0;
+        Toast.Add("已新增设备", Severity.Success);
+    });
+
+    private Task DeleteDevice(Station station) => Run("删除设备", async () =>
+    {
+        var tags = station.Tags.Count;
+        var curves = station.Curves.Count;
+        var extra = tags + curves > 0 ? $"，同时删除 {tags} 个点位、{curves} 条曲线定义" : "";
+        var confirmed = await DialogService.ShowMessageBox(
+            "删除设备",
+            $"确定删除「{station.Code} {station.Name}」？{extra}。已采集的历史记录不受影响，但操作不可恢复。",
+            yesText: "删除", cancelText: "取消");
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        await Config.DeleteStationAsync(station.Id);
+        if (_current?.Id == station.Id)
+        {
+            _current = null;
+        }
+
+        await ReloadList();
+        if (_current is null && _stations.Count > 0)
+        {
+            await Select(_stations[0]);
+        }
+
+        Toast.Add($"已删除 {station.Code}", Severity.Success);
+    });
+
+    private Task SaveStation() => Run("保存工站", async () =>
+    {
+        if (_current is null) return;
+        if (!StationValid)
+        {
+            // 「触发 / 回写地址」在握手页签里，报错时把那页切出来，否则用户看不到红字长在哪。
+            if (_triggerError is not null)
+            {
+                _tab = 0;
+            }
+
+            return;
+        }
+
+        _current.Code = _current.Code.Trim();
+        _current.Name = _current.Name.Trim();
+        await Config.SaveStationAsync(_current);
+        Toast.Add($"{_current.Code} 已保存并下发采集器", Severity.Success);
+        var id = _current.Id;
+        var tab = _tab;
+        await ReloadList();
+        await Select(_stations.First(s => s.Id == id));
+        _tab = tab;
+    });
+
+    private Task AddTag() => Run("添加点位", async () =>
+    {
+        if (_current is null || !TagValid) return;
+
+        _tag.Code = _tag.Code.Trim();
+        _tag.Address = _tag.Address.Trim();
+        _tag.StationId = _current.Id;
+        await Config.SaveTagAsync(_tag);
+        var added = _tag.Code;
+        _tag = NewTag();
+        var tab = _tab;
+        await Select(_current);
+        _tab = tab;
+        Toast.Add($"点位 {added} 已添加", Severity.Success);
+    });
+
+    private Task DeleteTag(TagDefinition tag) => Run("删除点位", async () =>
+    {
+        if (_current is null) return;
+        var confirmed = await DialogService.ShowMessageBox(
+            "删除点位",
+            $"确定删除点位「{tag.Code} {tag.Name}」？删除后采集时不再读取该地址。",
+            yesText: "删除", cancelText: "取消");
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        await Config.DeleteTagAsync(tag.Id);
+        var tab = _tab;
+        await Select(_current);
+        _tab = tab;
+        Toast.Add($"点位 {tag.Code} 已删除", Severity.Success);
+    });
+
+    private Task AddCurve() => Run("添加曲线", async () =>
+    {
+        if (_current is null || !CurveValid) return;
+
+        _curve.Code = _curve.Code.Trim();
+        _curve.StationId = _current.Id;
+        _curve.Series =
+        [
+            new CurveSeries { Name = "压力", Role = SeriesRole.Y, StartAddress = _yAddress.Trim(), DataType = PlcDataType.Float, StrideWords = 2 },
+            new CurveSeries { Name = "位移", Role = SeriesRole.X, StartAddress = _xAddress.Trim(), DataType = PlcDataType.Float, StrideWords = 2 }
+        ];
+        await Config.SaveCurveAsync(_curve);
+        var code = _curve.Code;
+        _curve = NewCurve();
+        var tab = _tab;
+        await Select(_current);
+        _tab = tab;
+        Toast.Add($"曲线 {code} 已添加", Severity.Success);
+    });
+
+    /// <summary>
+    /// 波形判据编辑。对话框返回的是克隆集合，这里整体交给仓储做按主键增量同步。
+    /// 打开对话框这段时间不算"正在保存"，否则用户编辑判据的几分钟里整页按钮都是灰的。
+    /// </summary>
+    private async Task EditCriteria(CurveDefinition curve)
+    {
+        var station = _current;
+        if (station is null || _busy)
+        {
+            return;
+        }
+
+        var parameters = new DialogParameters { ["Curve"] = curve };
+        var dialog = await DialogService.ShowAsync<CurveCriterionDialog>($"波形判据 · {curve.Code}", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+        var result = await dialog.Result;
+        if (result is null || result.Canceled || result.Data is not IReadOnlyList<CurveCriterion> criteria)
+        {
+            return;
+        }
+
+        await Run("保存波形判据", async () =>
+        {
+            // 不写 curve.Criteria：它是被跟踪实体的导航集合，替换它会和 EF 的导航修正
+            // 互相打架（同一行会在集合里留下两份）。仓储按主键同步，随后重读即可。
+            await Config.SaveCurveCriteriaAsync(curve.Id, criteria);
+            var tab = _tab;
+            await Select(station);
+            _tab = tab;
+            Toast.Add(
+                criteria.Count == 0
+                    ? $"曲线 {curve.Code} 已关闭波形判定"
+                    : $"曲线 {curve.Code} 已保存 {criteria.Count} 条波形判据并下发采集器",
+                Severity.Success);
+        });
+    }
+
+    private Task DeleteCurve(CurveDefinition curve) => Run("删除曲线", async () =>
+    {
+        if (_current is null) return;
+        var confirmed = await DialogService.ShowMessageBox(
+            "删除曲线定义",
+            $"确定删除曲线「{curve.Code} {curve.Name}」？历史曲线文件不会被删除。",
+            yesText: "删除", cancelText: "取消");
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        await Config.DeleteCurveAsync(curve.Id);
+        var tab = _tab;
+        await Select(_current);
+        _tab = tab;
+        Toast.Add($"曲线 {curve.Code} 已删除", Severity.Success);
+    });
+
+    private static TagDefinition NewTag() => new() { DataType = PlcDataType.Float, Scale = 1, PositionIndex = 1 };
+
+    private static CurveDefinition NewCurve() => new() { PointCount = 50, PositionIndex = 1 };
+}

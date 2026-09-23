@@ -1,0 +1,401 @@
+@page "/query/{MonthKey}/{RecordId:long}"
+@attribute [Authorize]
+@using System.Globalization
+@using DataTrace.Application.Runtime
+@using DataTrace.Domain.Entities
+@using DataTrace.Domain.Evaluation
+@inject IRuntimeStore Store
+@inject ICurveFileStore Curves
+@inject DtToast Toast
+@inject IJSRuntime Js
+@inject NavigationManager Nav
+
+<MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Href="@BackUrl">返回查询</MudButton>
+
+@if (!_loaded)
+{
+    <MudSkeleton Class="mt-3" SkeletonType="SkeletonType.Rectangle" Height="180px" />
+}
+else if (_record is null)
+{
+    <MudAlert Severity="Severity.Warning" Class="mt-3">
+        记录不存在或已按保留策略清理（月库 @MonthKey，记录 @RecordId）。请返回查询页重新选择条件。
+    </MudAlert>
+}
+else
+{
+    <MudPaper Class="pa-4 mt-2">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Class="flex-wrap">
+            <MudText Typo="Typo.h5">@_record.StationCode</MudText>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                     Color="@(_record.Judgement == Judgement.Ng ? Color.Error : Color.Success)">
+                @(_record.Judgement == Judgement.Ng ? "NG 不合格" : "OK 合格")
+            </MudChip>
+            @if (!string.IsNullOrWhiteSpace(_record.RecipeCode))
+            {
+                // 限值随型号切换而变，判定依据必须能回溯。
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">型号 @_record.RecipeCode</MudChip>
+            }
+            <MudSpacer />
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.History"
+                       Href="@PalletHistoryUrl()">同托盘近 30 天</MudButton>
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="Export" Disabled="_exporting"
+                       StartIcon="@(_exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)">
+                @(_exporting ? "导出中…" : "导出本记录")
+            </MudButton>
+        </MudStack>
+
+        <MudGrid Class="mt-3">
+            <MudItem xs="12" sm="6" md="3">
+                <MudText Typo="Typo.caption" Class="dt-muted">托盘码</MudText>
+                <MudText Typo="Typo.subtitle1">@_record.PalletCode</MudText>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudText Typo="Typo.caption" Class="dt-muted">流水号</MudText>
+                <MudText Typo="Typo.subtitle1">@_record.SerialNo</MudText>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudText Typo="Typo.caption" Class="dt-muted">触发时间</MudText>
+                <MudText Typo="Typo.subtitle1">@_record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss.fff")</MudText>
+                <MudText Typo="Typo.caption" Class="dt-muted">
+                    耗时 @_record.DurationMs ms · 完成 @_record.CompleteTime.ToString("HH:mm:ss.fff")
+                </MudText>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudText Typo="Typo.caption" Class="dt-muted">结果码</MudText>
+                <MudText Typo="Typo.subtitle1">@_record.ResultCode · @ResultCodes.Describe(_record.ResultCode)</MudText>
+            </MudItem>
+        </MudGrid>
+
+        @if (!string.IsNullOrEmpty(_record.ErrorMessage))
+        {
+            <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-2">@_record.ErrorMessage</MudAlert>
+        }
+    </MudPaper>
+
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mt-4 mb-1">
+        <MudText Typo="Typo.h6">点位</MudText>
+        @if (_outOfLimitCount > 0)
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Text">
+                @_outOfLimitCount 项超限
+            </MudChip>
+        }
+        @if (_warningCount > 0)
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Text">
+                @_warningCount 项预警
+            </MudChip>
+        }
+        <MudText Typo="Typo.caption" Class="dt-muted">
+            共 @_record.TagValues.Count 项 · 限值取判定那一刻生效的配置（含型号覆盖），不随后续改动重算
+        </MudText>
+    </MudStack>
+    <MudTable Items="_tagRows" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+        <HeaderContent>
+            <MudTh>点位</MudTh>
+            <MudTh>编码</MudTh>
+            <MudTh>数值</MudTh>
+            <MudTh>规格限</MudTh>
+            <MudTh>预警限</MudTh>
+            <MudTh>判定</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="点位">@context.TagName</MudTd>
+            <MudTd DataLabel="编码">@context.TagCode</MudTd>
+            <MudTd DataLabel="数值" Class="dt-nowrap">
+                @if (context.IsOutOfLimit)
+                {
+                    <strong class="dt-text-error">@Display(context)</strong>
+                }
+                else if (context.IsWarning)
+                {
+                    <strong class="dt-text-warning">@Display(context)</strong>
+                }
+                else
+                {
+                    @Display(context)
+                }
+                @if (OverageText(context) is { } overage)
+                {
+                    <MudText Typo="Typo.caption" Class="dt-text-error ml-1">@overage</MudText>
+                }
+            </MudTd>
+            <MudTd DataLabel="规格限" Class="dt-nowrap">@DisplayLabels.LimitRange(context.LowerLimit, context.UpperLimit)</MudTd>
+            <MudTd DataLabel="预警限" Class="dt-nowrap">@DisplayLabels.LimitRange(context.WarningLowerLimit, context.WarningUpperLimit)</MudTd>
+            <MudTd DataLabel="判定">
+                @if (context.IsOutOfLimit)
+                {
+                    <MudTooltip Text="超出规格限（判废）">
+                        <MudIcon Icon="@Icons.Material.Filled.ErrorOutline" Size="Size.Small"
+                                 Color="Color.Error" aria-label="超出规格限" />
+                    </MudTooltip>
+                    <MudText Typo="Typo.caption" Class="dt-text-error ml-1">超差</MudText>
+                }
+                else if (context.IsWarning)
+                {
+                    <MudTooltip Text="落在预警带（不判废）">
+                        <MudIcon Icon="@Icons.Material.Filled.WarningAmber" Size="Size.Small"
+                                 Color="Color.Warning" aria-label="落在预警带" />
+                    </MudTooltip>
+                    <MudText Typo="Typo.caption" Class="dt-text-warning ml-1">预警</MudText>
+                }
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText Typo="Typo.body2" Class="dt-muted py-3">该记录没有点位数据。</MudText>
+        </NoRecordsContent>
+    </MudTable>
+
+    @if (_record.Curves.Count > 0)
+    {
+        <MudText Typo="Typo.h6" Class="mt-4 mb-1">曲线</MudText>
+        @foreach (var curve in _record.Curves)
+        {
+            <MudPaper Class="pa-3 mt-2">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Class="flex-wrap mb-2">
+                    <MudText Typo="Typo.subtitle1">@curve.CurveName</MudText>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@curve.CurveCode</MudChip>
+                    <MudText Typo="Typo.caption" Class="dt-muted">
+                        @curve.PointCount 点 · @FileSizeText(curve.FileSize)
+                    </MudText>
+                    <MudSpacer />
+                    @if (PayloadFor(curve.Id) is null)
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Warning">曲线文件缺失</MudText>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption" Class="dt-muted">悬停读取数值</MudText>
+                    }
+                </MudStack>
+                @if (curve.Features.Count > 0)
+                {
+                    <MudStack Row="true" Spacing="2" Class="flex-wrap mb-2">
+                        @foreach (var feature in curve.Features.OrderBy(f => f.Role))
+                        {
+                            <MudTooltip Text="@DeviationTitle(feature)">
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                                         Color="@DeviationColor(feature)">
+                                    @feature.SeriesName @DeviationText(feature)
+                                </MudChip>
+                            </MudTooltip>
+                        }
+                        <MudText Typo="Typo.caption" Class="dt-muted align-self-center">
+                            波形偏离 · 影子模式，不参与判定
+                        </MudText>
+                    </MudStack>
+                }
+                <CurveChart Payload="PayloadFor(curve.Id)" />
+            </MudPaper>
+        }
+    }
+}
+
+@code {
+    [Parameter] public string MonthKey { get; set; } = "";
+    [Parameter] public long RecordId { get; set; }
+
+    /// <summary>查询页带过来的列表地址，返回时不再把用户筛选过的条件丢掉。</summary>
+    [SupplyParameterFromQuery(Name = "back")]
+    public string? BackQuery { get; set; }
+
+    private string BackUrl
+        => !string.IsNullOrWhiteSpace(BackQuery) && BackQuery.StartsWith("query", StringComparison.OrdinalIgnoreCase)
+            ? BackQuery
+            : "query";
+
+    private CollectRecord? _record;
+    private bool _loaded;
+    private readonly Dictionary<long, CurvePayload> _curvePayloads = [];
+    private List<TagValue> _tagRows = [];
+    private int _outOfLimitCount;
+    private int _warningCount;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loaded = false;
+        _curvePayloads.Clear();
+        _record = await Store.GetRecordAsync(MonthKey, RecordId);
+        if (_record is null)
+        {
+            _tagRows = [];
+            _outOfLimitCount = 0;
+            _warningCount = 0;
+            _loaded = true;
+            return;
+        }
+
+        // 红区排最前，其次是黄区，方便一眼看到该看的。
+        _tagRows = _record.TagValues
+            .OrderByDescending(v => v.IsOutOfLimit)
+            .ThenByDescending(v => v.IsWarning)
+            .ThenBy(v => v.TagCode, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        _outOfLimitCount = _tagRows.Count(v => v.IsOutOfLimit);
+        _warningCount = _tagRows.Count(v => v.IsWarning);
+
+        foreach (var curve in _record.Curves)
+        {
+            try
+            {
+                _curvePayloads[curve.Id] = await Curves.ReadAsync(curve.RelativePath);
+            }
+            catch
+            {
+                // 文件缺失时在界面上提示，不阻断其余内容展示
+            }
+        }
+
+        _loaded = true;
+    }
+
+    private CurvePayload? PayloadFor(long curveId)
+        => _curvePayloads.TryGetValue(curveId, out var payload) ? payload : null;
+
+    private string PalletHistoryUrl()
+    {
+        var pallet = _record?.PalletCode ?? "";
+        return $"/query?pallet={Uri.EscapeDataString(pallet)}&days=30";
+    }
+
+    private static string Display(TagValue value)
+        => value.TextValue ?? value.NumericValue?.ToString("0.####", CultureInfo.InvariantCulture) ?? "-";
+
+    /// <summary>导出里留空而不是写 0：下游表格把 0 当成真实限值就会算出错误的合格率。</summary>
+    private static string CsvNum(double? value)
+        => value?.ToString("0.###", CultureInfo.InvariantCulture) ?? "";
+
+    /// <summary>
+    /// 判废时说清"差多少"。只知道超限而不知道离限值多远，现场就没法判断是传感器飘了还是工艺真偏了。
+    /// 取不到数值（必填点位取空）时留空，那种情况的说明在结果码里。
+    /// </summary>
+    private static string? OverageText(TagValue value)
+    {
+        if (!value.IsOutOfLimit || value.NumericValue is not { } numeric)
+        {
+            return null;
+        }
+
+        if (value.UpperLimit is { } upper && numeric > upper)
+        {
+            return $"超上限 +{(numeric - upper).ToString("0.###", CultureInfo.InvariantCulture)}";
+        }
+
+        if (value.LowerLimit is { } lower && numeric < lower)
+        {
+            return $"超下限 -{(lower - numeric).ToString("0.###", CultureInfo.InvariantCulture)}";
+        }
+
+        return null;
+    }
+
+    private static string FileSizeText(long bytes)
+        => bytes < 1024
+            ? $"{bytes} B"
+            : bytes < 1024 * 1024
+                ? $"{bytes / 1024.0:0.#} KB"
+                : $"{bytes / 1024.0 / 1024:0.##} MB";
+
+    /// <summary>影子模式的偏离结论配色；未比对（没有可用基线）用灰色，不要显得像出了问题。</summary>
+    private static Color DeviationColor(CurveFeature feature) => feature.DeviationVerdict switch
+    {
+        CurveTemplateVerdict.Normal => Color.Success,
+        CurveTemplateVerdict.Suspicious => Color.Warning,
+        CurveTemplateVerdict.Abnormal => Color.Error,
+        _ => Color.Default
+    };
+
+    private static string DeviationText(CurveFeature feature)
+        => feature.DeviationRmsZ is { } rms
+            ? $"{rms.ToString("0.00", CultureInfo.InvariantCulture)}σ"
+            : "未比对";
+
+    private static string DeviationTitle(CurveFeature feature)
+    {
+        if (feature.DeviationVerdict is not { } verdict)
+        {
+            return "该序列没有可用基线（样本不足或型号与当前不一致），未做比对";
+        }
+
+        var label = verdict switch
+        {
+            CurveTemplateVerdict.Normal => "与基线一致",
+            CurveTemplateVerdict.Suspicious => "轻度偏离",
+            CurveTemplateVerdict.Abnormal => "显著偏离",
+            _ => "基线不可用"
+        };
+
+        var worst = feature.DeviationWorstDimension is { } dimension
+            ? $"，最大偏离维度：{CurveFeatureDimensions.Label(dimension)}"
+            : "";
+
+        return $"基线由 {feature.BaselineSampleCount} 条合格样本建立，综合偏离 " +
+               $"{feature.DeviationRmsZ?.ToString("0.00", CultureInfo.InvariantCulture) ?? "—"}σ，{label}{worst}（仅记录，不参与判定）";
+    }
+
+    private bool _exporting;
+
+    private async Task Export()
+    {
+        if (_record is null || _exporting)
+        {
+            return;
+        }
+
+        _exporting = true;
+        var rows = new List<string[]>
+        {
+            new[]
+            {
+                "记录信息", _record.SerialNo, _record.PalletCode, _record.StationCode,
+                _record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss"), _record.Judgement.ToString(),
+                ResultCodes.Describe(_record.ResultCode),
+                string.IsNullOrWhiteSpace(_record.RecipeCode) ? "(默认限值)" : _record.RecipeCode
+            },
+            Array.Empty<string>(),
+            new[] { "点位编码", "点位名称", "数值", "判定", "规格下限", "规格上限", "预警下限", "预警上限" }
+        };
+        @* 导出顺序跟屏显一致（超差→预警→其余按编码）：对照着看时两份东西行序不同最容易错。 *@
+        foreach (var value in _tagRows)
+        {
+            // 超规格与预警分开写：导出给质量看时，"判废"和"黄区提示"不能混为一谈。
+            // 限值留空表示"这条记录没记下来"（早于本版本），不要写 0 让下游当成真实限值。
+            rows.Add(new[]
+            {
+                value.TagCode, value.TagName, Display(value),
+                value.IsOutOfLimit ? "超限" : value.IsWarning ? "预警" : "",
+                CsvNum(value.LowerLimit), CsvNum(value.UpperLimit),
+                CsvNum(value.WarningLowerLimit), CsvNum(value.WarningUpperLimit)
+            });
+        }
+
+        rows.Add(Array.Empty<string>());
+        rows.Add(new[] { "曲线编码", "曲线名称", "点数", "文件路径" });
+        foreach (var curve in _record.Curves)
+        {
+            rows.Add(new[]
+            {
+                curve.CurveCode, curve.CurveName,
+                curve.PointCount.ToString(CultureInfo.InvariantCulture), curve.RelativePath
+            });
+        }
+
+        try
+        {
+            var csv = CsvExporter.Build(new[] { "项目", "A", "B", "C", "D", "E", "F", "G" }, rows);
+            await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName($"datatrace_{_record.SerialNo}"),
+                CsvExporter.ToBase64(csv));
+            Toast.Add("已导出本记录明细", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            // JS 互操失败（连接断了、浏览器拦下下载）抛出去会断掉整条 circuit，页面直接卡死。
+            Toast.Add($"导出失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _exporting = false;
+        }
+    }
+}

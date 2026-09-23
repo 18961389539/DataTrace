@@ -1,0 +1,217 @@
+@page "/config/settings"
+@attribute [Authorize(Roles = "Administrator,Engineer")]
+@using DataTrace.Application.Configuration
+@using DataTrace.Collector
+@inject IConfigRepository Config
+@inject ILineSimulator Simulator
+@inject DtToast Toast
+@inject IDialogService DialogService
+
+<PageHeader Title="系统设置">
+    <ChildContent>
+        @if (Dirty)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning">未保存</MudChip>
+        }
+    </ChildContent>
+    <Actions>
+        <MudText Typo="Typo.caption" Class="dt-muted">改动要点「保存」才会下发，采集器下一轮轮询采用新参数</MudText>
+    </Actions>
+</PageHeader>
+
+@if (_loading)
+{
+    <MudSkeleton Class="mb-3" />
+    <MudSkeleton Class="mb-3" SkeletonType="SkeletonType.Rectangle" Height="280px" />
+}
+else if (_settings is null)
+{
+    <MudAlert Severity="Severity.Error" Dense="true">系统设置读取失败，请刷新页面重试。</MudAlert>
+}
+else
+{
+    <MudPaper Class="pa-4 mb-3">
+        <MudText Typo="Typo.subtitle1" Class="mb-3">采集</MudText>
+        <MudGrid>
+            <MudItem xs="12" sm="6" md="3">
+                <MudNumericField @bind-Value="_settings.ScanIntervalMs" Label="扫描周期(ms)" Min="20" Max="5000"
+                                 Step="10" HelperText="采集器轮询 PLC 的间隔；改小更快，但会增加 PLC 负载" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudNumericField @bind-Value="_settings.WriteRetryCount" Label="写回重试次数" Min="0" Max="10"
+                                 HelperText="0 表示只写一次；NG 回写失败会导致 PLC 收不到结果" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudNumericField @bind-Value="_settings.RetentionYears" Label="保留年数" Min="1" Max="30"
+                                 HelperText="按整月删除更早的月库与曲线文件" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3" Class="d-flex align-center">
+                <MudSwitch T="bool" Value="_settings.CollectEnabled" ValueChanged="ToggleCollect" Disabled="_saving"
+                           Label="启用采集" Color="Color.Primary" />
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mb-3">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+            <MudText Typo="Typo.subtitle1">模拟产线</MudText>
+            <MudSpacer />
+            <MudButton Variant="Variant.Text" Size="Size.Small" Href="/simulate"
+                       EndIcon="@Icons.Material.Filled.ChevronRight">到 PLC 仿真页修改</MudButton>
+        </MudStack>
+        @* 只读展示：这四个参数在「PLC 仿真」页也有一份可编辑入口，两边都能写就会互相覆盖，
+           而且两页的取值范围本来就不一致（间隔一边 200–60000、一边 500–30000）。 *@
+        <MudStack Row="true" Spacing="4" Class="flex-wrap">
+            <div class="dt-metric">
+                <div class="dt-metric-label">启动后自动跑线</div>
+                <div class="dt-metric-value">@(_settings.SimulatorAutoRun ? "开" : "关")</div>
+            </div>
+            <div class="dt-metric">
+                <div class="dt-metric-label">托盘间隔</div>
+                <div class="dt-metric-value">@_settings.SimulatorIntervalMs ms</div>
+            </div>
+            <div class="dt-metric">
+                <div class="dt-metric-label">NG 比例</div>
+                <div class="dt-metric-value">@_settings.SimulatorNgPercent %</div>
+            </div>
+            <div class="dt-metric">
+                <div class="dt-metric-label">托盘池数量</div>
+                <div class="dt-metric-value">@_settings.SimulatorPalletPool</div>
+            </div>
+        </MudStack>
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mb-3">
+        <MudText Typo="Typo.subtitle1" Class="mb-3">MES 推送</MudText>
+        <MudGrid>
+            <MudItem xs="12" sm="6" md="3" Class="d-flex align-center">
+                <MudSwitch @bind-Value="_settings.MesEnabled" Label="启用 MES HTTP 推送" Color="Color.Primary" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="6">
+                <MudTextField @bind-Value="_settings.MesEndpoint" Label="MES 地址" Placeholder="http://mes.local/api/collect"
+                              Immediate="true" HelperText="启用推送时必须填写 http(s) 地址" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudNumericField @bind-Value="_settings.MesTimeoutSeconds" Label="MES 超时(秒)" Min="1" Max="300" />
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save" Disabled="_saving"
+                   StartIcon="@Icons.Material.Filled.Save">
+            @(_saving ? "保存中…" : "保存")
+        </MudButton>
+        <MudButton Variant="Variant.Outlined" OnClick="Reload" Disabled="_saving" StartIcon="@Icons.Material.Filled.RestartAlt">
+            放弃修改并重读
+        </MudButton>
+    </MudStack>
+}
+
+@code {
+    private SystemSettings? _settings;
+    private string _savedKey = "";
+    private bool _loading = true;
+    private bool _saving;
+
+    /// <summary>页面上的值与最近一次读/写的值不一致。没有这个提示，切走页面就会静默丢掉改动。</summary>
+    private bool Dirty => _settings is not null && Key(_settings) != _savedKey;
+
+    private static string Key(SystemSettings s) => string.Join('|',
+        s.ScanIntervalMs, s.WriteRetryCount, s.RetentionYears, s.CollectEnabled,
+        s.MesEnabled, s.MesEndpoint, s.MesTimeoutSeconds);
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        _loading = true;
+        try
+        {
+            _settings = (await Config.GetSnapshotAsync()).Settings;
+            _savedKey = _settings is null ? "" : Key(_settings);
+        }
+        catch (Exception ex)
+        {
+            _settings = null;
+            Toast.Add($"读取系统设置失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    /// <summary>关掉采集会让整线停止读数，属于影响生产的操作，必须二次确认。</summary>
+    private async Task ToggleCollect(bool enable)
+    {
+        if (_settings is null)
+        {
+            return;
+        }
+
+        if (enable)
+        {
+            _settings.CollectEnabled = true;
+            return;
+        }
+
+        var confirmed = await DialogService.ShowMessageBox(
+            "停用采集",
+            "停用后采集器不再读取任何工站，实时看板与查询都不会再有新数据。" +
+            "这一步只改页面上的开关，要点「保存」才真正下发。确定停用？",
+            yesText: "停用采集", cancelText: "取消");
+        if (confirmed == true)
+        {
+            _settings.CollectEnabled = false;
+        }
+    }
+
+    private async Task Save()
+    {
+        if (_settings is null || _saving)
+        {
+            return;
+        }
+
+        if (_settings.MesEnabled && !IsHttpUrl(_settings.MesEndpoint))
+        {
+            Toast.Add("已启用 MES 推送，但地址不是合法的 http(s) 地址", Severity.Warning);
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            // 只把本页拥有的字段搬到刚读出来的快照上。整对象写回会踩两个坑：
+            // 一是把「产品型号」页在这页打开之后改的 ActiveRecipeId 覆盖掉，
+            // 二是把「PLC 仿真」页改过的仿真参数按本页加载时的旧值写回去。
+            var target = (await Config.GetSnapshotAsync()).Settings;
+            target.ScanIntervalMs = _settings.ScanIntervalMs;
+            target.WriteRetryCount = _settings.WriteRetryCount;
+            target.RetentionYears = _settings.RetentionYears;
+            target.CollectEnabled = _settings.CollectEnabled;
+            target.MesEnabled = _settings.MesEnabled;
+            target.MesEndpoint = _settings.MesEndpoint;
+            target.MesTimeoutSeconds = _settings.MesTimeoutSeconds;
+
+            await Config.SaveSettingsAsync(target);
+            _settings = target;
+            _savedKey = Key(target);
+            Simulator.SetRunning(target.SimulatorAutoRun);
+            Toast.Add("已保存并下发采集器", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"保存失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private static bool IsHttpUrl(string? url)
+        => Uri.TryCreate(url, UriKind.Absolute, out var uri)
+           && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+}

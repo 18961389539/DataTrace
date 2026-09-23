@@ -1,0 +1,503 @@
+/* 字体、配色、圆角都来自 DataTraceTheme（Mud 主题）注入的 CSS 变量。
+   本文件只放主题表达不了的局部样式；新增颜色请引 palette 变量，不要再写十六进制。 */
+
+:root {
+    /* 与 MudPaper 共用一个圆角语言，避免出现「内层比外层更圆」 */
+    --dt-radius: var(--mud-default-borderradius);
+
+    /* 图表区：网格与轴文字复用主题变量，只有绘图底色是本地 token */
+    --dt-chart-bg: #f7f9fb;
+    --dt-chart-grid: var(--mud-palette-lines-default);
+    --dt-chart-axis: var(--mud-palette-text-secondary);
+
+    /* 数据表内滚区高度。表头吸附必须给容器一个高度才有滚动容器，
+       高度写在这一处而不是各页的标签上，改页头或筛选卡时只调这里。
+       330px ≈ 主内容上下留白 + 页头 + 筛选卡 + 分页条。
+       顶栏高度这里写死 64px 而不是引 --mud-appbar-height：那个变量由 Mud 挂在 .mud-layout 上，
+       :root 取不到，一旦引用整个 calc() 会被判无效、变量解析为空，高度就静默失效且不报错。
+       代价是改主题顶栏高度时这一行要跟着改。 */
+    --dt-grid-height: max(320px, calc(100vh - 64px - 330px));
+}
+
+/* Blazor 的错误边界样式（App.razor 的 #blazor-error-boundary）。
+   注意这里没有 .valid/.invalid/.validation-message：那几个类只由 EditContext 驱动的
+   表单生成，本应用全部用 Mud 控件自带的校验样式，没有 EditForm 就没有那些类。 */
+.blazor-error-boundary {
+    background: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNTYiIGhlaWdodD0iNDkiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgeG1sbnM6eGxpbms9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkveGxpbmsiIG92ZXJmbG93PSJoaWRkZW4iPjxkZWZzPjxjbGlwUGF0aCBpZD0iY2xpcDAiPjxyZWN0IHg9IjIzNSIgeT0iNTEiIHdpZHRoPSI1NiIgaGVpZ2h0PSI0OSIvPjwvY2xpcFBhdGg+PC9kZWZzPjxnIGNsaXAtcGF0aD0idXJsKCNjbGlwMCkiIHRyYW5zZm9ybT0idHJhbnNsYXRlKC0yMzUgLTUxKSI+PHBhdGggZD0iTTI2My41MDYgNTFDMjY0LjcxNyA1MSAyNjUuODEzIDUxLjQ4MzcgMjY2LjYwNiA1Mi4yNjU4TDI2Ny4wNTIgNTIuNzk4NyAyNjcuNTM5IDUzLjYyODMgMjkwLjE4NSA5Mi4xODMxIDI5MC41NDUgOTIuNzk1IDI5MC42NTYgOTIuOTk2QzI5MC44NzcgOTMuNTEzIDI5MSA5NC4wODE1IDI5MSA5NC42NzgyIDI5MSA5Ny4wNjUxIDI4OS4wMzggOTkgMjg2LjYxNyA5OUwyNDAuMzgzIDk5QzIzNy45NjMgOTkgMjM2IDk3LjA2NTEgMjM2IDk0LjY3ODIgMjM2IDk0LjM3OTkgMjM2LjAzMSA5NC4wODg2IDIzNi4wODkgOTMuODA3MkwyMzYuMzM4IDkzLjAxNjIgMjM2Ljg1OCA5Mi4xMzE0IDI1OS40NzMgNTMuNjI5NCAyNTkuOTYxIDUyLjc5ODUgMjYwLjQwNyA1Mi4yNjU4QzI2MS4yIDUxLjQ4MzcgMjYyLjI5NiA1MSAyNjMuNTA2IDUxWk0yNjMuNTg2IDY2LjAxODNDMjYwLjczNyA2Ni4wMTgzIDI1OS4zMTMgNjcuMTI0NSAyNTkuMzEzIDY5LjMzNyAyNTkuMzEzIDY5LjYxMDIgMjU5LjMzMiA2OS44NjA4IDI1OS4zNzEgNzAuMDg4N0wyNjEuNzk1IDg0LjAxNjEgMjY1LjM4IDg0LjAxNjEgMjY3LjgyMSA2OS43NDc1QzI2Ny44NiA2OS43MzA5IDI2Ny44NzkgNjkuNTg3NyAyNjcuODc5IDY5LjMxNzkgMjY3Ljg3OSA2Ny4xMTgyIDI2Ni40NDggNjYuMDE4MyAyNjMuNTg2IDY2LjAxODNaTTI2My41NzYgODYuMDU0N0MyNjEuMDQ5IDg2LjA1NDcgMjU5Ljc4NiA4Ny4zMDA1IDI1OS43ODYgODkuNzkyMSAyNTkuNzg2IDkyLjI4MzcgMjYxLjA0OSA5My41Mjk1IDI2My41NzYgOTMuNTI5NSAyNjYuMTE2IDkzLjUyOTUgMjY3LjM4NyA5Mi4yODM3IDI2Ny4zODcgODkuNzkyMSAyNjcuMzg3IDg3LjMwMDUgMjY2LjExNiA4Ni4wNTQ3IDI2My41NzYgODYuMDU0N1oiIGZpbGw9IiNGRkU1MDAiIGZpbGwtcnVsZT0iZXZlbm9kZCIvPjwvZz48L3N2Zz4=) no-repeat 1rem/1.8rem, var(--mud-palette-error);
+    padding: 1rem 1rem 1rem 3.7rem;
+    color: #fff;
+}
+
+    .blazor-error-boundary::after {
+        content: "页面出现错误，请刷新后重试。"
+    }
+
+/* ---------- 文本与数值 ---------- */
+
+.dt-muted {
+    color: var(--mud-palette-text-secondary);
+}
+
+/* 状态色文本：超限红、预警黄。取值跟随主题，供各页面替代内联 style。 */
+.dt-text-error {
+    color: var(--mud-palette-error);
+}
+
+.dt-text-warning {
+    color: var(--mud-palette-warning);
+}
+
+/* 数值列：右对齐 + 等宽数字，纵向扫读才能比大小 */
+.dt-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* 操作列这类非数值内容也要右对齐，但不该带上等宽数字的语义 */
+.dt-right {
+    text-align: right;
+}
+
+/* 每页条数选择器：不限制就会跟着栅格铺满一整行，看着像主筛选条件 */
+.dt-pagesize {
+    max-width: 150px;
+}
+
+/* 栅格同一行的卡片要等高，否则右侧留白把"两块并列"读成"一块半截" */
+.dt-fill {
+    height: 100%;
+}
+
+/* 限值矩阵这类窄数值列：五列同宽，写死在每一行里改一处要改五处 */
+.dt-limit-field {
+    max-width: 120px;
+}
+
+/* 不折叠的宽表在平板上给一个明确的横向滚动区，而不是把对话框撑破 */
+.dt-scroll-x {
+    overflow-x: auto;
+}
+
+/* 校验没过的行：整行上底色，比只把一个输入框描红更容易在几十行里被看见。
+   取色与 DtColors.Danger(#c62828) 同族，只压到很低的透明度。 */
+.dt-row-error td {
+    background: rgba(198, 40, 40, .07);
+}
+
+/* 时间、编号、耗时这类短列一旦被折成两行，纵向就对不齐，扫一眼也读不断句 */
+.dt-nowrap {
+    white-space: nowrap;
+}
+
+.dt-kpi {
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 页头与卡片 ---------- */
+
+/* MudBlazor 靠 .mud-main-content 的 padding-top 给 fixed 顶栏让位，任何 pa-* 工具类
+   都会把它一起覆盖成 16px，于是每页标题整条钻到顶栏底下。这里显式把让位加回来。 */
+.dt-main {
+    padding: calc(var(--mud-appbar-height) + 16px) 16px 16px;
+}
+
+/* 顶栏里的角色胶囊：MudChip 的 Inherit 仍取正文深色，压在深色底上读不出来 */
+.mud-appbar .dt-appbar-chip {
+    color: var(--mud-palette-appbar-text);
+    border-color: currentColor;
+    opacity: .75;
+}
+
+/* FocusOnNavigate 会把焦点放到页标题上（Routes.razor 的 Selector="h5"），程序性聚焦不该画出焦点环。
+   标题不可 Tab 到，去掉环不损失键盘可见性；用 h5 兜住是因为多数页面仍是裸 Typo.h5。 */
+h5:focus,
+.dt-page-title:focus {
+    outline: none;
+}
+
+/* 整行可点击进入明细 */
+.dt-clickable tbody tr {
+    cursor: pointer;
+}
+
+/* 顶栏面包屑 */
+.dt-crumb {
+    opacity: .7;
+    margin-left: 4px;
+}
+
+/* 导航分组标题 */
+.dt-nav-group {
+    padding: 14px 16px 4px;
+    letter-spacing: .08em;
+    color: var(--mud-palette-text-secondary);
+}
+
+/* 表单筛选区：让日期与输入框底部对齐 */
+.dt-filters .mud-input-control {
+    margin-top: 0;
+}
+
+.dt-filter-card {
+    padding: 12px 16px 4px;
+}
+
+/* ---------- 时间区间筛选（DateRangeFilter） ---------- */
+
+/* 按内容排布而不是按 12 栏切死：MudDatePicker 至少需要 180px 才放得下
+   "2026/9/21"，被切到 168px 时末位数字直接看不见了。 */
+.dt-range {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px 16px;
+    margin-bottom: 12px;
+}
+
+    .dt-range .mud-input-control {
+        margin-top: 0;
+    }
+
+.dt-range-presets {
+    flex: 0 0 auto;
+}
+
+.dt-range-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.dt-range-date {
+    flex: 0 1 200px;
+    min-width: 200px;
+}
+
+/* 指标卡：过程能力这类数值密集区，数字必须等宽对齐才看得动 */
+.dt-metric {
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--dt-radius);
+    padding: 10px 12px;
+}
+
+.dt-metric-label {
+    font-size: 0.75rem;
+    color: var(--mud-palette-text-secondary);
+    margin-bottom: 2px;
+}
+
+.dt-metric-value {
+    font-size: 1.25rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 图表 ---------- */
+
+.dt-chart {
+    background: var(--dt-chart-bg);
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--dt-radius);
+    display: block;
+    width: 100%;
+}
+
+.dt-chart-box {
+    position: relative;
+}
+
+/* 折线点：默认隐藏，悬停时按该序列自身的颜色填点（颜色由 LineChart 内联到 currentColor） */
+.dt-point {
+    fill: transparent;
+    transition: fill .12s ease-in;
+}
+
+.dt-chart-box:hover .dt-point {
+    fill: currentColor;
+    fill-opacity: .85;
+}
+
+.dt-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    font-size: 13px;
+    color: var(--mud-palette-text-secondary);
+    margin-bottom: 6px;
+}
+
+.dt-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.dt-legend-swatch {
+    width: 12px;
+    height: 3px;
+    border-radius: 2px;
+    display: inline-block;
+}
+
+/* ---------- 实时看板 ---------- */
+
+/* 左边框标状态：车间一眼扫过哪台不对 */
+.dash-station {
+    padding: 16px;
+    border-left: 4px solid var(--mud-palette-lines-default);
+    height: 100%;
+    min-height: 280px;
+}
+
+    .dash-station.ok {
+        border-left-color: var(--mud-palette-success);
+    }
+
+    .dash-station.ng,
+    .dash-station.fault {
+        border-left-color: var(--mud-palette-error);
+    }
+
+    .dash-station.busy {
+        border-left-color: var(--mud-palette-info);
+    }
+
+    .dash-station.disabled {
+        opacity: 0.55;
+    }
+
+.dash-tags {
+    margin-top: 14px;
+}
+
+.dash-tag {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--mud-palette-lines-default);
+    font-size: 0.95rem;
+}
+
+    .dash-tag.out,
+    .dash-tag.out .dash-tag-value {
+        color: var(--mud-palette-error);
+    }
+
+/* 预警带（黄区）：只提示不判废，所以用警告色而不是错误色 */
+.dash-tag.warn,
+.dash-tag.warn .dash-tag-value {
+    color: var(--mud-palette-warning);
+}
+
+.dash-tag-value {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+/* 看板点位状态说明：平板没有 hover，这句话必须直接读得到 */
+.dt-tag-state {
+    font-size: 0.75rem;
+    font-weight: 400;
+    margin-left: 6px;
+}
+
+/* ---------- 工站配置：左设备列表 ---------- */
+
+.station-pane {
+    min-height: 520px;
+}
+
+.station-list-item {
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--dt-radius);
+    cursor: pointer;
+}
+
+    .station-list-item.active {
+        background: var(--mud-palette-action-default-hover);
+        border-color: var(--mud-palette-primary);
+    }
+
+/* ---------- 登录 ---------- */
+/* 走原生 POST 表单（登录发生在 SignalR 建立之前），所以控件不能用 Mud 组件，
+   但尺寸、圆角、配色与主题里的 Mud 控件对齐。 */
+
+.login-card {
+    max-width: 380px;
+    margin: 0 auto;
+}
+
+.login-label {
+    display: block;
+    font-size: .875rem;
+    color: var(--mud-palette-text-secondary);
+    margin: 14px 0 4px;
+}
+
+.login-input {
+    display: block;
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--mud-palette-lines-inputs, #bdbdbd);
+    border-radius: var(--dt-radius);
+    font: inherit;
+    color: var(--mud-palette-text-primary);
+    background: var(--mud-palette-surface);
+}
+
+    .login-input:focus {
+        outline: 2px solid var(--mud-palette-primary);
+        outline-offset: 1px;
+    }
+
+.login-btn {
+    width: 100%;
+    margin-top: 20px;
+    padding: 10px;
+    border: 0;
+    border-radius: var(--dt-radius);
+    background: var(--mud-palette-primary);
+    color: #fff;
+    font: inherit;
+    cursor: pointer;
+}
+
+    .login-btn:hover {
+        background: var(--mud-palette-primary-hover);
+    }
+
+    .login-btn:focus-visible {
+        outline: 2px solid var(--mud-palette-primary);
+        outline-offset: 2px;
+    }
+
+.login-title {
+    font-size: 1.25rem;
+    font-weight: 500;
+    margin: 0 0 4px;
+}
+
+/* 副标题：登录页不解释自己是干什么的，第一次打开的人只能靠猜 */
+.login-hint {
+    margin: 0;
+    font-size: .875rem;
+    color: var(--mud-palette-text-secondary);
+}
+
+.login-error {
+    color: var(--mud-palette-error);
+    margin: 12px 0 0;
+}
+
+/* ---------- 窄屏：卡片与主内容留白收紧 ---------- */
+
+@media (max-width: 960px) {
+    .dt-main {
+        padding: calc(var(--mud-appbar-height) + 12px) 12px 12px;
+    }
+
+    .dash-station {
+        min-height: 0;
+    }
+}
+
+/* ---------- 交互反馈 ---------- */
+
+/* MudBlazor 7 的 Snackbar 没有关闭按钮：整条可点收起，错误类靠 RequireInteraction 停住等点。
+   光标提示让这个行为可见，否则用户以为只能干等它消失。 */
+.mud-snackbar {
+    cursor: pointer;
+}
+
+/* 看板数值刷新：元素用 @key 重建，动画随之重放，操作工一眼能看出哪一格刚变化 */
+.dt-flash {
+    animation: dt-flash 1.4s ease-out;
+    border-radius: 3px;
+}
+
+@keyframes dt-flash {
+    0%, 15% {
+        background: rgba(27, 110, 194, .3);
+    }
+
+    100% {
+        background: rgba(27, 110, 194, 0);
+    }
+}
+
+/* 采集中：呼吸描边。看板离操作工有一米远，静止的卡片容易被误认为没在跑 */
+.dash-station {
+    transition: border-left-color .35s ease;
+}
+
+.dash-station.busy {
+    animation: dt-busy 1.8s ease-in-out infinite;
+}
+
+@keyframes dt-busy {
+    0%, 100% {
+        box-shadow: 0 0 0 1px rgba(27, 110, 194, .22);
+    }
+
+    50% {
+        box-shadow: 0 0 0 5px rgba(27, 110, 194, .12);
+    }
+}
+
+/* 可点击行：hover 时给出左侧指引条，明确"这行能进明细"，而不是靠猜 */
+.dt-clickable tbody tr {
+    transition: background-color .12s ease-in, box-shadow .12s ease-in;
+}
+
+.dt-clickable tbody tr:hover {
+    box-shadow: inset 3px 0 0 var(--mud-palette-primary);
+}
+
+/* Blazor circuit 断开：不提示的话现场只看到"按了没反应"，容易误判成采集停了 */
+#components-reconnect-modal {
+    text-align: center;
+}
+
+.dt-reconnect {
+    display: none;
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    max-width: min(560px, calc(100vw - 32px));
+    padding: 12px 18px;
+    border-radius: 8px;
+    background: #37474f;
+    color: #fff;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, .3);
+    font-size: .95rem;
+    line-height: 1.5;
+    z-index: 10000;
+}
+
+.dt-reconnect b {
+    display: block;
+    margin-bottom: 2px;
+}
+
+#components-reconnect-modal.components-reconnect-show .dt-reconnect.try {
+    display: block;
+}
+
+#components-reconnect-modal.components-reconnect-failed .dt-reconnect.dead,
+#components-reconnect-modal.components-reconnect-rejected .dt-reconnect.dead {
+    display: block;
+}
+
+/* 动效对远端屏是必要的，但对晕动与读屏用户是干扰 */
+@media (prefers-reduced-motion: reduce) {
+    .dt-flash,
+    .dash-station.busy {
+        animation: none;
+    }
+}

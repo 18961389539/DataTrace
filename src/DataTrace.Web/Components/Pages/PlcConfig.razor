@@ -1,0 +1,214 @@
+@page "/config/plc"
+@attribute [Authorize(Roles = "Administrator,Engineer")]
+@using DataTrace.Application.Configuration
+@inject IConfigRepository Config
+@inject IAuditLogger Audit
+@inject AuthenticationStateProvider Auth
+@inject IDialogService DialogService
+@inject DtToast Toast
+
+<PageHeader Title="PLC 连接">
+    <Actions>
+        <MudText Typo="Typo.caption" Class="dt-muted">共 @_items.Count 台，被工站引用的连接不能删除</MudText>
+    </Actions>
+</PageHeader>
+
+<MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="NewItem" Disabled="_saving"
+           StartIcon="@(_saving ? Icons.Material.Filled.Sync : Icons.Material.Filled.Add)">
+    @(_saving ? "处理中…" : "新增连接")
+</MudButton>
+
+@if (_items.Count == 0)
+{
+    <MudAlert Severity="Severity.Info" Dense="true" Class="mt-3">
+        还没有 PLC 连接。先新增一台（或选择内置模拟器），再到「工站配置」把工站挂到这台 PLC 上。
+    </MudAlert>
+}
+
+<MudTable Items="_items" Dense="true" Hover="true" Class="mt-3" Breakpoint="Breakpoint.Sm" Loading="_loading"
+          LoadingProgressColor="Color.Info">
+    <HeaderContent>
+        <MudTh>名称</MudTh>
+        <MudTh>品牌</MudTh>
+        <MudTh>地址</MudTh>
+        <MudTh>字序</MudTh>
+        <MudTh>心跳</MudTh>
+        <MudTh>启用</MudTh>
+        <MudTh>工站</MudTh>
+        <MudTh Class="dt-right">操作</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="名称">@context.Name</MudTd>
+        <MudTd DataLabel="品牌">@BrandText(context.Brand)</MudTd>
+        <MudTd DataLabel="地址">@context.Host:@context.Port</MudTd>
+        <MudTd DataLabel="字序">
+            <MudTooltip Text="@($"{context.FloatWordOrder}（A 为最高字节）")">
+                <span>@DisplayLabels.WordOrder(context.FloatWordOrder)</span>
+            </MudTooltip>
+        </MudTd>
+        <MudTd DataLabel="心跳">
+            @if (context.Heartbeat?.Enabled == true && !string.IsNullOrWhiteSpace(context.Heartbeat.Address))
+            {
+                <span>@context.Heartbeat.Address / @context.Heartbeat.IntervalMs ms</span>
+            }
+            else
+            {
+                <span class="dt-muted">未启用</span>
+            }
+        </MudTd>
+        <MudTd DataLabel="启用">
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                     Color="@(context.Enabled ? Color.Success : Color.Default)">
+                @(context.Enabled ? "启用" : "停用")
+            </MudChip>
+        </MudTd>
+        <MudTd DataLabel="工站">@StationCount(context.Id)</MudTd>
+        <MudTd Class="dt-right">
+            <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Edit"
+                       Disabled="_saving" OnClick="@(() => Edit(context))">编辑</MudButton>
+            <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                       StartIcon="@Icons.Material.Filled.Delete" Disabled="_saving"
+                       OnClick="@(() => Delete(context))">删除</MudButton>
+        </MudTd>
+    </RowTemplate>
+    <NoRecordsContent>
+        <MudText Typo="Typo.body2" Class="dt-muted py-4">@(_loading ? "正在加载…" : "还没有 PLC 连接，点上方「新增连接」开始。")</MudText>
+    </NoRecordsContent>
+</MudTable>
+
+@code {
+    private IReadOnlyList<PlcConnection> _items = [];
+    private IReadOnlyList<Station> _stations = [];
+    private bool _loading;
+    private bool _saving;
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        _loading = true;
+        try
+        {
+            _items = await Config.GetPlcConnectionsAsync();
+            _stations = await Config.GetStationsAsync();
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"加载 PLC 连接失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private int StationCount(int plcId) => _stations.Count(s => s.PlcConnectionId == plcId);
+
+    private static string BrandText(PlcBrand brand) => brand switch
+    {
+        PlcBrand.Simulator => "模拟器",
+        PlcBrand.MitsubishiMc3E => "三菱 MC 3E",
+        PlcBrand.SiemensS7 => "西门子 S7",
+        PlcBrand.ModbusTcp => "Modbus TCP",
+        PlcBrand.OmronFins => "欧姆龙 FINS",
+        _ => brand.ToString()
+    };
+
+    private async Task NewItem()
+    {
+        var model = new PlcConnection
+        {
+            Port = 6000,
+            TimeoutMs = 2000,
+            FloatWordOrder = FloatWordOrder.CDAB,
+            Enabled = true
+        };
+        await ShowDialog(model, isNew: true, heartbeatAddress: "D0", heartbeatMs: 1000);
+    }
+
+    private async Task Edit(PlcConnection item)
+        => await ShowDialog(item, isNew: false,
+            heartbeatAddress: item.Heartbeat?.Address ?? "",
+            heartbeatMs: item.Heartbeat?.IntervalMs ?? 1000);
+
+    private async Task ShowDialog(PlcConnection model, bool isNew, string heartbeatAddress, int heartbeatMs)
+    {
+        var parameters = new DialogParameters
+        {
+            ["Model"] = model,
+            ["IsNew"] = isNew,
+            ["HeartbeatAddress"] = heartbeatAddress,
+            ["HeartbeatIntervalMs"] = heartbeatMs
+        };
+        var dialog = await DialogService.ShowAsync<PlcEditDialog>(isNew ? "新增 PLC 连接" : "编辑 PLC 连接", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
+        var result = await dialog.Result;
+        if (result is null || result.Canceled || result.Data is not PlcConnection saved)
+        {
+            return;
+        }
+
+        await Write(isNew ? "新增" : "保存", async () =>
+        {
+            await Config.SavePlcConnectionAsync(saved);
+            var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            await Audit.WriteAsync(user, isNew ? "Create" : "Save", "PlcConnection", saved.Name, null,
+                $"{saved.Host}:{saved.Port} {saved.Brand}");
+            await Reload();
+            Toast.Add(isNew ? $"已新增 {saved.Name}" : $"已保存 {saved.Name}", Severity.Success);
+        });
+    }
+
+    private async Task Delete(PlcConnection item)
+    {
+        var used = StationCount(item.Id);
+        if (used > 0)
+        {
+            Toast.Add($"「{item.Name}」已被 {used} 个工站引用，请先在工站配置里改绑或删除这些工站", Severity.Warning);
+            return;
+        }
+
+        var confirmed = await DialogService.ShowMessageBox(
+            "删除 PLC 连接",
+            $"确定删除「{item.Name}」({item.Host}:{item.Port})？删除后采集器将不再连接该 PLC。",
+            yesText: "删除", cancelText: "取消");
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        await Write("删除", async () =>
+        {
+            await Config.DeletePlcConnectionAsync(item.Id);
+            var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            await Audit.WriteAsync(user, "Delete", "PlcConnection", item.Name, $"{item.Host}:{item.Port}", null);
+            await Reload();
+            Toast.Add($"已删除 {item.Name}", Severity.Success);
+        });
+    }
+
+    /// <summary>
+    /// 写配置期间锁住本页按钮：连点不会重复下发，采集器也不会收到半路被改第二次的连接。
+    /// </summary>
+    private async Task Write(string what, Func<Task> action)
+    {
+        if (_saving)
+        {
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            await action();
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"{what}失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+}

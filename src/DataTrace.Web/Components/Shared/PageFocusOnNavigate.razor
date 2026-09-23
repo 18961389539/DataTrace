@@ -1,0 +1,55 @@
+@implements IDisposable
+@inject NavigationManager Nav
+@inject IJSRuntime Js
+
+@code {
+    /// <summary>与框架的 FocusOnNavigate 同义，但只在路径变化时移动焦点。</summary>
+    [Parameter] public string Selector { get; set; } = "h5";
+
+    private string _path = "";
+    private bool _pendingFocus;
+
+    protected override void OnInitialized()
+    {
+        _path = CurrentPath(Nav.Uri);
+        Nav.LocationChanged += OnLocationChanged;
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs args)
+    {
+        var path = CurrentPath(args.Location);
+
+        // 改筛选条件、翻页只会动 query string。这时把焦点抢回页标题，
+        // 顺带把长表格滚到顶部，用户刚点的位置就找不回来了。
+        if (path == _path)
+        {
+            return;
+        }
+
+        _path = path;
+        _pendingFocus = true;
+        StateHasChanged();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!(_pendingFocus || firstRender))
+        {
+            return;
+        }
+
+        _pendingFocus = false;
+        try
+        {
+            await Js.InvokeVoidAsync("dtFocusPageTitle", Selector);
+        }
+        catch (Exception)
+        {
+            // circuit 正在断开时聚焦没意义，也不该因此炸掉页面。
+        }
+    }
+
+    private static string CurrentPath(string uri) => uri.Split('?')[0].Split('#')[0];
+
+    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
+}
