@@ -14,7 +14,8 @@ namespace DataTrace.E2E.Tests;
 /// <item><c>update</c>：把截图写成新基线。改完界面样式后跑一次，人眼确认过再提交。</item>
 /// <item><c>compare</c>（默认）：与基线比。基线文件不存在时**判失败**而不是静默通过 ——
 /// 一条什么都没比的"绿"用例比红更糟。</item>
-/// <item><c>off</c>：不比。CI 目前用它：基线是在某台机器的 Edge 上录的，
+/// <item><c>off</c>：不比像素（截图照截，只断言"截出了一张有内容的图"）。CI 目前用它：
+/// 基线是在某台机器的 Edge 上录的，
 /// runner 上的 Edge 版本不同就会在抗锯齿/字体度量的差别上抖出假红。
 /// 想在 CI 上用，先在 windows-latest 上录一批基线再改这一行。</item>
 /// </list>
@@ -57,13 +58,19 @@ public static class VisualGolden
 
     private static string Mode => (Environment.GetEnvironmentVariable(ModeVariable) ?? "compare").Trim().ToLowerInvariant();
 
-    public static bool Enabled => Mode != "off";
-
     /// <summary>
     /// 比对（或录制）一张截图。失败信息里直接给出怎么重录，省得回头翻代码。
     /// </summary>
     public static void Verify(string name, byte[] png)
     {
+        // off 只关掉像素比对，截图本身仍然要成功：区域不存在、被折叠成 0 高度、
+        // 或者渲染成一张空白，都得在这里红，而不是整条用例静默不做事。
+        if (Mode == "off")
+        {
+            Assert.True(png.Length > 1024, $"{name} 截出来的图只有 {png.Length} 字节，区域大概没渲染出来");
+            return;
+        }
+
         var path = FullPath(name);
 
         if (Mode == "update")

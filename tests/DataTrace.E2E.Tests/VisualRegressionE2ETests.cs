@@ -149,23 +149,25 @@ public class VisualRegressionE2ETests : E2ETestBase
 
     /// <summary>
     /// 截图目标：名字、路由、区域选择器（空表示整页）。
-    /// CI 上（模式为 off）返回空数据，于是这条用例报"已跳过"而不是假绿。
     /// </summary>
+    /// <remarks>
+    /// 这里不能按模式返回空集合：xunit 把"没有数据点的 Theory"判成**失败**（No data found），
+    /// 不是跳过 —— CI 设 DATATRACE_E2E_GOLDEN=off 时就是被这条红掉的。
+    /// 关掉的是像素比对（在 <see cref="VisualGolden.Verify"/> 里），截图本身照截，
+    /// 所以 off 模式下仍然在验"这块区域存在、可见、能截出图"。
+    /// </remarks>
     [SupportedOSPlatform("windows")]
     public static TheoryData<string, string, string> GoldenTargets
     {
         get
         {
-            var data = new TheoryData<string, string, string>();
-            if (!VisualGolden.Enabled)
+            var data = new TheoryData<string, string, string>
             {
-                return data;
-            }
-
-            data.Add("filter-card", "/query", ".dt-filter-card");
-            data.Add("denied-panel", "/denied?ReturnUrl=%2Fusers", ".dt-main .mud-paper");
-            data.Add("app-shell", "/", ".mud-drawer");
-            data.Add("settings-form", "/config/settings", ".dt-main");
+                { "filter-card", "/query", ".dt-filter-card" },
+                { "denied-panel", "/denied?ReturnUrl=%2Fusers", ".dt-main .mud-paper" },
+                { "app-shell", "/", ".mud-drawer" },
+                { "settings-form", "/config/settings", ".dt-main" }
+            };
             return data;
         }
     }
