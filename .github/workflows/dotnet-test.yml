@@ -1,0 +1,39 @@
+name: test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 .NET SDK（slnx 解决方案格式需要 9.4+）
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      # Release 构建：警告不会让任务失败（Directory.Build.props 里 TreatWarningsAsErrors=false），
+      # 但会原样打在日志里 —— 本项目要求 0 警告，看这一屏就知道有没有多出 MUD0002。
+      # 想把它变成硬性关卡，就在下面这行加 -p:TreatWarningsAsErrors=true。
+      - name: 还原并构建
+        run: dotnet build DataTrace.slnx -c Release --nologo
+
+      - name: 单元与集成测试
+        run: dotnet test tests/DataTrace.Tests/DataTrace.Tests.csproj -c Release --no-build --nologo
+
+      - name: 组件测试（bUnit）
+        run: dotnet test tests/DataTrace.Web.Tests/DataTrace.Web.Tests.csproj -c Release --no-build --nologo
+
+      # E2E 会自己拉起一个隔离的 DataTrace.Web 实例；默认只认 Debug 产物路径，
+      # 所以这里显式告诉它用刚构建出来的 Release 应用。
+      - name: E2E（Playwright 驱动 windows-latest 自带的 msedge）
+        run: dotnet test tests/DataTrace.E2E.Tests/DataTrace.E2E.Tests.csproj -c Release --no-build --nologo
+        env:
+          DATATRACE_APP_DLL: ${{ github.workspace }}\src\DataTrace.Web\bin\Release\net8.0\DataTrace.Web.dll
