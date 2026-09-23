@@ -31,6 +31,14 @@ sc start DataTrace
 
 监听 `http://0.0.0.0:5080`，工控机与平板可通过局域网 IP 访问。
 
+换端口时别只改 `ASPNETCORE_URLS`：`appsettings.json` 里的 `Kestrel:Endpoints:Http:Url`
+优先级更高，会**静默**把它覆盖掉（现象是服务照样起在 5080，日志里没有任何提示）。
+改监听地址要改配置文件，或用同名配置项覆盖：
+
+```bat
+set Kestrel__Endpoints__Http__Url=http://0.0.0.0:5100
+```
+
 ## 数据目录
 
 `data/config.db` 配置与用户  

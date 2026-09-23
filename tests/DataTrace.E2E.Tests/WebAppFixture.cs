@@ -10,15 +10,24 @@ namespace DataTrace.E2E.Tests;
 /// </summary>
 /// <remarks>
 /// 三件事必须绕开开发机上的常态：常驻的 DataTrace.Web.exe 占着 5080 与默认输出目录，
-/// 所以端口走配置项覆盖、数据目录指向临时目录、并且必须是 Development
-/// （Production 下 app.css 与 _content/* 取不到，页面会看起来"坏了"）。
+/// 所以端口走配置项覆盖（Kestrel:Endpoints:Http:Url，不是 ASPNETCORE_URLS，后者会被
+/// appsettings 静默盖掉）、数据目录指向临时目录。
+/// 环境名由派生类决定：界面用例必须 Development（否则 app.css 与 _content/* 取不到，
+/// 页面看起来"坏了"），鉴权用例必须非 Development（Development 会免登录直接登成 admin）。
 /// </remarks>
-public sealed class WebAppFixture : IDisposable
+public abstract class WebAppHost : IDisposable
 {
     private Process? _process;
     private StringBuilder _output = new();
     private string? _dataRoot;
     private Task? _start;
+
+    protected WebAppHost(string environmentName)
+    {
+        EnvironmentName = environmentName;
+    }
+
+    protected string EnvironmentName { get; }
 
     public string BaseUrl { get; private set; } = "";
 
@@ -42,7 +51,7 @@ public sealed class WebAppFixture : IDisposable
             UseShellExecute = false,
             CreateNoWindow = true
         };
-        startInfo.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
+        startInfo.Environment["ASPNETCORE_ENVIRONMENT"] = EnvironmentName;
         startInfo.Environment["Kestrel__Endpoints__Http__Url"] = BaseUrl;
         startInfo.Environment["DataRoot"] = _dataRoot;
 
@@ -80,7 +89,8 @@ public sealed class WebAppFixture : IDisposable
 
             try
             {
-                // 首访会被自动登成 admin 并跳回首页，任一响应都说明管线通了。
+                // /login 在 Development 会被自动登成 admin 返 302，非 Development 直接 200，
+                // 两种响应都说明管线通了。
                 using var response = await http.GetAsync($"{BaseUrl}/login");
                 if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Found)
                 {
@@ -164,6 +174,28 @@ public sealed class WebAppFixture : IDisposable
     }
 }
 
+/// <summary>界面用例用的实例：Development 免登录、静态资源齐。</summary>
+public sealed class WebAppFixture : WebAppHost
+{
+    public WebAppFixture()
+        : base("Development")
+    {
+    }
+}
+
+/// <summary>
+/// 鉴权用例用的实例：Staging 关掉了免登录，才会真的产生登录挑战、越权跳转和登出。
+/// 该环境下 app.css 与 _content/* 取不到（静态资源只在 Development 装载），
+/// 所以这里只断言服务端就完成的跳转与预渲染文本，不要指望弹窗、输入框之类的交互。
+/// </summary>
+public sealed class AuthWebAppFixture : WebAppHost
+{
+    public AuthWebAppFixture()
+        : base("Staging")
+    {
+    }
+}
+
 /// <summary>整套 E2E 共用一个应用实例与一个浏览器。</summary>
 public sealed class BrowserFixture : IAsyncLifetime
 {
@@ -204,11 +236,17 @@ public sealed class E2ECollection : ICollectionFixture<WebAppFixture>, ICollecti
 {
 }
 
+/// <summary>鉴权用例单独一个集合：跑在非 Development 实例上，因此也有自己的浏览器。</summary>
+[CollectionDefinition("e2e-auth")]
+public sealed class AuthE2ECollection : ICollectionFixture<AuthWebAppFixture>, ICollectionFixture<BrowserFixture>
+{
+}
+
 /// <summary>E2E 用例基类：每个用例一个全新上下文，互不串 cookie。</summary>
 [Collection("e2e")]
 public abstract class E2ETestBase : IAsyncLifetime
 {
-    protected WebAppFixture App { get; }
+    protected WebAppHost App { get; }
 
     protected IBrowser Browser { get; }
 
@@ -216,7 +254,7 @@ public abstract class E2ETestBase : IAsyncLifetime
 
     protected IPage Page { get; private set; } = null!;
 
-    protected E2ETestBase(WebAppFixture app, BrowserFixture browser)
+    protected E2ETestBase(WebAppHost app, BrowserFixture browser)
     {
         App = app;
         Browser = browser.Browser;
@@ -233,16 +271,6 @@ public abstract class E2ETestBase : IAsyncLifetime
     public async Task DisposeAsync()
     {
         await Context.DisposeAsync();
-    }
-
-    /// <summary>以指定账号登录（应用对未登录请求会自动登成 admin，所以非 admin 角色必须显式登录）。</summary>
-    protected async Task LoginAsync(string userName, string password)
-    {
-        await Page.GotoAsync($"{App.BaseUrl}/login");
-        await Page.FillAsync("input[name=UserName]", userName);
-        await Page.FillAsync("input[name=Password]", password);
-        await Page.ClickAsync("button.login-btn");
-        await Page.WaitForURLAsync("**/", new PageWaitForURLOptions { WaitUntil = WaitUntilState.DOMContentLoaded });
     }
 
     /// <summary>等某个元素出现。Blazor Server 的交互要等 SignalR circuit，用可见元素比固定等待稳。</summary>
@@ -262,4 +290,46 @@ public abstract class E2ETestBase : IAsyncLifetime
         await input.FillAsync(value);
         await input.PressAsync("Enter");
     }
+}
+
+/// <summary>
+/// 鉴权用例基类：跑在 Staging 实例上，cookie 认证才会真的生效。
+/// 登录/登出/越权跳转全部在服务端完成，因此不依赖那个环境里 404 的 CSS 与 JS。
+/// </summary>
+[Collection("e2e-auth")]
+public abstract class AuthE2ETestBase : E2ETestBase
+{
+    protected AuthE2ETestBase(AuthWebAppFixture app, BrowserFixture browser)
+        : base(app, browser)
+    {
+    }
+
+    /// <summary>
+    /// 填好登录表并提交，等跳转落地（成败都算落地，由用例断言最终 URL）。
+    /// </summary>
+    /// <remarks>
+    /// 赋值与提交放在同一个 JS 任务里，不能拆成 FillAsync + ClickAsync：登录表在预渲染的
+    /// DOM 上，circuit 起来后第一次渲染会把这一段重建，把先前填进去的值一起抹掉，
+    /// 于是服务端收到的是空用户名空密码。真人手打碰不到这个窗口，自动化必撞。
+    /// </remarks>
+    protected async Task SubmitLoginAsync(string userName, string password)
+    {
+        await Page.GotoAsync($"{App.BaseUrl}/login");
+        await Page.WaitForSelectorAsync("form[action='/account/login'] input[name=UserName]");
+        await Page.EvaluateAsync(
+            @"([userName, password]) => {
+                  const form = document.querySelector('form[action=""/account/login""]');
+                  form.querySelector('input[name=UserName]').value = userName;
+                  form.querySelector('input[name=Password]').value = password;
+                  form.requestSubmit(form.querySelector('button.login-btn'));
+              }",
+            new[] { userName, password });
+
+        // 成功的去处不止一个（/ 或带 ReturnUrl 的目标），失败会停在 /login?error=1；
+        // 只有"离开裸 /login"是两种结局共有的确定信号。
+        await Page.WaitForURLAsync(url => !url.EndsWith("/login", StringComparison.Ordinal));
+    }
+
+    /// <summary>浏览器直接跟随服务端跳转，Page.Url 就是最终落点。</summary>
+    protected string CurrentPath() => new Uri(Page.Url).PathAndQuery;
 }
