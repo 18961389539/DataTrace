@@ -5,6 +5,7 @@ using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Web.Components.Pages;
+using DataTrace.Web.Components.Shared;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.Extensions.DependencyInjection;
@@ -63,13 +64,18 @@ public class QueryPageTests : WebTestBase
     }
 
     /// <summary>
-    /// 按下拉里的取值切换型号筛选。这几组值就是界面的取值契约：
-    /// "*"=全部、__EMPTY__=未选型号、带 "c:" 前缀的是真实编码。
+    /// 按下拉里的选项切换型号筛选。参数是筛选状态：null=全部型号、""=未选型号、其它=型号编码。
+    /// 从真正渲染出来的选项里取取值，顺带钉住"这个选项确实在下拉里"；
+    /// 返回选中的取值，供用例比对页面回读的那一份（两者不相等，MudSelect 就认不出选中项）。
     /// </summary>
-    private static async Task SelectRecipeAsync(IRenderedComponent<Query> cut, string optionValue)
+    private static async Task<RecipeFilterValue> SelectRecipeAsync(IRenderedComponent<Query> cut, string? recipe)
     {
-        var select = cut.FindComponent<MudSelect<string>>();
-        await cut.InvokeAsync(() => select.Instance.ValueChanged.InvokeAsync(optionValue));
+        var select = cut.FindComponent<MudSelect<RecipeFilterValue>>();
+        var value = cut.FindComponents<MudSelectItem<RecipeFilterValue>>()
+            .Select(i => i.Instance.Value)
+            .First(v => v is not null && v.Recipe == recipe);
+        await cut.InvokeAsync(() => select.Instance.ValueChanged.InvokeAsync(value));
+        return value!;
     }
 
     [Theory]
@@ -122,7 +128,7 @@ public class QueryPageTests : WebTestBase
     {
         var cut = Render();
 
-        await SelectRecipeAsync(cut, "*");
+        await SelectRecipeAsync(cut, null);
 
         _store.Verify(
             s => s.QueryAsync(It.Is<CollectQueryRequest>(r => r.RecipeCode == null), It.IsAny<CancellationToken>()),
@@ -134,7 +140,7 @@ public class QueryPageTests : WebTestBase
     {
         var cut = Render();
 
-        await SelectRecipeAsync(cut, "__EMPTY__");
+        await SelectRecipeAsync(cut, "");
 
         _store.Verify(
             s => s.QueryAsync(It.Is<CollectQueryRequest>(r => r.RecipeCode == ""), It.IsAny<CancellationToken>()),
@@ -144,30 +150,56 @@ public class QueryPageTests : WebTestBase
     [Fact]
     public async Task A_recipe_code_that_looks_like_a_sentinel_stays_selectable()
     {
-        // 旧实现把 __EMPTY__ 当"未选型号"的哨兵，真有人把型号编码取成这个名字就再也筛不出来了。
+        // 哨兵是"取值里的筛选状态"，不是编码文本：真有人把型号编码取成 __EMPTY__，
+        // 也得能和"未选型号"分开筛。
+        _store
+            .Setup(s => s.ListRecipeCodesAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["__EMPTY__"]);
         var cut = Render();
 
-        await SelectRecipeAsync(cut, "c:__EMPTY__");
+        var chosen = await SelectRecipeAsync(cut, "__EMPTY__");
 
         _store.Verify(
             s => s.QueryAsync(It.Is<CollectQueryRequest>(r => r.RecipeCode == "__EMPTY__"), It.IsAny<CancellationToken>()),
             Times.AtLeastOnce);
-        // 回读仍是这个编码：不能在下一轮渲染时被读成哨兵。
-        Assert.Equal("c:__EMPTY__", cut.FindComponent<MudSelect<string>>().Instance.Value);
+        // 回读仍是这个编码，且与选项本身相等：被读成哨兵的话 MudSelect 就认不出选中项了。
+        var bound = cut.FindComponent<MudSelect<RecipeFilterValue>>().Instance.Value;
+        Assert.Equal("__EMPTY__", bound?.Recipe);
+        Assert.Equal(chosen, bound);
+    }
+
+    [Fact]
+    public async Task A_recipe_code_that_looks_like_a_sentinel_is_not_confused_with_the_sentinel()
+    {
+        _store
+            .Setup(s => s.ListRecipeCodesAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["__EMPTY__"]);
+        var cut = Render();
+
+        var sentinel = await SelectRecipeAsync(cut, "");
+        var code = await SelectRecipeAsync(cut, "__EMPTY__");
+
+        // 两个选项必须是不相等的取值，否则选中态会串台。
+        Assert.NotEqual(sentinel, code);
+        Assert.Equal("", sentinel.Recipe);
+        Assert.Equal("__EMPTY__", code.Recipe);
     }
 
     [Fact]
     public async Task A_recipe_code_that_starts_with_the_option_prefix_round_trips()
     {
-        // 前缀不属于编码本身：编码叫 c:X 时下拉值必须是 c:c:X，少加一层会被剥成 X。
+        // 取值直接带编码，不再有"前缀叠层"的往返：编码叫 c:X 就按 c:X 精确匹配。
+        _store
+            .Setup(s => s.ListRecipeCodesAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["c:X"]);
         var cut = Render();
 
-        await SelectRecipeAsync(cut, "c:c:X");
+        var chosen = await SelectRecipeAsync(cut, "c:X");
 
         _store.Verify(
             s => s.QueryAsync(It.Is<CollectQueryRequest>(r => r.RecipeCode == "c:X"), It.IsAny<CancellationToken>()),
             Times.AtLeastOnce);
-        Assert.Equal("c:c:X", cut.FindComponent<MudSelect<string>>().Instance.Value);
+        Assert.Equal(chosen, cut.FindComponent<MudSelect<RecipeFilterValue>>().Instance.Value);
     }
 
     /// <summary>按角色发身份：页面只读 Name 与角色声明。</summary>

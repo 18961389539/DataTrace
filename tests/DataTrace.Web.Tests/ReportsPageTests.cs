@@ -6,6 +6,7 @@ using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Web.Components.Pages;
+using DataTrace.Web.Components.Shared;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.Extensions.DependencyInjection;
@@ -92,13 +93,18 @@ public class ReportsPageTests : WebTestBase
     }
 
     /// <summary>
-    /// 按下拉的取值切换型号筛选。这几组值就是界面的取值契约：
-    /// "*"=全部、__EMPTY__=未选型号、带 "c:" 前缀的是真实编码。
+    /// 按下拉里的选项切换型号筛选。参数是筛选状态：null=全部型号、""=未选型号、其它=型号编码。
+    /// 从真正渲染出来的选项里取取值，顺带钉住"这个选项确实在下拉里"；
+    /// 返回选中的取值，供用例比对页面回读的那一份（两者不相等，MudSelect 就认不出选中项）。
     /// </summary>
-    private static async Task SelectRecipeAsync(IRenderedComponent<Reports> cut, string optionValue)
+    private static async Task<RecipeFilterValue> SelectRecipeAsync(IRenderedComponent<Reports> cut, string? recipe)
     {
-        var select = cut.FindComponents<MudSelect<string>>()[0];
-        await cut.InvokeAsync(() => select.Instance.ValueChanged.InvokeAsync(optionValue));
+        var select = cut.FindComponent<MudSelect<RecipeFilterValue>>();
+        var value = cut.FindComponents<MudSelectItem<RecipeFilterValue>>()
+            .Select(i => i.Instance.Value)
+            .First(v => v is not null && v.Recipe == recipe);
+        await cut.InvokeAsync(() => select.Instance.ValueChanged.InvokeAsync(value));
+        return value!;
     }
 
     [Fact]
@@ -106,7 +112,7 @@ public class ReportsPageTests : WebTestBase
     {
         var cut = Render();
 
-        await SelectRecipeAsync(cut, "c:A100");
+        await SelectRecipeAsync(cut, "A100");
 
         // 一条都不能漏：漏了就会出现"选了 A100 却看到全部型号的不良"。
         _reports.Verify(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
@@ -125,7 +131,7 @@ public class ReportsPageTests : WebTestBase
     {
         var cut = Render();
 
-        await SelectRecipeAsync(cut, "__EMPTY__");
+        await SelectRecipeAsync(cut, "");
 
         _reports.Verify(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), "", It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -177,13 +183,20 @@ public class ReportsPageTests : WebTestBase
     [Fact]
     public async Task A_recipe_code_that_looks_like_a_sentinel_stays_selectable()
     {
-        // 旧实现把 __EMPTY__ 当"未选型号"的哨兵，真有人把型号编码取成这个名字就再也筛不出来了。
+        // 哨兵是"取值里的筛选状态"，不是编码文本：真有人把型号编码取成 __EMPTY__，
+        // 也得能和"未选型号"分开筛。
+        _store
+            .Setup(s => s.ListRecipeCodesAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["__EMPTY__"]);
         var cut = Render();
 
-        await SelectRecipeAsync(cut, "c:__EMPTY__");
+        var chosen = await SelectRecipeAsync(cut, "__EMPTY__");
 
         _reports.Verify(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), "__EMPTY__", It.IsAny<CancellationToken>()), Times.Once);
-        Assert.Equal("c:__EMPTY__", cut.FindComponents<MudSelect<string>>()[0].Instance.Value);
+        // 回读仍是这个编码，且与选项本身相等：被读成哨兵的话 MudSelect 就认不出选中项了。
+        var bound = cut.FindComponent<MudSelect<RecipeFilterValue>>().Instance.Value;
+        Assert.Equal("__EMPTY__", bound?.Recipe);
+        Assert.Equal(chosen, bound);
     }
 
     [Fact]
@@ -277,7 +290,7 @@ public class ReportsPageTests : WebTestBase
     {
         var cut = Render();
 
-        await SelectRecipeAsync(cut, "c:A100");
+        await SelectRecipeAsync(cut, "A100");
 
         // 默认区间与默认点位不写进地址，其余条件要能刷新/转发后复原。
         Assert.Contains("recipe=A100", cut.Services.GetRequiredService<NavigationManager>().Uri);
