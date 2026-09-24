@@ -145,7 +145,8 @@ public class SimulatePageTests : WebTestBase
 
         Assert.Equal(new[] { true }, Simulator.RunningChanges);
         Assert.Contains(nameof(IConfigRepository.SaveSettingsAsync), Config.Calls);
-        Assert.True(Config.Snapshot.Settings.SimulatorAutoRun);
+        // 断言落库的那一份：库里的快照要等真保存才变，界面上的开关只改页面值。
+        Assert.True(Assert.Single(Config.SavedSettings).SimulatorAutoRun);
     }
 
     [Fact]

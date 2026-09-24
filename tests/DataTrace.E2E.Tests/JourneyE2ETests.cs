@@ -82,8 +82,15 @@ public class JourneyE2ETests : E2ETestBase
         await WaitForAsync("text=返回查询");
 
         Assert.Matches("/query/\\d{6}/\\d+", new Uri(Page.Url).PathAndQuery);
+        // 详情是异步取数的：骨架屏上就有"返回查询"链接，等它出现就立刻读 body
+        // 会读到还没渲染记录的壳，于是"结果码"时有时无。等记录本身渲染出来再断言。
+        await WaitBodyContainsAsync("结果码");
         var detail = await Page.InnerTextAsync("body");
-        Assert.Contains("OK 合格", detail);
+        // 只要求详情真的把这条记录渲染出来了：判定可能是 OK 也可能是 NG
+        // （仿真器按比例造不良），钉死"最新一条一定合格"会按那个比例随机红。
+        Assert.True(
+            detail.Contains("OK 合格") || detail.Contains("NG 不合格") || detail.Contains("未判定"),
+            "详情页没有渲染判定结论");
     }
 
     [Fact]

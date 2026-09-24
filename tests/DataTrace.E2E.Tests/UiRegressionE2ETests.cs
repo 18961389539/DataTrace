@@ -270,7 +270,7 @@ public class UiRegressionE2ETests : E2ETestBase
 
         Assert.Equal(0, await Page.Locator("text=未保存").CountAsync());
 
-        var scanInterval = Page.GetByLabel("扫描周期(ms)");
+        var scanInterval = Page.GetByLabel("扫描间隔(ms)");
         var original = await scanInterval.InputValueAsync();
 
         try
@@ -282,7 +282,7 @@ public class UiRegressionE2ETests : E2ETestBase
             await WaitForAsync("text=未保存");
 
             await ClickAsync("保存");
-            await WaitBodyContainsAsync("已保存并下发采集器");
+            await WaitBodyContainsAsync("已保存并下发采集端");
 
             // 胶囊是标题的兄弟节点而不是子孙，所以按文字等它消失。
             await Page.WaitForFunctionAsync("""

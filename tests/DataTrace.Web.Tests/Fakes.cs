@@ -25,8 +25,40 @@ public sealed class FakeConfigRepository : IConfigRepository
     {
         Calls.Add(nameof(GetSnapshotAsync));
         ThrowIfConfigured();
-        return Task.FromResult(Snapshot);
+        // 每次读都给出新的 Settings 实例，跟真库（每次从 EF 物化）一致。
+        // 共用同一个实例时，界面上一改就等于改了"库里的那一行"，
+        // "放弃修改"、"改了还没保存"这类用例就全都失去意义了。
+        return Task.FromResult(new AppConfigurationSnapshot
+        {
+            Settings = CloneSettings(Snapshot.Settings),
+            PlcConnections = Snapshot.PlcConnections,
+            Stations = Snapshot.Stations,
+            Recipes = Snapshot.Recipes,
+            ActiveRecipe = Snapshot.ActiveRecipe,
+            Version = Snapshot.Version
+        });
     }
+
+    private static SystemSettings CloneSettings(SystemSettings src) => new()
+    {
+        Id = src.Id,
+        ScanIntervalMs = src.ScanIntervalMs,
+        WriteRetryCount = src.WriteRetryCount,
+        WriteRetryDelayMs = src.WriteRetryDelayMs,
+        RetentionYears = src.RetentionYears,
+        CurveRootPath = src.CurveRootPath,
+        SpoolPath = src.SpoolPath,
+        RuntimeDbPath = src.RuntimeDbPath,
+        CollectEnabled = src.CollectEnabled,
+        MesEnabled = src.MesEnabled,
+        MesEndpoint = src.MesEndpoint,
+        MesTimeoutSeconds = src.MesTimeoutSeconds,
+        SimulatorAutoRun = src.SimulatorAutoRun,
+        SimulatorIntervalMs = src.SimulatorIntervalMs,
+        SimulatorNgPercent = src.SimulatorNgPercent,
+        SimulatorPalletPool = src.SimulatorPalletPool,
+        ActiveRecipeId = src.ActiveRecipeId
+    };
 
     public Task SaveSettingsAsync(SystemSettings settings, CancellationToken cancellationToken = default)
     {

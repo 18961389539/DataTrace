@@ -1,8 +1,18 @@
+using System.Security.Claims;
+using DataTrace.Application.Backup;
 using DataTrace.Application.Configuration;
 using DataTrace.Collector;
+using DataTrace.Domain.Constants;
 using DataTrace.Plc.Simulator;
+using DataTrace.Web.Options;
 using DataTrace.Web.Services;
+using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Moq;
 using MudBlazor.Services;
 using AngleSharp.Dom;
 
@@ -21,6 +31,14 @@ public abstract class WebTestBase : IDisposable
 
     protected DialogSpy Dialogs { get; }
 
+    /// <summary>审计写库替身：页面上的关键动作都会经过它。</summary>
+    protected Mock<IAuditLogger> Audit { get; } = new();
+
+    protected Mock<IDatabaseBackupService> Backup { get; } = new();
+
+    /// <summary>品牌与部署身份。页面拿它显示厂名/版本/环境，测试里给一份空配置即可。</summary>
+    protected CustomerBrandingStore Branding { get; }
+
     /// <summary>页面与断言共用同一个模拟 PLC 目录，便于回读寄存器。</summary>
     protected SimulatorCatalog Simulators { get; } = new();
 
@@ -31,6 +49,16 @@ public abstract class WebTestBase : IDisposable
         Simulator = new FakeLineSimulator();
         Toast = new ToastSpy();
         Dialogs = new DialogSpy();
+        Branding = new CustomerBrandingStore(
+            // 全限定：本文件同时引了 DataTrace.Web.Options 命名空间，裸写 Options 会解析成命名空间。
+            Microsoft.Extensions.Options.Options.Create(new CustomerOptions()),
+            new StubWebHostEnvironment(),
+            NullLogger<CustomerBrandingStore>.Instance);
+
+        Backup.Setup(b => b.GetStatus()).Returns(new BackupStatusSnapshot());
+        Backup
+            .Setup(b => b.RunBackupAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BackupRunResult { Success = true });
 
         Context.JSInterop.Mode = JSRuntimeMode.Loose;
         Context.Services.AddMudServices();
@@ -39,9 +67,57 @@ public abstract class WebTestBase : IDisposable
         Context.Services.AddSingleton(Simulators);
         Context.Services.AddSingleton<ISnackbar>(Toast.Mock.Object);
         Context.Services.AddSingleton<IDialogService>(Dialogs.Mock.Object);
+        Context.Services.AddSingleton(Branding);
+        Context.Services.AddSingleton(Audit.Object);
+        Context.Services.AddSingleton(Backup.Object);
+        // 页面里有 @inject AuthenticationStateProvider 与 <AuthorizeView>；后者只认级联的
+        // Task<AuthenticationState>，所以用 bUnit 的测试授权（它把服务与级联值一起备齐）。
+        // 默认管理员；要按角色分档的用例自己再注册一个 AuthenticationStateProvider，后注册的生效。
+        Context.AddTestAuthorization().SetAuthorized("admin").SetRoles(AppRoles.Administrator);
+        // <AuthorizeView> 还要策略提供者与授权服务，否则它自己就构造不出来。
+        Context.Services.AddAuthorizationCore();
         // DtToast 只做"按严重度分档 + 同文案去重"，这里用真身，顺带把它对 ISnackbar 的用法一起测了。
         Context.Services.AddSingleton<DtToast>();
     }
+
+    /// <summary>只有环境名与内容根会被品牌存储读到，其余成员用不到。</summary>
+    private sealed class StubWebHostEnvironment : IWebHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = "Test";
+
+        public string ApplicationName { get; set; } = "DataTrace.Web.Tests";
+
+        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+
+        public string WebRootPath { get; set; } = AppContext.BaseDirectory;
+
+        public IFileProvider WebRootFileProvider { get; set; } = new NullFileProvider();
+
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
+    }
+
+    /// <summary>只读 Name 与角色声明的身份，够页面判断角色用。</summary>
+    private sealed class StubAuthenticationStateProvider(string role) : AuthenticationStateProvider
+    {
+        public override Task<AuthenticationState> GetAuthenticationStateAsync()
+        {
+            var identity = new ClaimsIdentity(
+                [
+                    new Claim(ClaimTypes.Name, "admin"),
+                    new Claim(ClaimTypes.Role, role)
+                ],
+                authenticationType: "test");
+
+            return Task.FromResult(new AuthenticationState(new ClaimsPrincipal(identity)));
+        }
+    }
+
+    /// <summary>
+    /// 按角色重设身份，覆盖基类默认的管理员。
+    /// 页面读的是注入的 AuthenticationStateProvider，后注册的同类型服务生效。
+    /// </summary>
+    protected void UseRole(string role)
+        => Context.Services.AddSingleton<AuthenticationStateProvider>(new StubAuthenticationStateProvider(role));
 
     /// <summary>按可见文字点击按钮，避开 Material 类名随版本漂移的问题。</summary>
     protected void ClickButton(IRenderedFragment cut, string text)
@@ -73,6 +149,31 @@ public abstract class WebTestBase : IDisposable
         var id = found.GetAttribute("for");
         Assert.False(string.IsNullOrEmpty(id));
         return cut.Find($"#{id}");
+    }
+
+    /// <summary>
+    /// 按 aria-label 定位输入框。设置页的说明文字是普通 div（不是 label[for]），
+    /// 那些字段只有 aria-label 这一个可访问名，也只能按它找。
+    /// </summary>
+    protected IElement InputForAriaLabel(IRenderedFragment cut, string label)
+    {
+        var found = cut.FindAll($"input[aria-label=\"{label}\"]").FirstOrDefault();
+        Assert.NotNull(found);
+        return found;
+    }
+
+    /// <summary>向带 aria-label 的输入框打字；Immediate 的 MudInput 绑 oninput、其余绑 onchange。</summary>
+    protected void TypeIntoAriaLabel(IRenderedFragment cut, string label, string value)
+    {
+        var input = InputForAriaLabel(cut, label);
+        try
+        {
+            input.Input(value);
+        }
+        catch (MissingEventHandlerException)
+        {
+            input.Change(value);
+        }
     }
 
     /// <summary>把第 n 个开关拨到目标值（MudSwitch 的 input 只监听 onchange，没有 onclick）。</summary>

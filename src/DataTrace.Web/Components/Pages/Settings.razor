@@ -132,7 +132,8 @@ else
                             <div class="dt-metric-label">
                                 数据目录 <span class="dt-src-badge rt">运行时</span>
                                 <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small" Class="pa-0 ml-1"
-                                               title="复制路径" OnClick="@(() => CopyPath(_dataRoot))" />
+                                               title="复制路径" aria-label="复制数据目录路径"
+                                               OnClick="@(() => CopyPath(_dataRoot))" />
                             </div>
                             <div class="dt-metric-value dt-path-trunc" title="@_dataRoot">@_dataRoot</div>
                         </div>
@@ -150,7 +151,7 @@ else
                                 <div class="dt-settings-row-hint">显示在登录页与顶栏标题</div>
                             </div>
                             <MudTextField @bind-Value="_editSiteName" Immediate="true" Margin="Margin.Dense"
-                                          Variant="Variant.Outlined" />
+                                          Variant="Variant.Outlined" aria-label="厂名 / 站点显示名" />
                             <span class="dt-src-badge edit">可在此修改·customer.json</span>
                         </div>
                         <div class="dt-settings-row">
@@ -159,7 +160,7 @@ else
                                 <div class="dt-settings-row-hint">放在安装目录 branding\ 下，例如 logo.png</div>
                             </div>
                             <MudTextField @bind-Value="_editLogoPath" Immediate="true" Margin="Margin.Dense"
-                                          Variant="Variant.Outlined" Placeholder="logo.png" />
+                                          Variant="Variant.Outlined" Placeholder="logo.png" aria-label="Logo 文件名" />
                             <span class="dt-src-badge edit">可在此修改·customer.json</span>
                         </div>
                     }
@@ -191,7 +192,8 @@ else
                             <div class="dt-settings-row-hint">采集端查询 PLC 的间隔；越小越快，也越加重 PLC 通讯</div>
                         </div>
                         <MudNumericField @bind-Value="_settings.ScanIntervalMs" Min="20" Max="5000" Step="10"
-                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true" />
+                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true"
+                                         aria-label="扫描间隔(ms)" />
                         <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
                     <div class="dt-settings-row">
@@ -200,7 +202,8 @@ else
                             <div class="dt-settings-row-hint">0 表示只写一次；NG 位写失败会导致 PLC 侧不更新</div>
                         </div>
                         <MudNumericField @bind-Value="_settings.WriteRetryCount" Min="0" Max="10"
-                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true" />
+                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true"
+                                         aria-label="写回重试次数" />
                         <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
 
@@ -255,7 +258,8 @@ else
                             <div class="dt-settings-row-hint">仅清理超过年限的运行时整月记录库和曲线文件（RetentionHostedService，约每 6 小时检查一次）。配置库中的审计日志（AuditLogs）不受此项影响，不会被按年数自动清除。</div>
                         </div>
                         <MudNumericField @bind-Value="_settings.RetentionYears" Min="1" Max="30"
-                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true" />
+                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true"
+                                         aria-label="保留年数" />
                         <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
                     <div class="dt-settings-row">
@@ -316,7 +320,8 @@ else
                                 <div class="dt-metric-label">
                                     备份目录 <span class="dt-src-badge ro">客户配置·只读</span>
                                     <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small" Class="pa-0 ml-1"
-                                                   title="复制路径" OnClick="@(() => CopyPath(_backupStatus.BackupDirectory))" />
+                                                   title="复制路径" aria-label="复制备份目录路径"
+                                                   OnClick="@(() => CopyPath(_backupStatus.BackupDirectory))" />
                                 </div>
                                 <div class="dt-metric-value dt-path-trunc" title="@_backupStatus.BackupDirectory">@_backupStatus.BackupDirectory</div>
                             </div>
@@ -352,7 +357,8 @@ else
                             <div class="dt-settings-row-hint">启用推送时必须填写合法 http(s) 地址</div>
                         </div>
                         <MudTextField @bind-Value="_settings.MesEndpoint" Immediate="true" Margin="Margin.Dense"
-                                      Variant="Variant.Outlined" Placeholder="http://mes.local/api/collect" />
+                                      Variant="Variant.Outlined" Placeholder="http://mes.local/api/collect"
+                                      aria-label="MES 地址" />
                         <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
                     <div class="dt-settings-row">
@@ -360,7 +366,8 @@ else
                             <div class="dt-settings-row-name">MES 超时(秒)</div>
                         </div>
                         <MudNumericField @bind-Value="_settings.MesTimeoutSeconds" Min="1" Max="300"
-                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true" />
+                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true"
+                                         aria-label="MES 超时(秒)" />
                         <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
                 </MudPaper>
@@ -608,25 +615,20 @@ private static string Key(SystemSettings s) => string.Join('|',
             _bindUrl = Branding.BindUrl;
             _appVersion = Branding.AppVersion;
 
+            // 只读一次快照：软上限提示与页面数据用的是同一份，之前分两次读同一个库。
+            var snap = await Config.GetSnapshotAsync();
+
             _softCapWarning = null;
-            try
+            if (_identity.MaxStations is int msCap && snap.Stations.Count > msCap)
             {
-                var snap = await Config.GetSnapshotAsync();
-                if (_identity.MaxStations is int msCap && snap.Stations.Count > msCap)
-                {
-                    _softCapWarning = $"工站数量 {snap.Stations.Count} 已超过客户约定上限 MaxStations={msCap}（仅提示，不阻止配置）。";
-                }
-                else if (_identity.MaxPlcs is int mpCap && snap.PlcConnections.Count > mpCap)
-                {
-                    _softCapWarning = $"PLC 连接数 {snap.PlcConnections.Count} 已超过客户约定上限 MaxPlcs={mpCap}（仅提示，不阻止配置）。";
-                }
+                _softCapWarning = $"工站数量 {snap.Stations.Count} 已超过客户约定上限 MaxStations={msCap}（仅提示，不阻止配置）。";
             }
-            catch
+            else if (_identity.MaxPlcs is int mpCap && snap.PlcConnections.Count > mpCap)
             {
-                // soft cap best-effort
+                _softCapWarning = $"PLC 连接数 {snap.PlcConnections.Count} 已超过客户约定上限 MaxPlcs={mpCap}（仅提示，不阻止配置）。";
             }
 
-            _settings = (await Config.GetSnapshotAsync()).Settings;
+            _settings = snap.Settings;
             _productionSimWarning = Branding.EnvironmentName.Equals("Production", StringComparison.OrdinalIgnoreCase)
                 && _settings is { SimulatorAutoRun: true };
             _savedKey = _settings is null ? "" : Key(_settings);
