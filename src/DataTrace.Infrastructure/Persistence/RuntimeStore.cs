@@ -261,7 +261,8 @@ public sealed class RuntimeStore : IRuntimeStore
                 {
                     Time = x.TriggerTime,
                     StationId = x.StationId,
-                    Judgement = x.Judgement
+                    Judgement = x.Judgement,
+                    RecipeCode = x.RecipeCode
                 })
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
@@ -269,6 +270,32 @@ public sealed class RuntimeStore : IRuntimeStore
         }
 
         return points;
+    }
+
+    public async Task<IReadOnlyList<string>> ListRecipeCodesAsync(
+        DateTime from,
+        DateTime to,
+        CancellationToken cancellationToken = default)
+    {
+        var codes = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var month in RuntimeDbFactory.MonthsInRange(from, to).Where(_factory.Exists))
+        {
+            await using var db = _factory.Open(month);
+            var part = await db.CollectRecords.AsNoTracking()
+                .Where(x => x.TriggerTime >= from && x.TriggerTime <= to)
+                .Select(x => x.RecipeCode)
+                .Distinct()
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            foreach (var code in part)
+            {
+                codes.Add(code ?? "");
+            }
+        }
+
+        return codes
+            .OrderBy(c => string.IsNullOrEmpty(c) ? "~" : c, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     public Task<IReadOnlyList<TagIssuePoint>> QueryOutOfLimitTagsAsync(
@@ -498,6 +525,12 @@ public sealed class RuntimeStore : IRuntimeStore
         if (request.Judgement is { } judgement)
         {
             query = query.Where(x => x.Judgement == judgement);
+        }
+
+        // null = 不限；非 null（含空串）按精确匹配，空串表示「未选型号」记录。
+        if (request.RecipeCode is { } recipeCode)
+        {
+            query = query.Where(x => x.RecipeCode == recipeCode);
         }
 
         return query;

@@ -33,9 +33,25 @@ public sealed class TrendPoint
     public string PalletCode { get; init; } = "";
 }
 
+
+/// <summary>按产品型号汇总的产量与直通率。未选型号（RecipeCode 为空）单独一行，显示名由 UI 处理。</summary>
+public sealed class RecipeThroughput
+{
+    public string RecipeCode { get; init; } = "";
+    public int Total { get; init; }
+    public int Ok { get; init; }
+    public int Ng { get; init; }
+    public int Pending { get; init; }
+    /// <summary>直通率 = Ok / (Ok+Ng)；分母为 0 时为 0。</summary>
+    public double PassRate => Ok + Ng == 0 ? 0 : (double)Ok / (Ok + Ng);
+}
+
 public interface IReportService
 {
     Task<IReadOnlyList<DailyThroughput>> GetThroughputAsync(DateTime from, DateTime to, int? stationId, CancellationToken cancellationToken = default);
+
+    /// <summary>按型号汇总产量/OK/NG/未判定/直通率；可选再按型号过滤（null=全部）。</summary>
+    Task<IReadOnlyList<RecipeThroughput>> GetThroughputByRecipeAsync(DateTime from, DateTime to, int? stationId, string? recipeCode, CancellationToken cancellationToken = default);
 
     /// <summary>超规格点位 Top N（真实不良）。</summary>
     Task<IReadOnlyList<IssueTopItem>> GetDefectTopAsync(DateTime from, DateTime to, int take = 10, CancellationToken cancellationToken = default);

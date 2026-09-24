@@ -4,6 +4,10 @@
         <MudText Typo="Typo.h6">型号限值 · @Recipe.Code @Recipe.Name</MudText>
     </TitleContent>
     <DialogContent>
+    <MudAlert Severity="Severity.Info" Dense="true" Class="mb-2" Variant="Variant.Outlined">
+        「目标值」仅用于显示与工艺参考，<b>不参与 OK/NG 判定</b>；判定只看规格限与预警限。
+    </MudAlert>
+
         <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-3">
             这里填的是<b>本型号的覆盖值</b>，留空的项沿用点位默认限值（不是「不判」）。
             五个字段全部留空的点位等于没有覆盖，保存时会被丢弃。

@@ -45,6 +45,10 @@ public sealed class CollectQueryRequest
     public string? SerialNo { get; init; }
     public int? StationId { get; init; }
     public Judgement? Judgement { get; init; }
+    /// <summary>
+    /// 型号过滤：null = 全部；"" = 仅「未选型号」；其它 = 精确匹配 RecipeCode。
+    /// </summary>
+    public string? RecipeCode { get; init; }
     public int Skip { get; init; }
     public int Take { get; init; } = 50;
 }
@@ -70,6 +74,8 @@ public sealed class JudgementPoint
     public DateTime Time { get; init; }
     public int StationId { get; init; }
     public Judgement Judgement { get; init; }
+    /// <summary>判定时生效的型号编码；空字符串表示当时未选型号。</summary>
+    public string RecipeCode { get; init; } = "";
 }
 
 /// <summary>不良 / 预警统计的窄投影：只带点位名称与代码。</summary>
@@ -130,6 +136,9 @@ public interface IRuntimeStore
 
     /// <summary>吞吐量统计的窄投影查询（服务端过滤 + 只取三列）。</summary>
     Task<IReadOnlyList<JudgementPoint>> QueryJudgementPointsAsync(DateTime from, DateTime to, int? stationId, CancellationToken cancellationToken = default);
+
+    /// <summary>日期范围内出现过的型号编码（含空串）；跨月库去重。</summary>
+    Task<IReadOnlyList<string>> ListRecipeCodesAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default);
 
     /// <summary>不良点位的窄投影查询（服务端按 IsOutOfLimit 过滤）。</summary>
     Task<IReadOnlyList<TagIssuePoint>> QueryOutOfLimitTagsAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default);

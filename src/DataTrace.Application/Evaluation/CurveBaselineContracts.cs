@@ -38,4 +38,10 @@ public interface ICurveBaselineCache
 
     /// <summary>用新一批基线整体替换（后台服务调用）。</summary>
     void Replace(CurveBaselineSnapshot snapshot);
+
+    /// <summary>
+    /// 型号改编码时：若当前缓存快照的 RecipeCode 等于旧码，则改写为新码（模板内容不变），
+    /// 避免改名后到下次重建前偏离打分整段空白。
+    /// </summary>
+    void RetagRecipeCode(string oldCode, string newCode);
 }

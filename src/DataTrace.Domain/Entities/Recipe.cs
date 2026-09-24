@@ -21,5 +21,11 @@ public class Recipe
 
     public string? Remark { get; set; }
 
+    /// <summary>
+    /// 历史编码（逗号分隔）。改编码后历史采集记录仍保留旧码；曲线基线重建时也会按这些旧码取样本，
+    /// 避免「改名后基线空窗」。不会回写历史记录。
+    /// </summary>
+    public string? PreviousCodes { get; set; }
+
     public ICollection<RecipeLimit> Limits { get; set; } = new List<RecipeLimit>();
 }

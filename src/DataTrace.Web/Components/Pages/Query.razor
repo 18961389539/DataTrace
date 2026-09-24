@@ -44,6 +44,18 @@
                                     <MudSelectItem T="Judgement?" Value="Judgement.None">未判定</MudSelectItem>
                 </MudSelect>
             </MudItem>
+
+                        <MudItem xs="12" sm="6" md="4" lg="3">
+                <MudSelect T="string" Value="_recipeFilter" ValueChanged="OnRecipeFilterChanged"
+                           Label="产品型号" Dense="true" Disabled="_loading">
+                    <MudSelectItem T="string" Value="@AllRecipesValue">全部型号</MudSelectItem>
+                    <MudSelectItem T="string" Value="@EmptyRecipeValue">未选型号</MudSelectItem>
+                    @foreach (var opt in _recipeOptions)
+                    {
+                        <MudSelectItem T="string" Value="@opt.Code">@opt.Label</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
         </MudGrid>
 
         <MudStack Row="true" Spacing="2" Class="mt-1 mb-2 flex-wrap">
@@ -74,6 +86,7 @@
         <MudTh>流水号</MudTh>
         <MudTh>托盘码</MudTh>
         <MudTh>工站</MudTh>
+        <MudTh>型号</MudTh>
         <MudTh>判定</MudTh>
         <MudTh Class="dt-nowrap">结果码</MudTh>
         <MudTh Class="dt-right">操作</MudTh>
@@ -83,6 +96,7 @@
         <MudTd DataLabel="流水号" Class="dt-nowrap">@context.Record.SerialNo</MudTd>
         <MudTd DataLabel="托盘码" Class="dt-nowrap">@context.Record.PalletCode</MudTd>
         <MudTd DataLabel="工站">@context.Record.StationCode</MudTd>
+        <MudTd DataLabel="型号">@RecipeLabel(context.Record.RecipeCode)</MudTd>
         <MudTd DataLabel="判定">
             <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
                      Color="@(context.Record.Judgement == Judgement.Ng ? Color.Error : context.Record.Judgement == Judgement.Ok ? Color.Success : Color.Default)">
@@ -139,6 +153,7 @@
     private string? _serialNo;
     private int? _stationId;
     private Judgement? _judgement;
+    private string _recipeFilter = AllRecipesValue;
     private IReadOnlyList<Station> _stations = [];
     private IReadOnlyList<CollectRecordListItem> _items = [];
     private int _total;
@@ -226,6 +241,7 @@
         }
 
         _stations = await Config.GetStationsAsync();
+        await RefreshRecipeOptionsAsync();
         await Load();
     }
 
@@ -236,6 +252,7 @@
         PalletCode = string.IsNullOrWhiteSpace(_pallet) ? null : _pallet.Trim(),
         SerialNo = string.IsNullOrWhiteSpace(_serialNo) ? null : _serialNo.Trim(),
         StationId = _stationId,
+        RecipeCode = ToRecipeQueryArg(),
         Judgement = _judgement,
         Skip = skip,
         Take = take
@@ -280,6 +297,8 @@
         _loading = true;
         try
         {
+            await RefreshRecipeOptionsAsync();
+
             var result = await Store.QueryAsync(BuildRequest((_page - 1) * _pageSize, _pageSize));
             _items = result.Items;
             _total = result.Total;
@@ -369,6 +388,7 @@
 
     private async Task Reset()
     {
+        _recipeFilter = AllRecipesValue;
         _pallet = null;
         _serialNo = null;
         _stationId = null;
@@ -413,6 +433,80 @@
         }
     }
 
+
+    private const string AllRecipesValue = "*";
+    /// <summary>内部哨兵：仅未选型号（空 RecipeCode）。从不作为下拉可见文案。</summary>
+    private const string EmptyRecipeValue = "__EMPTY__";
+
+    private sealed record RecipeFilterOption(string Code, string Label);
+
+    private IReadOnlyList<RecipeFilterOption> _recipeOptions = [];
+    private Dictionary<string, string> _recipeNames = new(StringComparer.Ordinal);
+
+    private string? ToRecipeQueryArg()
+    {
+        if (_recipeFilter == EmptyRecipeValue)
+            return "";
+        if (string.IsNullOrWhiteSpace(_recipeFilter) || _recipeFilter == AllRecipesValue)
+            return null;
+        return _recipeFilter.Trim();
+    }
+
+    private async Task OnRecipeFilterChanged(string value)
+    {
+        _recipeFilter = value ?? AllRecipesValue;
+        _page = 1;
+        await Load();
+    }
+
+    private async Task RefreshRecipeOptionsAsync()
+    {
+        var from = _from ?? DateTime.Today;
+        var to = _to ?? DateTime.Today;
+        // 区间内出现过的编码（含空）+ 配置里已知型号，避免改码后旧码消失
+        var fromRecords = await Store.ListRecipeCodesAsync(from, to);
+        var known = await Config.GetRecipesAsync();
+        _recipeNames = known
+            .GroupBy(r => r.Code, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First().Name ?? "", StringComparer.Ordinal);
+
+        var codes = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var c in fromRecords)
+        {
+            if (!string.IsNullOrEmpty(c))
+                codes.Add(c);
+        }
+        foreach (var r in known)
+        {
+            if (!string.IsNullOrEmpty(r.Code))
+                codes.Add(r.Code);
+        }
+
+        // 当前筛选项若不在集合里也保留（例如刚改码后仍想看旧码）
+        if (!string.IsNullOrEmpty(_recipeFilter)
+            && _recipeFilter != EmptyRecipeValue
+            && _recipeFilter != AllRecipesValue
+            && !codes.Contains(_recipeFilter))
+        {
+            codes.Add(_recipeFilter);
+        }
+
+        _recipeOptions = codes
+            .OrderBy(c => c, StringComparer.OrdinalIgnoreCase)
+            .Select(c => new RecipeFilterOption(c, FormatRecipeOption(c)))
+            .ToList();
+    }
+
+    private string FormatRecipeOption(string code)
+    {
+        if (_recipeNames.TryGetValue(code, out var name) && !string.IsNullOrWhiteSpace(name))
+            return $"{code} · {name}";
+        return $"旧编码 {code}";
+    }
+
+    private static string RecipeLabel(string? code)
+        => string.IsNullOrEmpty(code) ? "未选型号" : code;
+
     private async Task ExportCsv()
     {
         if (_exporting)
@@ -431,17 +525,19 @@
             }
 
             var csv = CsvExporter.Build(
-                ["触发时间", "流水号", "托盘码", "工站", "判定", "结果码", "结果说明"],
+                ["触发时间", "流水号", "托盘码", "工站", "型号", "判定", "结果码", "结果说明"],
                 result.Items.Select(item => new[]
                 {
                     item.Record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss"),
                     item.Record.SerialNo ?? "",
                     item.Record.PalletCode ?? "",
                     item.Record.StationCode ?? "",
+                    RecipeLabel(item.Record.RecipeCode),
                     DisplayLabels.JudgementTextLong(item.Record.Judgement),
                     item.Record.ResultCode.ToString(),
                     ResultCodes.Describe(item.Record.ResultCode)
-                }));
+                })
+            );
 
             await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName("datatrace_query"), CsvExporter.ToBase64(csv));
             if (result.Total > result.Items.Count)

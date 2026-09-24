@@ -53,6 +53,11 @@ public sealed class DatabaseSeeder
         await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "ActiveRecipeId",
             "ALTER TABLE SystemSettings ADD COLUMN ActiveRecipeId INTEGER NULL", cancellationToken).ConfigureAwait(false);
 
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "Recipes", "PreviousCodes",
+            "ALTER TABLE Recipes ADD COLUMN PreviousCodes TEXT NULL", cancellationToken).ConfigureAwait(false);
+
+        await CleanupOrphanRecipeLimitsAsync(cancellationToken).ConfigureAwait(false);
+
         foreach (var role in AppRoles.All)
         {
             if (!await _roles.RoleExistsAsync(role).ConfigureAwait(false))
@@ -332,4 +337,35 @@ public sealed class DatabaseSeeder
                 new CurveSeries { Name = "位移", Role = SeriesRole.X, StartAddress = xStart, DataType = PlcDataType.Float, StrideWords = 2, Unit = "mm" }
             ]
         };
+    /// <summary>
+    /// 一次性清理悬空/不可用的型号限值覆盖：Tag 已删，或 Tag 已改为 Bool/String。
+    /// 幂等；日志打印清理行数，便于现场核对历史脏数据。
+    /// </summary>
+    private async Task CleanupOrphanRecipeLimitsAsync(CancellationToken cancellationToken)
+    {
+        var numericTypes = new[] { PlcDataType.Int16, PlcDataType.Int32, PlcDataType.Float, PlcDataType.Double };
+        var validTagIds = await _db.Tags.AsNoTracking()
+            .Where(t => numericTypes.Contains(t.DataType))
+            .Select(t => t.Id)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var valid = validTagIds.ToHashSet();
+
+        var orphans = await _db.RecipeLimits
+            .Where(l => !valid.Contains(l.TagId))
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        if (orphans.Count == 0)
+        {
+            _logger.LogInformation("型号限值孤儿清理：无需处理（0 行）");
+            return;
+        }
+
+        _db.RecipeLimits.RemoveRange(orphans);
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        _logger.LogWarning("型号限值孤儿清理：已删除 {Count} 行（点位不存在或已改为 Bool/String）", orphans.Count);
+    }
+
+
 }

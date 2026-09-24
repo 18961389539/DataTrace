@@ -163,6 +163,7 @@ public sealed class CollectionHostedService : BackgroundService
         }
 
         _configVersion = snapshot.Version;
+        _status.SetActiveRecipe(snapshot.ActiveRecipe?.Code, snapshot.ActiveRecipe?.Name);
         _logger.LogInformation("已加载配置版本 {Version}，PLC {PlcCount}，工站 {StationCount}",
             snapshot.Version, _queues.Count, snapshot.Stations.Count);
         await Task.CompletedTask;

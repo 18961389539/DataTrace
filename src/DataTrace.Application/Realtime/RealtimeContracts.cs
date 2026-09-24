@@ -69,9 +69,22 @@ public interface IRuntimeStatusHub
     IReadOnlyList<StationRuntimeStatus> Stations { get; }
     IReadOnlyList<PlcRuntimeStatus> Plcs { get; }
     IReadOnlyList<CollectFeedItem> Recent { get; }
+
+    /// <summary>当前生效型号编码；null/空表示未选择（按点位默认限值）。</summary>
+    string? ActiveRecipeCode { get; }
+
+    /// <summary>当前生效型号名称；未选择时为 null。</summary>
+    string? ActiveRecipeName { get; }
+
     event Action? Changed;
     void UpsertStation(StationRuntimeStatus status);
     void UpsertPlc(PlcRuntimeStatus status);
+
+    /// <summary>
+    /// 更新当前型号指示（配置切换或采集器加载快照时调用）。
+    /// 值变化时触发 <see cref="Changed"/>，供看板等页面热刷新。
+    /// </summary>
+    void SetActiveRecipe(string? code, string? name);
 }
 
 public interface ICollectEventBus

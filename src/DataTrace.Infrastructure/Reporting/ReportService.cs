@@ -62,6 +62,31 @@ public sealed class ReportService : IReportService
     }
 
     /// <summary>按点位名称聚合计数，降序取前 N。名称缺失时回退到编码。</summary>
+
+    public async Task<IReadOnlyList<RecipeThroughput>> GetThroughputByRecipeAsync(
+        DateTime from, DateTime to, int? stationId, string? recipeCode, CancellationToken cancellationToken = default)
+    {
+        var points = await _store.QueryJudgementPointsAsync(from, to, stationId, cancellationToken).ConfigureAwait(false);
+        IEnumerable<JudgementPoint> filtered = points;
+        if (recipeCode is not null)
+        {
+            filtered = points.Where(p => p.RecipeCode == recipeCode);
+        }
+
+        return filtered
+            .GroupBy(p => p.RecipeCode ?? "")
+            .OrderBy(g => string.IsNullOrEmpty(g.Key) ? "~" : g.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new RecipeThroughput
+            {
+                RecipeCode = g.Key,
+                Total = g.Count(),
+                Ok = g.Count(x => x.Judgement == Judgement.Ok),
+                Ng = g.Count(x => x.Judgement == Judgement.Ng),
+                Pending = g.Count(x => x.Judgement == Judgement.None)
+            })
+            .ToList();
+    }
+
     private static IReadOnlyList<IssueTopItem> Top(IReadOnlyList<TagIssuePoint> points, int take)
         => points
             .GroupBy(t => string.IsNullOrWhiteSpace(t.TagName) ? t.TagCode : t.TagName)

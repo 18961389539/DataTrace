@@ -20,4 +20,25 @@ public sealed class CurveBaselineCache : ICurveBaselineCache
         ArgumentNullException.ThrowIfNull(snapshot);
         Volatile.Write(ref _current, snapshot);
     }
+
+    public void RetagRecipeCode(string oldCode, string newCode)
+    {
+        if (string.IsNullOrEmpty(oldCode) || string.Equals(oldCode, newCode, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var current = Volatile.Read(ref _current);
+        if (current is null || !string.Equals(current.RecipeCode, oldCode, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        Volatile.Write(ref _current, new CurveBaselineSnapshot
+        {
+            RecipeCode = newCode,
+            RefreshedAt = current.RefreshedAt,
+            Templates = current.Templates
+        });
+    }
 }

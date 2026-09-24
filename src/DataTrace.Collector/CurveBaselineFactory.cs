@@ -39,6 +39,15 @@ public sealed class CurveBaselineFactory
         // 型号隔离：基线只由与当前生效型号一致的样本建立。
         // 不同型号的正常波形分布不同，混在一起会让切换型号后每条都报警。
         var recipeCode = snapshot.ActiveRecipe?.Code ?? "";
+        // 改编码后历史样本仍写旧码：把 PreviousCodes 一并算作本型号样本来源，避免基线空窗。
+        var allowedRecipeCodes = new HashSet<string>(StringComparer.Ordinal) { recipeCode };
+        if (snapshot.ActiveRecipe?.PreviousCodes is { } previous && !string.IsNullOrWhiteSpace(previous))
+        {
+            foreach (var part in previous.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                allowedRecipeCodes.Add(part);
+            }
+        }
 
         var templates = new Dictionary<CurveBaselineKey, CurveTemplate>();
 
@@ -59,7 +68,7 @@ public sealed class CurveBaselineFactory
 
                 // 只有合格样本能当"正常"：历史里的不良波形正是要检出的东西。
                 var good = points
-                    .Where(p => !p.IsNg && string.Equals(p.RecipeCode, recipeCode, StringComparison.Ordinal))
+                    .Where(p => !p.IsNg && allowedRecipeCodes.Contains(p.RecipeCode))
                     .Select(p => p.Feature)
                     .ToList();
 

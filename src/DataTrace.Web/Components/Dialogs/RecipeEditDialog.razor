@@ -1,0 +1,86 @@
+@using DataTrace.Domain.Entities
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@Title</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudTextField @bind-Value="_code" Label="型号编码" Immediate="true"
+                      Error="@(!string.IsNullOrEmpty(_codeError))" ErrorText="@_codeError"
+                      Disabled="@CodeReadOnly" Class="mb-2" />
+        @if (!string.IsNullOrEmpty(CodeChangeHint))
+        {
+            <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-2" Variant="Variant.Outlined">
+                @CodeChangeHint
+            </MudAlert>
+        }
+        <MudTextField @bind-Value="_name" Label="型号名称" Class="mb-2" />
+        <MudTextField @bind-Value="_remark" Label="备注" Lines="2" />
+        @if (!string.IsNullOrEmpty(ExtraHint))
+        {
+            <MudText Typo="Typo.caption" Class="mud-text-secondary mt-2">@ExtraHint</MudText>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit" Disabled="@(!CanSubmit)">确定</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance? MudDialog { get; set; }
+
+    [Parameter] public string Title { get; set; } = "编辑型号";
+    [Parameter] public string Code { get; set; } = "";
+    [Parameter] public string Name { get; set; } = "";
+    [Parameter] public string? Remark { get; set; }
+    [Parameter] public bool CodeReadOnly { get; set; }
+    [Parameter] public string? CodeChangeHint { get; set; }
+    [Parameter] public string? ExtraHint { get; set; }
+    [Parameter] public Func<string, string?>? ValidateCode { get; set; }
+
+    private string _code = "";
+    private string _name = "";
+    private string? _remark;
+    private string? _codeError;
+
+    protected override void OnParametersSet()
+    {
+        _code = Code;
+        _name = Name;
+        _remark = Remark;
+        _codeError = null;
+    }
+
+    private bool CanSubmit =>
+        !string.IsNullOrWhiteSpace(_code)
+        && !string.IsNullOrWhiteSpace(_name)
+        && string.IsNullOrEmpty(_codeError);
+
+    private void Cancel() => MudDialog?.Cancel();
+
+    private void Submit()
+    {
+        _code = _code.Trim();
+        _name = _name.Trim();
+        _codeError = ValidateCode?.Invoke(_code);
+        if (!string.IsNullOrEmpty(_codeError) || string.IsNullOrWhiteSpace(_name))
+        {
+            return;
+        }
+
+        MudDialog?.Close(DialogResult.Ok(new RecipeEditResult
+        {
+            Code = _code,
+            Name = _name,
+            Remark = string.IsNullOrWhiteSpace(_remark) ? null : _remark.Trim()
+        }));
+    }
+
+    public sealed class RecipeEditResult
+    {
+        public string Code { get; init; } = "";
+        public string Name { get; init; } = "";
+        public string? Remark { get; init; }
+    }
+}

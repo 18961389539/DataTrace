@@ -1,5 +1,7 @@
 using DataTrace.Application.Configuration;
+using DataTrace.Application.Evaluation;
 using DataTrace.Domain.Entities;
+using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
 using Microsoft.EntityFrameworkCore;
 
@@ -8,10 +10,12 @@ namespace DataTrace.Infrastructure.Persistence;
 public sealed class ConfigRepository : IConfigRepository
 {
     private readonly ConfigDbContext _db;
+    private readonly ICurveBaselineCache _baselines;
 
-    public ConfigRepository(ConfigDbContext db)
+    public ConfigRepository(ConfigDbContext db, ICurveBaselineCache baselines)
     {
         _db = db;
+        _baselines = baselines;
     }
 
     public Task<int> GetVersionAsync(CancellationToken cancellationToken = default)
@@ -187,7 +191,23 @@ public sealed class ConfigRepository : IConfigRepository
         }
         else
         {
-            _db.Tags.Update(tag);
+            // 不要 Update(detached)：同作用域里若已有同 Id 跟踪实例会触发 EF 冲突。
+            // 与 SaveCurveAsync 一致：加载已跟踪实体再 SetValues。
+            var existing = await _db.Tags.FirstOrDefaultAsync(x => x.Id == tag.Id, cancellationToken).ConfigureAwait(false);
+            if (existing is null)
+            {
+                _db.Tags.Add(tag);
+            }
+            else
+            {
+                _db.Entry(existing).CurrentValues.SetValues(tag);
+            }
+
+            // Bool/String 不能参与数值限值覆盖：改类型时清掉遗留 RecipeLimit
+            if (tag.DataType is PlcDataType.Bool or PlcDataType.String)
+            {
+                await RemoveRecipeLimitsForTagAsync(tag.Id, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -202,6 +222,8 @@ public sealed class ConfigRepository : IConfigRepository
             return;
         }
 
+        // 同一事务清掉型号覆盖行，避免 TagId 悬空孤儿。
+        await RemoveRecipeLimitsForTagAsync(id, cancellationToken).ConfigureAwait(false);
         _db.Tags.Remove(item);
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
@@ -333,6 +355,14 @@ public sealed class ConfigRepository : IConfigRepository
 
         if (recipe.Id == 0)
         {
+            var createConflict = await _db.Recipes.AsNoTracking()
+                .AnyAsync(x => x.Code.ToLower() == recipe.Code.ToLower(), cancellationToken)
+                .ConfigureAwait(false);
+            if (createConflict)
+            {
+                throw new InvalidOperationException($"型号编码「{recipe.Code}」已存在");
+            }
+
             // 先只落型号行，拿到主键后再同步限值 —— 与更新路径走同一套增量逻辑，
             // 避免级联插入和增量同步同时对同一批限值动手。
             var incoming = recipe.Limits.ToList();
@@ -352,8 +382,35 @@ public sealed class ConfigRepository : IConfigRepository
             }
 
             var disabling = existing.Enabled && !recipe.Enabled;
+            var oldCode = existing.Code;
+            var newCode = recipe.Code;
 
-            existing.Code = recipe.Code;
+            // 编码全局唯一（忽略大小写）；允许大小写校正同一条。
+            var conflict = await _db.Recipes.AsNoTracking()
+                .AnyAsync(x => x.Id != existing.Id && x.Code.ToLower() == newCode.ToLower(), cancellationToken)
+                .ConfigureAwait(false);
+            if (conflict)
+            {
+                throw new InvalidOperationException($"型号编码「{newCode}」已存在");
+            }
+
+            if (!string.Equals(oldCode, newCode, StringComparison.Ordinal))
+            {
+                // 历史采集记录保留旧码；把旧码记入 PreviousCodes，供曲线基线重建认领样本。
+                var prev = string.IsNullOrWhiteSpace(existing.PreviousCodes)
+                    ? []
+                    : existing.PreviousCodes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+                if (!prev.Contains(oldCode, StringComparer.Ordinal) && !string.IsNullOrEmpty(oldCode))
+                {
+                    prev.Add(oldCode);
+                }
+                // 若新码曾出现在历史列表里（来回改），去掉以免集合膨胀。
+                prev.RemoveAll(c => string.Equals(c, newCode, StringComparison.Ordinal));
+                existing.PreviousCodes = prev.Count == 0 ? null : string.Join(',', prev);
+                existing.Code = newCode;
+                _baselines.RetagRecipeCode(oldCode, newCode);
+            }
+
             existing.Name = recipe.Name;
             existing.Enabled = recipe.Enabled;
             existing.Remark = recipe.Remark;
@@ -463,6 +520,18 @@ public sealed class ConfigRepository : IConfigRepository
     /// 限值覆盖行按主键做增量同步：传入的集合即最终状态。
     /// 与曲线判据同源的做法 —— 以数据库里的行为准，不读也不写调用方的导航集合。
     /// </summary>
+
+    private async Task RemoveRecipeLimitsForTagAsync(int tagId, CancellationToken cancellationToken)
+    {
+        var orphans = await _db.RecipeLimits.Where(x => x.TagId == tagId).ToListAsync(cancellationToken).ConfigureAwait(false);
+        if (orphans.Count == 0)
+        {
+            return;
+        }
+
+        _db.RecipeLimits.RemoveRange(orphans);
+    }
+
     private async Task SyncLimitsAsync(int recipeId, IEnumerable<RecipeLimit> incoming, CancellationToken cancellationToken)
     {
         var targets = incoming.ToList();

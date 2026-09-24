@@ -11,11 +11,27 @@
 @inject CustomerBrandingStore Branding
 @inject IDatabaseBackupService BackupService
 @inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
 
 <PageHeader Title="实时看板">
     <ChildContent>
         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_stations.Count 台工站</MudChip>
         <LiveCadenceChip LastBeat="LastBeat" />
+
+        @if (CanManageRecipes)
+        {
+            <MudChip T="string" Size="Size.Small" Color="@(string.IsNullOrEmpty(Status.ActiveRecipeCode) ? Color.Default : Color.Primary)"
+                     Variant="Variant.Filled" OnClick="GoRecipes" Style="cursor:pointer">
+                @ActiveRecipeLabel
+            </MudChip>
+        }
+        else
+        {
+            <MudChip T="string" Size="Size.Small" Color="@(string.IsNullOrEmpty(Status.ActiveRecipeCode) ? Color.Default : Color.Primary)"
+                     Variant="Variant.Filled">
+                @ActiveRecipeLabel
+            </MudChip>
+        }
     </ChildContent>
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">
@@ -82,6 +98,7 @@ else
                     <MudStack Row="true" AlignItems="AlignItems.Start">
                         <div>
                             <MudText Typo="Typo.subtitle1">@station.StationCode @station.StationName</MudText>
+                            <MudText Typo="Typo.caption" Class="dt-muted">@ActiveRecipeLabel</MudText>
                             <MudText Typo="Typo.caption" Class="dt-muted dt-flash" @key="@BeatKey(station)">
                                 @(string.IsNullOrWhiteSpace(station.LastPalletCode) ? "等待托盘" : station.LastPalletCode)
                                 · @(station.LastSerialNo ?? "-")
@@ -204,6 +221,7 @@ else
     private bool _productionSimWarning;
     private bool _backupStale;
     private bool _isAdmin;
+    private bool _canManageRecipes;
 
     private IReadOnlyList<PlcRuntimeStatus> _plcs = [];
     private IReadOnlyList<StationRuntimeStatus> _stations = [];
@@ -223,6 +241,7 @@ else
         {
             var auth = await AuthState.GetAuthenticationStateAsync();
             _isAdmin = auth.User?.IsInRole("Administrator") == true;
+            _canManageRecipes = _isAdmin || auth.User?.IsInRole("Engineer") == true;
             var bak = BackupService.GetStatus();
             _backupStale = bak.IsStaleOrFailed(TimeSpan.FromHours(48));
         }
@@ -312,6 +331,16 @@ else
         if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes} 分前";
         return time.Value.ToString("HH:mm:ss");
     }
+
+
+    private bool CanManageRecipes => _canManageRecipes;
+
+    private string ActiveRecipeLabel =>
+        string.IsNullOrEmpty(Status.ActiveRecipeCode)
+            ? "未选择型号·按点位默认限值"
+            : $"当前型号 {Status.ActiveRecipeCode}" + (string.IsNullOrEmpty(Status.ActiveRecipeName) ? "" : $"（{Status.ActiveRecipeName}）");
+
+    private void GoRecipes() => Nav.NavigateTo("/config/recipes");
 
     public void Dispose()
     {

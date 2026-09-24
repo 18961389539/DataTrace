@@ -7,6 +7,8 @@
 @inject IReportService ReportService
 @inject ISpcService SpcService
 @inject IConfigRepository Config
+@inject IRuntimeStore Store
+@using DataTrace.Application.Runtime
 @inject DtToast Toast
 @inject IJSRuntime Js
 
@@ -32,6 +34,18 @@
                     @foreach (var s in _stations)
                     {
                         <MudSelectItem T="int?" Value="@s.Id">@s.Code @s.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+
+                        <MudItem xs="12" sm="6" md="4" lg="3">
+                <MudSelect T="string" Value="_recipeFilter" ValueChanged="OnRecipeFilterChanged"
+                           Label="产品型号" Dense="true" Disabled="_loading">
+                    <MudSelectItem T="string" Value="@AllRecipesValue">全部型号</MudSelectItem>
+                    <MudSelectItem T="string" Value="@EmptyRecipeValue">未选型号</MudSelectItem>
+                    @foreach (var opt in _recipeOptions)
+                    {
+                        <MudSelectItem T="string" Value="@opt.Code">@opt.Label</MudSelectItem>
                     }
                 </MudSelect>
             </MudItem>
@@ -98,6 +112,33 @@
                     平均直通率 @AverageYield().ToString("P1")
                 </MudText>
             }
+        </MudPaper>
+    </MudItem>
+
+    <MudItem xs="12">
+        <MudPaper Class="pa-4 dt-fill mt-3">
+            <MudText Typo="Typo.h6" Class="mb-2">按产品型号</MudText>
+            <MudTable Items="_byRecipe" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading">
+                <HeaderContent>
+                    <MudTh>型号</MudTh>
+                    <MudTh Class="dt-num">产量</MudTh>
+                    <MudTh Class="dt-num">OK</MudTh>
+                    <MudTh Class="dt-num">NG</MudTh>
+                    <MudTh Class="dt-num">未判定</MudTh>
+                    <MudTh Class="dt-num">直通率</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="型号">@FormatRecipeRow(context.RecipeCode)</MudTd>
+                    <MudTd DataLabel="产量" Class="dt-num">@context.Total</MudTd>
+                    <MudTd DataLabel="OK" Class="dt-num">@context.Ok</MudTd>
+                    <MudTd DataLabel="NG" Class="dt-num">@context.Ng</MudTd>
+                    <MudTd DataLabel="未判定" Class="dt-num">@context.Pending</MudTd>
+                    <MudTd DataLabel="直通率" Class="dt-num">@((context.PassRate * 100).ToString("0.0"))%</MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Class="dt-muted">所选范围内没有记录。</MudText>
+                </NoRecordsContent>
+            </MudTable>
         </MudPaper>
     </MudItem>
     <MudItem xs="12" md="6">
@@ -357,7 +398,9 @@
     private IReadOnlyList<Station> _stations = [];
     private List<TagDefinition> _tags = [];
     private IReadOnlyList<DailyThroughput> _fpy = [];
-    private IReadOnlyList<IssueTopItem> _defects = [];
+    private IReadOnlyList<RecipeThroughput> _byRecipe = [];
+    private string _recipeFilter = AllRecipesValue;
+private IReadOnlyList<IssueTopItem> _defects = [];
     private IReadOnlyList<IssueTopItem> _warnings = [];
     private ProcessCapabilityReport? _spc;
 
@@ -376,6 +419,7 @@
     protected override async Task OnInitializedAsync()
     {
         _stations = await Config.GetStationsAsync();
+        await RefreshRecipeOptionsAsync();
         RefreshTags();
         await Load();
     }
@@ -395,8 +439,7 @@
             _tagId = _tags.Count > 0 ? _tags[0].Id : 0;
         }
     }
-
-    private async Task OnStationChanged(int? stationId)
+private async Task OnStationChanged(int? stationId)
     {
         _stationId = stationId;
         RefreshTags();
@@ -408,6 +451,79 @@
         _tagId = tagId;
         await Load();
     }
+
+
+    private const string AllRecipesValue = "*";
+    /// <summary>内部哨兵：仅未选型号（空 RecipeCode）。从不作为下拉可见文案。</summary>
+    private const string EmptyRecipeValue = "__EMPTY__";
+
+    private sealed record RecipeFilterOption(string Code, string Label);
+
+    private IReadOnlyList<RecipeFilterOption> _recipeOptions = [];
+    private Dictionary<string, string> _recipeNames = new(StringComparer.Ordinal);
+
+    private string? ToRecipeQueryArg()
+    {
+        if (_recipeFilter == EmptyRecipeValue)
+            return "";
+        if (string.IsNullOrWhiteSpace(_recipeFilter) || _recipeFilter == AllRecipesValue)
+            return null;
+        return _recipeFilter.Trim();
+    }
+
+    private async Task OnRecipeFilterChanged(string value)
+    {
+        _recipeFilter = value ?? AllRecipesValue;
+        await Load();
+    }
+
+    private async Task RefreshRecipeOptionsAsync()
+    {
+        var from = _from ?? DateTime.Today;
+        var to = _to ?? DateTime.Today;
+        // 区间内出现过的编码（含空）+ 配置里已知型号，避免改码后旧码消失
+        var fromRecords = await Store.ListRecipeCodesAsync(from, to);
+        var known = await Config.GetRecipesAsync();
+        _recipeNames = known
+            .GroupBy(r => r.Code, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First().Name ?? "", StringComparer.Ordinal);
+
+        var codes = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var c in fromRecords)
+        {
+            if (!string.IsNullOrEmpty(c))
+                codes.Add(c);
+        }
+        foreach (var r in known)
+        {
+            if (!string.IsNullOrEmpty(r.Code))
+                codes.Add(r.Code);
+        }
+
+        // 当前筛选项若不在集合里也保留（例如刚改码后仍想看旧码）
+        if (!string.IsNullOrEmpty(_recipeFilter)
+            && _recipeFilter != EmptyRecipeValue
+            && _recipeFilter != AllRecipesValue
+            && !codes.Contains(_recipeFilter))
+        {
+            codes.Add(_recipeFilter);
+        }
+
+        _recipeOptions = codes
+            .OrderBy(c => c, StringComparer.OrdinalIgnoreCase)
+            .Select(c => new RecipeFilterOption(c, FormatRecipeOption(c)))
+            .ToList();
+    }
+
+    private string FormatRecipeOption(string code)
+    {
+        if (_recipeNames.TryGetValue(code, out var name) && !string.IsNullOrWhiteSpace(name))
+            return $"{code} · {name}";
+        return $"旧编码 {code}";
+    }
+
+    private string FormatRecipeRow(string? code)
+        => string.IsNullOrEmpty(code) ? "未选型号" : FormatRecipeOption(code);
 
     private async Task Load()
     {
@@ -425,9 +541,13 @@
         _loading = true;
         try
         {
+            await RefreshRecipeOptionsAsync();
+
             var from = DateRangeFilter.StartOf(_from);
             var to = DateRangeFilter.EndOfInclusive(_to);
             _fpy = await ReportService.GetThroughputAsync(from, to, _stationId);
+            var recipeArg = ToRecipeQueryArg();
+            _byRecipe = await ReportService.GetThroughputByRecipeAsync(from, to, _stationId, recipeArg);
             _defects = await ReportService.GetDefectTopAsync(from, to);
             _warnings = await ReportService.GetWarningTopAsync(from, to);
             _trend = _tagId != 0

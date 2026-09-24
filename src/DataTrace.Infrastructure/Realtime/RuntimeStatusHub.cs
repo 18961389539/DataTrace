@@ -15,6 +15,8 @@ public sealed class RuntimeStatusHub : IRuntimeStatusHub, ICollectEventBus
     private IReadOnlyList<StationRuntimeStatus> _stationsSnapshot = [];
     private IReadOnlyList<PlcRuntimeStatus> _plcsSnapshot = [];
     private IReadOnlyList<CollectFeedItem> _recentSnapshot = [];
+    private string? _activeRecipeCode;
+    private string? _activeRecipeName;
 
     private readonly object _notifyGate = new();
     private bool _notifyPending;
@@ -54,6 +56,16 @@ public sealed class RuntimeStatusHub : IRuntimeStatusHub, ICollectEventBus
             }
         }
     }
+    public string? ActiveRecipeCode
+    {
+        get { lock (_gate) { return _activeRecipeCode; } }
+    }
+
+    public string? ActiveRecipeName
+    {
+        get { lock (_gate) { return _activeRecipeName; } }
+    }
+
 
     public void UpsertStation(StationRuntimeStatus status)
     {
@@ -115,6 +127,26 @@ public sealed class RuntimeStatusHub : IRuntimeStatusHub, ICollectEventBus
         }
 
         RecordSaved?.Invoke(record);
+        ScheduleChanged();
+    }
+
+
+    public void SetActiveRecipe(string? code, string? name)
+    {
+        var normalizedCode = string.IsNullOrWhiteSpace(code) ? null : code.Trim();
+        var normalizedName = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+        lock (_gate)
+        {
+            if (string.Equals(_activeRecipeCode, normalizedCode, StringComparison.Ordinal)
+                && string.Equals(_activeRecipeName, normalizedName, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _activeRecipeCode = normalizedCode;
+            _activeRecipeName = normalizedName;
+        }
+
         ScheduleChanged();
     }
 

@@ -173,6 +173,10 @@ public sealed class RuntimeDbFactory
             "RecipeCode",
             """ALTER TABLE "CollectRecords" ADD COLUMN "RecipeCode" TEXT NOT NULL DEFAULT ''""");
 
+        // 查询/报表按型号过滤与分组；IF NOT EXISTS 对已有月库幂等安全。
+        ctx.Database.ExecuteSqlRaw(
+            """CREATE INDEX IF NOT EXISTS "IX_CollectRecords_RecipeCode" ON "CollectRecords" ("RecipeCode");""");
+
         // 判定那一刻生效的四道限值。用 REAL NULL 且不回填：老记录要么确实没配限值，
         // 要么是那会儿还没记，两者都不能凭空补 0——补 0 会让历史明细显示"规格限 0"。
         SqliteSchema.AddColumnIfMissing(
