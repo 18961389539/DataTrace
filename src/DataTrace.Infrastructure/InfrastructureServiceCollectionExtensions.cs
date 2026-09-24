@@ -33,6 +33,9 @@ public static class InfrastructureServiceCollectionExtensions
 
         services.AddIdentity<ApplicationUser, IdentityRole>(options =>
             {
+                // 显式策略：长度≥8、要大写、要数字；不要强制特殊字符。
+                // RequireLowercase / RequiredUniqueChars 保持 Identity 默认（true / 1），
+                // Web 端 PasswordPolicy 通过 IOptions<IdentityOptions> 读取合并后的完整规则。
                 options.Password.RequireNonAlphanumeric = false;
                 options.Password.RequireUppercase = true;
                 options.Password.RequireDigit = true;
