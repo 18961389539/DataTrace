@@ -116,13 +116,38 @@ public class ReportServiceTests
     {
         var service = new ReportService(BuildStore());
 
-        var top = await service.GetDefectTopAsync(Day1, Day2.AddDays(1));
+        var top = await service.GetDefectTopAsync(Day1, Day2.AddDays(1), stationId: null);
 
-        Assert.Equal(2, top.Count);
-        Assert.Equal("压力", top[0].Name);
-        Assert.Equal(2, top[0].Count);
-        Assert.Equal("工站温度", top[1].Name);
-        Assert.Equal(1, top[1].Count);
+        Assert.Equal(2, top.Items.Count);
+        Assert.Equal("压力", top.Items[0].Name);
+        Assert.Equal(2, top.Items[0].Count);
+        Assert.Equal("工站温度", top.Items[1].Name);
+        Assert.Equal(1, top.Items[1].Count);
+        // 区间内共 3 次超限（压力 2 次 + 工站温度 1 次），榜内合计恰好也是 3。
+        Assert.Equal(3, top.Total);
+    }
+
+    /// <summary>
+    /// 占比的分母必须是区间内全部次数，而不是榜内合计：榜内合计永远 100%，
+    /// 就看不出"榜外还有一大截"，也就不会去查第 11 个点位。
+    /// </summary>
+    [Fact]
+    public async Task Defect_top_total_covers_rows_beyond_the_take()
+    {
+        var store = new FakeRuntimeStore();
+        for (var i = 0; i < 3; i++)
+        {
+            store.Records.Add(("202609", Record(Day1.AddMinutes(i), Judgement.Ng, 10,
+                Tag(1, "压力", 25, true), Tag(2, "工站温度", 95, true), Tag(3, "位移", 60, true))));
+        }
+        var service = new ReportService(store);
+
+        var top = await service.GetDefectTopAsync(Day1, Day2, stationId: null, take: 2);
+
+        Assert.Equal(2, top.Items.Count);
+        // 榜上两行各 3 次，但区间里一共 9 次 —— 分母用榜内合计就会显示成两个 50%。
+        Assert.Equal(9, top.Total);
+        Assert.Equal(3d / 9d, (double)top.Items[0].Count / top.Total, precision: 6);
     }
 
     [Fact]
@@ -130,12 +155,32 @@ public class ReportServiceTests
     {
         var service = new ReportService(BuildStore());
 
-        var top = await service.GetDefectTopAsync(Day1, Day2.AddDays(1), take: 1);
+        var top = await service.GetDefectTopAsync(Day1, Day2.AddDays(1), stationId: null, take: 1);
 
-        var item = Assert.Single(top);
+        var item = Assert.Single(top.Items);
         Assert.Equal("压力", item.Name);
         // 前两条记录压力均在限内，不应计入不良。
         Assert.Equal(2, item.Count);
+    }
+
+    /// <summary>工站筛选和型号一样是整份报表的条件：不良榜不跟着收窄，现场会去错工站找原因。</summary>
+    [Fact]
+    public async Task Defect_top_filters_by_station()
+    {
+        var service = new ReportService(BuildStore());
+
+        // Day1 的三条里，Ng 那条在工站 20，超限点是压力与工站温度。
+        var station20 = await service.GetDefectTopAsync(Day1, Day2.AddDays(1), stationId: 20);
+        Assert.Equal(2, station20.Items.Count);
+        Assert.Equal(2, station20.Total);
+
+        // 工站 30 只有 Day2 那条 Ng，超限点仍是压力。
+        var station30 = await service.GetDefectTopAsync(Day1, Day2.AddDays(1), stationId: 30);
+        Assert.Equal("压力", Assert.Single(station30.Items).Name);
+        Assert.Equal(1, station30.Total);
+
+        // 没有任何记录的工站回空，而不是回全部。
+        Assert.Equal(0, (await service.GetDefectTopAsync(Day1, Day2.AddDays(1), stationId: 99)).Total);
     }
 
     [Fact]
@@ -145,7 +190,7 @@ public class ReportServiceTests
         store.Records.Add(("202609", Record(Day1, Judgement.Ng, 10, Tag(7, "", 99, true, code: "ST010_TEMP"))));
         var service = new ReportService(store);
 
-        var item = Assert.Single(await service.GetDefectTopAsync(Day1, Day2));
+        var item = Assert.Single((await service.GetDefectTopAsync(Day1, Day2, null)).Items);
         Assert.Equal("ST010_TEMP", item.Name);
     }
 
@@ -204,17 +249,17 @@ public class ReportServiceTests
             Tag(1, "压力", 25, true), Tag(2, "工站温度", 95, true))));
         var service = new ReportService(store);
 
-        var warnings = await service.GetWarningTopAsync(Day1, Day2);
+        var warnings = await service.GetWarningTopAsync(Day1, Day2, stationId: null);
 
-        var item = Assert.Single(warnings);
+        var item = Assert.Single(warnings.Items);
         Assert.Equal("压力", item.Name);
         Assert.Equal(1, item.Count);
 
         // 不良统计只看超规格点位，两者互不串台。
-        var defects = await service.GetDefectTopAsync(Day1, Day2);
-        Assert.Equal(2, defects.Count);
-        Assert.Equal("压力", defects[0].Name);
-        Assert.Equal(1, defects[0].Count);
+        var defects = await service.GetDefectTopAsync(Day1, Day2, stationId: null);
+        Assert.Equal(2, defects.Items.Count);
+        Assert.Equal("压力", defects.Items[0].Name);
+        Assert.Equal(1, defects.Items[0].Count);
     }
 
     [Fact]
@@ -229,11 +274,11 @@ public class ReportServiceTests
         store.Records.Add(("202609", second));
         var service = new ReportService(store);
 
-        Assert.Equal(2, (await service.GetWarningTopAsync(Day1, Day2)).Count);
-        Assert.Single(await service.GetWarningTopAsync(Day1, Day2, take: 1));
+        Assert.Equal(2, (await service.GetWarningTopAsync(Day1, Day2, null)).Items.Count);
+        Assert.Single((await service.GetWarningTopAsync(Day1, Day2, null, take: 1)).Items);
         // 第二条在 Day1+1h，收窄到 30 分钟就只剩第一条。
-        Assert.Equal("压力", Assert.Single(await service.GetWarningTopAsync(Day1, Day1.AddMinutes(30))).Name);
-        Assert.Empty(await service.GetWarningTopAsync(Day1.AddHours(5), Day2));
+        Assert.Equal("压力", Assert.Single((await service.GetWarningTopAsync(Day1, Day1.AddMinutes(30), null)).Items).Name);
+        Assert.Empty((await service.GetWarningTopAsync(Day1.AddHours(5), Day2, null)).Items);
     }
 
     [Fact]
@@ -242,7 +287,9 @@ public class ReportServiceTests
         var service = new ReportService(BuildStore());
 
         // BuildStore 的数据都是超规格或正常值，没有人落在黄区。
-        Assert.Empty(await service.GetWarningTopAsync(Day1, Day2.AddDays(1)));
+        var warnings = await service.GetWarningTopAsync(Day1, Day2.AddDays(1), stationId: null);
+        Assert.Empty(warnings.Items);
+        Assert.Equal(0, warnings.Total);
     }
 
     /// <summary>
@@ -274,8 +321,8 @@ public class ReportServiceTests
         Assert.Equal("A100", Assert.Single((await service.GetThroughputAsync(Day1, Day2, null, "A100")).ByRecipe).RecipeCode);
 
         // 不良与趋势同样收窄；B200 那条没有超限点位，所以筛它就查不到不良。
-        Assert.Equal("压力", Assert.Single(await service.GetDefectTopAsync(Day1, Day2, recipeCode: "A100")).Name);
-        Assert.Empty(await service.GetDefectTopAsync(Day1, Day2, recipeCode: "B200"));
+        Assert.Equal("压力", Assert.Single((await service.GetDefectTopAsync(Day1, Day2, null, recipeCode: "A100")).Items).Name);
+        Assert.Empty((await service.GetDefectTopAsync(Day1, Day2, null, recipeCode: "B200")).Items);
         Assert.Single(await service.GetTrendAsync(Day1, Day2, tagId: 1, recipeCode: "A100"));
         Assert.Equal(2, (await service.GetTrendAsync(Day1, Day2, tagId: 1)).Count);
     }

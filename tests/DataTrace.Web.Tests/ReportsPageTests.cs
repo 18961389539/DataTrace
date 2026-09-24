@@ -65,11 +65,11 @@ public class ReportsPageTests : WebTestBase
                 ByRecipe = [new RecipeThroughput { RecipeCode = "A100", Total = 3, Ok = 3 }]
             });
         _reports
-            .Setup(r => r.GetDefectTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<IssueTopItem>());
+            .Setup(r => r.GetDefectTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueTopReport());
         _reports
-            .Setup(r => r.GetWarningTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<IssueTopItem>());
+            .Setup(r => r.GetWarningTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueTopReport());
         _reports
             .Setup(r => r.GetTrendAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([new TrendPoint { Time = SampleTime, Value = 12.5, PalletCode = "P0001" }]);
@@ -110,8 +110,8 @@ public class ReportsPageTests : WebTestBase
 
         // 一条都不能漏：漏了就会出现"选了 A100 却看到全部型号的不良"。
         _reports.Verify(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
-        _reports.Verify(r => r.GetDefectTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
-        _reports.Verify(r => r.GetWarningTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
+        _reports.Verify(r => r.GetDefectTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<int>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
+        _reports.Verify(r => r.GetWarningTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<int>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
         _reports.Verify(r => r.GetTrendAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), 1, "A100", It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
         _spc.Verify(s => s.GetProcessCapabilityAsync(1, It.IsAny<DateTime>(), It.IsAny<DateTime>(), "A100", It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
 
@@ -128,6 +128,50 @@ public class ReportsPageTests : WebTestBase
         await SelectRecipeAsync(cut, "__EMPTY__");
 
         _reports.Verify(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), "", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// 工站和型号一样是整份报表的条件：不良/预警不跟着收窄，
+    /// 选了 ST010 却看到全线的不良榜，现场就会去错工站找原因。
+    /// </summary>
+    [Fact]
+    public async Task Station_filter_reaches_the_issue_queries_too()
+    {
+        var cut = Render();
+
+        var station = cut.FindComponents<MudSelect<int?>>()[0];
+        await cut.InvokeAsync(() => station.Instance.ValueChanged.InvokeAsync(10));
+
+        _reports.Verify(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), 10, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        _reports.Verify(r => r.GetDefectTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), 10, It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        _reports.Verify(r => r.GetWarningTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), 10, It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// 占比的分母是区间内全部次数，不是榜内合计：榜内合计永远 100%，
+    /// 就看不出"榜外还有一大截"。
+    /// </summary>
+    [Fact]
+    public void The_share_column_is_measured_against_the_whole_range()
+    {
+        _reports
+            .Setup(r => r.GetDefectTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueTopReport
+            {
+                Items =
+                [
+                    new IssueTopItem { Name = "压力", Count = 3 },
+                    new IssueTopItem { Name = "位移", Count = 3 }
+                ],
+                Total = 9
+            });
+
+        var cut = Render();
+
+        // 3 / 9 才是真占比；按榜内合计算会显示成 50.0%，等于宣称榜外没有别的问题。
+        Assert.Contains((3d / 9d).ToString("P1"), cut.Markup);
+        Assert.DoesNotContain((3d / 6d).ToString("P1"), cut.Markup);
+        Assert.Contains("区间共 9 次超规格", cut.Markup);
     }
 
     [Fact]
@@ -157,6 +201,33 @@ public class ReportsPageTests : WebTestBase
         Assert.DoesNotContain("A100", cut.Markup);
         Assert.Contains("统计失败", Toast.LastMessage);
     }
+
+    /// <summary>
+    /// 失败后趋势与过程能力都被清空了，若沿用"区间内没有采集数据"，
+    /// 现场会照着"这个点位没数据"去查传感器 —— 得说清楚是统计失败。
+    /// </summary>
+    [Fact]
+    public void A_failed_reload_says_so_instead_of_claiming_there_is_no_data()
+    {
+        var cut = Render();
+        _reports
+            .Setup(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("月库被占用"));
+
+        ClickButton(cut, "刷新报表");
+
+        ActivateTab(cut, "参数趋势");
+        Assert.Contains("本页结果已清空", cut.Markup);
+        Assert.DoesNotContain("没有采集数据", cut.Markup);
+
+        ActivateTab(cut, "过程能力");
+        Assert.Contains("本页结果已清空", cut.Markup);
+        Assert.DoesNotContain("再回到这里查看过程能力", cut.Markup);
+    }
+
+    /// <summary>MudTabs 只渲染当前页签的面板，要断言别的页签得先切过去。</summary>
+    private static void ActivateTab(IRenderedComponent<Reports> cut, string tabText)
+        => cut.FindAll(".mud-tab").First(t => t.TextContent.Contains(tabText)).Click();
 
     [Theory]
     [InlineData(AppRoles.Administrator, true)]

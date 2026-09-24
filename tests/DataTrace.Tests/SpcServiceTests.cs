@@ -194,6 +194,48 @@ public class SpcServiceTests
         Assert.Equal(6, segment.Summary.Count);
     }
 
+    /// <summary>
+    /// 报表按型号筛选时，兜底限值也必须取被筛型号的覆盖值：
+    /// 筛了 A100 却拿当前生效型号（这里未选型号）的默认限值去兜底，
+    /// 算出来的 Cp/Cpk 与图上那批样本不是一套口径。
+    /// </summary>
+    [Fact]
+    public async Task Config_fallback_uses_the_filtered_recipe_not_the_active_one()
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+        var station = harness.Station(0);
+        var tag = station.Tags.Single(t => t.Code == "ST010_P1");
+        for (var i = 0; i < 6; i++)
+        {
+            LoadPressure(harness, station, $"PR{i:00}", 12f + i * 0.5f);
+            Assert.Equal(ResultCodes.Success, await harness.RunAsync(station));
+        }
+
+        // 老数据：没有落库限值，只能按配置兜底。
+        WipePersistedLimits(harness);
+
+        var spc = harness.Scope.ServiceProvider.GetRequiredService<ISpcService>();
+        var from = DateTime.Today.AddDays(-1);
+        var to = DateTime.Today.AddDays(1);
+
+        // 不限型号：当前未选型号 → 点位默认上限 20。
+        var unrestricted = await spc.GetProcessCapabilityAsync(tag.Id, from, to);
+        var byDefault = Assert.Single(unrestricted!.Segments);
+        Assert.True(byDefault.LimitsFromConfig);
+        Assert.Equal(tag.UpperLimit, byDefault.UpperLimit);
+
+        // 筛 A100：A100 把压力规格上限收紧到 16，兜底就得用 16。
+        var filtered = await spc.GetProcessCapabilityAsync(tag.Id, from, to, "A100");
+        var byRecipe = Assert.Single(filtered!.Segments);
+        Assert.Equal(16d, byRecipe.UpperLimit);
+        Assert.Equal("A100", filtered.RecipeCode);
+
+        // 筛「未选型号」：只用点位默认限值，不能把当前生效型号的覆盖带进来。
+        var noRecipe = await spc.GetProcessCapabilityAsync(tag.Id, from, to, "");
+        Assert.Equal(tag.UpperLimit, Assert.Single(noRecipe!.Segments).UpperLimit);
+        Assert.Equal("", noRecipe.RecipeCode);
+    }
+
     /// <summary>把压力点覆盖成确定值：两段的数值分布必须一样，Cpu 才可比。</summary>
     private static void LoadPressure(CollectHarness harness, Station station, string pallet, float value)
     {

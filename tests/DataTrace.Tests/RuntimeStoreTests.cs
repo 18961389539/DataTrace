@@ -549,11 +549,14 @@ public class RuntimeStoreTests
         Assert.Equal(3, (await env.Store.QueryJudgementPointsAsync(Day1, Day1.AddDays(30), null)).Count);
 
         // 不良投影：只回带超限点位的名称与代码。
-        var defects = await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddHours(3));
+        var defects = await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddHours(3), null);
         var defect = Assert.Single(defects);
         Assert.Equal("压力", defect.TagName);
         Assert.Equal("ST010_P1", defect.TagCode);
-        Assert.Empty(await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddHours(1)));
+        Assert.Empty(await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddHours(1), null));
+
+        // 工站过滤同样下推到 SQL：选错工站就会去错工站找原因。
+        Assert.Empty(await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddHours(3), 99));
 
         // 趋势投影：按 TagId 过滤，时间升序，并带出托盘码。
         const int tagId = 10 * 10 + 1;
@@ -603,9 +606,9 @@ public class RuntimeStoreTests
         Assert.Empty(await env.Store.QueryJudgementPointsAsync(Day1, Day1.AddDays(1), null, "ZZZ"));
 
         // 不良与预警：超限点在 A100 那条上。
-        Assert.Single(await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddDays(1), "A100"));
-        Assert.Empty(await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddDays(1), "B200"));
-        Assert.Empty(await env.Store.QueryWarningTagsAsync(Day1, Day1.AddDays(1), "A100"));
+        Assert.Single(await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddDays(1), null, "A100"));
+        Assert.Empty(await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddDays(1), null, "B200"));
+        Assert.Empty(await env.Store.QueryWarningTagsAsync(Day1, Day1.AddDays(1), null, "A100"));
 
         // 趋势：A100 一条采样、B200 一条，未选型号一条。
         Assert.Single(await env.Store.QueryTagTrendAsync(Day1, Day1.AddDays(1), tagId, "A100"));
@@ -638,6 +641,45 @@ public class RuntimeStoreTests
 
         // take 为 0 表示不限。
         Assert.Equal(5, (await env.Store.QueryTagTrendAsync(Day1, Day1.AddDays(1), tagId)).Count);
+    }
+
+    /// <summary>
+    /// 跨月取"最新 take 点"：从最新月库往回取、凑够即停，
+    /// 结果必须仍是全局最新那批，而不是"最新月库里的那几条"。
+    /// </summary>
+    [Fact]
+    public async Task Trend_take_across_months_keeps_the_globally_newest_points()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        // 九月两条（11、12），十月三条（13、14、15）。
+        await SaveTrendPointAsync(env, "202609", "P0901", new DateTime(2026, 9, 28, 8, 0, 0), 11);
+        await SaveTrendPointAsync(env, "202609", "P0902", new DateTime(2026, 9, 29, 8, 0, 0), 12);
+        await SaveTrendPointAsync(env, "202610", "P1001", new DateTime(2026, 10, 2, 8, 0, 0), 13);
+        await SaveTrendPointAsync(env, "202610", "P1002", new DateTime(2026, 10, 3, 8, 0, 0), 14);
+        await SaveTrendPointAsync(env, "202610", "P1003", new DateTime(2026, 10, 4, 8, 0, 0), 15);
+
+        const int tagId = 10 * 10 + 1;
+        var from = new DateTime(2026, 9, 1);
+        var to = new DateTime(2026, 11, 1);
+
+        var latestTwo = await env.Store.QueryTagTrendAsync(from, to, tagId, take: 2);
+        Assert.Equal(new[] { 14d, 15d }, latestTwo.Select(p => p.Value).ToArray());
+        Assert.True(latestTwo[0].Time < latestTwo[1].Time);
+
+        // 取满一年也一样：跨到最早那几个月库仍只回最新 take 点。
+        var latestThree = await env.Store.QueryTagTrendAsync(from, to, tagId, take: 3);
+        Assert.Equal(new[] { 13d, 14d, 15d }, latestThree.Select(p => p.Value).ToArray());
+
+        // 不限 take 时仍然是整段升序，跨月不丢点。
+        var all = await env.Store.QueryTagTrendAsync(from, to, tagId);
+        Assert.Equal(new[] { 11d, 12d, 13d, 14d, 15d }, all.Select(p => p.Value).ToArray());
+    }
+
+    private static async Task SaveTrendPointAsync(RuntimeEnv env, string monthKey, string pallet, DateTime time, double value)
+    {
+        var request = FirstStation(monthKey, pallet, pallet, time);
+        request.Record.TagValues.Single().NumericValue = value;
+        await env.Store.SaveAsync(request);
     }
 
     [Fact]
@@ -738,14 +780,14 @@ public class RuntimeStoreTests
         // 不良行：超规格。
         await env.Store.SaveAsync(FirstStation("202609", "P0002", "S2", Day1.AddHours(1), Judgement.Ng));
 
-        var warnings = await env.Store.QueryWarningTagsAsync(Day1, Day1.AddDays(1));
+        var warnings = await env.Store.QueryWarningTagsAsync(Day1, Day1.AddDays(1), null);
         var warning = Assert.Single(warnings);
         Assert.Equal("压力", warning.TagName);
         Assert.Equal("ST010_P1", warning.TagCode);
 
         // 两类标记互不串台。
-        Assert.Single(await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddDays(1)));
-        Assert.Empty(await env.Store.QueryWarningTagsAsync(Day1.AddHours(2), Day1.AddDays(1)));
+        Assert.Single(await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddDays(1), null));
+        Assert.Empty(await env.Store.QueryWarningTagsAsync(Day1.AddHours(2), Day1.AddDays(1), null));
 
         // 补列迁移生效：IsWarning 能写进月库并读回。
         var stored = await env.Store.GetRecordAsync("202609", warned.Record.Id);

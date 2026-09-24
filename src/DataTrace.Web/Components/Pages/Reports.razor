@@ -161,8 +161,16 @@
     <MudItem xs="12" md="6">
         <MudPaper Class="pa-4 dt-fill">
             <MudText Typo="Typo.h6" Class="mb-2">不良 Top N</MudText>
-            <IssueTopTable Items="_defects" Loading="_loading" Share="DefectShare"
+            <IssueTopTable Items="_defects.Items" Loading="_loading" Share="DefectShare"
                            EmptyText="区间内没有不良记录，工站状态良好。" />
+            @if (_defects.Items.Count > 0)
+            {
+                @* 分母是区间内全部超限次数，不是榜内合计：榜内合计永远 100%，
+                   那样就看不出"榜外还有一大截"，也就不会去查第 11 个点位。 *@
+                <MudText Typo="Typo.caption" Class="dt-muted mt-2">
+                    区间共 @_defects.Total 次超规格，下表列出前 @_defects.Items.Count 项；占比以全部次数为分母。
+                </MudText>
+            }
         </MudPaper>
     </MudItem>
     <MudItem xs="12">
@@ -174,8 +182,14 @@
                     落在黄区、尚未判废。这里先热起来，说明趋势正在往限值漂。
                 </MudText>
             </MudStack>
-            <IssueTopTable Items="_warnings" Loading="_loading" Share="WarningShare"
+            <IssueTopTable Items="_warnings.Items" Loading="_loading" Share="WarningShare"
                            EmptyText="区间内没有任何点位进入预警带。若这里长期为空，也可能说明预警限还没配。" />
+            @if (_warnings.Items.Count > 0)
+            {
+                <MudText Typo="Typo.caption" Class="dt-muted mt-2">
+                    区间共 @_warnings.Total 次进入预警带，下表列出前 @_warnings.Items.Count 项；占比以全部次数为分母。
+                </MudText>
+            }
         </MudPaper>
     </MudItem>
         </MudGrid>
@@ -197,6 +211,11 @@
             @if (_tags.Count == 0)
             {
                 <MudText Typo="Typo.body2" Class="dt-muted py-3">当前工站没有可画趋势的数值点位。</MudText>
+            }
+            else if (_loadFailed)
+            {
+                @* 失败时结果已被清空，这里若沿用"没有采集数据"，现场会照着"点位没数据"去查传感器。 *@
+                <MudText Typo="Typo.body2" Class="dt-text-error py-3">统计失败，本页结果已清空。请重试；若持续失败请检查月库是否被占用。</MudText>
             }
             else if (_trend.Count == 0)
             {
@@ -242,7 +261,11 @@
                 <MudText Typo="Typo.caption" Class="dt-muted">I-MR 单值移动极差控制图</MudText>
             </MudStack>
 
-            @if (_spc is null)
+            @if (_loadFailed)
+            {
+                <MudText Typo="Typo.body2" Class="dt-text-error py-3">统计失败，本页结果已清空。请重试；若持续失败请检查月库是否被占用。</MudText>
+            }
+            else if (_spc is null)
             {
                 <MudText Typo="Typo.body2" Class="dt-muted py-3">请先在「参数趋势」页签选择一个数值点位，再回到这里查看过程能力。</MudText>
             }
@@ -419,8 +442,8 @@
     private IReadOnlyList<RecipeThroughput> _byRecipe = [];
     /// <summary>型号筛选：null/缺省=全部型号；<c>""</c>=未选型号；其它为精确匹配。作用于整份报表。</summary>
     private string? _recipeFilter;
-private IReadOnlyList<IssueTopItem> _defects = [];
-    private IReadOnlyList<IssueTopItem> _warnings = [];
+private IssueTopReport _defects = new();
+    private IssueTopReport _warnings = new();
     private ProcessCapabilityReport? _spc;
 
     /// <summary>与 _spc.Segments 一一对应的控制图序列：分段之后每段各画一张图。</summary>
@@ -436,6 +459,12 @@ private IReadOnlyList<IssueTopItem> _defects = [];
     private bool _loading;
     private bool _loadPending;
     private bool _canExport;
+
+    /// <summary>
+    /// 上一轮统计失败了。趋势与过程能力在失败后与"区间内没有采样数据"长得一样，
+    /// 不说清楚的话现场会照着"这个点位没数据"去查传感器。
+    /// </summary>
+    private bool _loadFailed;
 
     /// <summary>
     /// 趋势与过程能力单次最多统计的采样点数。区间取很大时（例如整年）不加限制会把
@@ -687,8 +716,10 @@ private async Task OnStationChanged(int? stationId)
                 var throughput = await ReportService.GetThroughputAsync(from, to, _stationId, recipeArg);
                 _fpy = throughput.ByDay;
                 _byRecipe = throughput.ByRecipe;
-                _defects = await ReportService.GetDefectTopAsync(from, to, recipeCode: recipeArg);
-                _warnings = await ReportService.GetWarningTopAsync(from, to, recipeCode: recipeArg);
+                // 工站与型号一样是整份报表的筛选条件：不良/预警不跟着收窄，
+                // 选了 ST010 却看到全线的不良榜，现场就会去错工站找原因。
+                _defects = await ReportService.GetDefectTopAsync(from, to, _stationId, recipeCode: recipeArg);
+                _warnings = await ReportService.GetWarningTopAsync(from, to, _stationId, recipeCode: recipeArg);
 
                 // 多取一点用来判断"到底有没有截断"，免得刚好等于上限时误报。
                 var trendPoints = _tagId != 0
@@ -706,6 +737,7 @@ private async Task OnStationChanged(int? stationId)
                     ? await SpcService.GetProcessCapabilityAsync(_tagId, from, to, recipeArg, TrendSampleLimit)
                     : null;
                 _spcCharts = _spc?.Segments.Select(BuildSpcSeries).ToList() ?? [];
+                _loadFailed = false;
             }
             while (_loadPending);
         }
@@ -714,6 +746,7 @@ private async Task OnStationChanged(int? stationId)
             // 失败时把上一轮结果清掉：进度条一消失还留着旧数字，就是"看着有数、其实是旧的"。
             // Query 页失败时本来就会清 _items/_total，两页不该不一致。
             ClearResults();
+            _loadFailed = true;
             Toast.Add($"统计失败：{ex.Message}", Severity.Error);
         }
         finally
@@ -783,8 +816,8 @@ private async Task OnStationChanged(int? stationId)
         _fpy = [];
         // 这张表也要清：它同样会"进度条一消失还留着旧数字"。
         _byRecipe = [];
-        _defects = [];
-        _warnings = [];
+        _defects = new();
+        _warnings = new();
         _spc = null;
         _spcCharts = [];
         _trend = [];
@@ -841,16 +874,10 @@ private async Task OnStationChanged(int? stationId)
     }
 
     private double DefectShare(int count)
-    {
-        var total = _defects.Sum(x => x.Count);
-        return total == 0 ? 0 : (double)count / total;
-    }
+        => _defects.Total == 0 ? 0 : (double)count / _defects.Total;
 
     private double WarningShare(int count)
-    {
-        var total = _warnings.Sum(x => x.Count);
-        return total == 0 ? 0 : (double)count / total;
-    }
+        => _warnings.Total == 0 ? 0 : (double)count / _warnings.Total;
 
     private static Color YieldColor(double yield) => yield switch
     {
@@ -875,6 +902,9 @@ private async Task OnStationChanged(int? stationId)
         }
 
         _exporting = true;
+        // 条数先定格：下载是异步的，中途点刷新会把 _trend 换掉，
+        // 于是提示与审计里的条数跟真正导出去的那份对不上。
+        var count = _trend.Count;
         try
         {
             var rows = _trend.Select(p => new[]
@@ -897,12 +927,12 @@ private async Task OnStationChanged(int? stationId)
             _exporting = false;
         }
 
-        var message = $"已导出 {_trend.Count} 个趋势点";
+        var message = $"已导出 {count} 个趋势点";
 
         // 文件已经下载完了：审计写库失败不能报成"导出失败"，现场会以为没导出去而重导。
         try
         {
-            await WriteExportAuditAsync();
+            await WriteExportAuditAsync(count);
             Toast.Add(message, Severity.Success);
         }
         catch (Exception ex)
@@ -911,7 +941,7 @@ private async Task OnStationChanged(int? stationId)
         }
     }
 
-    private async Task WriteExportAuditAsync()
+    private async Task WriteExportAuditAsync(int count)
     {
         var auth = await Auth.GetAuthenticationStateAsync();
         var user = auth.User.Identity?.Name ?? "";
@@ -926,7 +956,7 @@ private async Task OnStationChanged(int? stationId)
         var key = $"{DateRangeFilter.StartOf(_from):yyyy-MM-dd}~{DateRangeFilter.StartOf(_to):yyyy-MM-dd}";
         var summary =
             $"station={_stationId?.ToString() ?? "全部"};tag={tag?.Code ?? _tagId.ToString()};" +
-            $"recipe={recipe};points={_trend.Count}";
+            $"recipe={recipe};points={count}";
         await Audit.WriteAsync(user, "Export", "Report", key, null, summary);
     }
 

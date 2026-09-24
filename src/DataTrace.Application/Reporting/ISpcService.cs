@@ -56,7 +56,10 @@ public sealed class ProcessCapabilityReport
     /// </summary>
     public double? TargetValue { get; init; }
 
-    /// <summary>取数时点的活动型号编码；空串表示按点位默认限值。</summary>
+    /// <summary>
+    /// 兜底规格限与目标值所依据的型号编码：不限型号时是当前生效型号，
+    /// 按型号筛选时是被筛的那个型号；空串表示只用点位默认限值。
+    /// </summary>
     public string RecipeCode { get; init; } = "";
 
     /// <summary>按时间升序排列的全部采样值（跨段不切，趋势图与序号映射都靠它）。</summary>

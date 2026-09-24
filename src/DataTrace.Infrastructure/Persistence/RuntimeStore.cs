@@ -308,20 +308,23 @@ public sealed class RuntimeStore : IRuntimeStore
     public Task<IReadOnlyList<TagIssuePoint>> QueryOutOfLimitTagsAsync(
         DateTime from,
         DateTime to,
+        int? stationId,
         string? recipeCode = null,
         CancellationToken cancellationToken = default)
-        => QueryTagIssuesAsync(from, to, warning: false, recipeCode, cancellationToken);
+        => QueryTagIssuesAsync(from, to, stationId, warning: false, recipeCode, cancellationToken);
 
     public Task<IReadOnlyList<TagIssuePoint>> QueryWarningTagsAsync(
         DateTime from,
         DateTime to,
+        int? stationId,
         string? recipeCode = null,
         CancellationToken cancellationToken = default)
-        => QueryTagIssuesAsync(from, to, warning: true, recipeCode, cancellationToken);
+        => QueryTagIssuesAsync(from, to, stationId, warning: true, recipeCode, cancellationToken);
 
     private async Task<IReadOnlyList<TagIssuePoint>> QueryTagIssuesAsync(
         DateTime from,
         DateTime to,
+        int? stationId,
         bool warning,
         string? recipeCode,
         CancellationToken cancellationToken)
@@ -344,6 +347,11 @@ public sealed class RuntimeStore : IRuntimeStore
             issues = warning
                 ? issues.Where(x => x.tag.IsWarning)
                 : issues.Where(x => x.tag.IsOutOfLimit);
+
+            if (stationId is { } sid)
+            {
+                issues = issues.Where(x => x.record.StationId == sid);
+            }
 
             if (recipeCode is not null)
             {
@@ -374,7 +382,17 @@ public sealed class RuntimeStore : IRuntimeStore
         CancellationToken cancellationToken = default)
     {
         var points = new List<TagTrendPoint>();
-        foreach (var month in RuntimeDbFactory.MonthsInRange(from, to).Where(_factory.Exists))
+
+        // take > 0 时从最新的月库往回取、凑够就停：每个月都取 take 条的话，
+        // "单次最多 take 点"这个上限在跨年区间上会被放大十几倍（高频点位一年十几万条），
+        // 而更早的月库不可能提供更新的点，取它们纯属白读。
+        var months = RuntimeDbFactory.MonthsInRange(from, to).Where(_factory.Exists).ToList();
+        if (take > 0)
+        {
+            months.Reverse();
+        }
+
+        foreach (var month in months)
         {
             await using var db = _factory.Open(month);
             var query = db.TagValues
@@ -411,6 +429,11 @@ public sealed class RuntimeStore : IRuntimeStore
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
             points.AddRange(part);
+
+            if (take > 0 && points.Count >= take)
+            {
+                break;
+            }
         }
 
         if (take <= 0)
@@ -418,8 +441,8 @@ public sealed class RuntimeStore : IRuntimeStore
             return points;
         }
 
-        // 跨月合并后重新取全局最新 take 条：每月各取 take 条，
-        // 全局最新的 take 条必然落在并集里，不会漏样本。最后统一升序，交给画图与移动极差。
+        // 跨月合并后重新取全局最新 take 条：已取到的点比所有未读的月库都新，
+        // 所以只要凑够 take 条，结果必然就是全局最新的那批。最后统一升序，交给画图与移动极差。
         return points
             .OrderByDescending(p => p.Time)
             .Take(take)

@@ -236,19 +236,21 @@ internal class FakeRuntimeStore : IRuntimeStore
                 .Distinct()
                 .ToList());
 
-    public Task<IReadOnlyList<TagIssuePoint>> QueryOutOfLimitTagsAsync(DateTime from, DateTime to, string? recipeCode = null, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<TagIssuePoint>> QueryOutOfLimitTagsAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default)
         => Task.FromResult<IReadOnlyList<TagIssuePoint>>(
             Records
                 .Where(x => x.Record.TriggerTime >= from && x.Record.TriggerTime <= to)
+                .Where(x => stationId is null || x.Record.StationId == stationId)
                 .Where(x => recipeCode is null || x.Record.RecipeCode == recipeCode)
                 .SelectMany(x => x.Record.TagValues.Where(t => t.IsOutOfLimit))
                 .Select(t => new TagIssuePoint { TagName = t.TagName, TagCode = t.TagCode })
                 .ToList());
 
-    public Task<IReadOnlyList<TagIssuePoint>> QueryWarningTagsAsync(DateTime from, DateTime to, string? recipeCode = null, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<TagIssuePoint>> QueryWarningTagsAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default)
         => Task.FromResult<IReadOnlyList<TagIssuePoint>>(
             Records
                 .Where(x => x.Record.TriggerTime >= from && x.Record.TriggerTime <= to)
+                .Where(x => stationId is null || x.Record.StationId == stationId)
                 .Where(x => recipeCode is null || x.Record.RecipeCode == recipeCode)
                 .SelectMany(x => x.Record.TagValues.Where(t => t.IsWarning))
                 .Select(t => new TagIssuePoint { TagName = t.TagName, TagCode = t.TagCode })

@@ -26,6 +26,19 @@ public sealed class IssueTopItem
     public int Count { get; init; }
 }
 
+/// <summary>
+/// 不良 / 预警 Top N 的结果：截断后的榜单 + 区间内的全部次数。
+/// <see cref="Total"/> 是占比的分母，必须是全部次数而不是榜内合计 ——
+/// 拿榜内合计当分母会永远显示 100%，看不出"榜外还有一大截"。
+/// </summary>
+public sealed class IssueTopReport
+{
+    public IReadOnlyList<IssueTopItem> Items { get; init; } = [];
+
+    /// <summary>区间内全部次数（含榜外的那些）。</summary>
+    public int Total { get; init; }
+}
+
 public sealed class TrendPoint
 {
     public DateTime Time { get; init; }
@@ -64,12 +77,14 @@ public interface IReportService
     Task<ThroughputReport> GetThroughputAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default);
 
     /// <summary>超规格点位 Top N（真实不良）。</summary>
+    /// <param name="stationId">工站过滤：null = 全部工站。</param>
     /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
-    Task<IReadOnlyList<IssueTopItem>> GetDefectTopAsync(DateTime from, DateTime to, int take = 10, string? recipeCode = null, CancellationToken cancellationToken = default);
+    Task<IssueTopReport> GetDefectTopAsync(DateTime from, DateTime to, int? stationId, int take = 10, string? recipeCode = null, CancellationToken cancellationToken = default);
 
     /// <summary>预警点位 Top N（落在黄区，尚未判废）。用于在出不良之前发现漂移。</summary>
+    /// <param name="stationId">工站过滤：null = 全部工站。</param>
     /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
-    Task<IReadOnlyList<IssueTopItem>> GetWarningTopAsync(DateTime from, DateTime to, int take = 10, string? recipeCode = null, CancellationToken cancellationToken = default);
+    Task<IssueTopReport> GetWarningTopAsync(DateTime from, DateTime to, int? stationId, int take = 10, string? recipeCode = null, CancellationToken cancellationToken = default);
 
     /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
     /// <param name="take">最多取区间内<b>最新</b>的多少点；0 表示不限。</param>

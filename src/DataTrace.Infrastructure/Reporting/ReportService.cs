@@ -52,15 +52,15 @@ public sealed class ReportService : IReportService
         return new ThroughputReport { ByDay = byDay, ByRecipe = byRecipe };
     }
 
-    public async Task<IReadOnlyList<IssueTopItem>> GetDefectTopAsync(DateTime from, DateTime to, int take = 10, string? recipeCode = null, CancellationToken cancellationToken = default)
+    public async Task<IssueTopReport> GetDefectTopAsync(DateTime from, DateTime to, int? stationId, int take = 10, string? recipeCode = null, CancellationToken cancellationToken = default)
     {
-        var points = await _store.QueryOutOfLimitTagsAsync(from, to, recipeCode, cancellationToken).ConfigureAwait(false);
+        var points = await _store.QueryOutOfLimitTagsAsync(from, to, stationId, recipeCode, cancellationToken).ConfigureAwait(false);
         return Top(points, take);
     }
 
-    public async Task<IReadOnlyList<IssueTopItem>> GetWarningTopAsync(DateTime from, DateTime to, int take = 10, string? recipeCode = null, CancellationToken cancellationToken = default)
+    public async Task<IssueTopReport> GetWarningTopAsync(DateTime from, DateTime to, int? stationId, int take = 10, string? recipeCode = null, CancellationToken cancellationToken = default)
     {
-        var points = await _store.QueryWarningTagsAsync(from, to, recipeCode, cancellationToken).ConfigureAwait(false);
+        var points = await _store.QueryWarningTagsAsync(from, to, stationId, recipeCode, cancellationToken).ConfigureAwait(false);
         return Top(points, take);
     }
 
@@ -78,13 +78,17 @@ public sealed class ReportService : IReportService
             .ToList();
     }
 
-    /// <summary>按点位名称聚合计数，降序取前 N。名称缺失时回退到编码。</summary>
-    private static IReadOnlyList<IssueTopItem> Top(IReadOnlyList<TagIssuePoint> points, int take)
-        => points
-            .GroupBy(t => string.IsNullOrWhiteSpace(t.TagName) ? t.TagCode : t.TagName)
-            .Select(g => new IssueTopItem { Name = g.Key, Count = g.Count() })
-            .OrderByDescending(x => x.Count)
-            .ThenBy(x => x.Name, StringComparer.Ordinal)
-            .Take(take)
-            .ToList();
+    /// <summary>按点位名称聚合计数，降序取前 N；同时回带区间内全部次数（占比的分母）。</summary>
+    private static IssueTopReport Top(IReadOnlyList<TagIssuePoint> points, int take)
+        => new()
+        {
+            Items = points
+                .GroupBy(t => string.IsNullOrWhiteSpace(t.TagName) ? t.TagCode : t.TagName)
+                .Select(g => new IssueTopItem { Name = g.Key, Count = g.Count() })
+                .OrderByDescending(x => x.Count)
+                .ThenBy(x => x.Name, StringComparer.Ordinal)
+                .Take(take)
+                .ToList(),
+            Total = points.Count
+        };
 }

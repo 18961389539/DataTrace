@@ -142,12 +142,14 @@ public interface IRuntimeStore
     Task<IReadOnlyList<string>> ListRecipeCodesAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default);
 
     /// <summary>不良点位的窄投影查询（服务端按 IsOutOfLimit 过滤）。</summary>
+    /// <param name="stationId">工站过滤：null = 全部工站。</param>
     /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
-    Task<IReadOnlyList<TagIssuePoint>> QueryOutOfLimitTagsAsync(DateTime from, DateTime to, string? recipeCode = null, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<TagIssuePoint>> QueryOutOfLimitTagsAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default);
 
     /// <summary>预警点位的窄投影查询（服务端按 IsWarning 过滤）。</summary>
+    /// <param name="stationId">工站过滤：null = 全部工站。</param>
     /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
-    Task<IReadOnlyList<TagIssuePoint>> QueryWarningTagsAsync(DateTime from, DateTime to, string? recipeCode = null, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<TagIssuePoint>> QueryWarningTagsAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default);
 
     /// <summary>单点位趋势的窄投影查询（服务端按 TagId 过滤）。</summary>
     /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>

@@ -1,6 +1,7 @@
 using DataTrace.Application.Configuration;
 using DataTrace.Application.Reporting;
 using DataTrace.Application.Runtime;
+using DataTrace.Domain.Entities;
 using DataTrace.Domain.Evaluation;
 
 namespace DataTrace.Infrastructure.Reporting;
@@ -41,9 +42,12 @@ public sealed class SpcService : ISpcService
             .OrderBy(p => p.Time)
             .ToList();
 
-        // 配置里的生效限值（点位默认 + 当前型号覆盖）。它有两个用途：
+        // 配置里的生效限值（点位默认 + 型号覆盖）。它有两个用途：
         // 目标值（没有随记录落库），以及给"限值列还是 null"的老数据兜底。
-        var configLimits = RecipeLimitResolver.Resolve(tag, snapshot.ActiveRecipe);
+        // 型号必须取"报表筛的那个"：筛了 A100 却拿当前生效型号的覆盖限值去兜底，
+        // 算出来的 Cp/Cpk 与图上那批样本不是一套口径。
+        var limitsRecipe = ResolveLimitsRecipe(snapshot, recipeCode);
+        var configLimits = RecipeLimitResolver.Resolve(tag, limitsRecipe);
 
         // 按采集时落库的规格限切连续段：限值一动就断，每段各自算能力指数与控制限。
         var runs = new List<(double? Lower, double? Upper, bool FromConfig, List<TagTrendPoint> Points)>();
@@ -86,13 +90,26 @@ public sealed class SpcService : ISpcService
             TagName = tag.Name,
             Unit = tag.Unit,
             TargetValue = configLimits.Target,
-            RecipeCode = snapshot.ActiveRecipe?.Code ?? "",
+            RecipeCode = limitsRecipe?.Code ?? "",
             Samples = points
                 .Select(p => new TrendPoint { Time = p.Time, Value = p.Value, PalletCode = p.PalletCode })
                 .ToList(),
             Segments = segments
         };
     }
+
+    /// <summary>
+    /// 报表的型号筛选 → 兜底限值所依据的型号。
+    /// null（不限型号）沿用当前生效型号；""（未选型号）只用点位默认限值；
+    /// 指定编码取该型号（编码不存在或已停用时 <see cref="RecipeLimitResolver"/> 自会回落到默认限值）。
+    /// </summary>
+    private static Recipe? ResolveLimitsRecipe(AppConfigurationSnapshot snapshot, string? recipeCode)
+        => recipeCode switch
+        {
+            null => snapshot.ActiveRecipe,
+            "" => null,
+            var code => snapshot.Recipes.FirstOrDefault(r => string.Equals(r.Code, code, StringComparison.Ordinal))
+        };
 
     private static ProcessCapabilitySegment BuildSegment(
         int number,
