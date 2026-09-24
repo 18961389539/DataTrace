@@ -73,6 +73,14 @@ function Write-CustomerMeta {
         ServiceName        = $ServiceName
         Environment        = $Environment
         SimulatorAutoRun   = $SimulatorAutoRun
+        Backup             = [ordered]@{
+            Enabled          = $true
+            DailyTime        = '02:30'
+            BackupDirectory  = ''
+            RetentionDays    = 30
+            MaxBackups       = 60
+            RecordRetention  = [ordered]@{ Enabled = $false; KeepDays = 1095 }
+        }
         UpdatedAt          = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
     }
     if ($LogoPath) { $obj['LogoPath'] = $LogoPath }
@@ -132,6 +140,17 @@ function Write-ProductionAppsettings {
     $obj = [ordered]@{
         DataRoot = $DataRoot
         Customer = $customer
+        Backup = [ordered]@{
+            Enabled = $true
+            DailyTime = '02:30'
+            BackupDirectory = ''
+            RetentionDays = 30
+            MaxBackups = 60
+            RecordRetention = [ordered]@{
+                Enabled = $false
+                KeepDays = 1095
+            }
+        }
         Kestrel  = @{
             Endpoints = @{
                 Http = @{

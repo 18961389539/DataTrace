@@ -89,3 +89,12 @@
 |---|---|---|
 | 实施 | | |
 | 客户确认 | | |
+
+## 数据库备份
+
+- [ ] 确认 `appsettings.Production.json` / `customer.json` 中 `Backup:Enabled=true`，`RecordRetention:Enabled=false`（除非客户明确要求清理）
+- [ ] 记下备份目录（默认 `{DataRoot}/backups`），并安排拷贝到其它磁盘/NAS
+- [ ] 安装后到设置页看「数据库备份」卡片；管理员点一次「立即备份」，确认生成带 `manifest.json` 的目录
+- [ ] 演练恢复：`.\restore.ps1 -InstallDir <安装目录> -Latest`（在测试目录演练，勿对生产盲试）
+- [ ] 升级仍走 `upgrade.ps1` 的 `backups/upgrade-*`；日常库备份与升级快照都要保留
+

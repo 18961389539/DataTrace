@@ -222,3 +222,26 @@ Start-Service -Name DataTrace-CustomerA
 ## 开通现场
 
 见 [CHECKLIST.md](./CHECKLIST.md) 逐项勾选：PLC 型号、点位、工站、配方、账号、备份。
+
+## 数据库备份与恢复
+
+应用内默认启用定时在线备份（`Backup` 配置节，可用 `customer.json` / `appsettings.Production.json` 覆盖）：
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `Backup:Enabled` | `true` | 是否启用定时备份 |
+| `Backup:DailyTime` | `02:30` | 本地每日备份时间 |
+| `Backup:BackupDirectory` | 空 → `{DataRoot}/backups` | 备份根目录 |
+| `Backup:RetentionDays` | `30` | 按天保留 |
+| `Backup:MaxBackups` | `60` | 最多保留套数（0=不限数量） |
+| `Backup:RecordRetention:Enabled` | **`false`** | 备份成功后是否清理过期采集记录（默认关） |
+| `Backup:RecordRetention:KeepDays` | `1095` | 记录保留天数（仅上面开启时生效） |
+
+- 备份内容：`config.db`（含 Identity）+ `runtime/data_yyyyMM.db`。使用 SQLite Online Backup API，**不要**对正在运行的库做裸文件拷贝。
+- 每套备份目录形如 `data/backups/2026-09-24_0230/`，内含 `manifest.json`（版本、时间、大小、SHA256、quick_check）。
+- **强烈建议**把 `backups` 目录定期拷到其它磁盘或 NAS；本机同盘不能防磁盘损坏。
+- 设置页「数据库备份」卡片可查看状态；管理员可「立即备份」。
+- `deploy/backup-now.ps1`：维护窗口离线备份（可选 `-StopApp`）；运行中优先用设置页按钮。
+- `deploy/restore.ps1 -InstallDir ... -Latest`（或 `-BackupSet`）：停应用 → 当前库挪到 `pre-restore-*` → 恢复 → 启动并 verify。
+- `upgrade.ps1` 仍使用升级专用 `backups/upgrade-*` 整目录快照（含二进制）；与每日库备份互补，未强行合并。
+

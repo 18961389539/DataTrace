@@ -1,5 +1,6 @@
 @page "/config/settings"
 @attribute [Authorize(Roles = "Administrator,Engineer")]
+@using DataTrace.Application.Backup
 @using DataTrace.Application.Configuration
 @using DataTrace.Collector
 @using DataTrace.Web.Services
@@ -8,6 +9,7 @@
 @inject DtToast Toast
 @inject IDialogService DialogService
 @inject CustomerBrandingStore Branding
+@inject IDatabaseBackupService BackupService
 
 <PageHeader Title="系统设置">
     <ChildContent>
@@ -174,6 +176,77 @@ else
         </MudGrid>
     </MudPaper>
 
+
+    <MudPaper Class="pa-4 mb-3">
+        <MudText Typo="Typo.subtitle1" Class="mb-2">数据库备份</MudText>
+        <MudText Typo="Typo.caption" Class="dt-muted mb-3">
+            定时在线备份 config.db 与 runtime 月库（SQLite Backup API，不停机）。默认每天本地 @_backupStatus?.DailyTime，保留 @_backupStatus?.RetentionDays 天 / 最多 @_backupStatus?.MaxBackups 套。
+            记录清理默认关闭（当前：@(_backupStatus?.RecordRetentionEnabled == true ? $"已启用，保留 {_backupStatus.RecordKeepDays} 天" : "关闭")）。
+        </MudText>
+
+        @if (_backupStatus is null)
+        {
+            <MudSkeleton Width="60%" />
+        }
+        else
+        {
+            @if (!_backupStatus.Enabled)
+            {
+                <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3" Variant="Variant.Outlined">
+                    自动备份已关闭（Backup:Enabled=false）。生产环境建议保持开启，并定期把备份目录拷到其它磁盘/NAS。
+                </MudAlert>
+            }
+            else if (_backupStatus.IsStaleOrFailed(TimeSpan.FromHours(48)))
+            {
+                <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3" Variant="Variant.Outlined">
+                    @if (_backupStatus.LastSucceeded == false)
+                    {
+                        <text>最近一次备份失败：@(_backupStatus.LastError ?? "未知错误")。请检查磁盘空间与日志后点击「立即备份」。</text>
+                    }
+                    else
+                    {
+                        <text>超过 48 小时没有成功备份（或尚无成功记录）。请立即备份，并确认定时任务已启用。</text>
+                    }
+                </MudAlert>
+            }
+
+            <MudStack Row="true" Spacing="4" Class="flex-wrap mb-3">
+                <div class="dt-metric">
+                    <div class="dt-metric-label">上次成功</div>
+                    <div class="dt-metric-value" style="font-size:.9rem">
+                        @(_backupStatus.LastSuccessAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "尚无")
+                    </div>
+                </div>
+                <div class="dt-metric">
+                    <div class="dt-metric-label">上次大小</div>
+                    <div class="dt-metric-value" style="font-size:.9rem">@FormatBytes(_backupStatus.LastBackupBytes)</div>
+                </div>
+                <div class="dt-metric">
+                    <div class="dt-metric-label">下次计划</div>
+                    <div class="dt-metric-value" style="font-size:.9rem">
+                        @(_backupStatus.NextScheduledAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—")
+                    </div>
+                </div>
+                <div class="dt-metric">
+                    <div class="dt-metric-label">备份目录</div>
+                    <div class="dt-metric-value" style="font-size:.8rem;word-break:break-all">@_backupStatus.BackupDirectory</div>
+                </div>
+            </MudStack>
+
+            <AuthorizeView Roles="Administrator">
+                <Authorized>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RunBackupNow"
+                               Disabled="_backingUp" StartIcon="@Icons.Material.Filled.Backup">
+                        @(_backingUp ? "备份中…" : "立即备份")
+                    </MudButton>
+                </Authorized>
+                <NotAuthorized>
+                    <MudText Typo="Typo.caption" Class="dt-muted">仅管理员可手动触发备份。</MudText>
+                </NotAuthorized>
+            </AuthorizeView>
+        }
+    </MudPaper>
+
     <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
         <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save" Disabled="_saving"
                    StartIcon="@Icons.Material.Filled.Save">
@@ -200,6 +273,8 @@ else
     private string _appVersion = "";
     private string? _softCapWarning;
     private bool _productionSimWarning;
+    private BackupStatusSnapshot? _backupStatus;
+    private bool _backingUp;
 
     /// <summary>页面上的值与最近一次读/写的值不一致。没有这个提示，切走页面就会静默丢掉改动。</summary>
     private bool Dirty => _settings is not null && Key(_settings) != _savedKey;
@@ -208,7 +283,11 @@ else
         s.ScanIntervalMs, s.WriteRetryCount, s.RetentionYears, s.CollectEnabled,
         s.MesEnabled, s.MesEndpoint, s.MesTimeoutSeconds);
 
-    protected override async Task OnInitializedAsync() => await Reload();
+    protected override async Task OnInitializedAsync()
+    {
+        await Reload();
+        RefreshBackupStatus();
+    }
 
     private async Task Reload()
     {
@@ -351,4 +430,68 @@ else
     private static bool IsHttpUrl(string? url)
         => Uri.TryCreate(url, UriKind.Absolute, out var uri)
            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    private void RefreshBackupStatus()
+    {
+        try
+        {
+            _backupStatus = BackupService.GetStatus();
+        }
+        catch
+        {
+            _backupStatus = null;
+        }
+    }
+
+    private async Task RunBackupNow()
+    {
+        if (_backingUp)
+        {
+            return;
+        }
+
+        _backingUp = true;
+        try
+        {
+            var result = await BackupService.RunBackupAsync();
+            RefreshBackupStatus();
+            if (result.Success)
+            {
+                Toast.Add($"备份完成：{result.BackupPath}", Severity.Success);
+            }
+            else
+            {
+                Toast.Add($"备份失败：{result.Error}", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"备份异常：{ex.Message}", Severity.Error);
+            RefreshBackupStatus();
+        }
+        finally
+        {
+            _backingUp = false;
+        }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes <= 0)
+        {
+            return "—";
+        }
+
+        string[] units = ["B", "KB", "MB", "GB"];
+        double v = bytes;
+        var i = 0;
+        while (v >= 1024 && i < units.Length - 1)
+        {
+            v /= 1024;
+            i++;
+        }
+
+        return $"{v:0.##} {units[i]}";
+    }
+
 }

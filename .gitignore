@@ -267,6 +267,9 @@ Generated_Code/
 # because we have git ;-)
 _UpgradeReport_Files/
 Backup*/
+# Allow source folders named Backup (feature code)
+!src/**/Backup/
+!src/**/Backup/**
 UpgradeLog*.XML
 UpgradeLog*.htm
 ServiceFabricBackup/

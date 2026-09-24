@@ -63,6 +63,7 @@ builder.Host.UseSerilog((ctx, log) =>
 
 builder.Services.AddSingleton<IConfigureOptions<CustomerOptions>, CustomerOptionsSetup>();
 builder.Services.AddOptions<CustomerOptions>();
+builder.Services.Configure<BackupOptions>(builder.Configuration.GetSection(BackupOptions.SectionName));
 builder.Services.AddSingleton<CustomerBrandingStore>();
 
 builder.Services.AddDataTraceInfrastructure(dataRoot);

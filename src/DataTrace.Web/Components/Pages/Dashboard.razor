@@ -1,5 +1,6 @@
 @page "/"
 @attribute [Authorize]
+@using DataTrace.Application.Backup
 @using DataTrace.Application.Configuration
 @using DataTrace.Application.Realtime
 @using DataTrace.Domain.Constants
@@ -8,6 +9,8 @@
 @inject IRuntimeStatusHub Status
 @inject IConfigRepository Config
 @inject CustomerBrandingStore Branding
+@inject IDatabaseBackupService BackupService
+@inject AuthenticationStateProvider AuthState
 
 <PageHeader Title="实时看板">
     <ChildContent>
@@ -23,6 +26,13 @@
     </Actions>
 </PageHeader>
 
+
+@if (_backupStale && _isAdmin)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
+        数据库备份异常或超过 48 小时未成功，请到「系统设置」查看并立即备份。
+    </MudAlert>
+}
 
 @if (_productionSimWarning)
 {
@@ -192,6 +202,8 @@ else
 
 @code {
     private bool _productionSimWarning;
+    private bool _backupStale;
+    private bool _isAdmin;
 
     private IReadOnlyList<PlcRuntimeStatus> _plcs = [];
     private IReadOnlyList<StationRuntimeStatus> _stations = [];
@@ -206,6 +218,19 @@ else
             var snap = await Config.GetSnapshotAsync();
             _productionSimWarning = Branding.EnvironmentName.Equals("Production", StringComparison.OrdinalIgnoreCase)
                 && snap.Settings.SimulatorAutoRun;
+
+        try
+        {
+            var auth = await AuthState.GetAuthenticationStateAsync();
+            _isAdmin = auth.User?.IsInRole("Administrator") == true;
+            var bak = BackupService.GetStatus();
+            _backupStale = bak.IsStaleOrFailed(TimeSpan.FromHours(48));
+        }
+        catch
+        {
+            _backupStale = false;
+        }
+
         }
         catch
         {

@@ -11,7 +11,10 @@ using DataTrace.Infrastructure.Persistence;
 using DataTrace.Infrastructure.Realtime;
 using DataTrace.Infrastructure.Reporting;
 using DataTrace.Infrastructure.Seeding;
+using DataTrace.Application.Backup;
+using DataTrace.Infrastructure.Backup;
 using DataTrace.Infrastructure.Storage;
+using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,6 +26,10 @@ public static class InfrastructureServiceCollectionExtensions
     public static IServiceCollection AddDataTraceInfrastructure(this IServiceCollection services, string dataRoot)
     {
         Directory.CreateDirectory(dataRoot);
+        services.AddSingleton(new DataRootPaths(dataRoot));
+        services.AddSingleton<IDatabaseBackupService, DatabaseBackupService>();
+        services.AddHostedService<DatabaseBackupHostedService>();
+
         var configPath = Path.Combine(dataRoot, "config.db");
         var runtimePath = Path.Combine(dataRoot, "runtime");
         var curvePath = Path.Combine(dataRoot, "curves");
