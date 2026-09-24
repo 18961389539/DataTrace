@@ -79,7 +79,6 @@ function Write-CustomerMeta {
             BackupDirectory  = ''
             RetentionDays    = 30
             MaxBackups       = 60
-            RecordRetention  = [ordered]@{ Enabled = $false; KeepDays = 1095 }
         }
         UpdatedAt          = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
     }
@@ -146,10 +145,6 @@ function Write-ProductionAppsettings {
             BackupDirectory = ''
             RetentionDays = 30
             MaxBackups = 60
-            RecordRetention = [ordered]@{
-                Enabled = $false
-                KeepDays = 1095
-            }
         }
         Kestrel  = @{
             Endpoints = @{

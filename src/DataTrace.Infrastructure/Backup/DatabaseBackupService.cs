@@ -2,7 +2,6 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using DataTrace.Application.Backup;
 using DataTrace.Application.Configuration;
-using DataTrace.Application.Runtime;
 using DataTrace.Infrastructure.Persistence;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -19,7 +18,6 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
     private readonly DataRootPaths _paths;
     private readonly IOptionsMonitor<BackupOptions> _options;
     private readonly RuntimeDbFactory _runtime;
-    private readonly ICurveFileStore _curves;
     private readonly ILogger<DatabaseBackupService> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _statusGate = new();
@@ -29,13 +27,11 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
         DataRootPaths paths,
         IOptionsMonitor<BackupOptions> options,
         RuntimeDbFactory runtime,
-        ICurveFileStore curves,
         ILogger<DatabaseBackupService> logger)
     {
         _paths = paths;
         _options = options;
         _runtime = runtime;
-        _curves = curves;
         _logger = logger;
         TryLoadStatusFromDisk();
     }
@@ -52,8 +48,6 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
                 BackupDirectory = opts.ResolveBackupDirectory(_paths.Root),
                 RetentionDays = opts.RetentionDays,
                 MaxBackups = opts.MaxBackups,
-                RecordRetentionEnabled = opts.RecordRetention.Enabled,
-                RecordKeepDays = opts.RecordRetention.KeepDays,
                 LastSuccessAt = _state.LastSuccessAt,
                 LastAttemptAt = _state.LastAttemptAt,
                 LastSucceeded = _state.LastSucceeded,
@@ -192,23 +186,6 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
 
             var deletedSets = ApplyRetention(backupRoot, opts, unique);
 
-            RecordPurgeResult? purge = null;
-            if (opts.RecordRetention.Enabled)
-            {
-                purge = await PurgeOldRecordsAsync(opts.RecordRetention.KeepDays, cancellationToken)
-                    .ConfigureAwait(false);
-                if (purge.Error is not null)
-                {
-                    _logger.LogWarning("记录清理未完全成功: {Error}", purge.Error);
-                }
-                else
-                {
-                    _logger.LogInformation(
-                        "记录清理完成：删除 {Records} 条采集记录，{Curves} 个曲线文件（保留 {Days} 天）",
-                        purge.DeletedRecords, purge.DeletedCurveFiles, opts.RecordRetention.KeepDays);
-                }
-            }
-
             PersistStatus(started, true, null, unique, total, files.Count);
             _logger.LogInformation(
                 "数据库备份成功：{Path}，{Count} 个文件，{Bytes} 字节，清理旧备份集 {Deleted}",
@@ -222,8 +199,7 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
                 BackupPath = unique,
                 TotalBytes = total,
                 Files = files,
-                DeletedBackupSets = deletedSets,
-                RecordPurge = purge
+                DeletedBackupSets = deletedSets
             };
         }
         catch (Exception ex)
@@ -389,103 +365,6 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
         }
 
         return deleted;
-    }
-
-    private async Task<RecordPurgeResult> PurgeOldRecordsAsync(int keepDays, CancellationToken ct)
-    {
-        keepDays = Math.Max(1, keepDays);
-        var cutoff = DateTime.Now.Date.AddDays(-keepDays);
-        var deletedRecords = 0;
-        var deletedCurves = 0;
-        try
-        {
-            foreach (var month in _runtime.ListMonthKeys())
-            {
-                if (month.Length == 6
-                    && DateTime.TryParseExact(month + "01", "yyyyMMdd", null,
-                        System.Globalization.DateTimeStyles.None, out var monthStart)
-                    && monthStart.AddMonths(1) <= cutoff)
-                {
-                    await using (var db = _runtime.Open(month))
-                    {
-                        deletedRecords += await db.CollectRecords.CountAsync(ct).ConfigureAwait(false);
-                    }
-
-                    _runtime.DeleteMonth(month);
-                    await _curves.DeleteMonthAsync(month[..4], month[4..], ct).ConfigureAwait(false);
-                    _logger.LogInformation("记录保留：已删除整月 {Month}", month);
-                    continue;
-                }
-
-                await using var ctx = _runtime.Open(month);
-                const int batch = 200;
-                while (true)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    var ids = await ctx.CollectRecords.AsNoTracking()
-                        .Where(r => r.TriggerTime < cutoff)
-                        .OrderBy(r => r.Id)
-                        .Take(batch)
-                        .Select(r => r.Id)
-                        .ToListAsync(ct)
-                        .ConfigureAwait(false);
-                    if (ids.Count == 0)
-                    {
-                        break;
-                    }
-
-                    var curvePaths = await ctx.CurveRecords.AsNoTracking()
-                        .Where(c => ids.Contains(c.CollectRecordId))
-                        .Select(c => c.RelativePath)
-                        .ToListAsync(ct)
-                        .ConfigureAwait(false);
-
-                    foreach (var rel in curvePaths.Where(p => !string.IsNullOrWhiteSpace(p)))
-                    {
-                        await _curves.DeleteFileAsync(rel, ct).ConfigureAwait(false);
-                        deletedCurves++;
-                    }
-
-                    var curveIds = await ctx.CurveRecords.AsNoTracking()
-                        .Where(c => ids.Contains(c.CollectRecordId))
-                        .Select(c => c.Id)
-                        .ToListAsync(ct)
-                        .ConfigureAwait(false);
-
-                    if (curveIds.Count > 0)
-                    {
-                        await ctx.CurveFeatures.Where(f => curveIds.Contains(f.CurveRecordId))
-                            .ExecuteDeleteAsync(ct).ConfigureAwait(false);
-                    }
-
-                    await ctx.CurveRecords.Where(c => ids.Contains(c.CollectRecordId))
-                        .ExecuteDeleteAsync(ct).ConfigureAwait(false);
-                    await ctx.TagValues.Where(t => ids.Contains(t.CollectRecordId))
-                        .ExecuteDeleteAsync(ct).ConfigureAwait(false);
-                    await ctx.ProductRecords.Where(p => ids.Contains(p.CollectRecordId))
-                        .ExecuteDeleteAsync(ct).ConfigureAwait(false);
-                    deletedRecords += await ctx.CollectRecords.Where(r => ids.Contains(r.Id))
-                        .ExecuteDeleteAsync(ct).ConfigureAwait(false);
-                }
-            }
-
-            return new RecordPurgeResult
-            {
-                Ran = true,
-                DeletedRecords = deletedRecords,
-                DeletedCurveFiles = deletedCurves
-            };
-        }
-        catch (Exception ex)
-        {
-            return new RecordPurgeResult
-            {
-                Ran = true,
-                DeletedRecords = deletedRecords,
-                DeletedCurveFiles = deletedCurves,
-                Error = ex.Message
-            };
-        }
     }
 
     private void PersistStatus(

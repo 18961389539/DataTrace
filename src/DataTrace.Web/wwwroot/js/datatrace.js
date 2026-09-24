@@ -83,3 +83,13 @@ window.dtCopy = async function (text) {
         lockAll();
     }
 })();
+
+
+// 系统设置分区锚点滚动（平滑；缺失元素时静默）。
+window.dtScrollIntoView = function (id) {
+    if (!id) { return false; }
+    var el = document.getElementById(id);
+    if (!el) { return false; }
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return true;
+};

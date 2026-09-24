@@ -4,24 +4,30 @@
 @using DataTrace.Application.Configuration
 @using DataTrace.Collector
 @using DataTrace.Web.Services
+@using DataTrace.Domain.Entities
+@using DataTrace.Web.Options
 @inject IConfigRepository Config
 @inject ILineSimulator Simulator
 @inject DtToast Toast
 @inject IDialogService DialogService
 @inject CustomerBrandingStore Branding
 @inject IDatabaseBackupService BackupService
+@inject IJSRuntime JS
+@inject AuthenticationStateProvider AuthState
 
 <PageHeader Title="系统设置">
     <ChildContent>
         @if (Dirty)
         {
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning">未保存</MudChip>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning">有未保存的更改</MudChip>
         }
     </ChildContent>
     <Actions>
-        <MudText Typo="Typo.caption" Class="dt-muted">改动要点「保存」才会下发，采集器下一轮轮询采用新参数</MudText>
+        <MudText Typo="Typo.caption" Class="dt-muted">改动要点「保存」才会下发；采集端下一轮查询周期起用新参数</MudText>
     </Actions>
 </PageHeader>
+
+<NavigationLock ConfirmExternalNavigation="@Dirty" OnBeforeInternalNavigation="OnBeforeInternalNavigation" />
 
 @if (_loading)
 {
@@ -30,243 +36,436 @@
 }
 else if (_settings is null)
 {
-    <MudAlert Severity="Severity.Error" Dense="true">系统设置读取失败，请刷新页面重试。</MudAlert>
+    <MudAlert Severity="Severity.Error" Dense="true">系统配置读取失败，请刷新页面重试。</MudAlert>
 }
 else
 {
-    <MudPaper Class="pa-4 mb-3">
-        <MudText Typo="Typo.subtitle1" Class="mb-2">部署身份（配得开）</MudText>
-        <MudText Typo="Typo.caption" Class="dt-muted mb-3">
-            一客户一套部署。厂名/Logo 写入安装目录 customer.json；端口与数据目录由安装脚本写入 appsettings.Production.json。
-            多产线请使用多个安装目录（或未来 SiteId），本页不建多站点库表。
-        </MudText>
-        <MudStack Row="true" Spacing="4" Class="flex-wrap mb-3">
-            <div class="dt-metric">
-                <div class="dt-metric-label">客户标识</div>
-                <div class="dt-metric-value">@(_identity.CustomerId is { Length: > 0 } ? _identity.CustomerId : "—")</div>
+    <div class="dt-settings-page">
+        <div class="dt-settings-health">
+            <div class="dt-settings-health-card">
+                <div class="dt-settings-health-label">数据库备份</div>
+                <div class="dt-settings-health-value">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@BackupChipColor">@BackupChipText</MudChip>
+                </div>
+                <div class="dt-settings-health-detail">@BackupDetail</div>
+                <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Primary" Class="pa-0 mt-1"
+                           OnClick="@(() => ScrollTo("sec-data"))">查看备份区</MudButton>
             </div>
-            <div class="dt-metric">
-                <div class="dt-metric-label">运行环境</div>
-                <div class="dt-metric-value">@_envName</div>
+            <div class="dt-settings-health-card">
+                <div class="dt-settings-health-label">仿真自动跑线</div>
+                <div class="dt-settings-health-value">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@SimChipColor">@SimChipText</MudChip>
+                </div>
+                <div class="dt-settings-health-detail">@SimDetail</div>
+                <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Primary" Class="pa-0 mt-1"
+                           Href="/simulate">去 PLC 仿真页</MudButton>
             </div>
-            <div class="dt-metric">
-                <div class="dt-metric-label">数据目录</div>
-                <div class="dt-metric-value" style="font-size:.85rem;word-break:break-all">@_dataRoot</div>
-            </div>
-            <div class="dt-metric">
-                <div class="dt-metric-label">监听地址</div>
-                <div class="dt-metric-value" style="font-size:.85rem">@(_bindUrl ?? "—")</div>
-            </div>
-        
-            <div class="dt-metric">
-                <div class="dt-metric-label">应用版本</div>
-                <div class="dt-metric-value">@_appVersion</div>
-            </div></MudStack>
-        <AuthorizeView Roles="Administrator">
-            <Authorized>
-                <MudGrid>
-                    <MudItem xs="12" sm="6" md="4">
-                        <MudTextField @bind-Value="_editSiteName" Label="厂名 / 站点显示名" Immediate="true"
-                                      HelperText="顶栏、登录页、浏览器标题；保存到 customer.json" />
-                    </MudItem>
-                    <MudItem xs="12" sm="6" md="4">
-                        <MudTextField @bind-Value="_editLogoPath" Label="Logo 文件名" Immediate="true"
-                                      Placeholder="logo.png"
-                                      HelperText="放在安装目录 branding\ 下，例如 logo.png → /branding/logo.png" />
-                    </MudItem>
-                    <MudItem xs="12" sm="6" md="4" Class="d-flex align-center">
-                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="SaveBranding" Disabled="_savingBrand"
-                                   StartIcon="@Icons.Material.Filled.Badge">
-                            @(_savingBrand ? "保存中…" : "保存品牌")
-                        </MudButton>
-                    </MudItem>
-                </MudGrid>
-            </Authorized>
-            <NotAuthorized>
-                <MudAlert Severity="Severity.Info" Dense="true" Class="mt-1">厂名/Logo 仅管理员可改；当前为只读展示。</MudAlert>
-            </NotAuthorized>
-        </AuthorizeView>
-    </MudPaper>
-
-    @if (_softCapWarning is { Length: > 0 })
-    {
-        <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
-            @_softCapWarning
-        </MudAlert>
-    }
-
-    @if (_productionSimWarning)
-    {
-        <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3" Variant="Variant.Outlined">
-            Production 环境下数据库仍开启「启动后自动跑仿真」（SimulatorAutoRun=true）。客户现场请保持关闭；应用下次启动会强制写回 false。
-        </MudAlert>
-    }
-
-    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
-        <b>默认密码：</b>首次部署请到「用户」页修改 admin / engineer 等出厂口令。应用不会强制改密以免把管理员锁在门外。
-    </MudAlert>
-
-    <MudPaper Class="pa-4 mb-3">
-        <MudText Typo="Typo.subtitle1" Class="mb-3">采集</MudText>
-        <MudGrid>
-            <MudItem xs="12" sm="6" md="3">
-                <MudNumericField @bind-Value="_settings.ScanIntervalMs" Label="扫描周期(ms)" Min="20" Max="5000"
-                                 Step="10" HelperText="采集器轮询 PLC 的间隔；改小更快，但会增加 PLC 负载" />
-            </MudItem>
-            <MudItem xs="12" sm="6" md="3">
-                <MudNumericField @bind-Value="_settings.WriteRetryCount" Label="写回重试次数" Min="0" Max="10"
-                                 HelperText="0 表示只写一次；NG 回写失败会导致 PLC 收不到结果" />
-            </MudItem>
-            <MudItem xs="12" sm="6" md="3">
-                <MudNumericField @bind-Value="_settings.RetentionYears" Label="保留年数" Min="1" Max="30"
-                                 HelperText="按整月删除更早的月库与曲线文件" />
-            </MudItem>
-            <MudItem xs="12" sm="6" md="3" Class="d-flex align-center">
-                <MudSwitch T="bool" Value="_settings.CollectEnabled" ValueChanged="ToggleCollect" Disabled="_saving"
-                           Label="启用采集" Color="Color.Primary" />
-            </MudItem>
-        </MudGrid>
-    </MudPaper>
-
-    <MudPaper Class="pa-4 mb-3">
-        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
-            <MudText Typo="Typo.subtitle1">模拟产线</MudText>
-            <MudSpacer />
-            <MudButton Variant="Variant.Text" Size="Size.Small" Href="/simulate"
-                       EndIcon="@Icons.Material.Filled.ChevronRight">去 PLC 仿真页修改</MudButton>
-        </MudStack>
-        <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3" Variant="Variant.Text">
-            客户 Production 安装默认关闭「启动后自动跑仿真」（见 customer.json / appsettings.Production.json 的 SimulatorAutoRun）。
-            开发演示环境仍可默认开启。现场勿误开仿真。开关改动请在「PLC 仿真」页操作并保存。
-        </MudAlert>
-        @* 只读展示：可编辑入口仅在「PLC 仿真」页，避免两处同时写互相覆盖。 *@
-        <MudStack Row="true" Spacing="4" Class="flex-wrap">
-            <div class="dt-metric">
-                <div class="dt-metric-label">启动后自动跑仿真</div>
-                <div class="dt-metric-value">@(_settings.SimulatorAutoRun ? "开" : "关")</div>
-            </div>
-            <div class="dt-metric">
-                <div class="dt-metric-label">托盘间隔</div>
-                <div class="dt-metric-value">@_settings.SimulatorIntervalMs ms</div>
-            </div>
-            <div class="dt-metric">
-                <div class="dt-metric-label">NG 比例</div>
-                <div class="dt-metric-value">@_settings.SimulatorNgPercent %</div>
-            </div>
-            <div class="dt-metric">
-                <div class="dt-metric-label">托盘池数量</div>
-                <div class="dt-metric-value">@_settings.SimulatorPalletPool</div>
-            </div>
-        </MudStack>
-    </MudPaper>
-
-    <MudPaper Class="pa-4 mb-3">
-        <MudText Typo="Typo.subtitle1" Class="mb-3">MES 推送</MudText>
-        <MudGrid>
-            <MudItem xs="12" sm="6" md="3" Class="d-flex align-center">
-                <MudSwitch @bind-Value="_settings.MesEnabled" Label="启用 MES HTTP 推送" Color="Color.Primary" />
-            </MudItem>
-            <MudItem xs="12" sm="6" md="6">
-                <MudTextField @bind-Value="_settings.MesEndpoint" Label="MES 地址" Placeholder="http://mes.local/api/collect"
-                              Immediate="true" HelperText="启用推送时必须填写 http(s) 地址" />
-            </MudItem>
-            <MudItem xs="12" sm="6" md="3">
-                <MudNumericField @bind-Value="_settings.MesTimeoutSeconds" Label="MES 超时(秒)" Min="1" Max="300" />
-            </MudItem>
-        </MudGrid>
-    </MudPaper>
-
-
-    <MudPaper Class="pa-4 mb-3">
-        <MudText Typo="Typo.subtitle1" Class="mb-2">数据库备份</MudText>
-        <MudText Typo="Typo.caption" Class="dt-muted mb-3">
-            定时在线备份 config.db 与 runtime 月库（SQLite Backup API，不停机）。默认每天本地 @_backupStatus?.DailyTime，保留 @_backupStatus?.RetentionDays 天 / 最多 @_backupStatus?.MaxBackups 套。
-            记录清理默认关闭（当前：@(_backupStatus?.RecordRetentionEnabled == true ? $"已启用，保留 {_backupStatus.RecordKeepDays} 天" : "关闭")）。
-        </MudText>
-
-        @if (_backupStatus is null)
-        {
-            <MudSkeleton Width="60%" />
-        }
-        else
-        {
-            @if (!_backupStatus.Enabled)
-            {
-                <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3" Variant="Variant.Outlined">
-                    自动备份已关闭（Backup:Enabled=false）。生产环境建议保持开启，并定期把备份目录拷到其它磁盘/NAS。
-                </MudAlert>
-            }
-            else if (_backupStatus.IsStaleOrFailed(TimeSpan.FromHours(48)))
-            {
-                <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3" Variant="Variant.Outlined">
-                    @if (_backupStatus.LastSucceeded == false)
+            <div class="dt-settings-health-card">
+                <div class="dt-settings-health-label">授权上限</div>
+                <div class="dt-settings-health-value">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                             Color="@(_softCapWarning is { Length: > 0 } ? Color.Warning : Color.Success)">
+                        @(_softCapWarning is { Length: > 0 } ? "需关注" : "未超限")
+                    </MudChip>
+                </div>
+                <div class="dt-settings-health-detail">
+                    @if (_softCapWarning is { Length: > 0 })
                     {
-                        <text>最近一次备份失败：@(_backupStatus.LastError ?? "未知错误")。请检查磁盘空间与日志后点击「立即备份」。</text>
+                        @_softCapWarning
                     }
                     else
                     {
-                        <text>超过 48 小时没有成功备份（或尚无成功记录）。请立即备份，并确认定时任务已启用。</text>
+                        <text>MaxStations / MaxPlcs 客户约定上限未超出</text>
                     }
-                </MudAlert>
+                </div>
+                <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Primary" Class="pa-0 mt-1"
+                           OnClick="@(() => ScrollTo("sec-basic"))">查看基本信息</MudButton>
+            </div>
+            <div class="dt-settings-health-card">
+                <div class="dt-settings-health-label">默认口令</div>
+                <div class="dt-settings-health-value">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning">需关注</MudChip>
+                </div>
+                <div class="dt-settings-health-detail">请确认已修改 admin / engineer 等出厂口令（应用不强制检测）</div>
+                <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Primary" Class="pa-0 mt-1"
+                           Href="/users">去用户页</MudButton>
+            </div>
+        </div>
+
+        <div class="dt-settings-nav-mobile">
+            @foreach (var item in NavItems)
+            {
+                <MudChip T="string" Size="Size.Small"
+                         Variant="@(_activeSection == item.Id ? Variant.Filled : Variant.Outlined)"
+                         Color="Color.Primary"
+                         OnClick="@(() => ScrollTo(item.Id))">@item.Label</MudChip>
             }
+        </div>
 
-            <MudStack Row="true" Spacing="4" Class="flex-wrap mb-3">
-                <div class="dt-metric">
-                    <div class="dt-metric-label">上次成功</div>
-                    <div class="dt-metric-value" style="font-size:.9rem">
-                        @(_backupStatus.LastSuccessAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "尚无")
+        <div class="dt-settings-layout">
+            <nav class="dt-settings-nav" aria-label="设置分区">
+                @foreach (var item in NavItems)
+                {
+                    <button type="button"
+                            class="dt-settings-nav-btn @(_activeSection == item.Id ? "active" : null)"
+                            @onclick="@(() => ScrollTo(item.Id))">@item.Label</button>
+                }
+            </nav>
+
+            <div>
+                <MudPaper Class="pa-4 mb-3 dt-settings-section" id="sec-basic" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-1">基本信息</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted mb-3">
+                        一客户一套部署。厂名/Logo 写入安装目录 customer.json；端口、数据目录可由安装脚本写入 appsettings.Production.json。
+                    </MudText>
+                    <MudStack Row="true" Spacing="3" Class="flex-wrap mb-3">
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">客户标识 <span class="dt-src-badge ro">客户配置·只读</span></div>
+                            <div class="dt-metric-value">@(_identity.CustomerId is { Length: > 0 } ? _identity.CustomerId : "—")</div>
+                        </div>
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">运行环境 <span class="dt-src-badge rt">运行时</span></div>
+                            <div class="dt-metric-value">@_envName</div>
+                        </div>
+                        <div class="dt-metric" style="min-width:220px;max-width:360px;flex:1">
+                            <div class="dt-metric-label">
+                                数据目录 <span class="dt-src-badge rt">运行时</span>
+                                <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small" Class="pa-0 ml-1"
+                                               title="复制路径" OnClick="@(() => CopyPath(_dataRoot))" />
+                            </div>
+                            <div class="dt-metric-value dt-path-trunc" title="@_dataRoot">@_dataRoot</div>
+                        </div>
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">监听地址 <span class="dt-src-badge ro">客户配置·只读</span></div>
+                            <div class="dt-metric-value" style="font-size:.9rem">@(_bindUrl ?? "—")</div>
+                        </div>
+                    </MudStack>
+
+                    @if (_canEditBrand)
+                    {
+                        <div class="dt-settings-row">
+                            <div>
+                                <div class="dt-settings-row-name">厂名 / 站点显示名</div>
+                                <div class="dt-settings-row-hint">显示在登录页与顶栏标题</div>
+                            </div>
+                            <MudTextField @bind-Value="_editSiteName" Immediate="true" Margin="Margin.Dense"
+                                          Variant="Variant.Outlined" />
+                            <span class="dt-src-badge edit">可在此修改·customer.json</span>
+                        </div>
+                        <div class="dt-settings-row">
+                            <div>
+                                <div class="dt-settings-row-name">Logo 文件名</div>
+                                <div class="dt-settings-row-hint">放在安装目录 branding\ 下，例如 logo.png</div>
+                            </div>
+                            <MudTextField @bind-Value="_editLogoPath" Immediate="true" Margin="Margin.Dense"
+                                          Variant="Variant.Outlined" Placeholder="logo.png" />
+                            <span class="dt-src-badge edit">可在此修改·customer.json</span>
+                        </div>
+                    }
+                    else
+                    {
+                        <MudAlert Severity="Severity.Info" Dense="true" Class="mt-1">厂名/Logo 仅管理员可改，当前为只读展示。</MudAlert>
+                        <MudStack Row="true" Spacing="4" Class="flex-wrap mt-2">
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">厂名 / 站点显示名</div>
+                                <div class="dt-metric-value" style="font-size:1rem">@_identity.EffectiveSiteName</div>
+                            </div>
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">Logo 文件名</div>
+                                <div class="dt-metric-value" style="font-size:1rem">@(_identity.LogoPath ?? "—")</div>
+                            </div>
+                        </MudStack>
+                    }
+                </MudPaper>
+
+                <MudPaper Class="pa-4 mb-3 dt-settings-section" id="sec-collect" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-1">采集与仿真</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted mb-3">
+                        下列采集参数保存后下发采集端。停用采集见「安全」危险操作区。
+                    </MudText>
+
+                    <div class="dt-settings-row">
+                        <div>
+                            <div class="dt-settings-row-name">扫描间隔(ms)</div>
+                            <div class="dt-settings-row-hint">采集端查询 PLC 的间隔；越小越快，也越加重 PLC 通讯</div>
+                        </div>
+                        <MudNumericField @bind-Value="_settings.ScanIntervalMs" Min="20" Max="5000" Step="10"
+                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true" />
+                        <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
-                </div>
-                <div class="dt-metric">
-                    <div class="dt-metric-label">上次大小</div>
-                    <div class="dt-metric-value" style="font-size:.9rem">@FormatBytes(_backupStatus.LastBackupBytes)</div>
-                </div>
-                <div class="dt-metric">
-                    <div class="dt-metric-label">下次计划</div>
-                    <div class="dt-metric-value" style="font-size:.9rem">
-                        @(_backupStatus.NextScheduledAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—")
+                    <div class="dt-settings-row">
+                        <div>
+                            <div class="dt-settings-row-name">写回重试次数</div>
+                            <div class="dt-settings-row-hint">0 表示只写一次；NG 位写失败会导致 PLC 侧不更新</div>
+                        </div>
+                        <MudNumericField @bind-Value="_settings.WriteRetryCount" Min="0" Max="10"
+                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true" />
+                        <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
-                </div>
-                <div class="dt-metric">
-                    <div class="dt-metric-label">备份目录</div>
-                    <div class="dt-metric-value" style="font-size:.8rem;word-break:break-all">@_backupStatus.BackupDirectory</div>
-                </div>
-            </MudStack>
 
-            <AuthorizeView Roles="Administrator">
-                <Authorized>
-                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RunBackupNow"
-                               Disabled="_backingUp" StartIcon="@Icons.Material.Filled.Backup">
-                        @(_backingUp ? "备份中…" : "立即备份")
-                    </MudButton>
-                </Authorized>
-                <NotAuthorized>
-                    <MudText Typo="Typo.caption" Class="dt-muted">仅管理员可手动触发备份。</MudText>
-                </NotAuthorized>
-            </AuthorizeView>
-        }
-    </MudPaper>
+                    <MudDivider Class="my-3" />
 
-    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
-        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save" Disabled="_saving"
-                   StartIcon="@Icons.Material.Filled.Save">
-            @(_saving ? "保存中…" : "保存")
-        </MudButton>
-        <MudButton Variant="Variant.Outlined" OnClick="Reload" Disabled="_saving" StartIcon="@Icons.Material.Filled.RestartAlt">
-            放弃修改并重载
-        </MudButton>
-    </MudStack>
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                        <MudText Typo="Typo.subtitle2">仿真参数</MudText>
+                        <MudSpacer />
+                        <MudButton Variant="Variant.Text" Size="Size.Small" Href="/simulate"
+                                   EndIcon="@Icons.Material.Filled.ChevronRight">去 PLC 仿真页修改</MudButton>
+                    </MudStack>
+                    <MudText Typo="Typo.caption" Class="dt-muted mb-3">
+                        客户 Production 安装默认关闭「启动后自动跑仿真」（customer.json / appsettings.Production.json 的 SimulatorAutoRun）。
+                        本页只读展示；可编辑在「PLC 仿真」页，保存时会同步写回配置库。
+                    </MudText>
+                    <MudStack Row="true" Spacing="3" Class="flex-wrap dt-settings-readonly pa-3 rounded">
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">启动后自动跑仿真 <span class="dt-src-badge ro">客户配置·只读</span></div>
+                            <div class="dt-metric-value">@(_settings.SimulatorAutoRun ? "开" : "关")</div>
+                        </div>
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">托盘间隔 <span class="dt-src-badge rt">运行时</span></div>
+                            <div class="dt-metric-value">@_settings.SimulatorIntervalMs ms</div>
+                        </div>
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">NG 比例 <span class="dt-src-badge rt">运行时</span></div>
+                            <div class="dt-metric-value">@_settings.SimulatorNgPercent %</div>
+                        </div>
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">托盘池数量 <span class="dt-src-badge rt">运行时</span></div>
+                            <div class="dt-metric-value">@_settings.SimulatorPalletPool</div>
+                        </div>
+                    </MudStack>
+                    @if (_productionSimWarning)
+                    {
+                        <MudText Typo="Typo.caption" Class="mt-2" Style="color:var(--mud-palette-error)">
+                            Production 环境下数据库仍开启「启动后自动跑仿真」（SimulatorAutoRun=true）。客户现场须保持关闭；应到「PLC 仿真」页改回 false。
+                        </MudText>
+                    }
+                </MudPaper>
+
+                <MudPaper Class="pa-4 mb-3 dt-settings-section" id="sec-data" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-1">数据与备份</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted mb-3">
+                        定时在线备份 config.db 与 runtime 月库（SQLite Backup API，不停服）；默认每天本地 @(_backupStatus?.DailyTime ?? "02:30")，
+                        保留 @(_backupStatus?.RetentionDays ?? 30) 天 / 最多 @(_backupStatus?.MaxBackups ?? 60) 套。曲线文件本身不进备份包。
+                    </MudText>
+
+                    <div class="dt-settings-row">
+                        <div>
+                            <div class="dt-settings-row-name">保留年数</div>
+                            <div class="dt-settings-row-hint">超过年限的整月记录库和曲线文件会被删除（RetentionHostedService，约每 6 小时检查一次）</div>
+                        </div>
+                        <MudNumericField @bind-Value="_settings.RetentionYears" Min="1" Max="30"
+                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true" />
+                        <span class="dt-src-badge edit">可在此修改·配置库</span>
+                    </div>
+                    <div class="dt-settings-row">
+                        <div>
+                            <div class="dt-settings-row-name">备份保留</div>
+                            <div class="dt-settings-row-hint">备份套数保留策略，与「保留年数」互不替代</div>
+                        </div>
+                        <MudText Typo="Typo.body2">
+                            @(_backupStatus?.RetentionDays ?? 30) 天 / 最多 @(_backupStatus?.MaxBackups ?? 60) 份
+                        </MudText>
+                        <span class="dt-src-badge ro">客户配置·只读</span>
+                    </div>
+
+                    @if (_backupStatus is null)
+                    {
+                        <MudSkeleton Width="60%" Class="mt-3" />
+                    }
+                    else
+                    {
+                        @if (!_backupStatus.Enabled)
+                        {
+                            <MudText Typo="Typo.caption" Class="mb-2" Style="color:var(--mud-palette-error)">
+                                自动备份已关闭（Backup:Enabled=false）。请在配置中重新打开，并把备份目录放到独立磁盘/NAS。完整说明见本区上方文案。
+                            </MudText>
+                        }
+                        else if (_backupStatus.IsStaleOrFailed(TimeSpan.FromHours(48)))
+                        {
+                            <MudText Typo="Typo.caption" Class="mb-2" Style="color:var(--mud-palette-error)">
+                                @if (_backupStatus.LastSucceeded == false)
+                                {
+                                    <text>最近一次备份失败：@(_backupStatus.LastError ?? "未知错误")。请检查磁盘空间与日志后点「立即备份」。</text>
+                                }
+                                else
+                                {
+                                    <text>超过 48 小时没有成功备份（或尚无成功记录）。请确认定时任务与配置后点「立即备份」。</text>
+                                }
+                            </MudText>
+                        }
+
+                        <MudStack Row="true" Spacing="3" Class="flex-wrap my-3">
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">上次成功 <span class="dt-src-badge rt">运行时</span></div>
+                                <div class="dt-metric-value" style="font-size:.9rem">
+                                    @(_backupStatus.LastSuccessAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "尚无")
+                                </div>
+                            </div>
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">上次大小 <span class="dt-src-badge rt">运行时</span></div>
+                                <div class="dt-metric-value" style="font-size:.9rem">@FormatBytes(_backupStatus.LastBackupBytes)</div>
+                            </div>
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">下次计划 <span class="dt-src-badge rt">运行时</span></div>
+                                <div class="dt-metric-value" style="font-size:.9rem">
+                                    @(_backupStatus.NextScheduledAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—")
+                                </div>
+                            </div>
+                            <div class="dt-metric" style="min-width:220px;max-width:360px;flex:1">
+                                <div class="dt-metric-label">
+                                    备份目录 <span class="dt-src-badge ro">客户配置·只读</span>
+                                    <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small" Class="pa-0 ml-1"
+                                                   title="复制路径" OnClick="@(() => CopyPath(_backupStatus.BackupDirectory))" />
+                                </div>
+                                <div class="dt-metric-value dt-path-trunc" title="@_backupStatus.BackupDirectory">@_backupStatus.BackupDirectory</div>
+                            </div>
+                        </MudStack>
+
+                        <AuthorizeView Roles="Administrator">
+                            <Authorized>
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RunBackupNow"
+                                           Disabled="_backingUp" StartIcon="@Icons.Material.Filled.Backup">
+                                    @(_backingUp ? "备份中…" : "立即备份")
+                                </MudButton>
+                            </Authorized>
+                            <NotAuthorized>
+                                <MudText Typo="Typo.caption" Class="dt-muted">仅管理员可手动触发备份。</MudText>
+                            </NotAuthorized>
+                        </AuthorizeView>
+                    }
+                </MudPaper>
+
+                <MudPaper Class="pa-4 mb-3 dt-settings-section" id="sec-mes" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-3">MES 对接</MudText>
+                    <div class="dt-settings-row">
+                        <div>
+                            <div class="dt-settings-row-name">启用 MES HTTP 推送</div>
+                        </div>
+                        <MudSwitch @bind-Value="_settings.MesEnabled" Color="Color.Primary"
+                                   Label="@(_settings.MesEnabled ? "已启用" : "已关闭")" />
+                        <span class="dt-src-badge edit">可在此修改·配置库</span>
+                    </div>
+                    <div class="dt-settings-row">
+                        <div>
+                            <div class="dt-settings-row-name">MES 地址</div>
+                            <div class="dt-settings-row-hint">启用推送时必须填写合法 http(s) 地址</div>
+                        </div>
+                        <MudTextField @bind-Value="_settings.MesEndpoint" Immediate="true" Margin="Margin.Dense"
+                                      Variant="Variant.Outlined" Placeholder="http://mes.local/api/collect" />
+                        <span class="dt-src-badge edit">可在此修改·配置库</span>
+                    </div>
+                    <div class="dt-settings-row">
+                        <div>
+                            <div class="dt-settings-row-name">MES 超时(秒)</div>
+                        </div>
+                        <MudNumericField @bind-Value="_settings.MesTimeoutSeconds" Min="1" Max="300"
+                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true" />
+                        <span class="dt-src-badge edit">可在此修改·配置库</span>
+                    </div>
+                </MudPaper>
+
+                <MudPaper Class="pa-4 mb-3 dt-settings-section" id="sec-security" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-1">安全</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted mb-3">
+                        首次部署请到「用户」页修改 admin / engineer 等出厂口令。应用不强制改密，需由管理员自行确认。
+                        @if (_softCapWarning is { Length: > 0 })
+                        {
+                            <text> 另：@_softCapWarning</text>
+                        }
+                    </MudText>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" Size="Size.Small" Href="/users"
+                               StartIcon="@Icons.Material.Filled.ManageAccounts">打开用户页</MudButton>
+
+                    <div class="dt-danger-zone">
+                        <div class="dt-danger-zone-title">危险操作</div>
+                        <MudText Typo="Typo.caption" Class="dt-muted mb-3">
+                            停用采集后采集端不再读取任何工站；实时看板与查询仍可看历史数据。开关只改页面值，需点「保存」才会下发。
+                            当前状态：<b>@(_settings.CollectEnabled ? "采集已启用" : "采集已停用")</b>
+                            <span class="dt-src-badge edit" style="margin-left:8px">可在此修改·配置库</span>
+                        </MudText>
+                        @if (_settings.CollectEnabled)
+                        {
+                            <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="_saving"
+                                       StartIcon="@Icons.Material.Filled.PowerSettingsNew"
+                                       OnClick="DisableCollect">停用采集…</MudButton>
+                        }
+                        else
+                        {
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_saving"
+                                       StartIcon="@Icons.Material.Filled.PlayArrow"
+                                       OnClick="EnableCollect">重新启用采集</MudButton>
+                        }
+                    </div>
+                </MudPaper>
+
+                <MudPaper Class="pa-4 mb-3 dt-settings-section" id="sec-about" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-3">关于</MudText>
+                    <MudStack Row="true" Spacing="3" Class="flex-wrap">
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">应用版本 <span class="dt-src-badge rt">运行时</span></div>
+                            <div class="dt-metric-value">@_appVersion</div>
+                        </div>
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">客户标识 <span class="dt-src-badge ro">客户配置·只读</span></div>
+                            <div class="dt-metric-value">@(_identity.CustomerId is { Length: > 0 } ? _identity.CustomerId : "—")</div>
+                        </div>
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">运行环境 <span class="dt-src-badge rt">运行时</span></div>
+                            <div class="dt-metric-value">@_envName</div>
+                        </div>
+                    </MudStack>
+                </MudPaper>
+
+                @if (Dirty)
+                {
+                    <div class="dt-settings-savebar">
+                        <span class="dt-settings-savebar-note">有未保存的更改</span>
+                        <MudButton Variant="Variant.Outlined" OnClick="Reload" Disabled="_saving"
+                                   StartIcon="@Icons.Material.Filled.RestartAlt">放弃</MudButton>
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save" Disabled="_saving"
+                                   StartIcon="@Icons.Material.Filled.Save">
+                            @(_saving ? "保存中…" : "保存")
+                        </MudButton>
+                    </div>
+                }
+                else
+                {
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3" Class="mb-2">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save" Disabled="_saving"
+                                   StartIcon="@Icons.Material.Filled.Save">
+                            @(_saving ? "保存中…" : "保存")
+                        </MudButton>
+                        <MudButton Variant="Variant.Text" OnClick="Reload" Disabled="_saving"
+                                   StartIcon="@Icons.Material.Filled.RestartAlt">重新加载</MudButton>
+                    </MudStack>
+                }
+            </div>
+        </div>
+    </div>
 }
 
 @code {
+    private static readonly (string Id, string Label)[] NavItems =
+    [
+        ("sec-basic", "基本信息"),
+        ("sec-collect", "采集与仿真"),
+        ("sec-data", "数据与备份"),
+        ("sec-mes", "MES 对接"),
+        ("sec-security", "安全"),
+        ("sec-about", "关于"),
+    ];
+
     private SystemSettings? _settings;
     private string _savedKey = "";
+    private string _savedSiteName = "";
+    private string? _savedLogoPath;
     private bool _loading = true;
     private bool _saving;
-    private bool _savingBrand;
+    private bool _backingUp;
+    private bool _canEditBrand;
     private string _editSiteName = "";
     private string? _editLogoPath;
-    private DataTrace.Web.Options.CustomerOptions _identity = new();
+    private CustomerOptions _identity = new();
     private string _envName = "";
     private string _dataRoot = "";
     private string? _bindUrl;
@@ -274,10 +473,62 @@ else
     private string? _softCapWarning;
     private bool _productionSimWarning;
     private BackupStatusSnapshot? _backupStatus;
-    private bool _backingUp;
+    private string _activeSection = "sec-basic";
 
-    /// <summary>页面上的值与最近一次读/写的值不一致。没有这个提示，切走页面就会静默丢掉改动。</summary>
-    private bool Dirty => _settings is not null && Key(_settings) != _savedKey;
+    private bool SettingsDirty => _settings is not null && Key(_settings) != _savedKey;
+
+    private bool BrandingDirty =>
+        _canEditBrand
+        && (!string.Equals((_editSiteName ?? "").Trim(), (_savedSiteName ?? "").Trim(), StringComparison.Ordinal)
+            || !string.Equals((_editLogoPath ?? "").Trim(), (_savedLogoPath ?? "").Trim(), StringComparison.Ordinal));
+
+    private bool Dirty => SettingsDirty || BrandingDirty;
+
+    private Color BackupChipColor =>
+        _backupStatus is null ? Color.Default
+        : !_backupStatus.Enabled || _backupStatus.IsStaleOrFailed(TimeSpan.FromHours(48)) ? Color.Error
+        : Color.Success;
+
+    private string BackupChipText =>
+        _backupStatus is null ? "未知"
+        : !_backupStatus.Enabled ? "已关闭"
+        : _backupStatus.IsStaleOrFailed(TimeSpan.FromHours(48)) ? "异常"
+        : "正常";
+
+    private string BackupDetail
+    {
+        get
+        {
+            if (_backupStatus is null) return "状态加载中…";
+            if (!_backupStatus.Enabled) return "Backup:Enabled=false";
+            if (_backupStatus.LastSucceeded == false)
+            {
+                var err = _backupStatus.LastError ?? "未知错误";
+                return $"最近失败：{err}";
+            }
+            var when = _backupStatus.LastSuccessAt?.ToLocalTime().ToString("HH:mm") ?? "尚无";
+            return $"{when} 成功 · {FormatBytes(_backupStatus.LastBackupBytes)}";
+        }
+    }
+
+    private Color SimChipColor =>
+        _productionSimWarning ? Color.Error
+        : (_settings?.SimulatorAutoRun == true ? Color.Warning : Color.Default);
+
+    private string SimChipText =>
+        _productionSimWarning ? "异常"
+        : (_settings?.SimulatorAutoRun == true ? "需关注" : "已关闭");
+
+    private string SimDetail
+    {
+        get
+        {
+            if (_productionSimWarning)
+                return $"Production 仍开启 AutoRun · {_envName}";
+            var auto = _settings?.SimulatorAutoRun == true ? "AutoRun 开" : "AutoRun 关";
+            return $"{auto} · {_envName}";
+        }
+    }
 
     private static string Key(SystemSettings s) => string.Join('|',
         s.ScanIntervalMs, s.WriteRetryCount, s.RetentionYears, s.CollectEnabled,
@@ -285,8 +536,43 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        var auth = await AuthState.GetAuthenticationStateAsync();
+        _canEditBrand = auth.User.IsInRole("Administrator");
         await Reload();
-        RefreshBackupStatus();
+    }
+
+    private async Task ScrollTo(string id)
+    {
+        _activeSection = id;
+        try { await JS.InvokeVoidAsync("dtScrollIntoView", id); }
+        catch { /* ignore */ }
+    }
+
+    private async Task CopyPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return;
+        try
+        {
+            var ok = await JS.InvokeAsync<bool>("dtCopy", path);
+            Toast.Add(ok ? "路径已复制" : "复制失败", ok ? Severity.Success : Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"复制失败：{ex.Message}", Severity.Warning);
+        }
+    }
+
+    private async Task OnBeforeInternalNavigation(LocationChangingContext context)
+    {
+        if (!Dirty) return;
+        var ok = await DialogService.ShowMessageBox(
+            "未保存的更改",
+            "离开本页将丢失未保存的更改。确定离开？",
+            yesText: "离开", cancelText: "留下");
+        if (ok != true)
+        {
+            context.PreventNavigation();
+        }
     }
 
     private async Task Reload()
@@ -297,6 +583,8 @@ else
             _identity = Branding.GetSnapshot();
             _editSiteName = _identity.EffectiveSiteName;
             _editLogoPath = _identity.LogoPath;
+            _savedSiteName = _editSiteName;
+            _savedLogoPath = _editLogoPath;
             _envName = Branding.EnvironmentName;
             _dataRoot = Branding.ResolvedDataRoot;
             _bindUrl = Branding.BindUrl;
@@ -306,26 +594,25 @@ else
             try
             {
                 var snap = await Config.GetSnapshotAsync();
-                var maxSt = _identity.MaxStations;
-                var maxPlc = _identity.MaxPlcs;
-                if (maxSt is int msCap && snap.Stations.Count > msCap)
+                if (_identity.MaxStations is int msCap && snap.Stations.Count > msCap)
                 {
-                    _softCapWarning = $"工站数量 {snap.Stations.Count} 已超过客户约定上限 MaxStations={msCap}（仅提示，不阻断配置）。";
+                    _softCapWarning = $"工站数量 {snap.Stations.Count} 已超过客户约定上限 MaxStations={msCap}（仅提示，不阻止配置）。";
                 }
-                else if (maxPlc is int mpCap && snap.PlcConnections.Count > mpCap)
+                else if (_identity.MaxPlcs is int mpCap && snap.PlcConnections.Count > mpCap)
                 {
-                    _softCapWarning = $"PLC 连接数 {snap.PlcConnections.Count} 已超过客户约定上限 MaxPlcs={mpCap}（仅提示，不阻断配置）。";
+                    _softCapWarning = $"PLC 连接数 {snap.PlcConnections.Count} 已超过客户约定上限 MaxPlcs={mpCap}（仅提示，不阻止配置）。";
                 }
             }
             catch
             {
-                // soft cap is best-effort; ignore load errors here
+                // soft cap best-effort
             }
 
             _settings = (await Config.GetSnapshotAsync()).Settings;
             _productionSimWarning = Branding.EnvironmentName.Equals("Production", StringComparison.OrdinalIgnoreCase)
-                && _settings.SimulatorAutoRun;
+                && _settings is { SimulatorAutoRun: true };
             _savedKey = _settings is null ? "" : Key(_settings);
+            RefreshBackupStatus();
         }
         catch (Exception ex)
         {
@@ -338,44 +625,13 @@ else
         }
     }
 
-    private async Task SaveBranding()
+    private async Task DisableCollect()
     {
-        if (_savingBrand) return;
-        _savingBrand = true;
-        try
-        {
-            Branding.SaveBranding(_editSiteName, _editLogoPath);
-            _identity = Branding.GetSnapshot();
-            Toast.Add("品牌已保存到 customer.json（刷新页面后顶栏/登录页生效）", Severity.Success);
-        }
-        catch (Exception ex)
-        {
-            Toast.Add($"保存品牌失败：{ex.Message}", Severity.Error);
-        }
-        finally
-        {
-            _savingBrand = false;
-        }
-    }
-
-    /// <summary>关掉采集会让整线停止读数，属于影响生产的操作，必须二次确认。</summary>
-    private async Task ToggleCollect(bool enable)
-    {
-        if (_settings is null)
-        {
-            return;
-        }
-
-        if (enable)
-        {
-            _settings.CollectEnabled = true;
-            return;
-        }
-
+        if (_settings is null) return;
         var confirmed = await DialogService.ShowMessageBox(
             "停用采集",
-            "停用后采集器不再读取任何工站，实时看板与查询都不会再有新数据。" +
-            "这一步只改页面上的开关，要点「保存」才真正下发。确定停用？",
+            "停用后采集端不再读取任何工站；实时看板与查询仍可看历史数据。"
+            + "这一步只改页面上的开关，要点「保存」才会真正下发并确认停用。",
             yesText: "停用采集", cancelText: "取消");
         if (confirmed == true)
         {
@@ -383,12 +639,15 @@ else
         }
     }
 
+    private void EnableCollect()
+    {
+        if (_settings is null) return;
+        _settings.CollectEnabled = true;
+    }
+
     private async Task Save()
     {
-        if (_settings is null || _saving)
-        {
-            return;
-        }
+        if (_settings is null || _saving) return;
 
         if (_settings.MesEnabled && !IsHttpUrl(_settings.MesEndpoint))
         {
@@ -396,34 +655,96 @@ else
             return;
         }
 
+        var needSettings = SettingsDirty;
+        var needBrand = BrandingDirty;
+        if (!needSettings && !needBrand)
+        {
+            Toast.Add("没有需要保存的更改", Severity.Info);
+            return;
+        }
+
         _saving = true;
+        string? settingsErr = null;
+        string? brandErr = null;
+        var settingsSaved = false;
+        var brandSaved = false;
+
         try
         {
-            // 只把本页拥有的字段搬到刚读出来的快照上。整对象写回会踩两个坑：
-            // 一是把「产品型号」页在这页打开之后改的 ActiveRecipeId 覆盖掉，
-            // 二是把「PLC 仿真」页改过的仿真参数按本页加载时的旧值写回去。
-            var target = (await Config.GetSnapshotAsync()).Settings;
-            target.ScanIntervalMs = _settings.ScanIntervalMs;
-            target.WriteRetryCount = _settings.WriteRetryCount;
-            target.RetentionYears = _settings.RetentionYears;
-            target.CollectEnabled = _settings.CollectEnabled;
-            target.MesEnabled = _settings.MesEnabled;
-            target.MesEndpoint = _settings.MesEndpoint;
-            target.MesTimeoutSeconds = _settings.MesTimeoutSeconds;
+            if (needSettings)
+            {
+                try
+                {
+                    var target = (await Config.GetSnapshotAsync()).Settings;
+                    target.ScanIntervalMs = _settings.ScanIntervalMs;
+                    target.WriteRetryCount = _settings.WriteRetryCount;
+                    target.RetentionYears = _settings.RetentionYears;
+                    target.CollectEnabled = _settings.CollectEnabled;
+                    target.MesEnabled = _settings.MesEnabled;
+                    target.MesEndpoint = _settings.MesEndpoint;
+                    target.MesTimeoutSeconds = _settings.MesTimeoutSeconds;
 
-            await Config.SaveSettingsAsync(target);
-            _settings = target;
-            _savedKey = Key(target);
-            Simulator.SetRunning(target.SimulatorAutoRun);
-            Toast.Add("已保存并下发采集器", Severity.Success);
-        }
-        catch (Exception ex)
-        {
-            Toast.Add($"保存失败：{ex.Message}", Severity.Error);
+                    await Config.SaveSettingsAsync(target);
+                    _settings = target;
+                    _savedKey = Key(target);
+                    Simulator.SetRunning(target.SimulatorAutoRun);
+                    settingsSaved = true;
+                }
+                catch (Exception ex)
+                {
+                    settingsErr = ex.Message;
+                }
+            }
+
+            if (needBrand)
+            {
+                try
+                {
+                    Branding.SaveBranding(_editSiteName, _editLogoPath);
+                    _identity = Branding.GetSnapshot();
+                    _savedSiteName = _identity.EffectiveSiteName;
+                    _savedLogoPath = _identity.LogoPath;
+                    _editSiteName = _savedSiteName;
+                    _editLogoPath = _savedLogoPath;
+                    brandSaved = true;
+                }
+                catch (Exception ex)
+                {
+                    brandErr = ex.Message;
+                }
+            }
         }
         finally
         {
             _saving = false;
+        }
+
+        if (settingsErr is null && brandErr is null)
+        {
+            var bits = new List<string>();
+            if (settingsSaved) bits.Add("配置已保存并下发采集端");
+            if (brandSaved) bits.Add("品牌已写入 customer.json");
+            Toast.Add(bits.Count > 0 ? string.Join("；", bits) : "已保存", Severity.Success);
+        }
+        else if (settingsSaved && brandErr is not null)
+        {
+            Toast.Add($"配置已保存，品牌保存失败：{brandErr}", Severity.Warning);
+        }
+        else if (brandSaved && settingsErr is not null)
+        {
+            Toast.Add($"品牌已保存，配置保存失败：{settingsErr}", Severity.Warning);
+        }
+        else if (settingsErr is not null && brandErr is not null)
+        {
+            Toast.Add($"配置保存失败：{settingsErr}；品牌保存失败：{brandErr}", Severity.Error);
+        }
+        else if (settingsErr is not null)
+        {
+            Toast.Add($"配置保存失败：{settingsErr}", Severity.Error);
+        }
+        else
+        {
+            Toast.Add($"品牌保存失败：{brandErr}", Severity.Error);
         }
     }
 
@@ -433,65 +754,38 @@ else
 
     private void RefreshBackupStatus()
     {
-        try
-        {
-            _backupStatus = BackupService.GetStatus();
-        }
-        catch
-        {
-            _backupStatus = null;
-        }
+        try { _backupStatus = BackupService.GetStatus(); }
+        catch { _backupStatus = null; }
     }
 
     private async Task RunBackupNow()
     {
-        if (_backingUp)
-        {
-            return;
-        }
-
+        if (_backingUp) return;
         _backingUp = true;
         try
         {
             var result = await BackupService.RunBackupAsync();
             RefreshBackupStatus();
             if (result.Success)
-            {
                 Toast.Add($"备份完成：{result.BackupPath}", Severity.Success);
-            }
             else
-            {
                 Toast.Add($"备份失败：{result.Error}", Severity.Error);
-            }
         }
         catch (Exception ex)
         {
             Toast.Add($"备份异常：{ex.Message}", Severity.Error);
             RefreshBackupStatus();
         }
-        finally
-        {
-            _backingUp = false;
-        }
+        finally { _backingUp = false; }
     }
 
     private static string FormatBytes(long bytes)
     {
-        if (bytes <= 0)
-        {
-            return "—";
-        }
-
+        if (bytes <= 0) return "—";
         string[] units = ["B", "KB", "MB", "GB"];
         double v = bytes;
         var i = 0;
-        while (v >= 1024 && i < units.Length - 1)
-        {
-            v /= 1024;
-            i++;
-        }
-
+        while (v >= 1024 && i < units.Length - 1) { v /= 1024; i++; }
         return $"{v:0.##} {units[i]}";
     }
-
 }

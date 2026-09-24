@@ -234,8 +234,8 @@ Start-Service -Name DataTrace-CustomerA
 | `Backup:BackupDirectory` | 空 → `{DataRoot}/backups` | 备份根目录 |
 | `Backup:RetentionDays` | `30` | 按天保留 |
 | `Backup:MaxBackups` | `60` | 最多保留套数（0=不限数量） |
-| `Backup:RecordRetention:Enabled` | **`false`** | 备份成功后是否清理过期采集记录（默认关） |
-| `Backup:RecordRetention:KeepDays` | `1095` | 记录保留天数（仅上面开启时生效） |
+
+采集记录与曲线文件的长期保留由系统设置页「保留年数」控制（配置库 `SystemSettings.RetentionYears`），由 `RetentionHostedService` 约每 6 小时删除超过年限的整月 `runtime/data_yyyyMM.db` 及对应曲线目录；与备份套数保留（`Backup:RetentionDays` / `MaxBackups`）是两套机制，互不替代。已废弃的 `Backup:RecordRetention` 配置键若仍存在会被忽略。
 
 - 备份内容：`config.db`（含 Identity）+ `runtime/data_yyyyMM.db`。使用 SQLite Online Backup API，**不要**对正在运行的库做裸文件拷贝。
 - 每套备份目录形如 `data/backups/2026-09-24_0230/`，内含 `manifest.json`（版本、时间、大小、SHA256、quick_check）。

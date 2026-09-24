@@ -19,15 +19,6 @@ public sealed class BackupRunResult
     public long TotalBytes { get; init; }
     public IReadOnlyList<BackupFileInfo> Files { get; init; } = [];
     public int DeletedBackupSets { get; init; }
-    public RecordPurgeResult? RecordPurge { get; init; }
-}
-
-public sealed class RecordPurgeResult
-{
-    public bool Ran { get; init; }
-    public int DeletedRecords { get; init; }
-    public int DeletedCurveFiles { get; init; }
-    public string? Error { get; init; }
 }
 
 public sealed class BackupStatusSnapshot
@@ -37,8 +28,6 @@ public sealed class BackupStatusSnapshot
     public string BackupDirectory { get; init; } = "";
     public int RetentionDays { get; init; }
     public int MaxBackups { get; init; }
-    public bool RecordRetentionEnabled { get; init; }
-    public int RecordKeepDays { get; init; }
 
     public DateTimeOffset? LastSuccessAt { get; init; }
     public DateTimeOffset? LastAttemptAt { get; init; }
