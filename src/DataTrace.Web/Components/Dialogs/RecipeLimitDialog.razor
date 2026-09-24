@@ -89,7 +89,7 @@
     {
         foreach (var station in Stations.OrderBy(s => s.Sequence))
         {
-            foreach (var tag in station.Tags.Where(t => t.Enabled && t.DataType != PlcDataType.String))
+            foreach (var tag in station.Tags.Where(t => t.Enabled && t.DataType is not (PlcDataType.String or PlcDataType.Bool)))
             {
                 var existing = RecipeLimitResolver.FindOverride(Recipe, tag.Id);
                 _rows.Add(new Row

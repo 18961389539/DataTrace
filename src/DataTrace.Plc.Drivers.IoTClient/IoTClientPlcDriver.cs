@@ -167,7 +167,7 @@ public sealed class IoTClientPlcDriver : IPlcDriver
     private object CreateClient() => _connection.Brand switch
     {
         PlcBrand.MitsubishiMc3E => new MitsubishiClient(MitsubishiVersion.Qna_3E, _connection.Host, _connection.Port, _connection.TimeoutMs),
-        PlcBrand.SiemensS7 => new SiemensClient(SiemensVersion.S7_1200, _connection.Host, _connection.Port, 0, 1, _connection.TimeoutMs),
+        PlcBrand.SiemensS7 => CreateSiemensClient(),
         PlcBrand.OmronFins => new OmronFinsClient(_connection.Host, _connection.Port, _connection.TimeoutMs),
         PlcBrand.ModbusTcp => new ModbusTcpClient(_connection.Host, _connection.Port, _connection.TimeoutMs),
         _ => throw new PlcDriverException($"不支持的品牌 {_connection.Brand}")
@@ -242,6 +242,31 @@ public sealed class IoTClientPlcDriver : IPlcDriver
         var data = ToBytes(words);
         Array.Reverse(data);
         return data;
+    }
+
+    private SiemensClient CreateSiemensClient()
+    {
+        var (rack, slot) = ParseSiemensRackSlot();
+        return new SiemensClient(SiemensVersion.S7_1200, _connection.Host, _connection.Port, rack, slot, _connection.TimeoutMs);
+    }
+
+    private (byte rack, byte slot) ParseSiemensRackSlot()
+    {
+        var extra = (_connection.Extra ?? "").Trim();
+        if (extra.Length == 0)
+        {
+            return ((byte)0, (byte)1);
+        }
+
+        var parts = extra.Replace('/', ',').Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 2
+            && int.TryParse(parts[0], out var rack)
+            && int.TryParse(parts[1], out var slot))
+        {
+            return ((byte)rack, (byte)slot);
+        }
+
+        return ((byte)0, (byte)1);
     }
 
     private byte ParseStation()

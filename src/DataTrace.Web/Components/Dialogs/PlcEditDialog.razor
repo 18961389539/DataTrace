@@ -1,3 +1,4 @@
+@using DataTrace.Domain.Enums
 ﻿@using DataTrace.Domain.Entities
 <MudDialog>
     <TitleContent>
@@ -50,6 +51,18 @@
                 <MudNumericField @bind-Value="HeartbeatIntervalMs" Label="心跳周期 (ms)" Min="100" Max="60000" />
             </MudItem>
             <MudItem xs="12" md="6">
+                <MudSelect T="HeartbeatMode" @bind-Value="_heartbeatMode" Label="心跳模式"
+                           HelperText="递增：周期+1；翻转：0/1 交替写入">
+                    <MudSelectItem T="HeartbeatMode" Value="HeartbeatMode.Increment">递增</MudSelectItem>
+                    <MudSelectItem T="HeartbeatMode" Value="HeartbeatMode.Toggle">翻转</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudTextField @bind-Value="_draft.Extra" Label="额外参数" Immediate="true"
+                              HelperText="@ExtraHelper(_draft.Brand)"
+                              Error="@(_extraError is not null)" ErrorText="@_extraError" />
+            </MudItem>
+            <MudItem xs="12" md="6">
                 <MudNumericField @bind-Value="_draft.MergeGapWords" Label="合并间隙字数" Min="1" Max="512"
                                  HelperText="地址间隔小于该值时会合并成一次批量读取" />
             </MudItem>
@@ -79,6 +92,7 @@
 
     [Parameter] public int HeartbeatIntervalMs { get; set; } = 1000;
 
+    private HeartbeatMode _heartbeatMode = HeartbeatMode.Increment;
     private string? _nameError;
     private string? _hostError;
     private string? _portError;
@@ -89,7 +103,13 @@
     /// </summary>
     private PlcConnection _draft = new();
 
-    protected override void OnInitialized() => _draft = CloneForEdit(Model);
+    protected override void OnInitialized()
+    {
+        _draft = CloneForEdit(Model);
+        _heartbeatMode = _draft.Heartbeat?.Mode ?? HeartbeatMode.Increment;
+        HeartbeatAddress = _draft.Heartbeat?.Address ?? HeartbeatAddress;
+        HeartbeatIntervalMs = _draft.Heartbeat?.IntervalMs > 0 ? _draft.Heartbeat.IntervalMs : HeartbeatIntervalMs;
+    }
 
     private static PlcConnection CloneForEdit(PlcConnection source) => new()
     {
@@ -143,10 +163,68 @@
         _nameError = string.IsNullOrWhiteSpace(_draft.Name) ? "请填写连接名称" : null;
         _hostError = string.IsNullOrWhiteSpace(_draft.Host) ? "请填写 PLC 的 IP 地址" : null;
         _portError = _draft.Port is <= 0 or > 65535 ? "端口需在 1–65535 之间" : null;
+        if (!ValidateExtra())
+        {
+            return false;
+        }
+
         return _nameError is null && _hostError is null && _portError is null;
     }
 
     /// <summary>给输入框的 change 回调用的无返回值版本（@bind-Value:after 不接受带值的委托）。</summary>
+    private string? _extraError;
+
+
+    private static string ExtraHelper(PlcBrand brand) => brand switch
+    {
+        PlcBrand.ModbusTcp => "Modbus 站号（1–247 的整数，写入 Extra）。留空默认 1",
+        PlcBrand.SiemensS7 => "西门子机架/插槽，格式 rack,slot（如 0,1）。留空默认 0,1",
+        _ => "一般可留空；部分协议用于站号等扩展参数"
+    };
+
+    private bool ValidateExtra()
+    {
+        _extraError = null;
+        var extra = (_draft.Extra ?? "").Trim();
+        if (extra.Length == 0)
+        {
+            return true;
+        }
+
+        if (_draft.Brand == PlcBrand.ModbusTcp)
+        {
+            if (!byte.TryParse(extra, out var station) || station is < 1 or > 247)
+            {
+                _extraError = "Modbus 站号须为 1–247 的整数";
+                return false;
+            }
+        }
+        else if (_draft.Brand == PlcBrand.SiemensS7)
+        {
+            if (!TryParseSiemensRackSlot(extra, out _, out _))
+            {
+                _extraError = "西门子 Extra 格式应为 rack,slot（如 0,1）";
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryParseSiemensRackSlot(string extra, out int rack, out int slot)
+    {
+        rack = 0;
+        slot = 1;
+        var parts = extra.Replace('/', ',').Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2)
+        {
+            return false;
+        }
+
+        return int.TryParse(parts[0], out rack) && int.TryParse(parts[1], out slot)
+               && rack is >= 0 and <= 7 && slot is >= 0 and <= 31;
+    }
+
     private void Revalidate() => Validate();
 
     private void Submit()
@@ -161,7 +239,9 @@
         _draft.Heartbeat ??= new HeartbeatSettings();
         _draft.Heartbeat.Address = (HeartbeatAddress ?? "").Trim();
         _draft.Heartbeat.IntervalMs = HeartbeatIntervalMs;
+        _draft.Heartbeat.Mode = _heartbeatMode;
         _draft.Heartbeat.Enabled = !string.IsNullOrWhiteSpace(_draft.Heartbeat.Address);
+        _draft.Extra = string.IsNullOrWhiteSpace(_draft.Extra) ? null : _draft.Extra.Trim();
         MudDialog?.Close(DialogResult.Ok(_draft));
     }
 }
