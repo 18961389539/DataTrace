@@ -1,0 +1,12 @@
+@* 软 404 面板：Routes.NotFound 与 catch-all 页共用，避免两处文案分叉。 *@
+<MudPaper Class="pa-6">
+    <MudText Typo="Typo.h5" Class="dt-page-title mb-2">页面不存在</MudText>
+    <MudText Typo="Typo.body2" Class="dt-muted mb-4">
+        这个地址已经失效，或者地址写错了。可以从下面入口回到常用界面。
+    </MudText>
+    <MudStack Row="true" Spacing="2" Class="flex-wrap">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/">实时看板</MudButton>
+        <MudButton Variant="Variant.Outlined" Href="/query">数据查询</MudButton>
+        <MudButton Variant="Variant.Text" Href="/reports">报表</MudButton>
+    </MudStack>
+</MudPaper>

@@ -21,7 +21,7 @@ public static class DtColors
     public const string SeriesAmber = "#e07b00";
 
     public const string AppBar = "#22303f";
-    public const string Axis = "#5b6673";
+    public const string Axis = "#4a5568";
     public const string Grid = "#e3e8ee";
     public const string PlotBackground = "#f7f9fb";
 }

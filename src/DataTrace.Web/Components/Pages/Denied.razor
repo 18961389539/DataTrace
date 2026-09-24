@@ -1,6 +1,8 @@
 @page "/denied"
 @attribute [AllowAnonymous]
 
+<PageTitle>权限不足 · DataTrace</PageTitle>
+
 <AuthorizeView>
     <Authorized>
         <DeniedPanel UserName="@context.User.Identity?.Name" RequestedPath="@Requested" />

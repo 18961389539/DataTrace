@@ -1,6 +1,8 @@
 @* 页头统一结构：h5 标题 + 标题后状态标签 + 右侧统计/操作 + 可选说明。
    标题保持 h5 —— Routes.razor 的 PageFocusOnNavigate 以 h5 为选择器，
-   而 app.css 靠 .dt-page-title 抑制那次程序性聚焦画出的焦点环。 *@
+   而 app.css 靠 .dt-page-title 抑制那次程序性聚焦画出的焦点环。
+   浏览器标签页标题也在这里统一设置，避免各页漏写导致一直停在 App.razor 的 "DataTrace"。 *@
+<PageTitle>@(string.IsNullOrWhiteSpace(Title) ? "DataTrace" : $"{Title} · DataTrace")</PageTitle>
 <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2"
          Class="@($"mb-{(string.IsNullOrWhiteSpace(Description) ? 3 : 2)} flex-wrap")">
     <MudText Typo="Typo.h5" Class="dt-page-title">@Title</MudText>

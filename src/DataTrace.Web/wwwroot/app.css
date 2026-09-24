@@ -281,14 +281,38 @@ h5:focus,
 }
 
     .dash-tag.out,
-    .dash-tag.out .dash-tag-value {
+    .dash-tag.out .dash-tag-label {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 2px;
+    min-width: 0;
+}
+
+.dash-tag-value {
         color: var(--mud-palette-error);
     }
 
 /* 预警带（黄区）：只提示不判废，所以用警告色而不是错误色 */
 .dash-tag.warn,
-.dash-tag.warn .dash-tag-value {
+.dash-tag.warn .dash-tag-label {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 2px;
+    min-width: 0;
+}
+
+.dash-tag-value {
     color: var(--mud-palette-warning);
+}
+
+.dash-tag-label {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 2px;
+    min-width: 0;
 }
 
 .dash-tag-value {
@@ -500,4 +524,20 @@ h5:focus,
     .dash-station.busy {
         animation: none;
     }
+}
+
+/* ---------- 客户品牌 Logo（配得开） ---------- */
+.dt-brand-logo {
+    height: 28px;
+    width: auto;
+    max-width: 120px;
+    object-fit: contain;
+    margin-right: 10px;
+    vertical-align: middle;
+}
+.dt-brand-logo-login {
+    height: 48px;
+    max-width: 200px;
+    display: block;
+    margin: 0 auto 12px;
 }

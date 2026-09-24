@@ -1,0 +1,11 @@
+@page "/not-found"
+@page "/{*path:nonfile}"
+@attribute [AllowAnonymous]
+
+<PageTitle>页面不存在 · DataTrace</PageTitle>
+<NotFoundPanel />
+
+@code {
+    /// <summary>catch-all 路由参数；未声明会导致渲染期 InvalidOperationException。</summary>
+    [Parameter] public string? path { get; set; }
+}

@@ -7,25 +7,29 @@
 @implements IDisposable
 @inject IRuntimeStatusHub Status
 @inject IConfigRepository Config
+@inject CustomerBrandingStore Branding
 
 <PageHeader Title="实时看板">
     <ChildContent>
-        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_stations.Count 台设备</MudChip>
-        <MudTooltip Text="最近一次工站完成的时间。产线本就没料时变慢不算异常。">
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@CadenceColor">
-                最近节拍 @CadenceText
-            </MudChip>
-        </MudTooltip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_stations.Count 台工站</MudChip>
+        <LiveCadenceChip LastBeat="LastBeat" />
     </ChildContent>
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">
             PLC @_plcs.Count(p => p.Connected)/@_plcs.Count
             · 采集中 @_stations.Count(s => s.State == StationRuntimeState.Busy)
-            · @_now.ToString("HH:mm:ss")
+            · <LiveClock />
         </MudText>
     </Actions>
 </PageHeader>
 
+
+@if (_productionSimWarning)
+{
+    <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3" Variant="Variant.Outlined">
+        Production 环境下仍开启「启动后自动跑仿真」。客户现场请关闭；下次启动会强制写回 false。
+    </MudAlert>
+}
 @if (!_collectEnabled)
 {
     <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
@@ -43,10 +47,10 @@
 @if (_stations.Count == 0)
 {
     <MudPaper Class="pa-6">
-        <MudText Typo="Typo.h6" Class="mb-2">还没有可监控的设备</MudText>
+        <MudText Typo="Typo.h6" Class="mb-2">还没有可监控的工站</MudText>
         <MudText Typo="Typo.body2" Class="dt-muted mb-4">
             先到「PLC 连接」新增一台 PLC（也可先用内置模拟器），再到「工站配置」创建工站并配好触发地址、点位与曲线，
-            看板就会实时显示每台设备的节拍与最近一次判定。
+            看板就会实时显示每台工站的节拍与最近一次判定。
         </MudText>
         <MudStack Row="true" Spacing="2">
             <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" Href="/config/plc">
@@ -84,29 +88,25 @@ else
                     }
                     else
                     {
-                        <div class="dash-tags">
+                                                <div class="dash-tags">
                             @foreach (var tag in station.LastTags)
                             {
-                                @* 状态说明写成可见文字而不是 title：平板没有 hover，
-                                   而"这条到底为什么变红"正是操作工要看的那一句。 *@
+                                @* 卡片里只放短芯片「超限/预警」，完整说明放进 Tooltip，
+                                   避免长句把工站卡撑满；触屏长按也能看到 tooltip。 *@
                                 <div class="@TagClass(tag)">
-                                    <span>
-                                        @if (tag.OutOfLimit)
-                                        {
-                                            <MudIcon Icon="@Icons.Material.Filled.ErrorOutline" Size="Size.Small" Class="mr-1" />
-                                        }
-                                        else if (tag.Warning)
-                                        {
-                                            <MudIcon Icon="@Icons.Material.Filled.WarningAmber" Size="Size.Small" Class="mr-1" />
-                                        }
+                                    <span class="dash-tag-label">
                                         @tag.Name
                                         @if (tag.OutOfLimit)
                                         {
-                                            <span class="dt-tag-state dt-text-error">超出规格限，判废</span>
+                                            <MudTooltip Text="超出规格限，判废">
+                                                <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined" Class="ml-1">超限</MudChip>
+                                            </MudTooltip>
                                         }
                                         else if (tag.Warning)
                                         {
-                                            <span class="dt-tag-state dt-text-warning">落在预警带，尚未判废</span>
+                                            <MudTooltip Text="落在预警带，尚未判废">
+                                                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Class="ml-1">预警</MudChip>
+                                            </MudTooltip>
                                         }
                                     </span>
                                     <span class="dash-tag-value dt-flash" @key="@tag.Display">@tag.Display @tag.Unit</span>
@@ -116,9 +116,8 @@ else
                         @foreach (var curve in station.LastCurves)
                         {
                             <MudText Typo="Typo.caption" Class="dt-muted mt-3 mb-1">@curve.Name</MudText>
-                            <LineChart Series="SparkSeries(station, curve)" ViewWidth="240" Height="56"
-                                       ShowAxis="false" ShowLegend="false" ShowPoints="false" MaxPoints="80"
-                                       EmptyText="无曲线点" />
+                            <StationSparkChart CurveName="@curve.Name" Values="curve.Values"
+                                               IsNg="@(station.LastJudgement == Judgement.Ng)" />
                         }
                     }
 
@@ -137,8 +136,17 @@ else
     </MudGrid>
 }
 
-<MudText Typo="Typo.h6" Class="mt-5 mb-2">最近采集</MudText>
-<MudTable Items="_recent" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mt-5 mb-2 flex-wrap">
+    <MudText Typo="Typo.h6" Class="mb-0">最近采集</MudText>
+    <MudChip T="string" Size="Size.Small" Variant="Variant.Text">近 @_recentPreview.Count 条</MudChip>
+    <MudSpacer />
+    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary"
+               EndIcon="@Icons.Material.Filled.ChevronRight" Href="/query">更多 → 数据查询</MudButton>
+</MudStack>
+<MudTable Items="_recentPreview" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm"
+          FixedHeader="true" Height="360px">
+
     <HeaderContent>
         <MudTh Class="dt-nowrap">完成时间</MudTh>
         <MudTh>工站</MudTh>
@@ -161,8 +169,8 @@ else
         <MudTd DataLabel="流水号">@context.SerialNo</MudTd>
         <MudTd DataLabel="判定">
             <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
-                     Color="@(context.Judgement == Judgement.Ng ? Color.Error : Color.Success)">
-                @(context.Judgement == Judgement.Ng ? "NG" : "OK")
+                     Color="@(context.Judgement == Judgement.Ng ? Color.Error : context.Judgement == Judgement.Ok ? Color.Success : Color.Default)">
+                @DisplayLabels.JudgementText(context.Judgement)
             </MudChip>
             @if (!string.IsNullOrEmpty(context.Error))
             {
@@ -183,22 +191,29 @@ else
 </MudTable>
 
 @code {
+    private bool _productionSimWarning;
+
     private IReadOnlyList<PlcRuntimeStatus> _plcs = [];
     private IReadOnlyList<StationRuntimeStatus> _stations = [];
     private IReadOnlyList<CollectFeedItem> _recent = [];
-    private DateTime _now = DateTime.Now;
-    private Timer? _clock;
+    private IReadOnlyList<CollectFeedItem> _recentPreview = [];
     private bool _collectEnabled = true;
 
     protected override async Task OnInitializedAsync()
     {
+                try
+        {
+            var snap = await Config.GetSnapshotAsync();
+            _productionSimWarning = Branding.EnvironmentName.Equals("Production", StringComparison.OrdinalIgnoreCase)
+                && snap.Settings.SimulatorAutoRun;
+        }
+        catch
+        {
+            // best-effort
+        }
+
         Refresh();
         Status.Changed += OnChanged;
-        _clock = new Timer(_ => InvokeAsync(() =>
-        {
-            _now = DateTime.Now;
-            StateHasChanged();
-        }), null, 1000, 1000);
 
         try
         {
@@ -218,6 +233,8 @@ else
         _plcs = Status.Plcs;
         _stations = Status.Stations;
         _recent = Status.Recent;
+        // 看板只展示最近十余条，完整历史去「数据查询」，避免表格占满整屏。
+        _recentPreview = _recent.Take(12).ToList();
     }
 
     /// <summary>托盘码与流水号一起作 key：换工件时 Blazor 重建元素，CSS 闪动动画才会重放。</summary>
@@ -225,20 +242,6 @@ else
         => $"{station.LastPalletCode}|{station.LastSerialNo}";
 
     private DateTime? LastBeat => _stations.Select(s => s.LastCompleteTime).Max();
-
-    private string CadenceText => Relative(LastBeat);
-
-    /// <summary>节拍新鲜度：绿=30 秒内，黄=5 分钟内，其余灰。空闲待料不该报红。</summary>
-    private Color CadenceColor
-    {
-        get
-        {
-            if (LastBeat is not { } beat) return Color.Default;
-            var idle = _now - beat;
-            if (idle < TimeSpan.FromSeconds(30)) return Color.Success;
-            return idle < TimeSpan.FromMinutes(5) ? Color.Warning : Color.Default;
-        }
-    }
 
     private static string CardClass(StationRuntimeStatus station)
     {
@@ -271,32 +274,14 @@ else
         if (station.State == StationRuntimeState.Disabled) return "停用";
         if (station.LastJudgement == Judgement.Ng) return "NG";
         if (station.LastJudgement == Judgement.Ok) return "OK";
+        if (station.LastJudgement == Judgement.None) return "未判定";
         return "空闲";
     }
 
-    private static IReadOnlyList<LineSeries> SparkSeries(StationRuntimeStatus station, StationLiveCurve curve)
-    {
-        if (curve.Values.Length == 0)
-        {
-            return [];
-        }
-
-        return
-        [
-            new LineSeries
-            {
-                Name = curve.Name,
-                Values = curve.Values,
-                Color = station.LastJudgement == Judgement.Ng ? ChartColors.Alert : ChartColors.Primary
-            }
-        ];
-    }
-
-
-    private string Relative(DateTime? time)
+    private static string Relative(DateTime? time)
     {
         if (time is null) return "尚无节拍";
-        var span = _now - time.Value;
+        var span = DateTime.Now - time.Value;
         if (span.TotalSeconds < 5) return "刚刚";
         if (span.TotalSeconds < 60) return $"{(int)span.TotalSeconds} 秒前";
         if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes} 分前";
@@ -306,6 +291,5 @@ else
     public void Dispose()
     {
         Status.Changed -= OnChanged;
-        _clock?.Dispose();
     }
 }
