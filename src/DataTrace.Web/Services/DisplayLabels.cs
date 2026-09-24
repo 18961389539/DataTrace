@@ -60,6 +60,7 @@ public static class DisplayLabels
             "config/settings" => "系统设置",
             "users" => "用户",
             "logs" => "审计日志",
+            "not-found" => "页面不存在",
             _ => null
         };
     }
@@ -110,6 +111,23 @@ public static class DisplayLabels
         FloatWordOrder.CDAB => "CDAB 小端交换字",
         FloatWordOrder.DCBA => "DCBA 小端逆序",
         _ => order.ToString()
+    };
+
+
+    public static string JudgementText(Judgement judgement) => judgement switch
+    {
+        Judgement.Ok => "OK",
+        Judgement.Ng => "NG",
+        Judgement.None => "未判定",
+        _ => judgement.ToString()
+    };
+
+    public static string JudgementTextLong(Judgement judgement) => judgement switch
+    {
+        Judgement.Ok => "OK 合格",
+        Judgement.Ng => "NG 不合格",
+        Judgement.None => "未判定",
+        _ => judgement.ToString()
     };
 
     private static string NullOr(string? value) => string.IsNullOrWhiteSpace(value) ? "-" : value;

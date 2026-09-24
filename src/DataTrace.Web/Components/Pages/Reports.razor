@@ -49,7 +49,11 @@
     </form>
 </MudPaper>
 
-<MudGrid>
+<MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-3"
+         AlwaysShowScrollButtons="true" @bind-ActivePanelIndex="_reportTab">
+    <MudTabPanel Text="直通率">
+        <MudGrid>
+
     <MudItem xs="12" md="6">
         <MudPaper Class="pa-4 dt-fill">
             <MudText Typo="Typo.h6" Class="mb-2">直通率</MudText>
@@ -59,7 +63,8 @@
                     <MudTh Class="dt-num">总数</MudTh>
                     <MudTh Class="dt-num">OK</MudTh>
                     <MudTh Class="dt-num">NG</MudTh>
-                    <MudTh Class="dt-num">直通率</MudTh>
+                    <MudTh Class="dt-num">未判定</MudTh>
+<MudTh Class="dt-num">直通率</MudTh>
                 </HeaderContent>
                 <RowTemplate>
                     <MudTd DataLabel="日期">@context.Day.ToString("yyyy-MM-dd")</MudTd>
@@ -75,7 +80,8 @@
                             @context.Ng
                         }
                     </MudTd>
-                    <MudTd DataLabel="直通率" Class="dt-num">
+                                        <MudTd DataLabel="未判定" Class="dt-num">@context.None</MudTd>
+<MudTd DataLabel="直通率" Class="dt-num">
                         <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@YieldColor(context.FirstPassYield)">
                             @context.FirstPassYield.ToString("P1")
                         </MudChip>
@@ -98,7 +104,7 @@
         <MudPaper Class="pa-4 dt-fill">
             <MudText Typo="Typo.h6" Class="mb-2">不良 Top N</MudText>
             <IssueTopTable Items="_defects" Loading="_loading" Share="DefectShare"
-                           EmptyText="区间内没有不良记录，设备状态良好。" />
+                           EmptyText="区间内没有不良记录，工站状态良好。" />
         </MudPaper>
     </MudItem>
     <MudItem xs="12">
@@ -114,8 +120,10 @@
                            EmptyText="区间内没有任何点位进入预警带。若这里长期为空，也可能说明预警限还没配。" />
         </MudPaper>
     </MudItem>
-    <MudItem xs="12">
-        <MudPaper Class="pa-4">
+        </MudGrid>
+    </MudTabPanel>
+    <MudTabPanel Text="参数趋势">
+<MudPaper Class="pa-4">
             <MudStack Row="true" AlignItems="AlignItems.Center" Class="flex-wrap mb-2">
                 <MudText Typo="Typo.h6">参数趋势</MudText>
                 <MudSpacer />
@@ -150,18 +158,26 @@
                            ShowPoints="_trend.Count <= 120" />
             }
         </MudPaper>
-    </MudItem>
-    <MudItem xs="12">
-        <MudPaper Class="pa-4">
+    </MudTabPanel>
+    <MudTabPanel Text="过程能力">
+        @* 与「参数趋势」共用上方筛选里的工站，以及本页选中的点位（见趋势页签）。 *@
+<MudPaper Class="pa-4">
             <MudStack Row="true" AlignItems="AlignItems.Center" Class="flex-wrap mb-2">
                 <MudText Typo="Typo.h6">过程能力</MudText>
+                <MudSelect T="int" Value="_tagId" ValueChanged="OnTagChanged" Dense="true" Label="点位"
+                           Disabled="_loading" Style="min-width:220px" Class="ml-2">
+                    @foreach (var tag in _tags)
+                    {
+                        <MudSelectItem T="int" Value="@tag.Id">@tag.Code @tag.Name</MudSelectItem>
+                    }
+                </MudSelect>
                 @if (_spc is not null)
                 {
                     <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@VerdictColor(_spc.Verdict)">
                         @VerdictLabel(_spc.Verdict)
                     </MudChip>
                     <MudText Typo="Typo.caption" Class="dt-muted">
-                        @_spc.TagCode @_spc.TagName · 与上方「参数趋势」同一点位
+                        @_spc.TagCode @_spc.TagName · 与「参数趋势」页签同一点位
                     </MudText>
                 }
                 <MudSpacer />
@@ -170,7 +186,7 @@
 
             @if (_spc is null)
             {
-                <MudText Typo="Typo.body2" Class="dt-muted py-3">请先在上方「参数趋势」里选择一个数值点位。</MudText>
+                <MudText Typo="Typo.body2" Class="dt-muted py-3">请先在「参数趋势」页签选择一个数值点位，再回到这里查看过程能力。</MudText>
             }
             else
             {
@@ -328,11 +344,12 @@
                 }
             }
         </MudPaper>
-    </MudItem>
-</MudGrid>
+    </MudTabPanel>
+</MudTabs>
 
 @code {
     // 默认区间与「近 7 天」预设取齐（含今天共 7 天），否则进页面时没有一个预设是选中态。
+    private int _reportTab;
     private DateTime? _from = DateTime.Today.AddDays(-6);
     private DateTime? _to = DateTime.Today;
     private int? _stationId;
@@ -495,8 +512,8 @@
 
     private double AverageYield()
     {
-        var total = _fpy.Sum(x => x.Total);
-        return total == 0 ? 0 : (double)_fpy.Sum(x => x.Ok) / total;
+        var judged = _fpy.Sum(x => x.Ok + x.Ng);
+        return judged == 0 ? 0 : (double)_fpy.Sum(x => x.Ok) / judged;
     }
 
     private double DefectShare(int count)

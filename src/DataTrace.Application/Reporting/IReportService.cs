@@ -6,7 +6,17 @@ public sealed class DailyThroughput
     public int Total { get; init; }
     public int Ok { get; init; }
     public int Ng { get; init; }
-    public double FirstPassYield => Total == 0 ? 0 : (double)Ok / Total;
+    /// <summary>尚未产生 OK/NG 的记录数（Judgement.None）。</summary>
+    public int None { get; init; }
+    /// <summary>直通率 = OK / (OK+NG)，未判定不计入分母。</summary>
+    public double FirstPassYield
+    {
+        get
+        {
+            var judged = Ok + Ng;
+            return judged == 0 ? 0 : (double)Ok / judged;
+        }
+    }
 }
 
 /// <summary>不良 / 预警 Top N 的统计项。预警是黄区提示，不计入不良。</summary>

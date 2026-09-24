@@ -29,7 +29,8 @@ public sealed class ReportService : IReportService
                 Day = g.Key,
                 Total = g.Count(),
                 Ok = g.Count(x => x.Judgement == Judgement.Ok),
-                Ng = g.Count(x => x.Judgement == Judgement.Ng)
+                Ng = g.Count(x => x.Judgement == Judgement.Ng),
+                None = g.Count(x => x.Judgement == Judgement.None)
             })
             .ToList();
     }

@@ -41,6 +41,7 @@
                 <MudSelect T="Judgement?" @bind-Value="_judgement" Label="判定" Clearable="true">
                     <MudSelectItem T="Judgement?" Value="Judgement.Ok">OK（合格）</MudSelectItem>
                     <MudSelectItem T="Judgement?" Value="Judgement.Ng">NG（不合格）</MudSelectItem>
+                                    <MudSelectItem T="Judgement?" Value="Judgement.None">未判定</MudSelectItem>
                 </MudSelect>
             </MudItem>
         </MudGrid>
@@ -84,8 +85,8 @@
         <MudTd DataLabel="工站">@context.Record.StationCode</MudTd>
         <MudTd DataLabel="判定">
             <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
-                     Color="@(context.Record.Judgement == Judgement.Ng ? Color.Error : Color.Success)">
-                @(context.Record.Judgement == Judgement.Ng ? "NG" : "OK")
+                     Color="@(context.Record.Judgement == Judgement.Ng ? Color.Error : context.Record.Judgement == Judgement.Ok ? Color.Success : Color.Default)">
+                @DisplayLabels.JudgementText(context.Record.Judgement)
             </MudChip>
         </MudTd>
         <MudTd DataLabel="结果码">
@@ -437,7 +438,7 @@
                     item.Record.SerialNo ?? "",
                     item.Record.PalletCode ?? "",
                     item.Record.StationCode ?? "",
-                    item.Record.Judgement.ToString(),
+                    DisplayLabels.JudgementTextLong(item.Record.Judgement),
                     item.Record.ResultCode.ToString(),
                     ResultCodes.Describe(item.Record.ResultCode)
                 }));

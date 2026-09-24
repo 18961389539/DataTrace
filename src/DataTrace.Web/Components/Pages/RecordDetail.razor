@@ -10,42 +10,53 @@
 @inject IJSRuntime Js
 @inject NavigationManager Nav
 
-<MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Href="@BackUrl">返回查询</MudButton>
-
 @if (!_loaded)
 {
-    <MudSkeleton Class="mt-3" SkeletonType="SkeletonType.Rectangle" Height="180px" />
+    <PageHeader Title="记录明细">
+        <Actions>
+            <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Href="@BackUrl">返回查询</MudButton>
+        </Actions>
+    </PageHeader>
+    <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="180px" />
 }
 else if (_record is null)
 {
-    <MudAlert Severity="Severity.Warning" Class="mt-3">
+    <PageHeader Title="记录明细">
+        <Actions>
+            <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Href="@BackUrl">返回查询</MudButton>
+        </Actions>
+    </PageHeader>
+    <MudAlert Severity="Severity.Warning">
         记录不存在或已按保留策略清理（月库 @MonthKey，记录 @RecordId）。请返回查询页重新选择条件。
     </MudAlert>
 }
 else
 {
-    <MudPaper Class="pa-4 mt-2">
-        <MudStack Row="true" AlignItems="AlignItems.Center" Class="flex-wrap">
-            <MudText Typo="Typo.h5">@_record.StationCode</MudText>
+    <PageHeader Title="@_record.StationCode">
+        <ChildContent>
             <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
-                     Color="@(_record.Judgement == Judgement.Ng ? Color.Error : Color.Success)">
-                @(_record.Judgement == Judgement.Ng ? "NG 不合格" : "OK 合格")
+                     Color="@(_record.Judgement == Judgement.Ng ? Color.Error : _record.Judgement == Judgement.Ok ? Color.Success : Color.Default)">
+                @DisplayLabels.JudgementTextLong(_record.Judgement)
             </MudChip>
             @if (!string.IsNullOrWhiteSpace(_record.RecipeCode))
             {
-                // 限值随型号切换而变，判定依据必须能回溯。
+                @* 限值随型号切换而变，判定依据必须能回溯。 *@
                 <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">型号 @_record.RecipeCode</MudChip>
             }
-            <MudSpacer />
+        </ChildContent>
+        <Actions>
+            <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Href="@BackUrl">返回查询</MudButton>
             <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.History"
                        Href="@PalletHistoryUrl()">同托盘近 30 天</MudButton>
             <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="Export" Disabled="_exporting"
                        StartIcon="@(_exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)">
                 @(_exporting ? "导出中…" : "导出本记录")
             </MudButton>
-        </MudStack>
+        </Actions>
+    </PageHeader>
 
-        <MudGrid Class="mt-3">
+    <MudPaper Class="pa-4">
+        <MudGrid>
             <MudItem xs="12" sm="6" md="3">
                 <MudText Typo="Typo.caption" Class="dt-muted">托盘码</MudText>
                 <MudText Typo="Typo.subtitle1">@_record.PalletCode</MudText>
@@ -349,7 +360,7 @@ else
             new[]
             {
                 "记录信息", _record.SerialNo, _record.PalletCode, _record.StationCode,
-                _record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss"), _record.Judgement.ToString(),
+                _record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss"), DisplayLabels.JudgementTextLong(_record.Judgement),
                 ResultCodes.Describe(_record.ResultCode),
                 string.IsNullOrWhiteSpace(_record.RecipeCode) ? "(默认限值)" : _record.RecipeCode
             },
