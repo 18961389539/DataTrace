@@ -3,6 +3,7 @@
 @using DataTrace.Application.Backup
 @using DataTrace.Application.Configuration
 @using DataTrace.Application.Realtime
+@using DataTrace.Application.Reporting
 @using DataTrace.Domain.Constants
 @using DataTrace.Domain.Enums
 @implements IDisposable
@@ -12,6 +13,8 @@
 @inject IDatabaseBackupService BackupService
 @inject AuthenticationStateProvider AuthState
 @inject NavigationManager Nav
+@inject IReportService Reports
+@inject IJSRuntime Js
 
 <PageHeader Title="实时看板">
     <ChildContent>
@@ -32,9 +35,22 @@
                 @ActiveRecipeLabel
             </MudChip>
         }
+
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" aria-label="今日（Asia/Shanghai）采集件数">今日 @_shiftTotal</MudChip>
+        <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">OK @_shiftOk</MudChip>
+        <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined">NG @_shiftNg</MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">未判定 @_shiftNone</MudChip>
+        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined"
+                 aria-label="直通率 = OK/(OK+NG)，未判定不进分母">直通率 @_shiftYieldText</MudChip>
     </ChildContent>
     <Actions>
-        <MudText Typo="Typo.caption" Class="dt-muted">
+        <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="mr-2"
+                   StartIcon="@(_shopFloor ? Icons.Material.Filled.FullscreenExit : Icons.Material.Filled.Fullscreen)"
+                   OnClick="ToggleShopFloorAsync">
+            @(_shopFloor ? "退出大屏" : "大屏模式")
+        </MudButton>
+        <MudText Typo="Typo.caption" Class="@(_dataStale ? "dt-clock-stale" : "dt-muted")"
+                 aria-label="@(_dataStale ? "本地时钟不代表数据仍在更新" : null)">
             PLC @_plcs.Count(p => p.Connected)/@_plcs.Count
             · 采集中 @_stations.Count(s => s.State == StationRuntimeState.Busy)
             · <LiveClock />
@@ -42,6 +58,22 @@
     </Actions>
 </PageHeader>
 
+@if (_shopFloor)
+{
+    <div class="dt-shopfloor-exit">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                   StartIcon="@Icons.Material.Filled.FullscreenExit"
+                   OnClick="ToggleShopFloorAsync">退出大屏</MudButton>
+    </div>
+}
+
+
+@if (_dataStale)
+{
+    <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3" Variant="Variant.Filled">
+        连接中断或数据已停止更新，显示可能过期（采集心跳超过 @StaleSeconds 秒未刷新）。
+    </MudAlert>
+}
 
 @if (_backupStale && _isAdmin)
 {
@@ -98,7 +130,6 @@ else
                     <MudStack Row="true" AlignItems="AlignItems.Start">
                         <div>
                             <MudText Typo="Typo.subtitle1">@station.StationCode @station.StationName</MudText>
-                            <MudText Typo="Typo.caption" Class="dt-muted">@ActiveRecipeLabel</MudText>
                             <MudText Typo="Typo.caption" Class="dt-muted dt-flash" @key="@BeatKey(station)">
                                 @(string.IsNullOrWhiteSpace(station.LastPalletCode) ? "等待托盘" : station.LastPalletCode)
                                 · @(station.LastSerialNo ?? "-")
@@ -179,6 +210,7 @@ else
         <MudTh>工站</MudTh>
         <MudTh>托盘码</MudTh>
         <MudTh>流水号</MudTh>
+        <MudTh>型号</MudTh>
         <MudTh>判定</MudTh>
         <MudTh Class="dt-num">耗时</MudTh>
         <MudTh></MudTh>
@@ -194,6 +226,7 @@ else
         <MudTd DataLabel="工站">@context.StationCode</MudTd>
         <MudTd DataLabel="托盘码">@context.PalletCode</MudTd>
         <MudTd DataLabel="流水号">@context.SerialNo</MudTd>
+        <MudTd DataLabel="型号">@RecipeLabel(context.RecipeCode)</MudTd>
         <MudTd DataLabel="判定">
             <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
                      Color="@(context.Judgement == Judgement.Ng ? Color.Error : context.Judgement == Judgement.Ok ? Color.Success : Color.Default)">
@@ -218,10 +251,16 @@ else
 </MudTable>
 
 @code {
+    private const int StaleSeconds = 30;
+    private const int ShiftCacheSeconds = 15;
+    private const string ShopFloorKey = "dt-shopfloor";
+
     private bool _productionSimWarning;
     private bool _backupStale;
     private bool _isAdmin;
     private bool _canManageRecipes;
+    private bool _shopFloor;
+    private bool _dataStale;
 
     private IReadOnlyList<PlcRuntimeStatus> _plcs = [];
     private IReadOnlyList<StationRuntimeStatus> _stations = [];
@@ -229,27 +268,38 @@ else
     private IReadOnlyList<CollectFeedItem> _recentPreview = [];
     private bool _collectEnabled = true;
 
+    private int _shiftTotal;
+    private int _shiftOk;
+    private int _shiftNg;
+    private int _shiftNone;
+    private string _shiftYieldText = "—";
+    private DateTime _shiftFetchedUtc = DateTime.MinValue;
+    private bool _shiftBusy;
+    private int _configVersion = -1;
+    private Timer? _uiTimer;
+
     protected override async Task OnInitializedAsync()
     {
-                try
+        try
         {
             var snap = await Config.GetSnapshotAsync();
+            _configVersion = snap.Version;
+            _collectEnabled = snap.Settings.CollectEnabled;
             _productionSimWarning = Branding.EnvironmentName.Equals("Production", StringComparison.OrdinalIgnoreCase)
                 && snap.Settings.SimulatorAutoRun;
 
-        try
-        {
-            var auth = await AuthState.GetAuthenticationStateAsync();
-            _isAdmin = auth.User?.IsInRole("Administrator") == true;
-            _canManageRecipes = _isAdmin || auth.User?.IsInRole("Engineer") == true;
-            var bak = BackupService.GetStatus();
-            _backupStale = bak.IsStaleOrFailed(TimeSpan.FromHours(48));
-        }
-        catch
-        {
-            _backupStale = false;
-        }
-
+            try
+            {
+                var auth = await AuthState.GetAuthenticationStateAsync();
+                _isAdmin = auth.User?.IsInRole("Administrator") == true;
+                _canManageRecipes = _isAdmin || auth.User?.IsInRole("Engineer") == true;
+                var bak = BackupService.GetStatus();
+                _backupStale = bak.IsStaleOrFailed(TimeSpan.FromHours(48));
+            }
+            catch
+            {
+                _backupStale = false;
+            }
         }
         catch
         {
@@ -257,20 +307,144 @@ else
         }
 
         Refresh();
+        EvaluateStale();
         Status.Changed += OnChanged;
+        _uiTimer = new Timer(_ => _ = InvokeAsync(OnUiTickAsync), null, 1000, 1000);
+        await RefreshShiftAsync(force: true);
+    }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
         try
         {
-            // 采集开关被关掉时看板会静静停住，不写出来的话很容易被当成页面死掉或采集故障。
-            _collectEnabled = (await Config.GetSnapshotAsync()).Settings.CollectEnabled;
+            var on = await Js.InvokeAsync<bool>("dtShopFloor.get");
+            if (on != _shopFloor)
+            {
+                _shopFloor = on;
+                await Js.InvokeVoidAsync("dtShopFloor.set", _shopFloor);
+                StateHasChanged();
+            }
         }
         catch
         {
-            // 配置读不出来就不下结论：漏一条提示比给一条假提示好。
+            // JS 未就绪时保持默认
         }
     }
 
-    private void OnChanged() => InvokeAsync(() => { Refresh(); StateHasChanged(); });
+    private void OnChanged() => _ = InvokeAsync(async () =>
+    {
+        Refresh();
+        await RefreshConfigAlertsAsync();
+        await RefreshShiftAsync(force: false);
+        EvaluateStale();
+        StateHasChanged();
+    });
+
+    private async Task OnUiTickAsync()
+    {
+        EvaluateStale();
+        try
+        {
+            var ver = await Config.GetVersionAsync();
+            if (ver != _configVersion)
+            {
+                _configVersion = ver;
+                await RefreshConfigAlertsAsync();
+                await RefreshShiftAsync(force: true);
+            }
+            else if ((DateTime.UtcNow - _shiftFetchedUtc).TotalSeconds >= ShiftCacheSeconds)
+            {
+                await RefreshShiftAsync(force: false);
+            }
+        }
+        catch
+        {
+            // ignore tick errors
+        }
+
+        StateHasChanged();
+    }
+
+    private void EvaluateStale()
+    {
+        // 采集关闭时用专用告警，不叠「数据过期」。
+        if (!_collectEnabled)
+        {
+            _dataStale = false;
+            return;
+        }
+
+        var age = DateTime.UtcNow - Status.LastCollectorUtc;
+        _dataStale = age.TotalSeconds > StaleSeconds;
+    }
+
+    private async Task RefreshConfigAlertsAsync()
+    {
+        try
+        {
+            var snap = await Config.GetSnapshotAsync();
+            _configVersion = snap.Version;
+            _collectEnabled = snap.Settings.CollectEnabled;
+            _productionSimWarning = Branding.EnvironmentName.Equals("Production", StringComparison.OrdinalIgnoreCase)
+                && snap.Settings.SimulatorAutoRun;
+        }
+        catch
+        {
+            // 配置读不出来就不下结论
+        }
+    }
+
+    private async Task RefreshShiftAsync(bool force)
+    {
+        if (_shiftBusy) return;
+        if (!force && (DateTime.UtcNow - _shiftFetchedUtc).TotalSeconds < ShiftCacheSeconds) return;
+
+        _shiftBusy = true;
+        try
+        {
+            var day = ShanghaiToday();
+            var rows = await Reports.GetThroughputAsync(day, day.AddDays(1).AddTicks(-1), null);
+            var today = rows.FirstOrDefault(r => r.Day.Date == day) ?? rows.FirstOrDefault();
+            if (today is null)
+            {
+                _shiftTotal = _shiftOk = _shiftNg = _shiftNone = 0;
+                _shiftYieldText = "—";
+            }
+            else
+            {
+                _shiftTotal = today.Total;
+                _shiftOk = today.Ok;
+                _shiftNg = today.Ng;
+                _shiftNone = today.None;
+                _shiftYieldText = today.Ok + today.Ng == 0 ? "—" : today.FirstPassYield.ToString("P1");
+            }
+
+            _shiftFetchedUtc = DateTime.UtcNow;
+        }
+        catch
+        {
+            // 报表失败时保留上次数字
+        }
+        finally
+        {
+            _shiftBusy = false;
+        }
+    }
+
+    private static DateTime ShanghaiToday()
+    {
+        try
+        {
+            var id = OperatingSystem.IsWindows() ? "China Standard Time" : "Asia/Shanghai";
+            var tz = TimeZoneInfo.FindSystemTimeZoneById(id);
+            return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz).Date;
+        }
+        catch
+        {
+            return DateTime.Today;
+        }
+    }
 
     private void Refresh()
     {
@@ -332,7 +506,6 @@ else
         return time.Value.ToString("HH:mm:ss");
     }
 
-
     private bool CanManageRecipes => _canManageRecipes;
 
     private string ActiveRecipeLabel =>
@@ -340,10 +513,27 @@ else
             ? "未选择型号·按点位默认限值"
             : $"当前型号 {Status.ActiveRecipeCode}" + (string.IsNullOrEmpty(Status.ActiveRecipeName) ? "" : $"（{Status.ActiveRecipeName}）");
 
+    private static string RecipeLabel(string? code)
+        => string.IsNullOrEmpty(code) ? "未选型号" : code;
+
     private void GoRecipes() => Nav.NavigateTo("/config/recipes");
+
+    private async Task ToggleShopFloorAsync()
+    {
+        _shopFloor = !_shopFloor;
+        try
+        {
+            await Js.InvokeVoidAsync("dtShopFloor.set", _shopFloor);
+        }
+        catch
+        {
+            // 无 JS 时仍切换本地标记；CSS 依赖 body class，失败则仅按钮文案变化
+        }
+    }
 
     public void Dispose()
     {
         Status.Changed -= OnChanged;
+        _uiTimer?.Dispose();
     }
 }

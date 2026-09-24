@@ -826,3 +826,35 @@ button.dt-settings-nav-btn.active {
     border-radius: var(--dt-radius);
 }
 
+
+/* —— 实时看板：大屏 / 过期时钟 —— */
+body.dt-shopfloor .mud-drawer {
+    display: none !important;
+}
+body.dt-shopfloor .mud-main-content {
+    margin-left: 0 !important;
+    padding: 12px 16px 24px !important;
+}
+body.dt-shopfloor .mud-appbar .mud-button-root[href="/account/logout"],
+body.dt-shopfloor .dt-appbar-chip {
+    /* 保留身份与退出，避免大屏锁死 */
+}
+body.dt-shopfloor .dash-station {
+    font-size: 1.05rem;
+    padding: 18px !important;
+    min-height: 180px;
+}
+body.dt-shopfloor .mud-chip {
+    font-size: 0.95rem;
+}
+.dt-shopfloor-exit {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 2000;
+}
+.dt-clock-stale {
+    color: var(--mud-palette-error) !important;
+    text-decoration: line-through;
+    opacity: 0.85;
+}

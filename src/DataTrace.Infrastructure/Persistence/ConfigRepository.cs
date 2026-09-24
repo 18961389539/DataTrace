@@ -1,4 +1,5 @@
 using DataTrace.Application.Configuration;
+using DataTrace.Application.Realtime;
 using DataTrace.Application.Evaluation;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
@@ -11,11 +12,13 @@ public sealed class ConfigRepository : IConfigRepository
 {
     private readonly ConfigDbContext _db;
     private readonly ICurveBaselineCache _baselines;
+    private readonly IRuntimeStatusHub _status;
 
-    public ConfigRepository(ConfigDbContext db, ICurveBaselineCache baselines)
+    public ConfigRepository(ConfigDbContext db, ICurveBaselineCache baselines, IRuntimeStatusHub status)
     {
         _db = db;
         _baselines = baselines;
+        _status = status;
     }
 
     public Task<int> GetVersionAsync(CancellationToken cancellationToken = default)
@@ -429,6 +432,7 @@ public sealed class ConfigRepository : IConfigRepository
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
+        await PushActiveRecipeToHubAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -484,6 +488,7 @@ public sealed class ConfigRepository : IConfigRepository
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
+        await PushActiveRecipeToHubAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task SetActiveRecipeAsync(int? recipeId, CancellationToken cancellationToken = default)
@@ -514,6 +519,7 @@ public sealed class ConfigRepository : IConfigRepository
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         // 自增版本号 → 采集器下一次轮询就会拉到新快照、换用新限值。
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
+        await PushActiveRecipeToHubAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -608,6 +614,31 @@ public sealed class ConfigRepository : IConfigRepository
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
+        // 采集开关等运行态字段变更时立刻唤醒看板，不依赖采集器循环。
+        _status.NotifyChanged();
+        await PushActiveRecipeToHubAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+
+    /// <summary>
+    /// 把当前生效型号立刻推到运行时看板 hub，不依赖采集器队列重建。
+    /// 采集关闭或工站 Busy 时也能让 Dashboard 芯片即时刷新。
+    /// </summary>
+    private async Task PushActiveRecipeToHubAsync(CancellationToken cancellationToken)
+    {
+        var settings = await _db.SystemSettings.AsNoTracking()
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (settings?.ActiveRecipeId is not { } activeId)
+        {
+            _status.SetActiveRecipe(null, null);
+            return;
+        }
+
+        var recipe = await _db.Recipes.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == activeId && x.Enabled, cancellationToken)
+            .ConfigureAwait(false);
+        _status.SetActiveRecipe(recipe?.Code, recipe?.Name);
     }
 
     public async Task BumpVersionAsync(CancellationToken cancellationToken = default)

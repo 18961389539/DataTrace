@@ -49,6 +49,8 @@ public sealed class CollectFeedItem
     public required string StationCode { get; init; }
     public required string PalletCode { get; init; }
     public required string SerialNo { get; init; }
+    /// <summary>采集时生效的产品型号编码；空表示当时未选型号。</summary>
+    public string RecipeCode { get; init; } = "";
     public short ResultCode { get; init; }
     public Judgement Judgement { get; init; }
     public DateTime CompleteTime { get; init; }
@@ -85,6 +87,18 @@ public interface IRuntimeStatusHub
     /// 值变化时触发 <see cref="Changed"/>，供看板等页面热刷新。
     /// </summary>
     void SetActiveRecipe(string? code, string? name);
+
+    /// <summary>
+    /// 采集器主循环心跳时间（UTC）。看板据此判断数据是否停更；
+    /// 仅更新时间戳，不触发 <see cref="Changed"/>，避免每拍刷屏。
+    /// </summary>
+    DateTime LastCollectorUtc { get; }
+
+    /// <summary>采集器每次循环调用；不广播 Changed。</summary>
+    void NoteCollectorTick();
+
+    /// <summary>强制通知订阅方刷新（例如仅改了 CollectEnabled）。</summary>
+    void NotifyChanged();
 }
 
 public interface ICollectEventBus

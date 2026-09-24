@@ -17,6 +17,7 @@ public sealed class RuntimeStatusHub : IRuntimeStatusHub, ICollectEventBus
     private IReadOnlyList<CollectFeedItem> _recentSnapshot = [];
     private string? _activeRecipeCode;
     private string? _activeRecipeName;
+    private DateTime _lastCollectorUtc = DateTime.UtcNow;
 
     private readonly object _notifyGate = new();
     private bool _notifyPending;
@@ -108,6 +109,7 @@ public sealed class RuntimeStatusHub : IRuntimeStatusHub, ICollectEventBus
             StationCode = record.StationCode,
             PalletCode = record.PalletCode,
             SerialNo = record.SerialNo,
+            RecipeCode = record.RecipeCode ?? "",
             ResultCode = record.ResultCode,
             Judgement = record.Judgement,
             CompleteTime = record.CompleteTime == default ? record.TriggerTime : record.CompleteTime,
@@ -149,6 +151,22 @@ public sealed class RuntimeStatusHub : IRuntimeStatusHub, ICollectEventBus
 
         ScheduleChanged();
     }
+
+
+    public DateTime LastCollectorUtc
+    {
+        get { lock (_gate) { return _lastCollectorUtc; } }
+    }
+
+    public void NoteCollectorTick()
+    {
+        lock (_gate)
+        {
+            _lastCollectorUtc = DateTime.UtcNow;
+        }
+    }
+
+    public void NotifyChanged() => ScheduleChanged();
 
     private void ScheduleChanged()
     {

@@ -52,6 +52,7 @@ public sealed class CollectionHostedService : BackgroundService
         {
             try
             {
+                _status.NoteCollectorTick();
                 await using var scope = _scopeFactory.CreateAsyncScope();
                 var configRepo = scope.ServiceProvider.GetRequiredService<IConfigRepository>();
                 var version = await configRepo.GetVersionAsync(stoppingToken).ConfigureAwait(false);

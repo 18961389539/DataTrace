@@ -93,3 +93,23 @@ window.dtScrollIntoView = function (id) {
     el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     return true;
 };
+
+// 大屏/车间模式：给 body 挂 class，偏好写入 localStorage；退出按钮始终由页面提供。
+window.dtShopFloor = {
+    key: 'dt-shopfloor',
+    get: function () {
+        try { return localStorage.getItem(this.key) === '1'; } catch (e) { return false; }
+    },
+    set: function (on) {
+        try { localStorage.setItem(this.key, on ? '1' : '0'); } catch (e) { }
+        document.body.classList.toggle('dt-shopfloor', !!on);
+        return !!on;
+    }
+};
+(function () {
+    try {
+        if (window.dtShopFloor.get()) {
+            document.body.classList.add('dt-shopfloor');
+        }
+    } catch (e) { }
+})();
