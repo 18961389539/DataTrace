@@ -24,6 +24,7 @@ public sealed class SpcService : ISpcService
         int tagId,
         DateTime from,
         DateTime to,
+        string? recipeCode = null,
         CancellationToken cancellationToken = default)
     {
         var snapshot = await _config.GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
@@ -33,9 +34,9 @@ public sealed class SpcService : ISpcService
             return null;
         }
 
-        // 窄投影已按 TagId 在服务端过滤；但跨月拼接后必须重新按时间排序，
+        // 窄投影已按 TagId（与可选的型号）在服务端过滤；但跨月拼接后必须重新按时间排序，
         // 否则移动极差会算到"上个月最后一点与本月第一点"这种假相邻关系上。
-        var points = (await _store.QueryTagTrendAsync(from, to, tagId, cancellationToken).ConfigureAwait(false))
+        var points = (await _store.QueryTagTrendAsync(from, to, tagId, recipeCode, cancellationToken).ConfigureAwait(false))
             .OrderBy(p => p.Time)
             .ToList();
 

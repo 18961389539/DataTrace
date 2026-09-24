@@ -18,9 +18,9 @@ public sealed class ReportService : IReportService
         _store = store;
     }
 
-    public async Task<IReadOnlyList<DailyThroughput>> GetThroughputAsync(DateTime from, DateTime to, int? stationId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<DailyThroughput>> GetThroughputAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default)
     {
-        var points = await _store.QueryJudgementPointsAsync(from, to, stationId, cancellationToken).ConfigureAwait(false);
+        var points = await _store.QueryJudgementPointsAsync(from, to, stationId, recipeCode, cancellationToken).ConfigureAwait(false);
         return points
             .GroupBy(p => p.Time.Date)
             .OrderBy(g => g.Key)
@@ -35,21 +35,21 @@ public sealed class ReportService : IReportService
             .ToList();
     }
 
-    public async Task<IReadOnlyList<IssueTopItem>> GetDefectTopAsync(DateTime from, DateTime to, int take = 10, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<IssueTopItem>> GetDefectTopAsync(DateTime from, DateTime to, int take = 10, string? recipeCode = null, CancellationToken cancellationToken = default)
     {
-        var points = await _store.QueryOutOfLimitTagsAsync(from, to, cancellationToken).ConfigureAwait(false);
+        var points = await _store.QueryOutOfLimitTagsAsync(from, to, recipeCode, cancellationToken).ConfigureAwait(false);
         return Top(points, take);
     }
 
-    public async Task<IReadOnlyList<IssueTopItem>> GetWarningTopAsync(DateTime from, DateTime to, int take = 10, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<IssueTopItem>> GetWarningTopAsync(DateTime from, DateTime to, int take = 10, string? recipeCode = null, CancellationToken cancellationToken = default)
     {
-        var points = await _store.QueryWarningTagsAsync(from, to, cancellationToken).ConfigureAwait(false);
+        var points = await _store.QueryWarningTagsAsync(from, to, recipeCode, cancellationToken).ConfigureAwait(false);
         return Top(points, take);
     }
 
-    public async Task<IReadOnlyList<TrendPoint>> GetTrendAsync(DateTime from, DateTime to, int tagId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<TrendPoint>> GetTrendAsync(DateTime from, DateTime to, int tagId, string? recipeCode = null, CancellationToken cancellationToken = default)
     {
-        var points = await _store.QueryTagTrendAsync(from, to, tagId, cancellationToken).ConfigureAwait(false);
+        var points = await _store.QueryTagTrendAsync(from, to, tagId, recipeCode, cancellationToken).ConfigureAwait(false);
         return points
             .OrderBy(x => x.Time)
             .Select(x => new TrendPoint
@@ -64,16 +64,11 @@ public sealed class ReportService : IReportService
     /// <summary>按点位名称聚合计数，降序取前 N。名称缺失时回退到编码。</summary>
 
     public async Task<IReadOnlyList<RecipeThroughput>> GetThroughputByRecipeAsync(
-        DateTime from, DateTime to, int? stationId, string? recipeCode, CancellationToken cancellationToken = default)
+        DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default)
     {
-        var points = await _store.QueryJudgementPointsAsync(from, to, stationId, cancellationToken).ConfigureAwait(false);
-        IEnumerable<JudgementPoint> filtered = points;
-        if (recipeCode is not null)
-        {
-            filtered = points.Where(p => p.RecipeCode == recipeCode);
-        }
-
-        return filtered
+        // 型号过滤下推到 SQL：不再把全区间记录取回来再内存过滤。
+        var points = await _store.QueryJudgementPointsAsync(from, to, stationId, recipeCode, cancellationToken).ConfigureAwait(false);
+        return points
             .GroupBy(p => p.RecipeCode ?? "")
             .OrderBy(g => string.IsNullOrEmpty(g.Key) ? "~" : g.Key, StringComparer.OrdinalIgnoreCase)
             .Select(g => new RecipeThroughput

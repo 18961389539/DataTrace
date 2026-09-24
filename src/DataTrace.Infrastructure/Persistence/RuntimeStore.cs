@@ -247,6 +247,7 @@ public sealed class RuntimeStore : IRuntimeStore
         DateTime from,
         DateTime to,
         int? stationId,
+        string? recipeCode = null,
         CancellationToken cancellationToken = default)
     {
         var points = new List<JudgementPoint>();
@@ -259,6 +260,8 @@ public sealed class RuntimeStore : IRuntimeStore
             {
                 query = query.Where(x => x.StationId == sid);
             }
+
+            query = ApplyRecipeFilter(query, recipeCode);
 
             var part = await query
                 .Select(x => new JudgementPoint
@@ -305,19 +308,22 @@ public sealed class RuntimeStore : IRuntimeStore
     public Task<IReadOnlyList<TagIssuePoint>> QueryOutOfLimitTagsAsync(
         DateTime from,
         DateTime to,
+        string? recipeCode = null,
         CancellationToken cancellationToken = default)
-        => QueryTagIssuesAsync(from, to, warning: false, cancellationToken);
+        => QueryTagIssuesAsync(from, to, warning: false, recipeCode, cancellationToken);
 
     public Task<IReadOnlyList<TagIssuePoint>> QueryWarningTagsAsync(
         DateTime from,
         DateTime to,
+        string? recipeCode = null,
         CancellationToken cancellationToken = default)
-        => QueryTagIssuesAsync(from, to, warning: true, cancellationToken);
+        => QueryTagIssuesAsync(from, to, warning: true, recipeCode, cancellationToken);
 
     private async Task<IReadOnlyList<TagIssuePoint>> QueryTagIssuesAsync(
         DateTime from,
         DateTime to,
         bool warning,
+        string? recipeCode,
         CancellationToken cancellationToken)
     {
         var points = new List<TagIssuePoint>();
@@ -339,6 +345,11 @@ public sealed class RuntimeStore : IRuntimeStore
                 ? issues.Where(x => x.tag.IsWarning)
                 : issues.Where(x => x.tag.IsOutOfLimit);
 
+            if (recipeCode is not null)
+            {
+                issues = issues.Where(x => x.record.RecipeCode == recipeCode);
+            }
+
             var part = await issues
                 .Where(x => x.record.TriggerTime >= from && x.record.TriggerTime <= to)
                 .Select(x => new TagIssuePoint
@@ -358,13 +369,14 @@ public sealed class RuntimeStore : IRuntimeStore
         DateTime from,
         DateTime to,
         int tagId,
+        string? recipeCode = null,
         CancellationToken cancellationToken = default)
     {
         var points = new List<TagTrendPoint>();
         foreach (var month in RuntimeDbFactory.MonthsInRange(from, to).Where(_factory.Exists))
         {
             await using var db = _factory.Open(month);
-            var part = await db.TagValues
+            var query = db.TagValues
                 .AsNoTracking()
                 .Join(
                     db.CollectRecords.AsNoTracking(),
@@ -374,7 +386,14 @@ public sealed class RuntimeStore : IRuntimeStore
                 .Where(x => x.tag.TagId == tagId
                             && x.tag.NumericValue != null
                             && x.record.TriggerTime >= from
-                            && x.record.TriggerTime <= to)
+                            && x.record.TriggerTime <= to);
+
+            if (recipeCode is not null)
+            {
+                query = query.Where(x => x.record.RecipeCode == recipeCode);
+            }
+
+            var part = await query
                 .OrderBy(x => x.record.TriggerTime)
                 .Select(x => new TagTrendPoint
                 {
@@ -531,12 +550,13 @@ public sealed class RuntimeStore : IRuntimeStore
             query = query.Where(x => x.Judgement == judgement);
         }
 
-        // null = 不限；非 null（含空串）按精确匹配，空串表示「未选型号」记录。
-        if (request.RecipeCode is { } recipeCode)
-        {
-            query = query.Where(x => x.RecipeCode == recipeCode);
-        }
-
-        return query;
+        return ApplyRecipeFilter(query, request.RecipeCode);
     }
+
+    /// <summary>
+    /// 型号过滤的唯一实现，查询页与报表页共用同一套语义：
+    /// null = 不限；非 null（含空串）按精确匹配，空串表示「未选型号」记录。
+    /// </summary>
+    private static IQueryable<CollectRecord> ApplyRecipeFilter(IQueryable<CollectRecord> query, string? recipeCode)
+        => recipeCode is null ? query : query.Where(x => x.RecipeCode == recipeCode);
 }

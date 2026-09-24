@@ -244,4 +244,39 @@ public class ReportServiceTests
         // BuildStore 的数据都是超规格或正常值，没有人落在黄区。
         Assert.Empty(await service.GetWarningTopAsync(Day1, Day2.AddDays(1)));
     }
+
+    /// <summary>
+    /// 型号筛选作用于整份报表：直通率、不良、预警、趋势都要跟着收窄，
+    /// 否则会出现"选了 A100 却看到全部型号的不良"这种误判。
+    /// </summary>
+    [Fact]
+    public async Task Recipe_filter_narrows_every_report()
+    {
+        var store = new FakeRuntimeStore();
+        var a100 = Record(Day1, Judgement.Ng, 10, Tag(1, "压力", 25, true));
+        a100.RecipeCode = "A100";
+        var b200 = Record(Day1.AddHours(1), Judgement.Ok, 10, Tag(1, "压力", 12, false));
+        b200.RecipeCode = "B200";
+        store.Records.Add(("202609", a100));
+        store.Records.Add(("202609", b200));
+        var service = new ReportService(store);
+
+        // 不限：两条都算。
+        var all = Assert.Single(await service.GetThroughputAsync(Day1, Day2, stationId: null));
+        Assert.Equal(2, all.Total);
+
+        var onlyA = Assert.Single(await service.GetThroughputAsync(Day1, Day2, stationId: null, recipeCode: "A100"));
+        Assert.Equal(1, onlyA.Total);
+        Assert.Equal(1, onlyA.Ng);
+
+        // 按型号汇总：筛了型号就只剩那一行，不筛则两行。
+        Assert.Equal(2, (await service.GetThroughputByRecipeAsync(Day1, Day2, null)).Count);
+        Assert.Equal("A100", Assert.Single(await service.GetThroughputByRecipeAsync(Day1, Day2, null, "A100")).RecipeCode);
+
+        // 不良与趋势同样收窄；B200 那条没有超限点位，所以筛它就查不到不良。
+        Assert.Equal("压力", Assert.Single(await service.GetDefectTopAsync(Day1, Day2, recipeCode: "A100")).Name);
+        Assert.Empty(await service.GetDefectTopAsync(Day1, Day2, recipeCode: "B200"));
+        Assert.Single(await service.GetTrendAsync(Day1, Day2, tagId: 1, recipeCode: "A100"));
+        Assert.Equal(2, (await service.GetTrendAsync(Day1, Day2, tagId: 1)).Count);
+    }
 }

@@ -3,12 +3,16 @@
 @using System.Globalization
 @using DataTrace.Application.Configuration
 @using DataTrace.Application.Reporting
+@using DataTrace.Domain.Constants
 @using DataTrace.Domain.Evaluation
+@using Microsoft.AspNetCore.Components.Authorization
 @inject IReportService ReportService
 @inject ISpcService SpcService
 @inject IConfigRepository Config
 @inject IRuntimeStore Store
 @using DataTrace.Application.Runtime
+@inject IAuditLogger Audit
+@inject AuthenticationStateProvider Auth
 @inject DtToast Toast
 @inject IJSRuntime Js
 
@@ -39,13 +43,13 @@
             </MudItem>
 
                         <MudItem xs="12" sm="6" md="4" lg="3">
-                <MudSelect T="string" Value="_recipeFilter" ValueChanged="OnRecipeFilterChanged"
-                           Label="产品型号" Dense="true" Disabled="_loading">
+                <MudSelect T="string" Value="@ToOptionValue(_recipeFilter)" ValueChanged="OnRecipeFilterChanged"
+                           Label="产品型号" Dense="true" Disabled="_loading" HelperText="作用于整份报表">
                     <MudSelectItem T="string" Value="@AllRecipesValue">全部型号</MudSelectItem>
                     <MudSelectItem T="string" Value="@EmptyRecipeValue">未选型号</MudSelectItem>
                     @foreach (var opt in _recipeOptions)
                     {
-                        <MudSelectItem T="string" Value="@opt.Code">@opt.Label</MudSelectItem>
+                        <MudSelectItem T="string" Value="@ToOptionValue(opt.Code)">@opt.Label</MudSelectItem>
                     }
                 </MudSelect>
             </MudItem>
@@ -55,10 +59,13 @@
                        StartIcon="@Icons.Material.Filled.Refresh" Disabled="_loading">
                 @(_loading ? "统计中…" : "刷新报表")
             </MudButton>
-            <MudButton Variant="Variant.Outlined" OnClick="ExportTrend" Disabled="_exporting || _trend.Count == 0"
-                       StartIcon="@(_exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)">
-                @(_exporting ? "导出中…" : "导出趋势")
-            </MudButton>
+            @if (_canExport)
+            {
+                <MudButton Variant="Variant.Outlined" OnClick="ExportTrend" Disabled="_exporting || _trend.Count == 0"
+                           StartIcon="@(_exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)">
+                    @(_exporting ? "导出中…" : "导出趋势")
+                </MudButton>
+            }
         </MudStack>
     </form>
 </MudPaper>
@@ -399,7 +406,8 @@
     private List<TagDefinition> _tags = [];
     private IReadOnlyList<DailyThroughput> _fpy = [];
     private IReadOnlyList<RecipeThroughput> _byRecipe = [];
-    private string _recipeFilter = AllRecipesValue;
+    /// <summary>型号筛选：null/缺省=全部型号；<c>""</c>=未选型号；其它为精确匹配。作用于整份报表。</summary>
+    private string? _recipeFilter;
 private IReadOnlyList<IssueTopItem> _defects = [];
     private IReadOnlyList<IssueTopItem> _warnings = [];
     private ProcessCapabilityReport? _spc;
@@ -415,11 +423,15 @@ private IReadOnlyList<IssueTopItem> _defects = [];
     private string _trendFromText = "";
     private string _trendToText = "";
     private bool _loading;
+    private bool _loadPending;
+    private bool _canExport;
 
     protected override async Task OnInitializedAsync()
     {
+        var auth = await Auth.GetAuthenticationStateAsync();
+        _canExport = auth.User.IsInRole(AppRoles.Administrator) || auth.User.IsInRole(AppRoles.Engineer);
+
         _stations = await Config.GetStationsAsync();
-        await RefreshRecipeOptionsAsync();
         RefreshTags();
         await Load();
     }
@@ -453,34 +465,72 @@ private async Task OnStationChanged(int? stationId)
     }
 
 
+    /// <summary>下拉里"全部型号"的取值；真实编码一律带 <see cref="RecipeOptionPrefix"/> 前缀，不会与之撞名。</summary>
     private const string AllRecipesValue = "*";
-    /// <summary>内部哨兵：仅未选型号（空 RecipeCode）。从不作为下拉可见文案。</summary>
+
+    /// <summary>下拉里"未选型号"（空 RecipeCode）的取值。</summary>
     private const string EmptyRecipeValue = "__EMPTY__";
+
+    /// <summary>
+    /// 只有真实型号编码才带的前缀：哨兵值（全部 / 未选型号）不带，
+    /// 于是型号编码哪怕自己就叫 "*" 或 "__EMPTY__"，也不会被读成哨兵。
+    /// </summary>
+    private const string RecipeOptionPrefix = "c:";
 
     private sealed record RecipeFilterOption(string Code, string Label);
 
     private IReadOnlyList<RecipeFilterOption> _recipeOptions = [];
     private Dictionary<string, string> _recipeNames = new(StringComparer.Ordinal);
+    private DateTime? _recipeOptionsFrom;
+    private DateTime? _recipeOptionsTo;
 
+    /// <summary>
+    /// 筛选状态 → 下拉值：null=全部、""=未选型号、其它=编码。
+    /// 前缀一律照加、不做"已带前缀就跳过"的判断：编码自己叫 c:X 时那层前缀就不是它的，
+    /// 少加一层会让 c:X 在回读时被剥成 X。
+    /// </summary>
+    private static string ToOptionValue(string? recipe)
+        => recipe switch
+        {
+            null => AllRecipesValue,
+            "" => EmptyRecipeValue,
+            var code => RecipeOptionPrefix + code
+        };
+
+    /// <summary>下拉值 → 筛选状态；认不出的形状按编码处理，宁可不筛也不丢条件。</summary>
+    private static string? FromOptionValue(string? value)
+        => value switch
+        {
+            null or AllRecipesValue => null,
+            EmptyRecipeValue => "",
+            var code when code.StartsWith(RecipeOptionPrefix, StringComparison.Ordinal)
+                => code[RecipeOptionPrefix.Length..],
+            var code => code
+        };
+
+    /// <summary>发给统计服务的型号参数：null=不限、空串=未选型号、其它=精确匹配。</summary>
     private string? ToRecipeQueryArg()
-    {
-        if (_recipeFilter == EmptyRecipeValue)
-            return "";
-        if (string.IsNullOrWhiteSpace(_recipeFilter) || _recipeFilter == AllRecipesValue)
-            return null;
-        return _recipeFilter.Trim();
-    }
+        => _recipeFilter is { Length: > 0 } code ? code.Trim() : _recipeFilter;
 
-    private async Task OnRecipeFilterChanged(string value)
+    private async Task OnRecipeFilterChanged(string? value)
     {
-        _recipeFilter = value ?? AllRecipesValue;
+        _recipeFilter = FromOptionValue(value);
         await Load();
     }
 
+    /// <summary>
+    /// 选项只在时间区间变化时重建：刷新、切工站、换点位、改型号都复用它，
+    /// 否则每次刷新都要重扫一遍区间内的型号编码。
+    /// </summary>
     private async Task RefreshRecipeOptionsAsync()
     {
         var from = _from ?? DateTime.Today;
         var to = _to ?? DateTime.Today;
+        if (_recipeOptionsFrom == from && _recipeOptionsTo == to)
+        {
+            return;
+        }
+
         // 区间内出现过的编码（含空）+ 配置里已知型号，避免改码后旧码消失
         var fromRecords = await Store.ListRecipeCodesAsync(from, to);
         var known = await Config.GetRecipesAsync();
@@ -501,18 +551,17 @@ private async Task OnStationChanged(int? stationId)
         }
 
         // 当前筛选项若不在集合里也保留（例如刚改码后仍想看旧码）
-        if (!string.IsNullOrEmpty(_recipeFilter)
-            && _recipeFilter != EmptyRecipeValue
-            && _recipeFilter != AllRecipesValue
-            && !codes.Contains(_recipeFilter))
+        if (_recipeFilter is { Length: > 0 } current && !codes.Contains(current))
         {
-            codes.Add(_recipeFilter);
+            codes.Add(current);
         }
 
         _recipeOptions = codes
             .OrderBy(c => c, StringComparer.OrdinalIgnoreCase)
             .Select(c => new RecipeFilterOption(c, FormatRecipeOption(c)))
             .ToList();
+        _recipeOptionsFrom = from;
+        _recipeOptionsTo = to;
     }
 
     private string FormatRecipeOption(string code)
@@ -527,42 +576,51 @@ private async Task OnStationChanged(int? stationId)
 
     private async Task Load()
     {
-        if (_loading)
-        {
-            return;
-        }
-
         if (DateRangeFilter.IsReversed(_from, _to))
         {
             Toast.Add(DateRangeFilter.ReversedRangeMessage, Severity.Warning);
             return;
         }
 
+        // 加载中直接丢弃请求不行：日期控件在加载中没禁用，"先改开始日期、再改结束日期"
+        // 会丢掉后者，界面停在旧区间上却显示新日期。把请求记下来，本轮结束立刻按最新条件重跑。
+        if (_loading)
+        {
+            _loadPending = true;
+            return;
+        }
+
         _loading = true;
         try
         {
-            await RefreshRecipeOptionsAsync();
+            do
+            {
+                _loadPending = false;
+                await RefreshRecipeOptionsAsync();
 
-            var from = DateRangeFilter.StartOf(_from);
-            var to = DateRangeFilter.EndOfInclusive(_to);
-            _fpy = await ReportService.GetThroughputAsync(from, to, _stationId);
-            var recipeArg = ToRecipeQueryArg();
-            _byRecipe = await ReportService.GetThroughputByRecipeAsync(from, to, _stationId, recipeArg);
-            _defects = await ReportService.GetDefectTopAsync(from, to);
-            _warnings = await ReportService.GetWarningTopAsync(from, to);
-            _trend = _tagId != 0
-                ? await ReportService.GetTrendAsync(from, to, _tagId)
-                : [];
-            _trendSeries = BuildTrendSeries();
-            RefreshTrendStats();
+                var from = DateRangeFilter.StartOf(_from);
+                var to = DateRangeFilter.EndOfInclusive(_to);
+                // 型号筛选作用于整份报表：口径一致才不会"选了 A100 却看到全部型号的不良"。
+                var recipeArg = ToRecipeQueryArg();
+                _fpy = await ReportService.GetThroughputAsync(from, to, _stationId, recipeArg);
+                _byRecipe = await ReportService.GetThroughputByRecipeAsync(from, to, _stationId, recipeArg);
+                _defects = await ReportService.GetDefectTopAsync(from, to, recipeCode: recipeArg);
+                _warnings = await ReportService.GetWarningTopAsync(from, to, recipeCode: recipeArg);
+                _trend = _tagId != 0
+                    ? await ReportService.GetTrendAsync(from, to, _tagId, recipeArg)
+                    : [];
+                _trendSeries = BuildTrendSeries();
+                RefreshTrendStats();
 
-            // 过程能力与趋势用同一点位、同一区间：趋势看单点、能力看整段分布。
-            // 这里会各自查一次窄投影（同 TagId、同列集）。刻意保留两次调用：
-            // 统计服务不该成为取趋势的唯一入口，而两次窄投影的量级远小于原先的整图加载。
-            _spc = _tagId != 0
-                ? await SpcService.GetProcessCapabilityAsync(_tagId, from, to)
-                : null;
-            _spcCharts = _spc?.Segments.Select(BuildSpcSeries).ToList() ?? [];
+                // 过程能力与趋势用同一点位、同一区间：趋势看单点、能力看整段分布。
+                // 这里会各自查一次窄投影（同 TagId、同列集）。刻意保留两次调用：
+                // 统计服务不该成为取趋势的唯一入口，而两次窄投影的量级远小于原先的整图加载。
+                _spc = _tagId != 0
+                    ? await SpcService.GetProcessCapabilityAsync(_tagId, from, to, recipeArg)
+                    : null;
+                _spcCharts = _spc?.Segments.Select(BuildSpcSeries).ToList() ?? [];
+            }
+            while (_loadPending);
         }
         catch (Exception ex)
         {
@@ -580,6 +638,8 @@ private async Task OnStationChanged(int? stationId)
     private void ClearResults()
     {
         _fpy = [];
+        // 这张表也要清：它同样会"进度条一消失还留着旧数字"。
+        _byRecipe = [];
         _defects = [];
         _warnings = [];
         _spc = null;
@@ -664,6 +724,12 @@ private async Task OnStationChanged(int? stationId)
             return;
         }
 
+        if (!_canExport)
+        {
+            Toast.Add("当前角色无权导出报表数据（需要管理员或工程师）", Severity.Warning);
+            return;
+        }
+
         _exporting = true;
         try
         {
@@ -675,17 +741,49 @@ private async Task OnStationChanged(int? stationId)
             });
             var csv = CsvExporter.Build(["时间", "数值", "托盘码"], rows);
             await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName("datatrace_trend"), CsvExporter.ToBase64(csv));
-            Toast.Add($"已导出 {_trend.Count} 个趋势点", Severity.Success);
         }
         catch (Exception ex)
         {
             // JS 互操失败（连接断了、浏览器拦下下载）抛出去会断掉整条 circuit，页面直接卡死。
             Toast.Add($"导出失败：{ex.Message}", Severity.Error);
+            return;
         }
         finally
         {
             _exporting = false;
         }
+
+        var message = $"已导出 {_trend.Count} 个趋势点";
+
+        // 文件已经下载完了：审计写库失败不能报成"导出失败"，现场会以为没导出去而重导。
+        try
+        {
+            await WriteExportAuditAsync();
+            Toast.Add(message, Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"{message}，但审计记录写入失败：{ex.Message}", Severity.Warning);
+        }
+    }
+
+    private async Task WriteExportAuditAsync()
+    {
+        var auth = await Auth.GetAuthenticationStateAsync();
+        var user = auth.User.Identity?.Name ?? "";
+        var recipe = _recipeFilter switch
+        {
+            null => "全部",
+            "" => "未选型号",
+            var code => code.Trim()
+        };
+        var tag = _tags.FirstOrDefault(t => t.Id == _tagId);
+        // 键放"导的是哪个区间"，条件与条数放变更列：与查询页、明细页的写法一致。
+        var key = $"{DateRangeFilter.StartOf(_from):yyyy-MM-dd}~{DateRangeFilter.StartOf(_to):yyyy-MM-dd}";
+        var summary =
+            $"station={_stationId?.ToString() ?? "全部"};tag={tag?.Code ?? _tagId.ToString()};" +
+            $"recipe={recipe};points={_trend.Count}";
+        await Audit.WriteAsync(user, "Export", "Report", key, null, summary);
     }
 
     /// <summary>

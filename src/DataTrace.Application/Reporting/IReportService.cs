@@ -48,16 +48,20 @@ public sealed class RecipeThroughput
 
 public interface IReportService
 {
-    Task<IReadOnlyList<DailyThroughput>> GetThroughputAsync(DateTime from, DateTime to, int? stationId, CancellationToken cancellationToken = default);
+    /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
+    Task<IReadOnlyList<DailyThroughput>> GetThroughputAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default);
 
     /// <summary>按型号汇总产量/OK/NG/未判定/直通率；可选再按型号过滤（null=全部）。</summary>
-    Task<IReadOnlyList<RecipeThroughput>> GetThroughputByRecipeAsync(DateTime from, DateTime to, int? stationId, string? recipeCode, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<RecipeThroughput>> GetThroughputByRecipeAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default);
 
     /// <summary>超规格点位 Top N（真实不良）。</summary>
-    Task<IReadOnlyList<IssueTopItem>> GetDefectTopAsync(DateTime from, DateTime to, int take = 10, CancellationToken cancellationToken = default);
+    /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
+    Task<IReadOnlyList<IssueTopItem>> GetDefectTopAsync(DateTime from, DateTime to, int take = 10, string? recipeCode = null, CancellationToken cancellationToken = default);
 
     /// <summary>预警点位 Top N（落在黄区，尚未判废）。用于在出不良之前发现漂移。</summary>
-    Task<IReadOnlyList<IssueTopItem>> GetWarningTopAsync(DateTime from, DateTime to, int take = 10, CancellationToken cancellationToken = default);
+    /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
+    Task<IReadOnlyList<IssueTopItem>> GetWarningTopAsync(DateTime from, DateTime to, int take = 10, string? recipeCode = null, CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<TrendPoint>> GetTrendAsync(DateTime from, DateTime to, int tagId, CancellationToken cancellationToken = default);
+    /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
+    Task<IReadOnlyList<TrendPoint>> GetTrendAsync(DateTime from, DateTime to, int tagId, string? recipeCode = null, CancellationToken cancellationToken = default);
 }

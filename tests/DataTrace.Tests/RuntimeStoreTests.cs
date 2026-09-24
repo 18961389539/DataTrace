@@ -570,6 +570,48 @@ public class RuntimeStoreTests
         Assert.All(trend, p => Assert.Null(p.UpperLimit));
     }
 
+    /// <summary>
+    /// 报表页的型号筛选要下推到 SQL。三态语义必须与查询页一致：
+    /// null = 不限、"" = 仅「未选型号」、其它 = 精确匹配。
+    /// 这里用真 SQLite 跑，顺带保证这段 Where 能被 EF 翻译（翻译不了会在这里炸，而不是等上线）。
+    /// </summary>
+    [Fact]
+    public async Task Report_projections_filter_by_recipe_in_sql()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+
+        var a100 = FirstStation("202609", "P0001", "S1", Day1, Judgement.Ng);
+        a100.Record.RecipeCode = "A100";
+        var b200 = FirstStation("202609", "P0002", "S2", Day1.AddHours(1));
+        b200.Record.RecipeCode = "B200";
+        // 未选型号：RecipeCode 落库为空串。
+        var noRecipe = FirstStation("202609", "P0003", "S3", Day1.AddHours(2));
+        await env.Store.SaveAsync(a100);
+        await env.Store.SaveAsync(b200);
+        await env.Store.SaveAsync(noRecipe);
+
+        const int tagId = 10 * 10 + 1;
+
+        // null = 不限。
+        Assert.Equal(3, (await env.Store.QueryJudgementPointsAsync(Day1, Day1.AddDays(1), null)).Count);
+        // 精确匹配。
+        var onlyA = await env.Store.QueryJudgementPointsAsync(Day1, Day1.AddDays(1), null, "A100");
+        Assert.Equal("A100", Assert.Single(onlyA).RecipeCode);
+        // "" = 仅「未选型号」，不能顺带把别的型号也带出来。
+        Assert.Equal("", Assert.Single(await env.Store.QueryJudgementPointsAsync(Day1, Day1.AddDays(1), null, "")).RecipeCode);
+        // 不存在的编码回空，而不是回全部。
+        Assert.Empty(await env.Store.QueryJudgementPointsAsync(Day1, Day1.AddDays(1), null, "ZZZ"));
+
+        // 不良与预警：超限点在 A100 那条上。
+        Assert.Single(await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddDays(1), "A100"));
+        Assert.Empty(await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddDays(1), "B200"));
+        Assert.Empty(await env.Store.QueryWarningTagsAsync(Day1, Day1.AddDays(1), "A100"));
+
+        // 趋势：A100 一条采样、B200 一条，未选型号一条。
+        Assert.Single(await env.Store.QueryTagTrendAsync(Day1, Day1.AddDays(1), tagId, "A100"));
+        Assert.Equal(3, (await env.Store.QueryTagTrendAsync(Day1, Day1.AddDays(1), tagId)).Count);
+    }
+
     [Fact]
     public async Task Curve_features_round_trip_through_the_month_database()
     {

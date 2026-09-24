@@ -135,19 +135,23 @@ public interface IRuntimeStore
     Task<IReadOnlyList<CollectRecord>> QueryForReportAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default);
 
     /// <summary>吞吐量统计的窄投影查询（服务端过滤 + 只取三列）。</summary>
-    Task<IReadOnlyList<JudgementPoint>> QueryJudgementPointsAsync(DateTime from, DateTime to, int? stationId, CancellationToken cancellationToken = default);
+    /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
+    Task<IReadOnlyList<JudgementPoint>> QueryJudgementPointsAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default);
 
     /// <summary>日期范围内出现过的型号编码（含空串）；跨月库去重。</summary>
     Task<IReadOnlyList<string>> ListRecipeCodesAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default);
 
     /// <summary>不良点位的窄投影查询（服务端按 IsOutOfLimit 过滤）。</summary>
-    Task<IReadOnlyList<TagIssuePoint>> QueryOutOfLimitTagsAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default);
+    /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
+    Task<IReadOnlyList<TagIssuePoint>> QueryOutOfLimitTagsAsync(DateTime from, DateTime to, string? recipeCode = null, CancellationToken cancellationToken = default);
 
     /// <summary>预警点位的窄投影查询（服务端按 IsWarning 过滤）。</summary>
-    Task<IReadOnlyList<TagIssuePoint>> QueryWarningTagsAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default);
+    /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
+    Task<IReadOnlyList<TagIssuePoint>> QueryWarningTagsAsync(DateTime from, DateTime to, string? recipeCode = null, CancellationToken cancellationToken = default);
 
     /// <summary>单点位趋势的窄投影查询（服务端按 TagId 过滤）。</summary>
-    Task<IReadOnlyList<TagTrendPoint>> QueryTagTrendAsync(DateTime from, DateTime to, int tagId, CancellationToken cancellationToken = default);
+    /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
+    Task<IReadOnlyList<TagTrendPoint>> QueryTagTrendAsync(DateTime from, DateTime to, int tagId, string? recipeCode = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 波形特征的窄投影查询：取某条曲线某个序列在区间内<b>最新的 take 条</b>。

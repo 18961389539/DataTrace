@@ -99,9 +99,11 @@ public interface ISpcService
     /// 取某点位在区间内的采样值并完成过程能力分析。
     /// 点位不存在时返回 null（界面据此提示而不是显示一张空图）。
     /// </summary>
+    /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
     Task<ProcessCapabilityReport?> GetProcessCapabilityAsync(
         int tagId,
         DateTime from,
         DateTime to,
+        string? recipeCode = null,
         CancellationToken cancellationToken = default);
 }

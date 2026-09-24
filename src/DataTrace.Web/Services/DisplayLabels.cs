@@ -77,7 +77,7 @@ public static class DisplayLabels
     public static readonly string[] KnownEntityTypes =
     [
         "PlcConnection", "Station", "TagDefinition", "CurveDefinition", "CurveCriterion",
-        "Recipe", "RecipeLimit", "SystemSettings", "User", "Backup", "Query", "Record"
+        "Recipe", "RecipeLimit", "SystemSettings", "User", "Backup", "Query", "Record", "Report"
     ];
 
     public static string AuditAction(string? action) => action switch
@@ -116,6 +116,7 @@ public static class DisplayLabels
         "Backup" => "数据库备份",
         "Query" => "数据查询",
         "Record" => "采集记录",
+        "Report" => "报表",
         _ => NullOr(entityType)
     };
 
