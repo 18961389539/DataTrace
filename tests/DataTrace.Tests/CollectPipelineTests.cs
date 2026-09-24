@@ -53,7 +53,8 @@ public class CollectPipelineTests
         Assert.Equal("P0001", query.Items[0].Record.PalletCode);
         Assert.Equal(ResultCodes.Success, query.Items[0].Record.ResultCode);
         Assert.Equal(1, station.PositionCount);
-        Assert.Single(query.Items[0].Record.Products);
+        var detailed = await harness.RuntimeStore.GetRecordAsync(query.Items[0].MonthKey, query.Items[0].Record.Id);
+        Assert.Single(detailed!.Products);
     }
 
     [Fact]
@@ -185,8 +186,10 @@ public class CollectPipelineTests
 
         Assert.Equal(ResultCodes.Success, await harness.RunAsync(station));
 
-        var record = Assert.Single((await harness.QueryAsync("P0002")).Items).Record;
-        var product = Assert.Single(record.Products);
+        var item = Assert.Single((await harness.QueryAsync("P0002")).Items);
+        var record = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
+        Assert.NotNull(record);
+        var product = Assert.Single(record!.Products);
         Assert.Equal(1, product.PositionIndex);
         Assert.False(product.Occupied);
         Assert.Equal(Judgement.None, product.Judgement);
@@ -204,14 +207,15 @@ public class CollectPipelineTests
 
         Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(station));
 
-        var record = Assert.Single((await harness.QueryAsync("P0003")).Items).Record;
-        Assert.Equal(Judgement.Ng, record.Judgement);
-        var product = Assert.Single(record.Products);
+        var item = Assert.Single((await harness.QueryAsync("P0003")).Items);
+        Assert.Equal(Judgement.Ng, item.Record.Judgement);
+        var record = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
+        Assert.NotNull(record);
+        var product = Assert.Single(record!.Products);
         Assert.Equal(Judgement.Ng, product.Judgement);
         Assert.Contains("超限", product.NgReason);
 
-        var pressure = await harness.RuntimeStore.GetRecordAsync(
-            (await harness.QueryAsync("P0003")).Items[0].MonthKey, record.Id);
+        var pressure = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, record.Id);
         Assert.NotNull(pressure);
         var tag = Assert.Single(pressure!.TagValues.Where(t => t.TagCode == "ST010_P1"));
         Assert.True(tag.IsOutOfLimit);
@@ -228,7 +232,7 @@ public class CollectPipelineTests
         Assert.Equal(ResultCodes.Success, await harness.RunAsync(station));
 
         var item = Assert.Single((await harness.QueryAsync("P0004")).Items);
-        // 列表查询只带 Products，曲线引用需要按记录主键回查。
+        // 列表查询不带导航集合，曲线引用需要按记录主键回查。
         var record = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
         var curveRecord = Assert.Single(record!.Curves);
         Assert.Equal("ST010_PD", curveRecord.CurveCode);
@@ -459,9 +463,11 @@ public class CollectPipelineTests
 
         Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(station));
 
-        var record = Assert.Single((await harness.QueryAsync("P0021")).Items).Record;
-        Assert.Equal(Judgement.Ng, record.Judgement);
-        var product = Assert.Single(record.Products);
+        var item = Assert.Single((await harness.QueryAsync("P0021")).Items);
+        Assert.Equal(Judgement.Ng, item.Record.Judgement);
+        var record = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
+        Assert.NotNull(record);
+        var product = Assert.Single(record!.Products);
         Assert.Equal(Judgement.Ng, product.Judgement);
         Assert.Contains("波形异常", product.NgReason);
         Assert.Contains("峰值", product.NgReason);
@@ -513,8 +519,9 @@ public class CollectPipelineTests
 
         Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(station));
 
-        var record = Assert.Single((await harness.QueryAsync("P0024")).Items).Record;
-        Assert.Contains("波形异常", Assert.Single(record.Products).NgReason);
+        var item = Assert.Single((await harness.QueryAsync("P0024")).Items);
+        var record = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
+        Assert.Contains("波形异常", Assert.Single(record!.Products).NgReason);
     }
 
     [Fact]
@@ -540,7 +547,8 @@ public class CollectPipelineTests
 
         Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(station));
 
-        var product = Assert.Single(Assert.Single((await harness.QueryAsync("P0026")).Items).Record.Products);
+        var item = Assert.Single((await harness.QueryAsync("P0026")).Items);
+        var product = Assert.Single((await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id))!.Products);
         Assert.Contains("超限", product.NgReason);
         Assert.DoesNotContain("波形异常", product.NgReason);
     }
@@ -561,7 +569,8 @@ public class CollectPipelineTests
         Load(harness, refreshed, "P0030");
         Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(refreshed));
 
-        var product = Assert.Single(Assert.Single((await harness.QueryAsync("P0030")).Items).Record.Products);
+        var item = Assert.Single((await harness.QueryAsync("P0030")).Items);
+        var product = Assert.Single((await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id))!.Products);
         Assert.Contains("波形异常", product.NgReason);
 
         // 从界面清空判据后，判定应当退回到只看点位限值。
@@ -695,11 +704,12 @@ public class CollectPipelineTests
         harness.Simulator.SetFloat("D1100", 19f, harness.Plc.FloatWordOrder);
         Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(switched));
 
-        var ng = Assert.Single((await harness.QueryAsync("P0051")).Items).Record;
-        Assert.Equal(Judgement.Ng, ng.Judgement);
+        var ngItem = Assert.Single((await harness.QueryAsync("P0051")).Items);
+        Assert.Equal(Judgement.Ng, ngItem.Record.Judgement);
         // 判定依据必须能回溯：记录里要写清当时用的是哪个型号。
-        Assert.Equal("A100", ng.RecipeCode);
-        Assert.Contains("超限", Assert.Single(ng.Products).NgReason);
+        Assert.Equal("A100", ngItem.Record.RecipeCode);
+        var ng = await harness.RuntimeStore.GetRecordAsync(ngItem.MonthKey, ngItem.Record.Id);
+        Assert.Contains("超限", Assert.Single(ng!.Products).NgReason);
 
         // 取消选择后又回到默认限值。
         await harness.ConfigRepository.SetActiveRecipeAsync(null);

@@ -3,6 +3,8 @@ using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
 using DataTrace.Infrastructure.Persistence;
+using DataTrace.Infrastructure.Evaluation;
+using DataTrace.Infrastructure.Realtime;
 using Microsoft.EntityFrameworkCore;
 
 namespace DataTrace.Tests;
@@ -250,12 +252,14 @@ public class AuditLoggerTests
             await Task.Delay(10);
         }
 
-        var all = await logger.QueryAsync();
+        var (all, allTotal) = await logger.QueryAsync();
+        Assert.Equal(5, allTotal);
         Assert.Equal(5, all.Count);
         Assert.Equal("Action4", all[0].Action);
         Assert.Equal("Action0", all[^1].Action);
 
-        var limited = await logger.QueryAsync(2);
+        var (limited, limitedTotal) = await logger.QueryAsync(take: 2);
+        Assert.Equal(5, limitedTotal);
         Assert.Equal(2, limited.Count);
         Assert.Equal("Action4", limited[0].Action);
         Assert.Equal("Action3", limited[1].Action);
@@ -280,6 +284,9 @@ public class AuditLoggerTests
 /// <summary>配置仓库：快照装配、版本自增、点位于曲线的归一化约束。</summary>
 public class ConfigRepositoryTests
 {
+    private static ConfigRepository Repo(ConfigDbContext db)
+        => new(db, new CurveBaselineCache(), new RuntimeStatusHub());
+
     private static async Task<(TempWorkspace Workspace, ConfigDbContext Db, PlcConnection Plc)> SeedAsync()
     {
         var workspace = new TempWorkspace();
@@ -333,7 +340,7 @@ public class ConfigRepositoryTests
         var (workspace, db, plc) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
 
         var snapshot = await repo.GetSnapshotAsync();
 
@@ -359,7 +366,7 @@ public class ConfigRepositoryTests
     {
         using var workspace = new TempWorkspace();
         await using var db = await TestDatabase.CreateConfigAsync(workspace.Path("config.db"));
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
 
         var snapshot = await repo.GetSnapshotAsync();
 
@@ -377,7 +384,7 @@ public class ConfigRepositoryTests
         var (workspace, db, _) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
 
         await repo.BumpVersionAsync();
         await repo.BumpVersionAsync();
@@ -385,7 +392,7 @@ public class ConfigRepositoryTests
 
         using var emptyWorkspace = new TempWorkspace();
         await using var emptyDb = await TestDatabase.CreateConfigAsync(emptyWorkspace.Path("config.db"));
-        var emptyRepo = new ConfigRepository(emptyDb);
+        var emptyRepo = Repo(emptyDb);
         await emptyRepo.BumpVersionAsync();
         Assert.Equal(1, await emptyRepo.GetVersionAsync());
     }
@@ -396,7 +403,7 @@ public class ConfigRepositoryTests
         var (workspace, db, plc) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
 
         var station = new Station
         {
@@ -437,7 +444,7 @@ public class ConfigRepositoryTests
         var (workspace, db, plc) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
 
         await repo.SaveStationAsync(new Station { PlcConnectionId = plc.Id, Code = "ST005", Name = "前置工站", Sequence = 5, TriggerAddress = "D900", PalletCodeAddress = "D910" });
 
@@ -452,7 +459,7 @@ public class ConfigRepositoryTests
         var (workspace, db, plc) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
         var stationId = (await repo.GetStationsAsync()).First(s => s.Code == "ST010").Id;
 
         var high = new TagDefinition { StationId = stationId, Code = "T_HIGH", Name = "越界高位", Address = "D1800", DataType = PlcDataType.Float, PositionIndex = 5 };
@@ -474,7 +481,7 @@ public class ConfigRepositoryTests
         var (workspace, db, plc) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
         var stationId = (await repo.GetStationsAsync()).First(s => s.Code == "ST010").Id;
 
         var curve = new CurveDefinition
@@ -503,7 +510,7 @@ public class ConfigRepositoryTests
         var (workspace, db, plc) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
         var stationId = plc.Stations.First().Id;
         var curveId = (await repo.GetStationsAsync()).First(s => s.Id == stationId).Curves.First().Id;
 
@@ -557,7 +564,7 @@ public class ConfigRepositoryTests
         var (workspace, db, plc) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
         var stationId = plc.Stations.First().Id;
         var curveId = (await repo.GetStationsAsync()).First(s => s.Id == stationId).Curves.First().Id;
 
@@ -579,7 +586,7 @@ public class ConfigRepositoryTests
         var (workspace, db, plc) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
         var tagId = (await repo.GetStationsAsync()).First(s => s.Code == "ST010").Tags.First().Id;
 
         await repo.SaveRecipeAsync(new Recipe { Code = "B200", Name = "型号 B200" });
@@ -642,7 +649,7 @@ public class ConfigRepositoryTests
         var (workspace, db, plc) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
 
         var recipe = new Recipe { Code = "C300", Name = "型号 C300" };
         await repo.SaveRecipeAsync(recipe);
@@ -681,7 +688,7 @@ public class ConfigRepositoryTests
         var (workspace, db, plc) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
 
         var recipe = new Recipe { Code = "D400", Name = "型号 D400" };
         await repo.SaveRecipeAsync(recipe);
@@ -703,7 +710,7 @@ public class ConfigRepositoryTests
         var (workspace, db, plc) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
 
         var recipe = new Recipe { Code = "E500", Name = "型号 E500" };
         await repo.SaveRecipeAsync(recipe);
@@ -733,7 +740,7 @@ public class ConfigRepositoryTests
         var (workspace, db, plc) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
         var station = plc.Stations.First();
 
         var before = await repo.GetSnapshotAsync();
@@ -771,7 +778,7 @@ public class ConfigRepositoryTests
         var (workspace, db, plc) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
         var tag = plc.Stations.First().Tags.First();
         tag.LowerLimit = 5;
         tag.UpperLimit = 20;
@@ -812,7 +819,7 @@ public class ConfigRepositoryTests
         var (workspace, db, _) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
 
         // 点位已经不在配置库里（删点位留下的残留覆盖行）：不能因此把型号编辑器锁死，
         // 这种行没有可比对的默认值，跳过即可。
@@ -833,7 +840,7 @@ public class ConfigRepositoryTests
         var (workspace, db, _) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
 
         var settings = await db.SystemSettings.FirstAsync();
         settings.MesEnabled = true;
@@ -854,7 +861,7 @@ public class ConfigRepositoryTests
         var (workspace, db, plc) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
 
         var loaded = await repo.GetPlcConnectionAsync(plc.Id);
         Assert.NotNull(loaded);
@@ -880,7 +887,7 @@ public class ConfigRepositoryTests
         var (workspace, db, _) = await SeedAsync();
         using var ws = workspace;
         await using var dbScope = db;
-        var repo = new ConfigRepository(db);
+        var repo = Repo(db);
 
         await repo.DeleteStationAsync(9999);
         await repo.DeleteTagAsync(9999);

@@ -226,6 +226,14 @@ internal class FakeRuntimeStore : IRuntimeStore
                 })
                 .ToList());
 
+    public Task<IReadOnlyList<string>> ListRecipeCodesAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<string>>(
+            Records
+                .Where(x => x.Record.TriggerTime >= from && x.Record.TriggerTime <= to)
+                .Select(x => x.Record.RecipeCode)
+                .Distinct()
+                .ToList());
+
     public Task<IReadOnlyList<TagIssuePoint>> QueryOutOfLimitTagsAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default)
         => Task.FromResult<IReadOnlyList<TagIssuePoint>>(
             Records

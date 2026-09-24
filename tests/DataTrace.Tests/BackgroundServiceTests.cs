@@ -415,6 +415,21 @@ public class CurveBaselineRefresherTests
             ReplaceCount++;
             Current = snapshot;
         }
+
+        public void RetagRecipeCode(string oldCode, string newCode)
+        {
+            if (Current is null || Current.RecipeCode != oldCode)
+            {
+                return;
+            }
+
+            Current = new CurveBaselineSnapshot
+            {
+                RecipeCode = newCode,
+                RefreshedAt = Current.RefreshedAt,
+                Templates = Current.Templates
+            };
+        }
     }
 
     [Fact]

@@ -2,8 +2,12 @@
 @attribute [Authorize]
 @using DataTrace.Application.Configuration
 @using DataTrace.Application.Runtime
+@using DataTrace.Domain.Constants
+@using Microsoft.AspNetCore.Components.Authorization
 @inject IRuntimeStore Store
 @inject IConfigRepository Config
+@inject IAuditLogger Audit
+@inject AuthenticationStateProvider Auth
 @inject DtToast Toast
 @inject IJSRuntime Js
 @inject NavigationManager Nav
@@ -66,10 +70,13 @@
             <MudButton Variant="Variant.Outlined" OnClick="Reset" StartIcon="@Icons.Material.Filled.RestartAlt">
                 重置
             </MudButton>
-            <MudButton Variant="Variant.Outlined" OnClick="ExportCsv" Disabled="_exporting || _total == 0"
-                       StartIcon="@Icons.Material.Filled.FileDownload">
-                @(_exporting ? "导出中…" : $"导出 CSV（最多 {ExportLimit:N0} 条）")
-            </MudButton>
+            @if (_canExport)
+            {
+                <MudButton Variant="Variant.Outlined" OnClick="ExportCsv" Disabled="_exporting || _total == 0"
+                           StartIcon="@Icons.Material.Filled.FileDownload">
+                    @(_exporting ? "导出中…" : $"导出 CSV（最多 {ExportLimit:N0} 条）")
+                </MudButton>
+            }
             <MudText Typo="Typo.caption" Class="dt-muted align-self-center">在输入框内按回车即查询</MudText>
         </MudStack>
     </form>
@@ -162,6 +169,7 @@
     private int _pageSize = 20;
     private bool _loading;
     private bool _exporting;
+    private bool _canExport;
 
     /// <summary>支持 /query?pallet=XXX&days=30 直达，便于从明细页或工单跳转。</summary>
     [SupplyParameterFromQuery(Name = "pallet")]
@@ -191,8 +199,15 @@
     [SupplyParameterFromQuery(Name = "size")]
     public int? SizeQuery { get; set; }
 
+    /// <summary>型号筛选：缺省=全部；值为 <see cref="EmptyRecipeValue"/> 表示「未选型号」；其它为精确匹配。</summary>
+    [SupplyParameterFromQuery(Name = "recipe")]
+    public string? RecipeQuery { get; set; }
+
     protected override async Task OnInitializedAsync()
     {
+        var auth = await Auth.GetAuthenticationStateAsync();
+        _canExport = auth.User.IsInRole(AppRoles.Administrator) || auth.User.IsInRole(AppRoles.Engineer);
+
         if (!string.IsNullOrWhiteSpace(PalletQuery))
         {
             _pallet = PalletQuery.Trim();
@@ -238,6 +253,12 @@
         if (PageQuery is { } page && page > 0)
         {
             _page = page;
+        }
+
+        if (!string.IsNullOrWhiteSpace(RecipeQuery))
+        {
+            var recipe = RecipeQuery.Trim();
+            _recipeFilter = recipe == EmptyRecipeValue ? EmptyRecipeValue : recipe;
         }
 
         _stations = await Config.GetStationsAsync();
@@ -371,6 +392,15 @@
         if (_judgement is { } judgement)
         {
             parts.Add($"judge={judgement}");
+        }
+
+        if (_recipeFilter == EmptyRecipeValue)
+        {
+            parts.Add($"recipe={Uri.EscapeDataString(EmptyRecipeValue)}");
+        }
+        else if (!string.IsNullOrWhiteSpace(_recipeFilter) && _recipeFilter != AllRecipesValue)
+        {
+            parts.Add($"recipe={Uri.EscapeDataString(_recipeFilter.Trim())}");
         }
 
         if (_pageSize != 20)
@@ -514,6 +544,12 @@
             return;
         }
 
+        if (!_canExport)
+        {
+            Toast.Add("当前角色无权导出查询结果（需要管理员或工程师）", Severity.Warning);
+            return;
+        }
+
         _exporting = true;
         try
         {
@@ -540,6 +576,7 @@
             );
 
             await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName("datatrace_query"), CsvExporter.ToBase64(csv));
+            await WriteExportAuditAsync(result.Items.Count, result.Total);
             if (result.Total > result.Items.Count)
             {
                 Toast.Add($"共命中 {result.Total} 条，已导出前 {result.Items.Count} 条", Severity.Warning);
@@ -557,5 +594,22 @@
         {
             _exporting = false;
         }
+    }
+
+    private async Task WriteExportAuditAsync(int exported, int total)
+    {
+        var auth = await Auth.GetAuthenticationStateAsync();
+        var user = auth.User.Identity?.Name ?? "";
+        var recipe = _recipeFilter == EmptyRecipeValue
+            ? "未选型号"
+            : string.IsNullOrWhiteSpace(_recipeFilter) || _recipeFilter == AllRecipesValue
+                ? "全部"
+                : _recipeFilter.Trim();
+        var summary =
+            $"from={(_from ?? DateTime.Today):yyyy-MM-dd};to={(_to ?? DateTime.Today):yyyy-MM-dd};" +
+            $"pallet={_pallet?.Trim() ?? ""};serial={_serialNo?.Trim() ?? ""};" +
+            $"station={_stationId?.ToString() ?? ""};judge={_judgement?.ToString() ?? ""};" +
+            $"recipe={recipe};exported={exported};total={total}";
+        await Audit.WriteAsync(user, "Export", "Query", summary, null, null);
     }
 }

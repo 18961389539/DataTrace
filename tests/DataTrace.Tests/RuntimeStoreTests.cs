@@ -257,7 +257,7 @@ public class RuntimeStoreTests
     }
 
     [Fact]
-    public async Task Query_returns_record_with_products_attached()
+    public async Task Query_returns_record_header_without_products()
     {
         await using var env = await RuntimeEnv.CreateAsync();
         await env.Store.SaveAsync(FirstStation("202609", "P0001", "S1", Day1));
@@ -270,7 +270,8 @@ public class RuntimeStoreTests
         Assert.Equal("P0001", item.Record.PalletCode);
         Assert.Equal(ResultCodes.Success, item.Record.ResultCode);
         Assert.Equal(Judgement.Ok, item.Record.Judgement);
-        Assert.Single(item.Record.Products);
+        // 列表查询刻意不 Include Products，避免导出万行时拉齐整图。
+        Assert.Empty(item.Record.Products);
     }
 
     [Fact]

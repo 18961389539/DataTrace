@@ -157,11 +157,12 @@ public sealed class RuntimeStore : IRuntimeStore
             }
 
             await using var db = _factory.Open(month);
+            // 列表 / 导出不需要 Products 导航：界面只展示记录头字段，Include 会放大到万行级导出。
+            // 明细页走 GetRecordAsync，仍会 Include Products / TagValues / Curves。
             var page = await Filter(db.CollectRecords.AsNoTracking(), request)
                 .OrderByDescending(x => x.TriggerTime)
                 .Skip(skip)
                 .Take(take)
-                .Include(x => x.Products)
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
             skip = 0;

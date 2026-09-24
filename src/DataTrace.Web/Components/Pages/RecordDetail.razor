@@ -1,11 +1,16 @@
 @page "/query/{MonthKey}/{RecordId:long}"
 @attribute [Authorize]
 @using System.Globalization
+@using DataTrace.Application.Configuration
 @using DataTrace.Application.Runtime
+@using DataTrace.Domain.Constants
 @using DataTrace.Domain.Entities
 @using DataTrace.Domain.Evaluation
+@using Microsoft.AspNetCore.Components.Authorization
 @inject IRuntimeStore Store
 @inject ICurveFileStore Curves
+@inject IAuditLogger Audit
+@inject AuthenticationStateProvider Auth
 @inject DtToast Toast
 @inject IJSRuntime Js
 @inject NavigationManager Nav
@@ -48,10 +53,13 @@ else
             <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Href="@BackUrl">返回查询</MudButton>
             <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.History"
                        Href="@PalletHistoryUrl()">同托盘近 30 天</MudButton>
-            <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="Export" Disabled="_exporting"
-                       StartIcon="@(_exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)">
-                @(_exporting ? "导出中…" : "导出本记录")
-            </MudButton>
+            @if (_canExport)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="Export" Disabled="_exporting"
+                           StartIcon="@(_exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)">
+                    @(_exporting ? "导出中…" : "导出本记录")
+                </MudButton>
+            }
         </Actions>
     </PageHeader>
 
@@ -218,10 +226,17 @@ else
 
     private CollectRecord? _record;
     private bool _loaded;
+    private bool _canExport;
     private readonly Dictionary<long, CurvePayload> _curvePayloads = [];
     private List<TagValue> _tagRows = [];
     private int _outOfLimitCount;
     private int _warningCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await Auth.GetAuthenticationStateAsync();
+        _canExport = auth.User.IsInRole(AppRoles.Administrator) || auth.User.IsInRole(AppRoles.Engineer);
+    }
 
     protected override async Task OnParametersSetAsync()
     {
@@ -354,6 +369,12 @@ else
             return;
         }
 
+        if (!_canExport)
+        {
+            Toast.Add("当前角色无权导出记录（需要管理员或工程师）", Severity.Warning);
+            return;
+        }
+
         _exporting = true;
         var rows = new List<string[]>
         {
@@ -397,6 +418,13 @@ else
             var csv = CsvExporter.Build(new[] { "项目", "A", "B", "C", "D", "E", "F", "G" }, rows);
             await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName($"datatrace_{_record.SerialNo}"),
                 CsvExporter.ToBase64(csv));
+            var auth = await Auth.GetAuthenticationStateAsync();
+            var user = auth.User.Identity?.Name ?? "";
+            var key = $"{MonthKey}/{_record.Id}";
+            var summary =
+                $"serial={_record.SerialNo};pallet={_record.PalletCode};station={_record.StationCode};" +
+                $"recipe={_record.RecipeCode};tags={_tagRows.Count};curves={_record.Curves.Count}";
+            await Audit.WriteAsync(user, "Export", "Record", key, null, summary);
             Toast.Add("已导出本记录明细", Severity.Success);
         }
         catch (Exception ex)
