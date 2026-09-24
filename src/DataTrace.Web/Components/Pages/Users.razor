@@ -4,11 +4,13 @@
 @using Microsoft.AspNetCore.Identity
 @using DataTrace.Web.Services
 @using Microsoft.EntityFrameworkCore
+@using DataTrace.Application.Configuration
 @inject UserManager<ApplicationUser> UserManager
 @inject IDialogService DialogService
 @inject AuthenticationStateProvider Auth
 @inject DtToast Toast
 @inject PasswordPolicy Passwords
+@inject IAuditLogger Audit
 
 <PageHeader Title="用户">
     <Actions>
@@ -223,6 +225,7 @@
                 Toast.Add($"已创建 {userName}（{RoleText(_role)}）", Severity.Success);
             }
 
+            await AuditSafe("Create", userName, null, $"display={_display.Trim()}; role={_role}");
             ClearForm();
             await Reload();
         }
@@ -277,6 +280,11 @@
             Toast.Add(
                 reset.Succeeded ? $"已重置 {row.UserName} 的密码" : "重置失败：" + PasswordPolicy.FormatIdentityErrors(reset),
                 reset.Succeeded ? Severity.Success : Severity.Error);
+            if (reset.Succeeded)
+            {
+                // 只记“已重置密码”，绝不写入明文口令。
+                await AuditSafe("ResetPassword", row.UserName, null, "password reset");
+            }
         }
         catch (Exception ex)
         {
@@ -337,6 +345,7 @@
                 return;
             }
 
+            await AuditSafe("Delete", row.UserName, $"roles={string.Join(',', row.RoleList)}", null);
             Toast.Add($"已删除 {row.UserName}", Severity.Success);
             await Reload();
         }
@@ -347,6 +356,19 @@
         finally
         {
             _working = false;
+        }
+    }
+
+    private async Task AuditSafe(string action, string key, string? oldValue, string? newValue)
+    {
+        try
+        {
+            var actor = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            await Audit.WriteAsync(actor, action, "User", key, oldValue, newValue);
+        }
+        catch
+        {
+            // 审计失败不阻断用户管理主流程。
         }
     }
 

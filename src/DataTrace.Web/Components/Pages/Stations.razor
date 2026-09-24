@@ -5,6 +5,8 @@
 @using DataTrace.Plc.Codec
 @using DataTrace.Domain.Evaluation
 @inject IConfigRepository Config
+@inject IAuditLogger Audit
+@inject AuthenticationStateProvider Auth
 @inject DtToast Toast
 @inject IDialogService DialogService
 
@@ -601,6 +603,7 @@
             Enabled = true
         };
         await Config.SaveStationAsync(station);
+        await AuditAsync("Create", "Station", station.Code, null, $"{station.Name}; plc={station.PlcConnectionId}; seq={station.Sequence}");
         await ReloadList();
         await Select(station);
         _tab = 0;
@@ -622,6 +625,7 @@
         }
 
         await Config.DeleteStationAsync(station.Id);
+        await AuditAsync("Delete", "Station", station.Code, $"{station.Name}; tags={tags}; curves={curves}", null);
         if (_current?.Id == station.Id)
         {
             _current = null;
@@ -652,7 +656,12 @@
 
         _current.Code = _current.Code.Trim();
         _current.Name = _current.Name.Trim();
+        var before = _stations.FirstOrDefault(s => s.Id == _current.Id);
+        var oldSnap = before is null ? null
+            : $"{before.Name}; plc={before.PlcConnectionId}; trigger={before.TriggerAddress}; enabled={before.Enabled}";
         await Config.SaveStationAsync(_current);
+        await AuditAsync("Save", "Station", _current.Code, oldSnap,
+            $"{_current.Name}; plc={_current.PlcConnectionId}; trigger={_current.TriggerAddress}; enabled={_current.Enabled}");
         Toast.Add($"{_current.Code} 已保存并下发采集器", Severity.Success);
         var id = _current.Id;
         var tab = _tab;
@@ -729,7 +738,12 @@
         _tag.StationId = _current.Id;
         var editing = _tag.Id != 0;
         var code = _tag.Code;
+        var oldTag = editing ? _current.Tags.FirstOrDefault(t => t.Id == _tag.Id) : null;
+        var oldSnap = oldTag is null ? null
+            : $"{oldTag.Address}; {oldTag.DataType}; limits={DisplayLabels.LimitRange(oldTag.LowerLimit, oldTag.UpperLimit)}";
         await Config.SaveTagAsync(_tag);
+        await AuditAsync(editing ? "Save" : "Create", "TagDefinition", $"{_current.Code}/{code}", oldSnap,
+            $"{_tag.Address}; {_tag.DataType}; limits={DisplayLabels.LimitRange(_tag.LowerLimit, _tag.UpperLimit)}");
         _tag = NewTag();
         var tab = _tab;
         await Select(_current);
@@ -750,6 +764,7 @@
         }
 
         await Config.DeleteTagAsync(tag.Id);
+        await AuditAsync("Delete", "TagDefinition", $"{_current.Code}/{tag.Code}", tag.Address, null);
         var tab = _tab;
         await Select(_current);
         _tab = tab;
@@ -795,6 +810,8 @@
         ];
         await Config.SaveCurveAsync(_curve);
         var code = _curve.Code;
+        await AuditAsync("Create", "CurveDefinition", $"{_current.Code}/{code}", null,
+            $"points={_curve.PointCount}; y={_yAddress}; x={_xAddress}");
         _curve = NewCurve();
         var tab = _tab;
         await Select(_current);
@@ -827,7 +844,10 @@
         {
             // 不写 curve.Criteria：它是被跟踪实体的导航集合，替换它会和 EF 的导航修正
             // 互相打架（同一行会在集合里留下两份）。仓储按主键同步，随后重读即可。
+            var beforeCount = curve.Criteria?.Count ?? 0;
             await Config.SaveCurveCriteriaAsync(curve.Id, criteria);
+            await AuditAsync("Save", "CurveCriterion", $"{station.Code}/{curve.Code}",
+                $"count={beforeCount}", $"count={criteria.Count}");
             var tab = _tab;
             await Select(station);
             _tab = tab;
@@ -852,11 +872,25 @@
         }
 
         await Config.DeleteCurveAsync(curve.Id);
+        await AuditAsync("Delete", "CurveDefinition", $"{_current.Code}/{curve.Code}", curve.Name, null);
         var tab = _tab;
         await Select(_current);
         _tab = tab;
         Toast.Add($"曲线 {curve.Code} 已删除", Severity.Success);
     });
+
+    private async Task AuditAsync(string action, string entityType, string key, string? oldValue, string? newValue)
+    {
+        try
+        {
+            var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            await Audit.WriteAsync(user, action, entityType, key, oldValue, newValue);
+        }
+        catch
+        {
+            // 审计失败不阻断工站配置主流程。
+        }
+    }
 
     private static TagDefinition NewTag() => new()
     {

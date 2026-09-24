@@ -1,5 +1,5 @@
 @page "/logs"
-@attribute [Authorize]
+@attribute [Authorize(Roles = "Administrator,Engineer")]
 @using DataTrace.Application.Configuration
 @inject IAuditLogger Audit
 @inject IJSRuntime Js
@@ -8,17 +8,19 @@
 <PageHeader Title="审计日志">
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">
-            @if (_all.Count >= QueryLimit)
+            共命中 @_total 条（配置库 AuditLogs；每页 @PageSize 条）
+            @if (_total > ExportCap)
             {
-                <text>最近 @QueryLimit 条配置改动（已达读取上限，更早的改动请看 data/logs 日志文件）</text>
-            }
-            else
-            {
-                <text>最近 @_all.Count 条配置改动记录</text>
+                <text>；导出上限 @ExportCap 条</text>
             }
         </MudText>
     </Actions>
 </PageHeader>
+
+<MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+    审计日志保存在配置库（config.db / AuditLogs），与运行时月库相互独立。
+    「系统设置 → 保留年数」只清理过期的运行时月库与曲线文件，<b>不会</b>按年数清理本页审计记录。
+</MudAlert>
 
 <MudPaper Class="dt-filter-card mb-3">
     <MudGrid Class="dt-filters">
@@ -31,7 +33,7 @@
             <MudSelect T="string" @bind-Value="_action" @bind-Value:after="OnFilterChanged" Label="动作" Clearable="true">
                 @foreach (var action in _actions)
                 {
-                    <MudSelectItem T="string" Value="action">@DisplayLabels.AuditAction(action)</MudSelectItem>
+                    <MudSelectItem T="string" Value="@action">@DisplayLabels.AuditAction(action)</MudSelectItem>
                 }
             </MudSelect>
         </MudItem>
@@ -44,9 +46,9 @@
             </MudSelect>
         </MudItem>
         <MudItem xs="12" sm="6" md="2" Class="d-flex align-center gap-2">
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Reload"
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="@(() => Reload())"
                        StartIcon="@Icons.Material.Filled.Refresh" Disabled="_loading" Class="mt-1">刷新</MudButton>
-            <MudButton Variant="Variant.Outlined" OnClick="ExportCsv" Disabled="_exporting || _filtered.Count == 0"
+            <MudButton Variant="Variant.Outlined" OnClick="ExportCsv" Disabled="_exporting || _total == 0"
                        StartIcon="@(_exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)"
                        Class="mt-1">@(_exporting ? "导出中…" : "导出")</MudButton>
         </MudItem>
@@ -97,17 +99,18 @@
 <MudStack Row="true" AlignItems="AlignItems.Center" Class="mt-3" Spacing="3">
     <MudPagination Count="_pages" Selected="_page" SelectedChanged="OnPage" BoundaryCount="1" MiddleCount="3" />
     <MudText Typo="Typo.caption" Class="dt-muted">
-        第 @_page / @_pages 页，命中 @_filtered.Count 条
+        第 @_page / @_pages 页，命中 @_total 条
+        @if (_total > ExportCap)
+        {
+            <text>（导出最多 @ExportCap 条）</text>
+        }
     </MudText>
 </MudStack>
 
 @code {
     private const int PageSize = 50;
+    private const int ExportCap = 5000;
 
-    /// <summary>一次最多读多少条。页面上必须说清楚这是上限，否则用户以为看到的就是全量。</summary>
-    private const int QueryLimit = 500;
-    private List<AuditLog> _all = [];
-    private List<AuditLog> _filtered = [];
     private List<AuditLog> _pageItems = [];
     private List<string> _actions = [];
     private string? _keyword;
@@ -115,27 +118,98 @@
     private int _rangeDays;
     private int _page = 1;
     private int _pages = 1;
+    private int _total;
     private bool _loading;
+    private bool _exporting;
+    private CancellationTokenSource? _filterCts;
 
-    protected override async Task OnInitializedAsync() => await Reload();
-
-    /// <summary>筛选条件变化时立刻重算，不需要额外点按钮。</summary>
-    private void OnFilterChanged()
+    protected override async Task OnInitializedAsync()
     {
-        _page = 1;
-        Apply();
+        await LoadActionOptions();
+        await Reload();
     }
 
-    private async Task Reload()
+    private async Task LoadActionOptions()
+    {
+        try
+        {
+            var fromDb = await Audit.ListActionsAsync();
+            _actions = DisplayLabels.KnownAuditActions
+                .Concat(fromDb)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(a => DisplayLabels.AuditAction(a), StringComparer.CurrentCulture)
+                .ToList();
+        }
+        catch
+        {
+            _actions = DisplayLabels.KnownAuditActions.ToList();
+        }
+    }
+
+    private async Task OnFilterChanged()
+    {
+        _page = 1;
+        _filterCts?.Cancel();
+        _filterCts = new CancellationTokenSource();
+        var token = _filterCts.Token;
+        try
+        {
+            await Task.Delay(250, token);
+            await Reload(token);
+        }
+        catch (OperationCanceledException)
+        {
+            // 输入过程中被新一次筛选取消，正常。
+        }
+    }
+
+    private DateTime? RangeFloor() => _rangeDays switch
+    {
+        1 => DateTime.Now.AddDays(-1),
+        7 => DateTime.Now.AddDays(-7),
+        30 => DateTime.Now.AddDays(-30),
+        _ => null
+    };
+
+    private (string? Keyword, IReadOnlyList<string> Actions, IReadOnlyList<string> Entities) KeywordArgs()
+    {
+        var keyword = _keyword?.Trim();
+        if (string.IsNullOrEmpty(keyword))
+        {
+            return (null, [], []);
+        }
+
+        return (keyword,
+            DisplayLabels.ActionsMatchingKeyword(keyword),
+            DisplayLabels.EntityTypesMatchingKeyword(keyword));
+    }
+
+    private async Task Reload(CancellationToken cancellationToken = default)
     {
         _loading = true;
         try
         {
-            var items = await Audit.QueryAsync(QueryLimit);
-            _all = items.OrderByDescending(x => x.Time).ToList();
-            _actions = _all.Select(x => x.Action).Where(a => !string.IsNullOrWhiteSpace(a))
-                .Distinct().OrderBy(a => a).ToList();
-            Apply();
+            var (keyword, matchedActions, matchedEntities) = KeywordArgs();
+            var (items, total) = await Audit.QueryAsync(
+                keyword: keyword,
+                action: string.IsNullOrWhiteSpace(_action) ? null : _action,
+                fromInclusive: RangeFloor(),
+                skip: (_page - 1) * PageSize,
+                take: PageSize,
+                keywordMatchedActions: matchedActions,
+                keywordMatchedEntityTypes: matchedEntities,
+                cancellationToken: cancellationToken);
+            _pageItems = items.ToList();
+            _total = total;
+            _pages = Math.Max(1, (int)Math.Ceiling(_total / (double)PageSize));
+            if (_page > _pages)
+            {
+                _page = _pages;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -147,57 +221,26 @@
         }
     }
 
-    private void Apply()
-    {
-        var keyword = _keyword?.Trim();
-        var floor = _rangeDays switch
-        {
-            1 => DateTime.Now.AddDays(-1),
-            7 => DateTime.Now.AddDays(-7),
-            30 => DateTime.Now.AddDays(-30),
-            _ => DateTime.MinValue
-        };
-
-        _filtered = _all.Where(item =>
-                item.Time >= floor
-                && (string.IsNullOrEmpty(_action) || item.Action == _action)
-                && (string.IsNullOrEmpty(keyword) || Matches(item, keyword)))
-            .ToList();
-        _pages = Math.Max(1, (int)Math.Ceiling(_filtered.Count / (double)PageSize));
-        _page = Math.Min(_page, _pages);
-        _pageItems = _filtered.Skip((_page - 1) * PageSize).Take(PageSize).ToList();
-    }
-
-    /// <summary>界面显示的是中文，所以按中文搜也要能命中；原始码同样保留可搜。</summary>
-    private static bool Matches(AuditLog item, string keyword)
-        => Contains(item.UserName, keyword)
-           || Contains(item.EntityType, keyword)
-           || Contains(DisplayLabels.EntityType(item.EntityType), keyword)
-           || Contains(item.Action, keyword)
-           || Contains(DisplayLabels.AuditAction(item.Action), keyword)
-           || Contains(item.EntityKey, keyword)
-           || Contains(item.OldValue, keyword)
-           || Contains(item.NewValue, keyword);
-
-    private static bool Contains(string? source, string keyword)
-        => source is not null && source.Contains(keyword, StringComparison.OrdinalIgnoreCase);
-
     private static Color ActionColor(string action) => action switch
     {
         var a when a.StartsWith("Delete", StringComparison.OrdinalIgnoreCase) => Color.Error,
+        var a when a.StartsWith("Disable", StringComparison.OrdinalIgnoreCase) => Color.Warning,
+        var a when a.StartsWith("Deactivate", StringComparison.OrdinalIgnoreCase) => Color.Warning,
         var a when a.StartsWith("Save", StringComparison.OrdinalIgnoreCase) => Color.Success,
+        var a when a.StartsWith("Create", StringComparison.OrdinalIgnoreCase) => Color.Success,
+        var a when a.StartsWith("Enable", StringComparison.OrdinalIgnoreCase) => Color.Success,
+        var a when a.StartsWith("Activate", StringComparison.OrdinalIgnoreCase) => Color.Success,
         var a when a.StartsWith("Login", StringComparison.OrdinalIgnoreCase) => Color.Info,
+        var a when a.StartsWith("Logout", StringComparison.OrdinalIgnoreCase) => Color.Info,
+        var a when a.StartsWith("Backup", StringComparison.OrdinalIgnoreCase) => Color.Info,
         _ => Color.Default
     };
 
     private async Task OnPage(int page)
     {
         _page = page;
-        Apply();
-        await Task.CompletedTask;
+        await Reload();
     }
-
-    private bool _exporting;
 
     private async Task ExportCsv()
     {
@@ -209,9 +252,19 @@
         _exporting = true;
         try
         {
+            var (keyword, matchedActions, matchedEntities) = KeywordArgs();
+            var (items, total) = await Audit.QueryAsync(
+                keyword: keyword,
+                action: string.IsNullOrWhiteSpace(_action) ? null : _action,
+                fromInclusive: RangeFloor(),
+                skip: 0,
+                take: ExportCap,
+                keywordMatchedActions: matchedActions,
+                keywordMatchedEntityTypes: matchedEntities);
+
             var csv = CsvExporter.Build(
                 ["时间", "用户", "动作", "对象", "键", "变更前", "变更后"],
-                _filtered.Select(item => new[]
+                items.Select(item => new[]
                 {
                     item.Time.ToString("yyyy-MM-dd HH:mm:ss"),
                     item.UserName,
@@ -223,11 +276,17 @@
                 }));
 
             await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName("datatrace_audit"), CsvExporter.ToBase64(csv));
-            Toast.Add($"已导出 {_filtered.Count} 条日志", Severity.Success);
+            if (total > ExportCap)
+            {
+                Toast.Add($"已按当前筛选导出前 {items.Count} 条（共命中 {total}，上限 {ExportCap}）", Severity.Warning);
+            }
+            else
+            {
+                Toast.Add($"已导出 {items.Count} 条日志", Severity.Success);
+            }
         }
         catch (Exception ex)
         {
-            // JS 互操失败（连接断了、浏览器拦下下载）抛出去会断掉整条 circuit，页面直接卡死。
             Toast.Add($"导出失败：{ex.Message}", Severity.Error);
         }
         finally

@@ -65,6 +65,21 @@ public static class DisplayLabels
         };
     }
 
+    /// <summary>审计动作码全集：下拉与中文关键字扩展共用，避免漏映射。</summary>
+    public static readonly string[] KnownAuditActions =
+    [
+        "Create", "Save", "Delete", "Login", "Logout", "Toggle", "Switch", "Export",
+        "Activate", "Deactivate", "Enable", "Disable", "Copy", "Recode", "SaveLimits",
+        "ResetPassword", "Backup"
+    ];
+
+    /// <summary>审计对象类型码全集。</summary>
+    public static readonly string[] KnownEntityTypes =
+    [
+        "PlcConnection", "Station", "TagDefinition", "CurveDefinition", "CurveCriterion",
+        "Recipe", "RecipeLimit", "SystemSettings", "User", "Backup"
+    ];
+
     public static string AuditAction(string? action) => action switch
     {
         "Create" => "新增",
@@ -75,6 +90,15 @@ public static class DisplayLabels
         "Toggle" => "启停",
         "Switch" => "切换",
         "Export" => "导出",
+        "Activate" => "启用为当前",
+        "Deactivate" => "取消当前",
+        "Enable" => "启用",
+        "Disable" => "停用",
+        "Copy" => "复制",
+        "Recode" => "改编码",
+        "SaveLimits" => "保存限值",
+        "ResetPassword" => "重置密码",
+        "Backup" => "备份",
         _ => NullOr(action)
     };
 
@@ -89,8 +113,37 @@ public static class DisplayLabels
         "RecipeLimit" => "型号限值",
         "SystemSettings" => "系统设置",
         "User" => "用户",
+        "Backup" => "数据库备份",
         _ => NullOr(entityType)
     };
+
+    /// <summary>关键字若匹配某动作的中文标签，返回这些动作码，供服务端 OR 查询。</summary>
+    public static IReadOnlyList<string> ActionsMatchingKeyword(string? keyword)
+    {
+        if (string.IsNullOrWhiteSpace(keyword))
+        {
+            return [];
+        }
+
+        var k = keyword.Trim();
+        return KnownAuditActions
+            .Where(a => AuditAction(a).Contains(k, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+    }
+
+    /// <summary>关键字若匹配某对象类型的中文标签，返回这些类型码。</summary>
+    public static IReadOnlyList<string> EntityTypesMatchingKeyword(string? keyword)
+    {
+        if (string.IsNullOrWhiteSpace(keyword))
+        {
+            return [];
+        }
+
+        var k = keyword.Trim();
+        return KnownEntityTypes
+            .Where(t => EntityType(t).Contains(k, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+    }
 
     public static string DataType(PlcDataType dataType) => dataType switch
     {

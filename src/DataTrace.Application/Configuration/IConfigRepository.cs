@@ -71,5 +71,21 @@ public interface IConfigRepository
 public interface IAuditLogger
 {
     Task WriteAsync(string userName, string action, string entityType, string? entityKey, string? oldValue, string? newValue, CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<AuditLog>> QueryAsync(int take = 200, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 服务端筛选 + 分页。keyword 在用户/动作码/对象码/键/变更内容上做 Contains；
+    /// 中文标签匹配请由调用方把命中的动作码/对象码传入 keywordMatched*。
+    /// </summary>
+    Task<(IReadOnlyList<AuditLog> Items, int Total)> QueryAsync(
+        string? keyword = null,
+        string? action = null,
+        DateTime? fromInclusive = null,
+        int skip = 0,
+        int take = 50,
+        IReadOnlyList<string>? keywordMatchedActions = null,
+        IReadOnlyList<string>? keywordMatchedEntityTypes = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>库中已出现过的动作码（下拉用），按字母序。</summary>
+    Task<IReadOnlyList<string>> ListActionsAsync(CancellationToken cancellationToken = default);
 }

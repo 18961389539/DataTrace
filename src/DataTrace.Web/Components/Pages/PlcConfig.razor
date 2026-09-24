@@ -127,11 +127,16 @@
     }
 
     private async Task Edit(PlcConnection item)
-        => await ShowDialog(item, isNew: false,
+    {
+        // 对话框会改同一引用，必须在打开前拍非机密字段快照写入 oldValue。
+        var oldValue = SummarizePlc(item);
+        await ShowDialog(item, isNew: false,
             heartbeatAddress: item.Heartbeat?.Address ?? "",
-            heartbeatMs: item.Heartbeat?.IntervalMs ?? 1000);
+            heartbeatMs: item.Heartbeat?.IntervalMs ?? 1000,
+            oldValue: oldValue);
+    }
 
-    private async Task ShowDialog(PlcConnection model, bool isNew, string heartbeatAddress, int heartbeatMs)
+    private async Task ShowDialog(PlcConnection model, bool isNew, string heartbeatAddress, int heartbeatMs, string? oldValue = null)
     {
         var parameters = new DialogParameters
         {
@@ -152,11 +157,22 @@
         {
             await Config.SavePlcConnectionAsync(saved);
             var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
-            await Audit.WriteAsync(user, isNew ? "Create" : "Save", "PlcConnection", saved.Name, null,
-                $"{saved.Host}:{saved.Port} {saved.Brand}");
+            await Audit.WriteAsync(user, isNew ? "Create" : "Save", "PlcConnection", saved.Name,
+                isNew ? null : oldValue,
+                SummarizePlc(saved));
             await Reload();
             Toast.Add(isNew ? $"已新增 {saved.Name}" : $"已保存 {saved.Name}", Severity.Success);
         });
+    }
+
+    /// <summary>审计用摘要：不含密码/密钥/令牌（当前实体无这些字段，Extra 也可能含敏感配置故不写入）。</summary>
+    private static string SummarizePlc(PlcConnection c)
+    {
+        var hb = c.Heartbeat is { Enabled: true } && !string.IsNullOrWhiteSpace(c.Heartbeat.Address)
+            ? $"{c.Heartbeat.Address}/{c.Heartbeat.IntervalMs}ms"
+            : "off";
+        return $"{c.Name}; {c.Host}:{c.Port}; {c.Brand}; timeout={c.TimeoutMs}; order={c.FloatWordOrder}; " +
+               $"strHiFirst={c.StringHighByteFirst}; mergeGap={c.MergeGapWords}; enabled={c.Enabled}; hb={hb}";
     }
 
     private async Task Delete(PlcConnection item)

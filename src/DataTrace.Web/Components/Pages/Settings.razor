@@ -12,6 +12,7 @@
 @inject IDialogService DialogService
 @inject CustomerBrandingStore Branding
 @inject IDatabaseBackupService BackupService
+@inject IAuditLogger Audit
 @inject IJSRuntime JS
 @inject AuthenticationStateProvider AuthState
 
@@ -251,7 +252,7 @@ else
                     <div class="dt-settings-row">
                         <div>
                             <div class="dt-settings-row-name">保留年数</div>
-                            <div class="dt-settings-row-hint">超过年限的整月记录库和曲线文件会被删除（RetentionHostedService，约每 6 小时检查一次）</div>
+                            <div class="dt-settings-row-hint">仅清理超过年限的运行时整月记录库和曲线文件（RetentionHostedService，约每 6 小时检查一次）。配置库中的审计日志（AuditLogs）不受此项影响，不会被按年数自动清除。</div>
                         </div>
                         <MudNumericField @bind-Value="_settings.RetentionYears" Min="1" Max="30"
                                          Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true" />
@@ -530,7 +531,24 @@ else
         }
     }
 
-    private static string Key(SystemSettings s) => string.Join('|',
+        private static string SummarizeSettings(SystemSettings s)
+        => $"scan={s.ScanIntervalMs}ms; retry={s.WriteRetryCount}; retentionYears={s.RetentionYears}; " +
+           $"collect={s.CollectEnabled}; mes={s.MesEnabled}; mesTimeout={s.MesTimeoutSeconds}s; endpoint={s.MesEndpoint}";
+
+    private async Task AuditSafe(string action, string entityType, string key, string? oldValue, string? newValue)
+    {
+        try
+        {
+            var user = (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            await Audit.WriteAsync(user, action, entityType, key, oldValue, newValue);
+        }
+        catch
+        {
+            // 审计失败不阻断设置保存 / 备份。
+        }
+    }
+
+private static string Key(SystemSettings s) => string.Join('|',
         s.ScanIntervalMs, s.WriteRetryCount, s.RetentionYears, s.CollectEnabled,
         s.MesEnabled, s.MesEndpoint, s.MesTimeoutSeconds);
 
@@ -676,6 +694,7 @@ else
                 try
                 {
                     var target = (await Config.GetSnapshotAsync()).Settings;
+                    var oldSnap = SummarizeSettings(target);
                     target.ScanIntervalMs = _settings.ScanIntervalMs;
                     target.WriteRetryCount = _settings.WriteRetryCount;
                     target.RetentionYears = _settings.RetentionYears;
@@ -685,6 +704,7 @@ else
                     target.MesTimeoutSeconds = _settings.MesTimeoutSeconds;
 
                     await Config.SaveSettingsAsync(target);
+                    await AuditSafe("Save", "SystemSettings", "settings", oldSnap, SummarizeSettings(target));
                     _settings = target;
                     _savedKey = Key(target);
                     Simulator.SetRunning(target.SimulatorAutoRun);
@@ -764,15 +784,24 @@ else
         _backingUp = true;
         try
         {
+            await AuditSafe("Backup", "Backup", "manual", null, "start");
             var result = await BackupService.RunBackupAsync();
             RefreshBackupStatus();
             if (result.Success)
+            {
+                await AuditSafe("Backup", "Backup", "manual", "start",
+                    $"success; path={result.BackupPath}; bytes={result.TotalBytes}");
                 Toast.Add($"备份完成：{result.BackupPath}", Severity.Success);
+            }
             else
+            {
+                await AuditSafe("Backup", "Backup", "manual", "start", $"fail; {result.Error}");
                 Toast.Add($"备份失败：{result.Error}", Severity.Error);
+            }
         }
         catch (Exception ex)
         {
+            await AuditSafe("Backup", "Backup", "manual", "start", $"fail; {ex.Message}");
             Toast.Add($"备份异常：{ex.Message}", Severity.Error);
             RefreshBackupStatus();
         }

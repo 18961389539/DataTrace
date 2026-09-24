@@ -183,20 +183,45 @@ app.Use(async (context, next) =>
 });
 app.UseAuthorization();
 app.UseAntiforgery();
-app.MapPost("/account/login", async (HttpContext http, SignInManager<ApplicationUser> signIn) =>
+app.MapPost("/account/login", async (HttpContext http, SignInManager<ApplicationUser> signIn, IAuditLogger audit) =>
 {
     var form = await http.Request.ReadFormAsync();
     var userName = form["UserName"].ToString();
     var password = form["Password"].ToString();
     var returnUrl = form[ReturnUrl.QueryKey].ToString();
     var result = await signIn.PasswordSignInAsync(userName, password, isPersistent: true, lockoutOnFailure: false);
-    return result.Succeeded
-        ? Results.Redirect(ReturnUrl.AfterSignIn(returnUrl))
-        : Results.Redirect(ReturnUrl.AfterSignInFailed(returnUrl));
+    if (result.Succeeded)
+    {
+        try
+        {
+            await audit.WriteAsync(userName, "Login", "User", userName, null, "success");
+        }
+        catch
+        {
+            // 审计失败不阻断登录。
+        }
+
+        return Results.Redirect(ReturnUrl.AfterSignIn(returnUrl));
+    }
+
+    return Results.Redirect(ReturnUrl.AfterSignInFailed(returnUrl));
 }).AllowAnonymous().DisableAntiforgery();
-app.MapGet("/account/logout", async (SignInManager<ApplicationUser> signIn) =>
+app.MapGet("/account/logout", async (HttpContext http, SignInManager<ApplicationUser> signIn, IAuditLogger audit) =>
 {
+    var userName = http.User.Identity?.Name ?? "";
     await signIn.SignOutAsync();
+    if (!string.IsNullOrWhiteSpace(userName))
+    {
+        try
+        {
+            await audit.WriteAsync(userName, "Logout", "User", userName, null, null);
+        }
+        catch
+        {
+            // 审计失败不阻断退出。
+        }
+    }
+
     return Results.Redirect("/");
 }).AllowAnonymous();
 // Soft-404：未知路径由 Pages/NotFound.razor 的 @page "/{*path:nonfile}" 接住并渲染友好页，

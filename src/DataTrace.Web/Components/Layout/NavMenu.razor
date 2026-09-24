@@ -1,7 +1,11 @@
 ﻿<MudNavMenu Class="pb-6">
     <MudText Typo="Typo.overline" Class="dt-nav-group">运行监控</MudText>
     <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">实时看板</MudNavLink>
-    <MudNavLink Href="/logs" Icon="@Icons.Material.Filled.History">审计日志</MudNavLink>
+    <AuthorizeView Roles="Administrator,Engineer">
+        <Authorized>
+            <MudNavLink Href="/logs" Icon="@Icons.Material.Filled.History">审计日志</MudNavLink>
+        </Authorized>
+    </AuthorizeView>
 
     <MudText Typo="Typo.overline" Class="dt-nav-group">生产数据</MudText>
     <MudNavLink Href="/query" Icon="@Icons.Material.Filled.Search">数据查询</MudNavLink>
