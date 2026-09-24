@@ -195,60 +195,75 @@ else
 }
 
 
-<MudStack Row="true" AlignItems="AlignItems.Center" Class="mt-5 mb-2 flex-wrap">
-    <MudText Typo="Typo.h6" Class="mb-0">最近采集</MudText>
-    <MudChip T="string" Size="Size.Small" Variant="Variant.Text">近 @_recentPreview.Count 条</MudChip>
-    <MudSpacer />
-    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary"
-               EndIcon="@Icons.Material.Filled.ChevronRight" Href="/query">更多 → 数据查询</MudButton>
-</MudStack>
-<MudTable Items="_recentPreview" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm"
-          FixedHeader="true" Height="360px">
+<MudExpansionPanels Class="mt-5 dt-recent-panels" Elevation="1" Dense="true">
+    <MudExpansionPanel Class="dt-recent-panel"
+                       Expanded="@RecentPanelExpanded"
+                       ExpandedChanged="OnRecentExpandedChangedAsync"
+                       Disabled="_shopFloor"
+                       HideIcon="_shopFloor">
+        <TitleContent>
+            <div class="dt-recent-title">
+                <MudText Typo="Typo.subtitle1" Class="mb-0">最近采集 · @_recentPreview.Count 条</MudText>
+                <MudSpacer />
+                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary"
+                           EndIcon="@Icons.Material.Filled.ChevronRight" Href="/query"
+                           Class="dt-recent-more"
+                           @onclick:stopPropagation="true">
+                    更多 → 数据查询
+                </MudButton>
+            </div>
+        </TitleContent>
+        <ChildContent>
+            <MudTable Items="_recentPreview" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm"
+                      FixedHeader="true" Height="360px">
 
-    <HeaderContent>
-        <MudTh Class="dt-nowrap">完成时间</MudTh>
-        <MudTh>工站</MudTh>
-        <MudTh>托盘码</MudTh>
-        <MudTh>流水号</MudTh>
-        <MudTh>型号</MudTh>
-        <MudTh>判定</MudTh>
-        <MudTh Class="dt-num">耗时</MudTh>
-        <MudTh></MudTh>
-    </HeaderContent>
-    <RowTemplate>
-        <MudTd DataLabel="完成时间" Class="dt-nowrap">
-            @* 格子里只放时分秒，完整时间戳（含日期与毫秒）用 tooltip：
-               平板没有 hover，原生 title 等于把诊断要用的精度藏起来。 *@
-            <MudTooltip Text="@context.CompleteTime.ToString("yyyy-MM-dd HH:mm:ss.fff")">
-                <span>@context.CompleteTime.ToString("HH:mm:ss")</span>
-            </MudTooltip>
-        </MudTd>
-        <MudTd DataLabel="工站">@context.StationCode</MudTd>
-        <MudTd DataLabel="托盘码">@context.PalletCode</MudTd>
-        <MudTd DataLabel="流水号">@context.SerialNo</MudTd>
-        <MudTd DataLabel="型号">@RecipeLabel(context.RecipeCode)</MudTd>
-        <MudTd DataLabel="判定">
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
-                     Color="@(context.Judgement == Judgement.Ng ? Color.Error : context.Judgement == Judgement.Ok ? Color.Success : Color.Default)">
-                @DisplayLabels.JudgementText(context.Judgement)
-            </MudChip>
-            @if (!string.IsNullOrEmpty(context.Error))
-            {
-                <MudText Typo="Typo.caption" Color="Color.Error">@context.Error</MudText>
-            }
-        </MudTd>
-        <MudTd DataLabel="耗时" Class="dt-num dt-nowrap">@context.DurationMs ms</MudTd>
-        <MudTd>
-            <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
-                       Href="@($"/query/{context.MonthKey}/{context.RecordId}")">明细</MudButton>
-        </MudTd>
-    </RowTemplate>
-    <NoRecordsContent>
-        <MudText Typo="Typo.body2" Class="dt-muted py-3">
-            还没有采集记录。可在「PLC 仿真」页触发一条走线，快速验证采集链路是否通畅。
-        </MudText>
-    </NoRecordsContent>
-</MudTable>
+                <HeaderContent>
+                    <MudTh Class="dt-nowrap">完成时间</MudTh>
+                    <MudTh>工站</MudTh>
+                    <MudTh>托盘码</MudTh>
+                    <MudTh>流水号</MudTh>
+                    <MudTh>型号</MudTh>
+                    <MudTh>判定</MudTh>
+                    <MudTh Class="dt-num">耗时</MudTh>
+                    <MudTh></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="完成时间" Class="dt-nowrap">
+                        @* 格子里只放时分秒，完整时间戳（含日期与毫秒）用 tooltip：
+                           平板没有 hover，原生 title 等于把诊断要用的精度藏起来。 *@
+                        <MudTooltip Text="@context.CompleteTime.ToString("yyyy-MM-dd HH:mm:ss.fff")">
+                            <span>@context.CompleteTime.ToString("HH:mm:ss")</span>
+                        </MudTooltip>
+                    </MudTd>
+                    <MudTd DataLabel="工站">@context.StationCode</MudTd>
+                    <MudTd DataLabel="托盘码">@context.PalletCode</MudTd>
+                    <MudTd DataLabel="流水号">@context.SerialNo</MudTd>
+                    <MudTd DataLabel="型号">@RecipeLabel(context.RecipeCode)</MudTd>
+                    <MudTd DataLabel="判定">
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                                 Color="@(context.Judgement == Judgement.Ng ? Color.Error : context.Judgement == Judgement.Ok ? Color.Success : Color.Default)">
+                            @DisplayLabels.JudgementText(context.Judgement)
+                        </MudChip>
+                        @if (!string.IsNullOrEmpty(context.Error))
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Error">@context.Error</MudText>
+                        }
+                    </MudTd>
+                    <MudTd DataLabel="耗时" Class="dt-num dt-nowrap">@context.DurationMs ms</MudTd>
+                    <MudTd>
+                        <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
+                                   Href="@($"/query/{context.MonthKey}/{context.RecordId}")">明细</MudButton>
+                    </MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body2" Class="dt-muted py-3">
+                        还没有采集记录。可在「PLC 仿真」页触发一条走线，快速验证采集链路是否通畅。
+                    </MudText>
+                </NoRecordsContent>
+            </MudTable>
+        </ChildContent>
+    </MudExpansionPanel>
+</MudExpansionPanels>
 
 @code {
     private const int StaleSeconds = 30;
@@ -260,6 +275,8 @@ else
     private bool _isAdmin;
     private bool _canManageRecipes;
     private bool _shopFloor;
+    /// <summary>User preference for recent-collect panel (localStorage dtRecentOpen). Forced closed while shop-floor.</summary>
+    private bool _recentOpenPref;
     private bool _dataStale;
 
     private IReadOnlyList<PlcRuntimeStatus> _plcs = [];
@@ -313,7 +330,7 @@ else
         await RefreshShiftAsync(force: true);
     }
 
-    protected override async Task OnAfterRenderAsync(bool firstRender)
+        protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
         try
@@ -323,15 +340,17 @@ else
             {
                 _shopFloor = on;
                 await Js.InvokeVoidAsync("dtShopFloor.set", _shopFloor);
-                StateHasChanged();
             }
+
+            // Default false (collapsed) when unset — matches dtRecentOpen.get
+            _recentOpenPref = await Js.InvokeAsync<bool>("dtRecentOpen.get");
+            StateHasChanged();
         }
         catch
         {
-            // JS 未就绪时保持默认
+            // JS not ready: keep defaults (shop-floor off, recent collapsed)
         }
     }
-
     private void OnChanged() => _ = InvokeAsync(async () =>
     {
         Refresh();
@@ -517,6 +536,27 @@ else
         => string.IsNullOrEmpty(code) ? "未选型号" : code;
 
     private void GoRecipes() => Nav.NavigateTo("/config/recipes");
+
+    /// <summary>Effective expand state: always collapsed in shop-floor; otherwise user preference.</summary>
+    private bool RecentPanelExpanded => !_shopFloor && _recentOpenPref;
+
+    private async Task OnRecentExpandedChangedAsync(bool open)
+    {
+        if (_shopFloor)
+        {
+            return;
+        }
+
+        _recentOpenPref = open;
+        try
+        {
+            await Js.InvokeVoidAsync("dtRecentOpen.set", open);
+        }
+        catch
+        {
+            // preference write best-effort
+        }
+    }
 
     private async Task ToggleShopFloorAsync()
     {

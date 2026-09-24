@@ -95,6 +95,19 @@ window.dtScrollIntoView = function (id) {
 };
 
 // 大屏/车间模式：给 body 挂 class，偏好写入 localStorage；退出按钮始终由页面提供。
+
+// Dashboard recent-collect collapse preference; same pattern as shop-floor. Default collapsed when unset.
+window.dtRecentOpen = {
+    key: 'dt-recent-open',
+    get: function () {
+        try { return localStorage.getItem(this.key) === '1'; } catch (e) { return false; }
+    },
+    set: function (on) {
+        try { localStorage.setItem(this.key, on ? '1' : '0'); } catch (e) { }
+        return !!on;
+    }
+};
+
 window.dtShopFloor = {
     key: 'dt-shopfloor',
     get: function () {

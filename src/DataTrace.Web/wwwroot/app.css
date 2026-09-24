@@ -858,3 +858,25 @@ body.dt-shopfloor .mud-chip {
     text-decoration: line-through;
     opacity: 0.85;
 }
+
+
+/* Dashboard: collapsible recent-collect panel */
+.dt-recent-title {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.dt-recent-panels .mud-expand-panel {
+    margin: 0 !important;
+}
+.dt-recent-panels .mud-expand-panel-header {
+    padding: 10px 14px !important;
+}
+body.dt-shopfloor .dt-recent-panels .mud-expand-panel-header {
+    cursor: default;
+}
+body.dt-shopfloor .dt-recent-panels .mud-expand-panel-content {
+    display: none !important;
+}
