@@ -53,7 +53,7 @@ public class ReportServiceTests
     {
         var service = new ReportService(BuildStore());
 
-        var rows = await service.GetThroughputAsync(Day1, Day2.AddDays(1), stationId: null);
+        var rows = (await service.GetThroughputAsync(Day1, Day2.AddDays(1), stationId: null)).ByDay;
 
         Assert.Equal(2, rows.Count);
         Assert.Equal(Day1.Date, rows[0].Day);
@@ -73,7 +73,7 @@ public class ReportServiceTests
     {
         var service = new ReportService(BuildStore());
 
-        var rows = await service.GetThroughputAsync(Day1, Day2.AddDays(1), stationId: 10);
+        var rows = (await service.GetThroughputAsync(Day1, Day2.AddDays(1), stationId: 10)).ByDay;
 
         var row = Assert.Single(rows);
         Assert.Equal(Day1.Date, row.Day);
@@ -88,7 +88,7 @@ public class ReportServiceTests
     {
         var service = new ReportService(BuildStore());
 
-        var rows = await service.GetThroughputAsync(Day2, Day2.AddDays(1), stationId: null);
+        var rows = (await service.GetThroughputAsync(Day2, Day2.AddDays(1), stationId: null)).ByDay;
 
         Assert.Single(rows);
         Assert.Equal(Day2.Date, rows[0].Day);
@@ -100,7 +100,7 @@ public class ReportServiceTests
     {
         var service = new ReportService(BuildStore());
 
-        Assert.Empty(await service.GetThroughputAsync(new DateTime(2025, 1, 1), new DateTime(2025, 1, 31), null));
+        Assert.Empty((await service.GetThroughputAsync(new DateTime(2025, 1, 1), new DateTime(2025, 1, 31), null)).ByDay);
     }
 
     [Fact]
@@ -262,16 +262,16 @@ public class ReportServiceTests
         var service = new ReportService(store);
 
         // 不限：两条都算。
-        var all = Assert.Single(await service.GetThroughputAsync(Day1, Day2, stationId: null));
+        var all = Assert.Single((await service.GetThroughputAsync(Day1, Day2, stationId: null)).ByDay);
         Assert.Equal(2, all.Total);
 
-        var onlyA = Assert.Single(await service.GetThroughputAsync(Day1, Day2, stationId: null, recipeCode: "A100"));
+        var onlyA = Assert.Single((await service.GetThroughputAsync(Day1, Day2, stationId: null, recipeCode: "A100")).ByDay);
         Assert.Equal(1, onlyA.Total);
         Assert.Equal(1, onlyA.Ng);
 
-        // 按型号汇总：筛了型号就只剩那一行，不筛则两行。
-        Assert.Equal(2, (await service.GetThroughputByRecipeAsync(Day1, Day2, null)).Count);
-        Assert.Equal("A100", Assert.Single(await service.GetThroughputByRecipeAsync(Day1, Day2, null, "A100")).RecipeCode);
+        // 按型号汇总与按日是同一份数据的两个切面：筛了型号就只剩那一行，不筛则两行。
+        Assert.Equal(2, (await service.GetThroughputAsync(Day1, Day2, null)).ByRecipe.Count);
+        Assert.Equal("A100", Assert.Single((await service.GetThroughputAsync(Day1, Day2, null, "A100")).ByRecipe).RecipeCode);
 
         // 不良与趋势同样收窄；B200 那条没有超限点位，所以筛它就查不到不良。
         Assert.Equal("压力", Assert.Single(await service.GetDefectTopAsync(Day1, Day2, recipeCode: "A100")).Name);

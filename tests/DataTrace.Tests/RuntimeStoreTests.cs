@@ -612,6 +612,34 @@ public class RuntimeStoreTests
         Assert.Equal(3, (await env.Store.QueryTagTrendAsync(Day1, Day1.AddDays(1), tagId)).Count);
     }
 
+    /// <summary>
+    /// 趋势的 take 取的是区间内<b>最新</b>的点，返回时仍升序 —— 界面靠首尾时间画时间轴、
+    /// 移动极差靠相邻关系，取成最旧的一批就全错了。
+    /// </summary>
+    [Fact]
+    public async Task Trend_take_keeps_the_newest_points_in_ascending_order()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        for (var i = 1; i <= 5; i++)
+        {
+            var request = FirstStation("202609", $"P000{i}", $"S{i}", Day1.AddHours(i));
+            request.Record.TagValues.Single().NumericValue = 10 + i;
+            await env.Store.SaveAsync(request);
+        }
+
+        const int tagId = 10 * 10 + 1;
+
+        var latestTwo = await env.Store.QueryTagTrendAsync(Day1, Day1.AddDays(1), tagId, take: 2);
+
+        Assert.Equal(2, latestTwo.Count);
+        // 最新两条是 P0005 / P0004，且按时间升序返回。
+        Assert.Equal(new[] { 14d, 15d }, latestTwo.Select(p => p.Value).ToArray());
+        Assert.True(latestTwo[0].Time < latestTwo[1].Time);
+
+        // take 为 0 表示不限。
+        Assert.Equal(5, (await env.Store.QueryTagTrendAsync(Day1, Day1.AddDays(1), tagId)).Count);
+    }
+
     [Fact]
     public async Task Curve_features_round_trip_through_the_month_database()
     {

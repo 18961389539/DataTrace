@@ -370,6 +370,7 @@ public sealed class RuntimeStore : IRuntimeStore
         DateTime to,
         int tagId,
         string? recipeCode = null,
+        int take = 0,
         CancellationToken cancellationToken = default)
     {
         var points = new List<TagTrendPoint>();
@@ -393,8 +394,12 @@ public sealed class RuntimeStore : IRuntimeStore
                 query = query.Where(x => x.record.RecipeCode == recipeCode);
             }
 
-            var part = await query
-                .OrderBy(x => x.record.TriggerTime)
+            // 要"最新 take 点"就得先倒序取；take <= 0 时不加限制，按月库顺序升序返回。
+            var ordered = take > 0
+                ? query.OrderByDescending(x => x.record.TriggerTime).Take(take)
+                : query.OrderBy(x => x.record.TriggerTime);
+
+            var part = await ordered
                 .Select(x => new TagTrendPoint
                 {
                     Time = x.record.TriggerTime,
@@ -408,7 +413,18 @@ public sealed class RuntimeStore : IRuntimeStore
             points.AddRange(part);
         }
 
-        return points;
+        if (take <= 0)
+        {
+            return points;
+        }
+
+        // 跨月合并后重新取全局最新 take 条：每月各取 take 条，
+        // 全局最新的 take 条必然落在并集里，不会漏样本。最后统一升序，交给画图与移动极差。
+        return points
+            .OrderByDescending(p => p.Time)
+            .Take(take)
+            .OrderBy(p => p.Time)
+            .ToList();
     }
 
     public async Task<IReadOnlyList<CurveFeaturePoint>> QueryCurveFeaturesAsync(

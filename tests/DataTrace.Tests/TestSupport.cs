@@ -254,7 +254,7 @@ internal class FakeRuntimeStore : IRuntimeStore
                 .Select(t => new TagIssuePoint { TagName = t.TagName, TagCode = t.TagCode })
                 .ToList());
 
-    public Task<IReadOnlyList<TagTrendPoint>> QueryTagTrendAsync(DateTime from, DateTime to, int tagId, string? recipeCode = null, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<TagTrendPoint>> QueryTagTrendAsync(DateTime from, DateTime to, int tagId, string? recipeCode = null, int take = 0, CancellationToken cancellationToken = default)
         => Task.FromResult<IReadOnlyList<TagTrendPoint>>(
             Records
                 .Where(x => x.Record.TriggerTime >= from && x.Record.TriggerTime <= to)
@@ -269,6 +269,10 @@ internal class FakeRuntimeStore : IRuntimeStore
                         LowerLimit = t.LowerLimit,
                         UpperLimit = t.UpperLimit
                     }))
+                // 与真身同语义：take 取的是区间内"最新"的 N 点，返回时升序。
+                .OrderByDescending(p => p.Time)
+                .Take(take > 0 ? take : int.MaxValue)
+                .OrderBy(p => p.Time)
                 .ToList());
 
     public Task MarkSessionAbnormalAsync(string monthKey, long sessionId, DateTime endTime, CancellationToken cancellationToken = default)

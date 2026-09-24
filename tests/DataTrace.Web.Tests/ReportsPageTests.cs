@@ -6,6 +6,7 @@ using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Web.Components.Pages;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -58,10 +59,11 @@ public class ReportsPageTests : WebTestBase
             .ReturnsAsync(Array.Empty<string>());
         _reports
             .Setup(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<DailyThroughput>());
-        _reports
-            .Setup(r => r.GetThroughputByRecipeAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync([new RecipeThroughput { RecipeCode = "A100", Total = 3, Ok = 3 }]);
+            .ReturnsAsync(new ThroughputReport
+            {
+                ByDay = [],
+                ByRecipe = [new RecipeThroughput { RecipeCode = "A100", Total = 3, Ok = 3 }]
+            });
         _reports
             .Setup(r => r.GetDefectTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<IssueTopItem>());
@@ -69,10 +71,10 @@ public class ReportsPageTests : WebTestBase
             .Setup(r => r.GetWarningTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<IssueTopItem>());
         _reports
-            .Setup(r => r.GetTrendAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetTrendAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([new TrendPoint { Time = SampleTime, Value = 12.5, PalletCode = "P0001" }]);
         _spc
-            .Setup(s => s.GetProcessCapabilityAsync(It.IsAny<int>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetProcessCapabilityAsync(It.IsAny<int>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProcessCapabilityReport?)null);
     }
 
@@ -108,11 +110,14 @@ public class ReportsPageTests : WebTestBase
 
         // 一条都不能漏：漏了就会出现"选了 A100 却看到全部型号的不良"。
         _reports.Verify(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
-        _reports.Verify(r => r.GetThroughputByRecipeAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
         _reports.Verify(r => r.GetDefectTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
         _reports.Verify(r => r.GetWarningTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
-        _reports.Verify(r => r.GetTrendAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), 1, "A100", It.IsAny<CancellationToken>()), Times.Once);
-        _spc.Verify(s => s.GetProcessCapabilityAsync(1, It.IsAny<DateTime>(), It.IsAny<DateTime>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
+        _reports.Verify(r => r.GetTrendAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), 1, "A100", It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
+        _spc.Verify(s => s.GetProcessCapabilityAsync(1, It.IsAny<DateTime>(), It.IsAny<DateTime>(), "A100", It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        // 每次加载只查一次产量：按日与按型号是同一份数据的两个切面，不该把区间内记录查两遍。
+        // 上面那条 A100 断言覆盖改筛选后那一次加载，这条覆盖首次加载（不限型号）。
+        _reports.Verify(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), null, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -165,6 +170,46 @@ public class ReportsPageTests : WebTestBase
         var cut = Render();
 
         Assert.Equal(visible, cut.FindAll("button").Any(b => b.TextContent.Contains("导出趋势")));
+    }
+
+    /// <summary>
+    /// 采样上限是"少算了就要说出来"：截断时必须出现提示，没截断时不能凭空警告。
+    /// </summary>
+    [Fact]
+    public void Trend_truncation_is_stated_on_the_page_only_when_it_happens()
+    {
+        var cut = Render();
+        Assert.DoesNotContain("单次上限", cut.Markup);
+
+        // 页面多取一点来判断有没有截断，所以超过上限就是"上限 + 1"。
+        var overLimit = Enumerable.Range(0, TrendLimitProbe)
+            .Select(i => new TrendPoint { Time = SampleTime.AddSeconds(i), Value = 12.5, PalletCode = "P0001" })
+            .ToList();
+        _reports
+            .Setup(r => r.GetTrendAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(overLimit);
+
+        ClickButton(cut, "刷新报表");
+
+        Assert.Contains("单次上限", cut.Markup);
+
+        // 上限之外的那一点不进内存、也不进导出。
+        ClickButton(cut, "导出趋势");
+        Assert.Contains("已导出 20000 个趋势点", Toast.LastMessage);
+    }
+
+    /// <summary>页面请求的是"上限 + 1"，用来区分"刚好到上限"和"被截断"。</summary>
+    private const int TrendLimitProbe = 20001;
+
+    [Fact]
+    public async Task Conditions_are_written_back_to_the_address_bar()
+    {
+        var cut = Render();
+
+        await SelectRecipeAsync(cut, "c:A100");
+
+        // 默认区间与默认点位不写进地址，其余条件要能刷新/转发后复原。
+        Assert.Contains("recipe=A100", cut.Services.GetRequiredService<NavigationManager>().Uri);
     }
 
     [Fact]

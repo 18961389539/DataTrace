@@ -423,7 +423,8 @@ else
         try
         {
             var day = ShanghaiToday();
-            var rows = await Reports.GetThroughputAsync(day, day.AddDays(1).AddTicks(-1), null);
+            var report = await Reports.GetThroughputAsync(day, day.AddDays(1).AddTicks(-1), null);
+            var rows = report.ByDay;
             var today = rows.FirstOrDefault(r => r.Day.Date == day) ?? rows.FirstOrDefault();
             if (today is null)
             {

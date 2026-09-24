@@ -46,13 +46,22 @@ public sealed class RecipeThroughput
     public double PassRate => Ok + Ng == 0 ? 0 : (double)Ok / (Ok + Ng);
 }
 
+/// <summary>
+/// 产量报表的两个切面：按日与按型号。
+/// 两者是同一次取数上的两种分组，合在一起返回，避免把区间内全部记录查两遍。
+/// </summary>
+public sealed class ThroughputReport
+{
+    public IReadOnlyList<DailyThroughput> ByDay { get; init; } = [];
+
+    public IReadOnlyList<RecipeThroughput> ByRecipe { get; init; } = [];
+}
+
 public interface IReportService
 {
+    /// <summary>产量报表：按日与按型号两个切面，同一次取数完成。</summary>
     /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
-    Task<IReadOnlyList<DailyThroughput>> GetThroughputAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default);
-
-    /// <summary>按型号汇总产量/OK/NG/未判定/直通率；可选再按型号过滤（null=全部）。</summary>
-    Task<IReadOnlyList<RecipeThroughput>> GetThroughputByRecipeAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default);
+    Task<ThroughputReport> GetThroughputAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default);
 
     /// <summary>超规格点位 Top N（真实不良）。</summary>
     /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
@@ -63,5 +72,6 @@ public interface IReportService
     Task<IReadOnlyList<IssueTopItem>> GetWarningTopAsync(DateTime from, DateTime to, int take = 10, string? recipeCode = null, CancellationToken cancellationToken = default);
 
     /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
-    Task<IReadOnlyList<TrendPoint>> GetTrendAsync(DateTime from, DateTime to, int tagId, string? recipeCode = null, CancellationToken cancellationToken = default);
+    /// <param name="take">最多取区间内<b>最新</b>的多少点；0 表示不限。</param>
+    Task<IReadOnlyList<TrendPoint>> GetTrendAsync(DateTime from, DateTime to, int tagId, string? recipeCode = null, int take = 0, CancellationToken cancellationToken = default);
 }

@@ -18,10 +18,12 @@ public sealed class ReportService : IReportService
         _store = store;
     }
 
-    public async Task<IReadOnlyList<DailyThroughput>> GetThroughputAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default)
+    public async Task<ThroughputReport> GetThroughputAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default)
     {
+        // 按日与按型号是同一次取数上的两种分组：分两次查会把区间内全部记录查两遍。
         var points = await _store.QueryJudgementPointsAsync(from, to, stationId, recipeCode, cancellationToken).ConfigureAwait(false);
-        return points
+
+        var byDay = points
             .GroupBy(p => p.Time.Date)
             .OrderBy(g => g.Key)
             .Select(g => new DailyThroughput
@@ -33,6 +35,21 @@ public sealed class ReportService : IReportService
                 None = g.Count(x => x.Judgement == Judgement.None)
             })
             .ToList();
+
+        var byRecipe = points
+            .GroupBy(p => p.RecipeCode ?? "")
+            .OrderBy(g => string.IsNullOrEmpty(g.Key) ? "~" : g.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new RecipeThroughput
+            {
+                RecipeCode = g.Key,
+                Total = g.Count(),
+                Ok = g.Count(x => x.Judgement == Judgement.Ok),
+                Ng = g.Count(x => x.Judgement == Judgement.Ng),
+                Pending = g.Count(x => x.Judgement == Judgement.None)
+            })
+            .ToList();
+
+        return new ThroughputReport { ByDay = byDay, ByRecipe = byRecipe };
     }
 
     public async Task<IReadOnlyList<IssueTopItem>> GetDefectTopAsync(DateTime from, DateTime to, int take = 10, string? recipeCode = null, CancellationToken cancellationToken = default)
@@ -47,9 +64,9 @@ public sealed class ReportService : IReportService
         return Top(points, take);
     }
 
-    public async Task<IReadOnlyList<TrendPoint>> GetTrendAsync(DateTime from, DateTime to, int tagId, string? recipeCode = null, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<TrendPoint>> GetTrendAsync(DateTime from, DateTime to, int tagId, string? recipeCode = null, int take = 0, CancellationToken cancellationToken = default)
     {
-        var points = await _store.QueryTagTrendAsync(from, to, tagId, recipeCode, cancellationToken).ConfigureAwait(false);
+        var points = await _store.QueryTagTrendAsync(from, to, tagId, recipeCode, take, cancellationToken).ConfigureAwait(false);
         return points
             .OrderBy(x => x.Time)
             .Select(x => new TrendPoint
@@ -62,26 +79,6 @@ public sealed class ReportService : IReportService
     }
 
     /// <summary>按点位名称聚合计数，降序取前 N。名称缺失时回退到编码。</summary>
-
-    public async Task<IReadOnlyList<RecipeThroughput>> GetThroughputByRecipeAsync(
-        DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default)
-    {
-        // 型号过滤下推到 SQL：不再把全区间记录取回来再内存过滤。
-        var points = await _store.QueryJudgementPointsAsync(from, to, stationId, recipeCode, cancellationToken).ConfigureAwait(false);
-        return points
-            .GroupBy(p => p.RecipeCode ?? "")
-            .OrderBy(g => string.IsNullOrEmpty(g.Key) ? "~" : g.Key, StringComparer.OrdinalIgnoreCase)
-            .Select(g => new RecipeThroughput
-            {
-                RecipeCode = g.Key,
-                Total = g.Count(),
-                Ok = g.Count(x => x.Judgement == Judgement.Ok),
-                Ng = g.Count(x => x.Judgement == Judgement.Ng),
-                Pending = g.Count(x => x.Judgement == Judgement.None)
-            })
-            .ToList();
-    }
-
     private static IReadOnlyList<IssueTopItem> Top(IReadOnlyList<TagIssuePoint> points, int take)
         => points
             .GroupBy(t => string.IsNullOrWhiteSpace(t.TagName) ? t.TagCode : t.TagName)

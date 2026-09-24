@@ -197,15 +197,69 @@ public class UiRegressionE2ETests : E2ETestBase
     {
         await Page.GotoAsync($"{App.BaseUrl}/reports");
         await WaitBodyContainsAsync("过程能力");
-        await WaitBodyContainsAsync("Cpk（组内）");
+
+        // MudTabs 只渲染当前页签的面板，过程能力必须点过去才在 DOM 里。
+        await ClickTabUntilAsync("过程能力", "I-MR 单值移动极差控制图");
+
+        // 首屏那次统计可能早于模拟器产出数据，此时面板是"区间内没有采样数据"、不画图。
+        await RefreshUntilCapabilityHasSamplesAsync();
 
         // LineChart 的 svg 自己带 dt-chart 类，不是 .dt-chart 的子元素。
         await Page.Locator("svg.dt-chart").First.WaitForAsync();
-
         // 演示实例没改过规格限，只应该有一段：分段提示与分段表都不该出现。
         var body = await Page.InnerTextAsync("body");
         Assert.DoesNotContain("区间内规格限变更", body);
         Assert.Equal(0, await Page.Locator("th", new() { HasText = "时间范围" }).CountAsync());
+    }
+
+    /// <summary>
+    /// 切页签。预渲染的 DOM 会在 circuit 接手时被重建，把早点的那一下抹掉
+    /// （与登录表是同一个窗口），所以点了要复核结果，没生效就再点。
+    /// </summary>
+    private Task ClickTabUntilAsync(string tabText, string expectedText)
+        => Page.WaitForFunctionAsync(
+            """
+            ([tabText, expectedText]) => {
+                const tab = [...document.querySelectorAll('.mud-tab')]
+                    .find(t => t.textContent.includes(tabText));
+                if (!tab) {
+                    return false;
+                }
+
+                tab.click();
+                return document.body.innerText.includes(expectedText);
+            }
+            """,
+            new[] { tabText, expectedText });
+
+    /// <summary>
+    /// 等过程能力拿到样本。页面只在加载和点「刷新报表」时取数，而数据要等模拟器跑，
+    /// 所以这里反复触发统计，而不是点一次干等。
+    /// </summary>
+    private async Task RefreshUntilCapabilityHasSamplesAsync(int timeoutMs = 60000)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            var ready = await Page.EvaluateAsync<bool>("""
+                () => {
+                    const text = document.body.innerText;
+                    return text.includes('Cpk（组内）')
+                        && !text.includes('区间内没有采样数据')
+                        && !text.includes('请先在「参数趋势」页签选择一个数值点位');
+                }
+                """);
+            if (ready)
+            {
+                return;
+            }
+
+            await ClickAsync("刷新报表");
+            await Task.Delay(1000);
+        }
+
+        throw new TimeoutException($"{timeoutMs}ms 内该点位没有采到样本，过程能力画不出图。");
     }
 
     [Fact]

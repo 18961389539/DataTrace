@@ -151,7 +151,8 @@ public interface IRuntimeStore
 
     /// <summary>单点位趋势的窄投影查询（服务端按 TagId 过滤）。</summary>
     /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
-    Task<IReadOnlyList<TagTrendPoint>> QueryTagTrendAsync(DateTime from, DateTime to, int tagId, string? recipeCode = null, CancellationToken cancellationToken = default);
+    /// <param name="take">最多取区间内<b>最新</b>的多少点（升序返回）；0 表示不限。</param>
+    Task<IReadOnlyList<TagTrendPoint>> QueryTagTrendAsync(DateTime from, DateTime to, int tagId, string? recipeCode = null, int take = 0, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 波形特征的窄投影查询：取某条曲线某个序列在区间内<b>最新的 take 条</b>。

@@ -15,6 +15,7 @@
 @inject AuthenticationStateProvider Auth
 @inject DtToast Toast
 @inject IJSRuntime Js
+@inject NavigationManager Nav
 
 <PageHeader Title="报表">
     <Actions>
@@ -70,8 +71,17 @@
     </form>
 </MudPaper>
 
+@if (_trendTruncated)
+{
+    @* 少算了就得说出来：不说的话图上那个偏窄的时间轴会被当成"区间内就这些点"。 *@
+    <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+        该点位在所选区间内的采样点超过单次上限，参数趋势与过程能力只统计<b>最近 @TrendSampleLimit 点</b>。
+        需要更早的数据请缩小区间。
+    </MudAlert>
+}
+
 <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-3"
-         AlwaysShowScrollButtons="true" @bind-ActivePanelIndex="_reportTab">
+         AlwaysShowScrollButtons="true">
     <MudTabPanel Text="直通率">
         <MudGrid>
 
@@ -397,7 +407,8 @@
 
 @code {
     // 默认区间与「近 7 天」预设取齐（含今天共 7 天），否则进页面时没有一个预设是选中态。
-    private int _reportTab;
+    // 当前页签刻意不做受控绑定：MudTabs 的 ActivePanelIndex 是受控参数，用户点页签不会回写，
+    // 一旦页面因刷新统计而重渲染，就会把页签弹回第一个 —— 看过程能力时点刷新最容易被弹走。
     private DateTime? _from = DateTime.Today.AddDays(-6);
     private DateTime? _to = DateTime.Today;
     private int? _stationId;
@@ -426,14 +437,85 @@ private IReadOnlyList<IssueTopItem> _defects = [];
     private bool _loadPending;
     private bool _canExport;
 
+    /// <summary>
+    /// 趋势与过程能力单次最多统计的采样点数。区间取很大时（例如整年）不加限制会把
+    /// 百万级点位拉进内存，而且一张图最多也就画 600 个点、Cpk 也不该跨太久远的历史。
+    /// 截断时界面会明确说明只统计了最近 N 点，不会悄悄少算。
+    /// </summary>
+    private const int TrendSampleLimit = 20000;
+
+    private bool _trendTruncated;
+
+    /// <summary>支持 /reports?from=…&amp;to=…&amp;station=…&amp;recipe=…&amp;tag=… 直达。</summary>
+    [SupplyParameterFromQuery(Name = "from")]
+    public string? FromQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "to")]
+    public string? ToQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "station")]
+    public int? StationQuery { get; set; }
+
+    /// <summary>型号筛选：<c>recipe=CODE</c> 精确匹配编码，<c>norecipe=1</c> 表示「未选型号」。</summary>
+    [SupplyParameterFromQuery(Name = "recipe")]
+    public string? RecipeQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "norecipe")]
+    public int? NoRecipeQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "tag")]
+    public int? TagQuery { get; set; }
+
     protected override async Task OnInitializedAsync()
     {
         var auth = await Auth.GetAuthenticationStateAsync();
         _canExport = auth.User.IsInRole(AppRoles.Administrator) || auth.User.IsInRole(AppRoles.Engineer);
 
+        ApplyQueryParameters();
         _stations = await Config.GetStationsAsync();
         RefreshTags();
+        ApplyTagQuery();
         await Load();
+    }
+
+    /// <summary>
+    /// 深链接：/reports?from=…&amp;to=…&amp;station=…&amp;recipe=…&amp;tag=… 直达。
+    /// 与查询页同一套约定，刷新和转发链接都还在同一批条件上。
+    /// </summary>
+    private void ApplyQueryParameters()
+    {
+        if (DateTime.TryParse(FromQuery, out var from))
+        {
+            _from = from.Date;
+        }
+
+        if (DateTime.TryParse(ToQuery, out var to))
+        {
+            _to = to.Date;
+        }
+
+        if (StationQuery is { } station && station > 0)
+        {
+            _stationId = station;
+        }
+
+        if (NoRecipeQuery == 1)
+        {
+            _recipeFilter = "";
+        }
+        else if (!string.IsNullOrWhiteSpace(RecipeQuery))
+        {
+            _recipeFilter = RecipeQuery.Trim();
+        }
+    }
+
+    /// <summary>点位的默认值是"筛选后第一个数值点位"，只有显式给了 tag 才覆盖。</summary>
+    private void ApplyTagQuery()
+    {
+        if (TagQuery is { } tag && tag > 0 && _tags.Any(t => t.Id == tag))
+        {
+            _tagId = tag;
+        }
     }
 
     private async Task OnSubmit() => await Load();
@@ -602,21 +684,26 @@ private async Task OnStationChanged(int? stationId)
                 var to = DateRangeFilter.EndOfInclusive(_to);
                 // 型号筛选作用于整份报表：口径一致才不会"选了 A100 却看到全部型号的不良"。
                 var recipeArg = ToRecipeQueryArg();
-                _fpy = await ReportService.GetThroughputAsync(from, to, _stationId, recipeArg);
-                _byRecipe = await ReportService.GetThroughputByRecipeAsync(from, to, _stationId, recipeArg);
+                var throughput = await ReportService.GetThroughputAsync(from, to, _stationId, recipeArg);
+                _fpy = throughput.ByDay;
+                _byRecipe = throughput.ByRecipe;
                 _defects = await ReportService.GetDefectTopAsync(from, to, recipeCode: recipeArg);
                 _warnings = await ReportService.GetWarningTopAsync(from, to, recipeCode: recipeArg);
-                _trend = _tagId != 0
-                    ? await ReportService.GetTrendAsync(from, to, _tagId, recipeArg)
+
+                // 多取一点用来判断"到底有没有截断"，免得刚好等于上限时误报。
+                var trendPoints = _tagId != 0
+                    ? await ReportService.GetTrendAsync(from, to, _tagId, recipeArg, TrendSampleLimit + 1)
                     : [];
+                _trendTruncated = trendPoints.Count > TrendSampleLimit;
+                _trend = _trendTruncated ? trendPoints.TakeLast(TrendSampleLimit).ToList() : trendPoints;
                 _trendSeries = BuildTrendSeries();
                 RefreshTrendStats();
 
-                // 过程能力与趋势用同一点位、同一区间：趋势看单点、能力看整段分布。
+                // 过程能力与趋势用同一点位、同一区间、同一采样上限：趋势看单点、能力看整段分布。
                 // 这里会各自查一次窄投影（同 TagId、同列集）。刻意保留两次调用：
                 // 统计服务不该成为取趋势的唯一入口，而两次窄投影的量级远小于原先的整图加载。
                 _spc = _tagId != 0
-                    ? await SpcService.GetProcessCapabilityAsync(_tagId, from, to, recipeArg)
+                    ? await SpcService.GetProcessCapabilityAsync(_tagId, from, to, recipeArg, TrendSampleLimit)
                     : null;
                 _spcCharts = _spc?.Segments.Select(BuildSpcSeries).ToList() ?? [];
             }
@@ -632,7 +719,63 @@ private async Task OnStationChanged(int? stationId)
         finally
         {
             _loading = false;
+            SyncUrl();
         }
+    }
+
+    /// <summary>
+    /// 把当前条件写回地址栏（默认值不写，保持 /reports 干净）。
+    /// 这样刷新和转发链接都还在同一批结果上，不用重新选一遍。
+    /// </summary>
+    private void SyncUrl()
+    {
+        var target = CurrentUrl();
+        if (Nav.ToBaseRelativePath(Nav.Uri) == target)
+        {
+            return;
+        }
+
+        Nav.NavigateTo(target, replace: true);
+    }
+
+    private string CurrentUrl()
+    {
+        var parts = new List<string>();
+
+        // 默认区间是"近 7 天"，与 DateRangeFilter 的预设取齐，等于默认值就不写进地址。
+        var defaultFrom = DateTime.Today.AddDays(-6);
+        if (_from is { } from && from.Date != defaultFrom)
+        {
+            parts.Add($"from={from:yyyy-MM-dd}");
+        }
+
+        if (_to is { } to && to.Date != DateTime.Today)
+        {
+            parts.Add($"to={to:yyyy-MM-dd}");
+        }
+
+        if (_stationId is { } station)
+        {
+            parts.Add($"station={station}");
+        }
+
+        if (_recipeFilter is { Length: > 0 } recipe)
+        {
+            parts.Add($"recipe={Uri.EscapeDataString(recipe.Trim())}");
+        }
+        else if (_recipeFilter is not null)
+        {
+            // 未选型号：独立参数，别和真实编码挤同一个 recipe。
+            parts.Add("norecipe=1");
+        }
+
+        // 点位默认是"筛选后第一个"，等于默认值就不写。
+        if (_tagId != 0 && (_tags.Count == 0 || _tagId != _tags[0].Id))
+        {
+            parts.Add($"tag={_tagId}");
+        }
+
+        return parts.Count == 0 ? "reports" : $"reports?{string.Join("&", parts)}";
     }
 
     private void ClearResults()
@@ -645,6 +788,7 @@ private async Task OnStationChanged(int? stationId)
         _spc = null;
         _spcCharts = [];
         _trend = [];
+        _trendTruncated = false;
         _trendSeries = [];
         _trendAverage = _trendMin = _trendMax = "-";
         _trendRangeText = _trendFromText = _trendToText = "";

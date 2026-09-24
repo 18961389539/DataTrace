@@ -100,10 +100,12 @@ public interface ISpcService
     /// 点位不存在时返回 null（界面据此提示而不是显示一张空图）。
     /// </summary>
     /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
+    /// <param name="take">最多取区间内<b>最新</b>的多少点；0 表示不限。与趋势图取同一个窗口，口径才一致。</param>
     Task<ProcessCapabilityReport?> GetProcessCapabilityAsync(
         int tagId,
         DateTime from,
         DateTime to,
         string? recipeCode = null,
+        int take = 0,
         CancellationToken cancellationToken = default);
 }
