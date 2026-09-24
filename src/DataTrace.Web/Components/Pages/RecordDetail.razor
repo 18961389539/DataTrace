@@ -402,14 +402,16 @@ else
             });
         }
 
-        rows.Add(Array.Empty<string>());
-        rows.Add(new[] { "曲线编码", "曲线名称", "点数", "文件路径" });
+        // 分区空行与曲线段都补满 8 列：列数参差时 Excel 会把两段内容拼错位。
+        rows.Add(new string[8]);
+        rows.Add(new[] { "曲线编码", "曲线名称", "点数", "文件路径", "", "", "", "" });
         foreach (var curve in _record.Curves)
         {
             rows.Add(new[]
             {
                 curve.CurveCode, curve.CurveName,
-                curve.PointCount.ToString(CultureInfo.InvariantCulture), curve.RelativePath
+                curve.PointCount.ToString(CultureInfo.InvariantCulture), curve.RelativePath,
+                "", "", "", ""
             });
         }
 
@@ -418,6 +420,21 @@ else
             var csv = CsvExporter.Build(new[] { "项目", "A", "B", "C", "D", "E", "F", "G" }, rows);
             await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName($"datatrace_{_record.SerialNo}"),
                 CsvExporter.ToBase64(csv));
+        }
+        catch (Exception ex)
+        {
+            // JS 互操失败（连接断了、浏览器拦下下载）抛出去会断掉整条 circuit，页面直接卡死。
+            Toast.Add($"导出失败：{ex.Message}", Severity.Error);
+            return;
+        }
+        finally
+        {
+            _exporting = false;
+        }
+
+        // 文件已经下载完了：审计写库失败不能报成"导出失败"，现场会以为没导出去而重导。
+        try
+        {
             var auth = await Auth.GetAuthenticationStateAsync();
             var user = auth.User.Identity?.Name ?? "";
             var key = $"{MonthKey}/{_record.Id}";
@@ -429,12 +446,7 @@ else
         }
         catch (Exception ex)
         {
-            // JS 互操失败（连接断了、浏览器拦下下载）抛出去会断掉整条 circuit，页面直接卡死。
-            Toast.Add($"导出失败：{ex.Message}", Severity.Error);
-        }
-        finally
-        {
-            _exporting = false;
+            Toast.Add($"已导出本记录明细，但审计记录写入失败：{ex.Message}", Severity.Warning);
         }
     }
 }

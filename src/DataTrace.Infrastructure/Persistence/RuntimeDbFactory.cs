@@ -16,6 +16,13 @@ public sealed class RuntimeDbFactory
 
     public static string MonthKey(DateTime time) => time.ToString("yyyyMM");
 
+    /// <summary>
+    /// 月库键只有 yyyyMM 一种合法形状。它会被直接拼进文件名，而明细页的月库键来自路由参数，
+    /// 形状不对时一律当"库不存在"：不能让 "..\..\data_202609" 这类键拐去打开别的文件。
+    /// </summary>
+    public static bool IsValidMonthKey(string? monthKey)
+        => monthKey is { Length: 6 } && monthKey.All(char.IsAsciiDigit);
+
     public static IEnumerable<string> MonthsInRange(DateTime from, DateTime to)
     {
         var cursor = new DateTime(from.Year, from.Month, 1);
@@ -29,7 +36,7 @@ public sealed class RuntimeDbFactory
 
     public string GetPath(string monthKey) => Path.Combine(_root, $"data_{monthKey}.db");
 
-    public bool Exists(string monthKey) => File.Exists(GetPath(monthKey));
+    public bool Exists(string monthKey) => IsValidMonthKey(monthKey) && File.Exists(GetPath(monthKey));
 
     public RuntimeDbContext Open(string monthKey)
     {

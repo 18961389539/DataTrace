@@ -161,6 +161,9 @@ public sealed class RuntimeStore : IRuntimeStore
             // 明细页走 GetRecordAsync，仍会 Include Products / TagValues / Curves。
             var page = await Filter(db.CollectRecords.AsNoTracking(), request)
                 .OrderByDescending(x => x.TriggerTime)
+                // 同毫秒并列的记录要有稳定次序：只按时间排序时，翻页取到的是两批"并列中的任意几条"，
+                // 结果就是某些行重复出现、另一些行一次都不出现。
+                .ThenByDescending(x => x.Id)
                 .Skip(skip)
                 .Take(take)
                 .ToListAsync(cancellationToken)

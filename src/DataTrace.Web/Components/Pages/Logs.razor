@@ -55,6 +55,8 @@
     </MudGrid>
 </MudPaper>
 
+@* 键 = 这条记录指向谁（用户 / 型号编码 / 月库-记录号 / 导出区间）；变更 = 改了什么。
+   非变更类动作（登录、退出、导出）把说明写在变更列，不当成"旧值 → 新值"渲染。 *@
 <MudTable Items="_pageItems" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm" Loading="_loading">
     <HeaderContent>
         <MudTh>时间</MudTh>
@@ -81,11 +83,16 @@
             {
                 <span class="dt-muted">-</span>
             }
-            else
+            else if (DisplayLabels.IsChangeAction(context.Action))
             {
                 <span class="dt-muted">@(string.IsNullOrEmpty(context.OldValue) ? "新增" : context.OldValue)</span>
                 <MudIcon Icon="@Icons.Material.Filled.ArrowRightAlt" Size="Size.Small" Class="mx-1" />
                 <span>@context.NewValue</span>
+            }
+            else
+            {
+                @* 导出/登录不是"变更"：写"新增 → 导出 20 条"会被读成新增了一条记录。 *@
+                <span>@(string.IsNullOrEmpty(context.NewValue) ? context.OldValue : context.NewValue)</span>
             }
         </MudTd>
     </RowTemplate>

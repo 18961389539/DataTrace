@@ -308,6 +308,30 @@ public class RuntimeStoreTests
         Assert.Equal(new[] { "P0003", "P0002" }, page.Items.Select(i => i.Record.PalletCode).ToArray());
     }
 
+    /// <summary>
+    /// 同一毫秒落库的记录在 TriggerTime 上并列；没有次级排序时，两次翻页取的是"并列中的任意几条"，
+    /// 会出现重复行与漏行。这里要求翻完所有页正好覆盖全部记录且互不重复。
+    /// </summary>
+    [Fact]
+    public async Task Query_pages_cover_every_record_when_trigger_times_tie()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        for (var i = 1; i <= 5; i++)
+        {
+            await env.Store.SaveAsync(FirstStation("202609", $"P000{i}", $"S{i}", Day1));
+        }
+
+        var collected = new List<string>();
+        for (var skip = 0; skip < 5; skip += 2)
+        {
+            var page = await env.Store.QueryAsync(Query(take: 2, skip: skip));
+            collected.AddRange(page.Items.Select(i => i.Record.PalletCode));
+        }
+
+        Assert.Equal(5, collected.Count);
+        Assert.Equal(5, collected.Distinct().Count());
+    }
+
     [Fact]
     public async Task Query_spans_multiple_month_databases()
     {
@@ -319,6 +343,35 @@ public class RuntimeStoreTests
 
         Assert.Equal(2, result.Total);
         Assert.Equal(new[] { "202607", "202601" }, result.Items.Select(i => i.MonthKey).ToArray());
+    }
+
+    /// <summary>
+    /// 分页跨月：skip/take 落在两个月份库的接缝上时，既不能漏掉上个月末尾的记录，
+    /// 也不能把上月开头的记录又算一遍。
+    /// </summary>
+    [Fact]
+    public async Task Query_pages_across_two_month_databases_without_gaps()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        for (var i = 1; i <= 2; i++)
+        {
+            await env.Store.SaveAsync(FirstStation("202608", $"N{i}", $"SN{i}", new DateTime(2026, 8, 20, 8, 0, i)));
+        }
+
+        for (var i = 1; i <= 3; i++)
+        {
+            await env.Store.SaveAsync(FirstStation("202609", $"P{i}", $"SP{i}", new DateTime(2026, 9, 20, 8, 0, i)));
+        }
+
+        var collected = new List<string>();
+        for (var skip = 0; skip < 5; skip += 2)
+        {
+            var page = await env.Store.QueryAsync(Query(take: 2, skip: skip));
+            collected.AddRange(page.Items.Select(i => i.Record.PalletCode));
+        }
+
+        // 5 条按月库倒序拼接：9 月三条在前（同月内时间倒序），8 月两条在后。
+        Assert.Equal(new[] { "P3", "P2", "P1", "N2", "N1" }, collected);
     }
 
     [Fact]
@@ -370,6 +423,22 @@ public class RuntimeStoreTests
 
         Assert.Null(await env.Store.GetRecordAsync("202608", request.Record.Id));
         Assert.Null(await env.Store.GetRecordAsync("202609", 999_999));
+    }
+
+    /// <summary>
+    /// 明细页的月库键来自路由参数，会被直接拼进文件名。
+    /// "..\..\data_202609" 这种键经 Path.Combine 后仍能拐回同一个库，
+    /// 形状不对就必须当"库不存在"，而不是按路径解析去打开别的文件。
+    /// </summary>
+    [Fact]
+    public async Task Get_record_treats_malformed_month_keys_as_missing()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        var request = FirstStation("202609", "P0001", "S1", Day1);
+        await env.Store.SaveAsync(request);
+
+        Assert.Null(await env.Store.GetRecordAsync(@"..\..\data_202609", request.Record.Id));
+        Assert.Null(await env.Store.GetRecordAsync("20260A", request.Record.Id));
     }
 
     [Fact]

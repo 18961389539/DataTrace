@@ -50,13 +50,13 @@
             </MudItem>
 
                         <MudItem xs="12" sm="6" md="4" lg="3">
-                <MudSelect T="string" Value="_recipeFilter" ValueChanged="OnRecipeFilterChanged"
+                <MudSelect T="string" Value="@ToOptionValue(_recipeFilter)" ValueChanged="OnRecipeFilterChanged"
                            Label="产品型号" Dense="true" Disabled="_loading">
                     <MudSelectItem T="string" Value="@AllRecipesValue">全部型号</MudSelectItem>
                     <MudSelectItem T="string" Value="@EmptyRecipeValue">未选型号</MudSelectItem>
                     @foreach (var opt in _recipeOptions)
                     {
-                        <MudSelectItem T="string" Value="@opt.Code">@opt.Label</MudSelectItem>
+                        <MudSelectItem T="string" Value="@ToOptionValue(opt.Code)">@opt.Label</MudSelectItem>
                     }
                 </MudSelect>
             </MudItem>
@@ -160,7 +160,8 @@
     private string? _serialNo;
     private int? _stationId;
     private Judgement? _judgement;
-    private string _recipeFilter = AllRecipesValue;
+    /// <summary>型号筛选：null/缺省=全部型号；<c>""</c>=未选型号；其它为精确匹配。</summary>
+    private string? _recipeFilter;
     private IReadOnlyList<Station> _stations = [];
     private IReadOnlyList<CollectRecordListItem> _items = [];
     private int _total;
@@ -168,6 +169,7 @@
     private int _pages = 1;
     private int _pageSize = 20;
     private bool _loading;
+    private bool _loadPending;
     private bool _exporting;
     private bool _canExport;
 
@@ -199,9 +201,16 @@
     [SupplyParameterFromQuery(Name = "size")]
     public int? SizeQuery { get; set; }
 
-    /// <summary>型号筛选：缺省=全部；值为 <see cref="EmptyRecipeValue"/> 表示「未选型号」；其它为精确匹配。</summary>
+    /// <summary>型号筛选：缺省=全部；<c>recipe=CODE</c> 精确匹配编码，<c>norecipe=1</c> 表示「未选型号」。</summary>
     [SupplyParameterFromQuery(Name = "recipe")]
     public string? RecipeQuery { get; set; }
+
+    /// <summary>
+    /// 「未选型号」用独立参数表达：与真实编码共用 recipe 时，
+    /// 型号编码恰好叫 __EMPTY__ 就没法表达了。
+    /// </summary>
+    [SupplyParameterFromQuery(Name = "norecipe")]
+    public int? NoRecipeQuery { get; set; }
 
     protected override async Task OnInitializedAsync()
     {
@@ -255,14 +264,16 @@
             _page = page;
         }
 
-        if (!string.IsNullOrWhiteSpace(RecipeQuery))
+        if (NoRecipeQuery == 1)
         {
-            var recipe = RecipeQuery.Trim();
-            _recipeFilter = recipe == EmptyRecipeValue ? EmptyRecipeValue : recipe;
+            _recipeFilter = "";
+        }
+        else if (!string.IsNullOrWhiteSpace(RecipeQuery))
+        {
+            _recipeFilter = RecipeQuery.Trim();
         }
 
         _stations = await Config.GetStationsAsync();
-        await RefreshRecipeOptionsAsync();
         await Load();
     }
 
@@ -310,26 +321,35 @@
     {
         // 改日期即查询之后，并发窗口是这里开的：不加守卫时两个 Load 谁后完成谁覆盖，
         // 而先完成的那个已经把 _loading 关了，界面看着"好了"其实是被推翻的旧结果。
+        // 但直接丢弃请求也不行：日期控件在加载中没禁用，"先改开始日期、再改结束日期"
+        // 会丢掉后者——表格和地址栏停在旧条件上，输入框却显示新日期。
+        // 所以把请求记下来，等这一轮结束立刻按最新条件再跑一次。
         if (_loading)
         {
+            _loadPending = true;
             return;
         }
 
         _loading = true;
         try
         {
-            await RefreshRecipeOptionsAsync();
-
-            var result = await Store.QueryAsync(BuildRequest((_page - 1) * _pageSize, _pageSize));
-            _items = result.Items;
-            _total = result.Total;
-            _pages = Math.Max(1, (int)Math.Ceiling(_total / (double)_pageSize));
-            if (_page > _pages)
+            do
             {
-                _page = _pages;
-                result = await Store.QueryAsync(BuildRequest((_page - 1) * _pageSize, _pageSize));
+                _loadPending = false;
+                await RefreshRecipeOptionsAsync();
+
+                var result = await Store.QueryAsync(BuildRequest((_page - 1) * _pageSize, _pageSize));
                 _items = result.Items;
+                _total = result.Total;
+                _pages = Math.Max(1, (int)Math.Ceiling(_total / (double)_pageSize));
+                if (_page > _pages)
+                {
+                    _page = _pages;
+                    result = await Store.QueryAsync(BuildRequest((_page - 1) * _pageSize, _pageSize));
+                    _items = result.Items;
+                }
             }
+            while (_loadPending);
         }
         catch (Exception ex)
         {
@@ -394,13 +414,14 @@
             parts.Add($"judge={judgement}");
         }
 
-        if (_recipeFilter == EmptyRecipeValue)
+        if (_recipeFilter is { Length: > 0 } recipe)
         {
-            parts.Add($"recipe={Uri.EscapeDataString(EmptyRecipeValue)}");
+            parts.Add($"recipe={Uri.EscapeDataString(recipe.Trim())}");
         }
-        else if (!string.IsNullOrWhiteSpace(_recipeFilter) && _recipeFilter != AllRecipesValue)
+        else if (_recipeFilter is not null)
         {
-            parts.Add($"recipe={Uri.EscapeDataString(_recipeFilter.Trim())}");
+            // 未选型号：独立参数，别和真实编码挤同一个 recipe。
+            parts.Add("norecipe=1");
         }
 
         if (_pageSize != 20)
@@ -418,7 +439,7 @@
 
     private async Task Reset()
     {
-        _recipeFilter = AllRecipesValue;
+        _recipeFilter = null;
         _pallet = null;
         _serialNo = null;
         _stationId = null;
@@ -464,35 +485,73 @@
     }
 
 
+    /// <summary>下拉里"全部型号"的取值；真实编码一律带 <see cref="RecipeOptionPrefix"/> 前缀，不会与之撞名。</summary>
     private const string AllRecipesValue = "*";
-    /// <summary>内部哨兵：仅未选型号（空 RecipeCode）。从不作为下拉可见文案。</summary>
+
+    /// <summary>下拉里"未选型号"（空 RecipeCode）的取值。</summary>
     private const string EmptyRecipeValue = "__EMPTY__";
+
+    /// <summary>
+    /// 只有真实型号编码才带的前缀：哨兵值（全部 / 未选型号）不带，
+    /// 于是型号编码哪怕自己就叫 "*" 或 "__EMPTY__"，也不会被读成哨兵。
+    /// </summary>
+    private const string RecipeOptionPrefix = "c:";
 
     private sealed record RecipeFilterOption(string Code, string Label);
 
     private IReadOnlyList<RecipeFilterOption> _recipeOptions = [];
     private Dictionary<string, string> _recipeNames = new(StringComparer.Ordinal);
+    private DateTime? _recipeOptionsFrom;
+    private DateTime? _recipeOptionsTo;
 
+    /// <summary>
+    /// 筛选状态 → 下拉值：null=全部、""=未选型号、其它=编码。
+    /// 前缀一律照加、不做"已带前缀就跳过"的判断：编码自己叫 c:X 时那层前缀就不是它的，
+    /// 少加一层会让 c:X 在回读时被剥成 X。
+    /// </summary>
+    private static string ToOptionValue(string? recipe)
+        => recipe switch
+        {
+            null => AllRecipesValue,
+            "" => EmptyRecipeValue,
+            var code => RecipeOptionPrefix + code
+        };
+
+    /// <summary>下拉值 → 筛选状态；认不出的形状按编码处理，宁可不筛也不丢条件。</summary>
+    private static string? FromOptionValue(string? value)
+        => value switch
+        {
+            null or AllRecipesValue => null,
+            EmptyRecipeValue => "",
+            var code when code.StartsWith(RecipeOptionPrefix, StringComparison.Ordinal)
+                => code[RecipeOptionPrefix.Length..],
+            var code => code
+        };
+
+    /// <summary>发给查询请求的型号参数：null=不限、空串=未选型号、其它=精确匹配。</summary>
     private string? ToRecipeQueryArg()
-    {
-        if (_recipeFilter == EmptyRecipeValue)
-            return "";
-        if (string.IsNullOrWhiteSpace(_recipeFilter) || _recipeFilter == AllRecipesValue)
-            return null;
-        return _recipeFilter.Trim();
-    }
+        => _recipeFilter is { Length: > 0 } code ? code.Trim() : _recipeFilter;
 
-    private async Task OnRecipeFilterChanged(string value)
+    private async Task OnRecipeFilterChanged(string? value)
     {
-        _recipeFilter = value ?? AllRecipesValue;
+        _recipeFilter = FromOptionValue(value);
         _page = 1;
         await Load();
     }
 
+    /// <summary>
+    /// 选项只在时间区间变化时重建：翻页、改每页条数、切换型号都复用它，
+    /// 否则每翻一页都要重扫一遍区间内的型号编码。
+    /// </summary>
     private async Task RefreshRecipeOptionsAsync()
     {
         var from = _from ?? DateTime.Today;
         var to = _to ?? DateTime.Today;
+        if (_recipeOptionsFrom == from && _recipeOptionsTo == to)
+        {
+            return;
+        }
+
         // 区间内出现过的编码（含空）+ 配置里已知型号，避免改码后旧码消失
         var fromRecords = await Store.ListRecipeCodesAsync(from, to);
         var known = await Config.GetRecipesAsync();
@@ -513,18 +572,17 @@
         }
 
         // 当前筛选项若不在集合里也保留（例如刚改码后仍想看旧码）
-        if (!string.IsNullOrEmpty(_recipeFilter)
-            && _recipeFilter != EmptyRecipeValue
-            && _recipeFilter != AllRecipesValue
-            && !codes.Contains(_recipeFilter))
+        if (_recipeFilter is { Length: > 0 } current && !codes.Contains(current))
         {
-            codes.Add(_recipeFilter);
+            codes.Add(current);
         }
 
         _recipeOptions = codes
             .OrderBy(c => c, StringComparer.OrdinalIgnoreCase)
             .Select(c => new RecipeFilterOption(c, FormatRecipeOption(c)))
             .ToList();
+        _recipeOptionsFrom = from;
+        _recipeOptionsTo = to;
     }
 
     private string FormatRecipeOption(string code)
@@ -576,14 +634,18 @@
             );
 
             await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName("datatrace_query"), CsvExporter.ToBase64(csv));
-            await WriteExportAuditAsync(result.Items.Count, result.Total);
-            if (result.Total > result.Items.Count)
+            var message = result.Total > result.Items.Count
+                ? $"共命中 {result.Total} 条，已导出前 {result.Items.Count} 条"
+                : $"已导出 {result.Items.Count} 条";
+            try
             {
-                Toast.Add($"共命中 {result.Total} 条，已导出前 {result.Items.Count} 条", Severity.Warning);
+                await WriteExportAuditAsync(result.Items.Count, result.Total);
+                Toast.Add(message, result.Total > result.Items.Count ? Severity.Warning : Severity.Success);
             }
-            else
+            catch (Exception ex)
             {
-                Toast.Add($"已导出 {result.Items.Count} 条", Severity.Success);
+                // 文件已经下载完了：审计写库失败不能报成"导出失败"，现场会以为没导出去而重导。
+                Toast.Add($"{message}，但审计记录写入失败：{ex.Message}", Severity.Warning);
             }
         }
         catch (Exception ex)
@@ -600,16 +662,19 @@
     {
         var auth = await Auth.GetAuthenticationStateAsync();
         var user = auth.User.Identity?.Name ?? "";
-        var recipe = _recipeFilter == EmptyRecipeValue
-            ? "未选型号"
-            : string.IsNullOrWhiteSpace(_recipeFilter) || _recipeFilter == AllRecipesValue
-                ? "全部"
-                : _recipeFilter.Trim();
+        var recipe = _recipeFilter switch
+        {
+            null => "全部",
+            "" => "未选型号",
+            var code => code.Trim()
+        };
+        // 键放"导的是哪个区间"，过滤条件与条数放变更列：与明细页导出的写法一致，
+        // 日志页的"键"列不该塞进一长串条件。审计日志的键/明细字段唯一语义见 Logs.razor。
+        var key = $"{(_from ?? DateTime.Today):yyyy-MM-dd}~{(_to ?? DateTime.Today):yyyy-MM-dd}";
         var summary =
-            $"from={(_from ?? DateTime.Today):yyyy-MM-dd};to={(_to ?? DateTime.Today):yyyy-MM-dd};" +
             $"pallet={_pallet?.Trim() ?? ""};serial={_serialNo?.Trim() ?? ""};" +
             $"station={_stationId?.ToString() ?? ""};judge={_judgement?.ToString() ?? ""};" +
             $"recipe={recipe};exported={exported};total={total}";
-        await Audit.WriteAsync(user, "Export", "Query", summary, null, null);
+        await Audit.WriteAsync(user, "Export", "Query", key, null, summary);
     }
 }

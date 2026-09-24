@@ -42,6 +42,28 @@ public class CsvExporterTests
     public void Build_renders_null_as_empty_cell()
         => Assert.Equal("a,b\n1,", CsvExporter.Build(new[] { "a", "b" }, new[] { new string?[] { "1", null } }));
 
+    [Theory]
+    [InlineData("=1+1", "'=1+1")]
+    [InlineData("+CMD|'/c calc'!A1", "'+CMD|'/c calc'!A1")]
+    [InlineData("@SUM(A1)", "'@SUM(A1)")]
+    public void Build_neutralises_cells_that_excel_would_run_as_a_formula(string value, string expected)
+    {
+        var csv = CsvExporter.Build(new[] { "h" }, new[] { new[] { value } });
+
+        Assert.Equal("h\n" + expected, csv);
+    }
+
+    [Fact]
+    public void Build_still_quotes_a_neutralised_cell_that_carries_separators()
+        => Assert.Equal("h\n\"'=1,2\"", CsvExporter.Build(new[] { "h" }, new[] { new[] { "=1,2" } }));
+
+    [Fact]
+    public void Build_leaves_negative_numbers_alone()
+    {
+        // 负号不加前缀：限值列取负是正常的，"'-2.5" 会让下游把它当文本。
+        Assert.Equal("h\n-2.5", CsvExporter.Build(new[] { "h" }, new[] { new[] { "-2.5" } }));
+    }
+
     [Fact]
     public void Number_uses_invariant_culture_and_trims_trailing_zeros()
     {
@@ -370,6 +392,16 @@ public class DisplayLabelsTests
     [Fact]
     public void LimitRange_formats_invariantly()
         => Assert.Equal("0.5 ~ 1234.568", DisplayLabels.LimitRange(0.5, 1234.5678));
+
+    [Theory]
+    [InlineData("Create", true)]
+    [InlineData("Save", true)]
+    [InlineData("Delete", true)]
+    [InlineData("Export", false)]
+    [InlineData("Login", false)]
+    [InlineData("Logout", false)]
+    public void IsChangeAction_separates_edits_from_events(string action, bool expected)
+        => Assert.Equal(expected, DisplayLabels.IsChangeAction(action));
 }
 
 /// <summary>登录后回跳：目标地址来自查询串/表单，属于用户可控输入，必须挡住站外地址。</summary>

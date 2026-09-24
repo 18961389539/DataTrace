@@ -38,6 +38,14 @@ public static class CsvExporter
     private static string Escape(string? value)
     {
         var text = value ?? "";
+        // 以 = + @ 开头的单元格进 Excel 会被当公式执行（DDE 这类注入就靠它）；
+        // 前置单引号是最省事的挡法，Excel 会把整格当文本。不含 "-"：
+        // 负数值列很常见，而 "-2+3" 这种算术载荷本身没有执行能力。
+        if (text.Length > 0 && text[0] is '=' or '+' or '@')
+        {
+            text = "'" + text;
+        }
+
         if (text.IndexOfAny([',', '"', '\n', '\r']) < 0)
         {
             return text;

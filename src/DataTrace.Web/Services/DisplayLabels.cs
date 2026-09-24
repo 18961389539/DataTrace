@@ -119,6 +119,14 @@ public static class DisplayLabels
         _ => NullOr(entityType)
     };
 
+    /// <summary>
+    /// 这条审计是不是"改了什么"——只有变更类动作才有旧值/新值可对照。
+    /// 登录、退出、导出只是发生了一件事，日志页把它们的说明写成"新增 → …"会读成
+    /// "新增了导出 20 条"；未知动作按变更处理，宁可多显示箭头也不要吞掉内容。
+    /// </summary>
+    public static bool IsChangeAction(string? action)
+        => action is not ("Login" or "Logout" or "Export");
+
     /// <summary>关键字若匹配某动作的中文标签，返回这些动作码，供服务端 OR 查询。</summary>
     public static IReadOnlyList<string> ActionsMatchingKeyword(string? keyword)
     {
