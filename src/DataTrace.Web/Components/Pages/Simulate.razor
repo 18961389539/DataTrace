@@ -10,6 +10,7 @@
 @inject SimulatorCatalog Simulators
 @inject IDialogService DialogService
 @inject DtToast Toast
+@inject CustomerBrandingStore Branding
 
 <PageHeader Title="PLC 仿真"
              Description="模拟 PLC 内存与产线节拍：自动生成托盘码、点位、位移压力曲线，按工站顺序触发并等待上位机回写 2–8。" />
@@ -17,11 +18,22 @@
 <MudGrid>
     <MudItem xs="12" md="4">
         <MudPaper Class="pa-4">
-            <MudSwitch T="bool" Value="_auto" ValueChanged="OnAutoChanged" Label="自动跑线" Color="Color.Primary" />
+            @if (ProductionLocksAutoRun)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mb-2">
+                    Production 环境已锁定关闭「启动后自动跑仿真」（SimulatorAutoRun），避免现场误开仿真。
+                    开发/演示环境仍可在本页切换。
+                </MudAlert>
+                <MudSwitch T="bool" Value="false" Disabled="true" Label="自动跑线（Production 已锁定关闭）" Color="Color.Primary" />
+            }
+            else
+            {
+                <MudSwitch T="bool" Value="_auto" ValueChanged="OnAutoChanged" Label="自动跑线" Color="Color.Primary" />
+            }
             <MudNumericField @bind-Value="_interval" Label="托盘间隔(ms)" Min="500" Max="30000" />
             <MudNumericField @bind-Value="_ng" Label="NG 比例(%)" Min="0" Max="100" />
             <MudNumericField @bind-Value="_pool" Label="托盘池数量(复用)" Min="1" Max="500" />
-            <MudButton Class="mt-2" Variant="Variant.Outlined" OnClick="SaveOptions" Disabled="_saving"
+            <MudButton Class="mt-2" Variant="Variant.Outlined" Color="Color.Primary" OnClick="SaveOptions" Disabled="_saving"
                        StartIcon="@(_saving ? Icons.Material.Filled.Sync : Icons.Material.Filled.Save)">
                 @(_saving ? "保存中…" : "保存参数")
             </MudButton>
@@ -98,7 +110,7 @@
             @if (_stations.Count == 0)
             {
                 <MudText Typo="Typo.caption" Class="dt-muted d-block mt-2">
-                    还没有启用的工站，先到「工站配置」创建设备后再来仿真。
+                    还没有启用的工站，先到「工站配置」创建工站后再来仿真。
                 </MudText>
             }
         </MudPaper>
@@ -106,6 +118,9 @@
 </MudGrid>
 
 @code {
+    private bool ProductionLocksAutoRun =>
+        Branding.EnvironmentName.Equals("Production", StringComparison.OrdinalIgnoreCase);
+
     private IReadOnlyList<Station> _stations = [];
     private Dictionary<int, PlcConnection> _plcs = new();
     private string _pallet = "P0001";
@@ -133,6 +148,10 @@
         _stations = snapshot.Stations.Where(s => s.Enabled).OrderBy(s => s.Sequence).ToList();
         _plcs = snapshot.PlcConnections.ToDictionary(x => x.Id);
         _auto = snapshot.Settings.SimulatorAutoRun || Simulator.Status.Running;
+        if (ProductionLocksAutoRun)
+        {
+            _auto = false;
+        }
         _interval = snapshot.Settings.SimulatorIntervalMs;
         _ng = snapshot.Settings.SimulatorNgPercent;
         _pool = snapshot.Settings.SimulatorPalletPool;
@@ -196,7 +215,7 @@
         try
         {
             var settings = (await Config.GetSnapshotAsync()).Settings;
-            settings.SimulatorAutoRun = _auto;
+            settings.SimulatorAutoRun = ProductionLocksAutoRun ? false : _auto;
             settings.SimulatorIntervalMs = _interval;
             settings.SimulatorNgPercent = _ng;
             settings.SimulatorPalletPool = _pool;

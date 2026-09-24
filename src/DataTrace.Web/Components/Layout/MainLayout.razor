@@ -1,12 +1,14 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
 @using Microsoft.AspNetCore.Components.Authorization
-@inject NavigationManager Nav
-@implements IDisposable
+@using DataTrace.Web.Services
+@inject CustomerBrandingStore Branding
 
 <MudThemeProvider Theme="DataTraceTheme.Current" />
 <MudPopoverProvider />
 <MudDialogProvider />
 <MudSnackbarProvider />
+
+<PageTitle>@_siteName</PageTitle>
 
 <MudLayout>
     <MudAppBar Elevation="1" Color="Color.Dark">
@@ -14,8 +16,12 @@
             <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
                            aria-label="展开或收起菜单" OnClick="@Toggle" />
         </MudTooltip>
-        <MudText Typo="Typo.subtitle1">DataTrace 产线采集</MudText>
-        <MudText Typo="Typo.subtitle2" Class="dt-crumb">/ @_title</MudText>
+        @* 顶栏品牌：客户厂名（customer.json / Customer:SiteName），可选 Logo *@
+        @if (!string.IsNullOrEmpty(_logoUrl))
+        {
+            <img src="@_logoUrl" alt="" class="dt-brand-logo" />
+        }
+        <MudText Typo="Typo.subtitle1">@_siteName</MudText>
         <MudSpacer />
         <AuthorizeView>
             <Authorized>
@@ -40,25 +46,17 @@
 
 @code {
     private bool _open = true;
-    private string _title = "实时看板";
+    private string _siteName = "DataTrace";
+    private string? _logoUrl;
 
     protected override void OnInitialized()
     {
-        _title = ResolveTitle(Nav.ToBaseRelativePath(Nav.Uri));
-        Nav.LocationChanged += OnLocationChanged;
+        var snap = Branding.GetSnapshot();
+        _siteName = snap.EffectiveSiteName;
+        _logoUrl = snap.ResolvedLogoUrl;
     }
 
     private void Toggle() => _open = !_open;
-
-    private void OnLocationChanged(object? sender, LocationChangedEventArgs args)
-    {
-        _title = ResolveTitle(Nav.ToBaseRelativePath(args.Location));
-        StateHasChanged();
-    }
-
-    /// <summary>顶栏显示当前页面名，避免多标签页时分不清在哪个界面。名字表在 DisplayLabels，与"权限不足"页共用。</summary>
-    private static string ResolveTitle(string relativePath)
-        => DisplayLabels.PageTitle(relativePath) ?? "DataTrace";
 
     private static string RoleLabel(System.Security.Claims.ClaimsPrincipal user)
     {
@@ -68,6 +66,4 @@
         if (user.IsInRole(AppRoles.Viewer)) return "访客";
         return "未分配角色";
     }
-
-    public void Dispose() => Nav.LocationChanged -= OnLocationChanged;
 }

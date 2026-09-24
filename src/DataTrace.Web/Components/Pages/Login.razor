@@ -1,10 +1,19 @@
 @page "/login"
 @layout EmptyLayout
 @attribute [AllowAnonymous]
+@using DataTrace.Web.Services
+@inject CustomerBrandingStore Branding
+
+<PageTitle>登录 · @_siteName</PageTitle>
 
 <div class="login-card">
-    <h1 class="login-title">登录 DataTrace</h1>
+    @if (!string.IsNullOrEmpty(_logoUrl))
+    {
+        <img src="@_logoUrl" alt="" class="dt-brand-logo dt-brand-logo-login" />
+    }
+    <h1 class="login-title">登录 @_siteName</h1>
     <p class="login-hint">产线数据采集与追溯。请使用工程师分配的账号登录。</p>
+    <p class="login-hint login-security">首次部署请立即到「用户」页修改默认密码（如 admin / Admin@123），勿把出厂口令留在现场。</p>
     <form method="post" action="/account/login" data-enhance="false" data-enhance-nav="false">
         <AntiforgeryToken />
         @* 回跳目标原样带回表单：Cookie 认证的挑战与 RedirectToLogin 都把它放在查询串上，
@@ -23,6 +32,16 @@
 </div>
 
 @code {
+    private string _siteName = "DataTrace";
+    private string? _logoUrl;
+
+    protected override void OnInitialized()
+    {
+        var snap = Branding.GetSnapshot();
+        _siteName = snap.EffectiveSiteName;
+        _logoUrl = snap.ResolvedLogoUrl;
+    }
+
     [SupplyParameterFromQuery(Name = "error")]
     public string? Error { get; set; }
 

@@ -28,7 +28,7 @@ public sealed class DatabaseSeeder
         _logger = logger;
     }
 
-    public async Task SeedAsync(CancellationToken cancellationToken = default)
+    public async Task SeedAsync(bool simulatorAutoRunSeed = true, CancellationToken cancellationToken = default)
     {
         await _db.Database.EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
         await _db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;", cancellationToken).ConfigureAwait(false);
@@ -68,7 +68,11 @@ public sealed class DatabaseSeeder
 
         if (!await _db.SystemSettings.AnyAsync(cancellationToken).ConfigureAwait(false))
         {
-            _db.SystemSettings.Add(new SystemSettings());
+            _db.SystemSettings.Add(new SystemSettings
+            {
+                // Entity default remains true for Dev; Production customer install passes false from Program.
+                SimulatorAutoRun = simulatorAutoRunSeed
+            });
         }
 
         if (!await _db.ConfigVersions.AnyAsync(cancellationToken).ConfigureAwait(false))

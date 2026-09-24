@@ -2,10 +2,12 @@
 @attribute [Authorize(Roles = "Administrator,Engineer")]
 @using DataTrace.Application.Configuration
 @using DataTrace.Collector
+@using DataTrace.Web.Services
 @inject IConfigRepository Config
 @inject ILineSimulator Simulator
 @inject DtToast Toast
 @inject IDialogService DialogService
+@inject CustomerBrandingStore Branding
 
 <PageHeader Title="系统设置">
     <ChildContent>
@@ -30,6 +32,78 @@ else if (_settings is null)
 }
 else
 {
+    <MudPaper Class="pa-4 mb-3">
+        <MudText Typo="Typo.subtitle1" Class="mb-2">部署身份（配得开）</MudText>
+        <MudText Typo="Typo.caption" Class="dt-muted mb-3">
+            一客户一套部署。厂名/Logo 写入安装目录 customer.json；端口与数据目录由安装脚本写入 appsettings.Production.json。
+            多产线请使用多个安装目录（或未来 SiteId），本页不建多站点库表。
+        </MudText>
+        <MudStack Row="true" Spacing="4" Class="flex-wrap mb-3">
+            <div class="dt-metric">
+                <div class="dt-metric-label">客户标识</div>
+                <div class="dt-metric-value">@(_identity.CustomerId is { Length: > 0 } ? _identity.CustomerId : "—")</div>
+            </div>
+            <div class="dt-metric">
+                <div class="dt-metric-label">运行环境</div>
+                <div class="dt-metric-value">@_envName</div>
+            </div>
+            <div class="dt-metric">
+                <div class="dt-metric-label">数据目录</div>
+                <div class="dt-metric-value" style="font-size:.85rem;word-break:break-all">@_dataRoot</div>
+            </div>
+            <div class="dt-metric">
+                <div class="dt-metric-label">监听地址</div>
+                <div class="dt-metric-value" style="font-size:.85rem">@(_bindUrl ?? "—")</div>
+            </div>
+        
+            <div class="dt-metric">
+                <div class="dt-metric-label">应用版本</div>
+                <div class="dt-metric-value">@_appVersion</div>
+            </div></MudStack>
+        <AuthorizeView Roles="Administrator">
+            <Authorized>
+                <MudGrid>
+                    <MudItem xs="12" sm="6" md="4">
+                        <MudTextField @bind-Value="_editSiteName" Label="厂名 / 站点显示名" Immediate="true"
+                                      HelperText="顶栏、登录页、浏览器标题；保存到 customer.json" />
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="4">
+                        <MudTextField @bind-Value="_editLogoPath" Label="Logo 文件名" Immediate="true"
+                                      Placeholder="logo.png"
+                                      HelperText="放在安装目录 branding\ 下，例如 logo.png → /branding/logo.png" />
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="4" Class="d-flex align-center">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="SaveBranding" Disabled="_savingBrand"
+                                   StartIcon="@Icons.Material.Filled.Badge">
+                            @(_savingBrand ? "保存中…" : "保存品牌")
+                        </MudButton>
+                    </MudItem>
+                </MudGrid>
+            </Authorized>
+            <NotAuthorized>
+                <MudAlert Severity="Severity.Info" Dense="true" Class="mt-1">厂名/Logo 仅管理员可改；当前为只读展示。</MudAlert>
+            </NotAuthorized>
+        </AuthorizeView>
+    </MudPaper>
+
+    @if (_softCapWarning is { Length: > 0 })
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
+            @_softCapWarning
+        </MudAlert>
+    }
+
+    @if (_productionSimWarning)
+    {
+        <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3" Variant="Variant.Outlined">
+            Production 环境下数据库仍开启「启动后自动跑仿真」（SimulatorAutoRun=true）。客户现场请保持关闭；应用下次启动会强制写回 false。
+        </MudAlert>
+    }
+
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
+        <b>默认密码：</b>首次部署请到「用户」页修改 admin / engineer 等出厂口令。应用不会强制改密以免把管理员锁在门外。
+    </MudAlert>
+
     <MudPaper Class="pa-4 mb-3">
         <MudText Typo="Typo.subtitle1" Class="mb-3">采集</MudText>
         <MudGrid>
@@ -57,13 +131,16 @@ else
             <MudText Typo="Typo.subtitle1">模拟产线</MudText>
             <MudSpacer />
             <MudButton Variant="Variant.Text" Size="Size.Small" Href="/simulate"
-                       EndIcon="@Icons.Material.Filled.ChevronRight">到 PLC 仿真页修改</MudButton>
+                       EndIcon="@Icons.Material.Filled.ChevronRight">去 PLC 仿真页修改</MudButton>
         </MudStack>
-        @* 只读展示：这四个参数在「PLC 仿真」页也有一份可编辑入口，两边都能写就会互相覆盖，
-           而且两页的取值范围本来就不一致（间隔一边 200–60000、一边 500–30000）。 *@
+        <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3" Variant="Variant.Text">
+            客户 Production 安装默认关闭「启动后自动跑仿真」（见 customer.json / appsettings.Production.json 的 SimulatorAutoRun）。
+            开发演示环境仍可默认开启。现场勿误开仿真。开关改动请在「PLC 仿真」页操作并保存。
+        </MudAlert>
+        @* 只读展示：可编辑入口仅在「PLC 仿真」页，避免两处同时写互相覆盖。 *@
         <MudStack Row="true" Spacing="4" Class="flex-wrap">
             <div class="dt-metric">
-                <div class="dt-metric-label">启动后自动跑线</div>
+                <div class="dt-metric-label">启动后自动跑仿真</div>
                 <div class="dt-metric-value">@(_settings.SimulatorAutoRun ? "开" : "关")</div>
             </div>
             <div class="dt-metric">
@@ -103,7 +180,7 @@ else
             @(_saving ? "保存中…" : "保存")
         </MudButton>
         <MudButton Variant="Variant.Outlined" OnClick="Reload" Disabled="_saving" StartIcon="@Icons.Material.Filled.RestartAlt">
-            放弃修改并重读
+            放弃修改并重载
         </MudButton>
     </MudStack>
 }
@@ -113,6 +190,16 @@ else
     private string _savedKey = "";
     private bool _loading = true;
     private bool _saving;
+    private bool _savingBrand;
+    private string _editSiteName = "";
+    private string? _editLogoPath;
+    private DataTrace.Web.Options.CustomerOptions _identity = new();
+    private string _envName = "";
+    private string _dataRoot = "";
+    private string? _bindUrl;
+    private string _appVersion = "";
+    private string? _softCapWarning;
+    private bool _productionSimWarning;
 
     /// <summary>页面上的值与最近一次读/写的值不一致。没有这个提示，切走页面就会静默丢掉改动。</summary>
     private bool Dirty => _settings is not null && Key(_settings) != _savedKey;
@@ -128,7 +215,37 @@ else
         _loading = true;
         try
         {
+            _identity = Branding.GetSnapshot();
+            _editSiteName = _identity.EffectiveSiteName;
+            _editLogoPath = _identity.LogoPath;
+            _envName = Branding.EnvironmentName;
+            _dataRoot = Branding.ResolvedDataRoot;
+            _bindUrl = Branding.BindUrl;
+            _appVersion = Branding.AppVersion;
+
+            _softCapWarning = null;
+            try
+            {
+                var snap = await Config.GetSnapshotAsync();
+                var maxSt = _identity.MaxStations;
+                var maxPlc = _identity.MaxPlcs;
+                if (maxSt is int msCap && snap.Stations.Count > msCap)
+                {
+                    _softCapWarning = $"工站数量 {snap.Stations.Count} 已超过客户约定上限 MaxStations={msCap}（仅提示，不阻断配置）。";
+                }
+                else if (maxPlc is int mpCap && snap.PlcConnections.Count > mpCap)
+                {
+                    _softCapWarning = $"PLC 连接数 {snap.PlcConnections.Count} 已超过客户约定上限 MaxPlcs={mpCap}（仅提示，不阻断配置）。";
+                }
+            }
+            catch
+            {
+                // soft cap is best-effort; ignore load errors here
+            }
+
             _settings = (await Config.GetSnapshotAsync()).Settings;
+            _productionSimWarning = Branding.EnvironmentName.Equals("Production", StringComparison.OrdinalIgnoreCase)
+                && _settings.SimulatorAutoRun;
             _savedKey = _settings is null ? "" : Key(_settings);
         }
         catch (Exception ex)
@@ -139,6 +256,26 @@ else
         finally
         {
             _loading = false;
+        }
+    }
+
+    private async Task SaveBranding()
+    {
+        if (_savingBrand) return;
+        _savingBrand = true;
+        try
+        {
+            Branding.SaveBranding(_editSiteName, _editLogoPath);
+            _identity = Branding.GetSnapshot();
+            Toast.Add("品牌已保存到 customer.json（刷新页面后顶栏/登录页生效）", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"保存品牌失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _savingBrand = false;
         }
     }
 
