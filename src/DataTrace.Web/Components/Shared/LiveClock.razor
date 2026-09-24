@@ -1,0 +1,19 @@
+@implements IDisposable
+
+@_now.ToString("HH:mm:ss")
+
+@code {
+    private DateTime _now = DateTime.Now;
+    private Timer? _timer;
+
+    protected override void OnInitialized()
+    {
+        _timer = new Timer(_ => InvokeAsync(() =>
+        {
+            _now = DateTime.Now;
+            StateHasChanged();
+        }), null, 1000, 1000);
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}

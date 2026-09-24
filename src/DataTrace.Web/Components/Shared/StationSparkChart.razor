@@ -1,0 +1,58 @@
+@* 工站迷你曲线：仅在曲线数据/判定色变化时重建 Series，避免看板整页刷新时反复抽稀 *@
+<LineChart Series="_series" ViewWidth="240" Height="56"
+           ShowAxis="false" ShowLegend="false" ShowPoints="false" MaxPoints="80"
+           EmptyText="无曲线点" />
+
+@code {
+    [Parameter] public string CurveName { get; set; } = "";
+    [Parameter] public float[] Values { get; set; } = [];
+    [Parameter] public bool IsNg { get; set; }
+
+    private IReadOnlyList<LineSeries> _series = [];
+    private string? _fingerprint;
+    private bool _render;
+
+    protected override void OnParametersSet()
+    {
+        var fingerprint = BuildFingerprint();
+        if (fingerprint == _fingerprint)
+        {
+            _render = false;
+            return;
+        }
+
+        _fingerprint = fingerprint;
+        _render = true;
+        if (Values.Length == 0)
+        {
+            _series = [];
+            return;
+        }
+
+        _series =
+        [
+            new LineSeries
+            {
+                Name = CurveName,
+                Values = Values,
+                Color = IsNg ? ChartColors.Alert : ChartColors.Primary
+            }
+        ];
+    }
+
+    protected override bool ShouldRender() => _render;
+
+    private string BuildFingerprint()
+    {
+        // 长度 + 首尾/中位采样足够区分「同一次采集结果」与「新曲线」；全量哈希在点数多时更贵。
+        var values = Values;
+        var len = values.Length;
+        if (len == 0)
+        {
+            return $"{CurveName}|0|{IsNg}";
+        }
+
+        var mid = values[len / 2];
+        return $"{CurveName}|{len}|{values[0]:R}|{mid:R}|{values[len - 1]:R}|{IsNg}";
+    }
+}

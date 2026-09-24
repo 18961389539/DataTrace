@@ -215,7 +215,12 @@ public sealed class CollectionHostedService : BackgroundService
                     buffers[i] = await queue.ReadWordsAsync(start, block.WordCount, cancellationToken).ConfigureAwait(false);
                 }
 
-                _status.UpsertPlc(new PlcRuntimeStatus { PlcConnectionId = plc.Id, Name = plc.Name, Connected = true });
+                // 仅在连通性/错误态真有变化时 Upsert，避免每次成功扫描都广播 Changed。
+                var plcStatus = _status.Plcs.FirstOrDefault(p => p.PlcConnectionId == plc.Id);
+                if (plcStatus is null || !plcStatus.Connected || !string.IsNullOrEmpty(plcStatus.LastError))
+                {
+                    _status.UpsertPlc(new PlcRuntimeStatus { PlcConnectionId = plc.Id, Name = plc.Name, Connected = true });
+                }
 
                 foreach (var station in stations)
                 {

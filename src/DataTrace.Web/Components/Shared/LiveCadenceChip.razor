@@ -1,0 +1,49 @@
+@implements IDisposable
+
+<MudTooltip Text="最近一次工站完成的时间。产线本就没料时变慢不算异常。">
+    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@CadenceColor">
+        最近节拍 @CadenceText
+    </MudChip>
+</MudTooltip>
+
+@code {
+    [Parameter] public DateTime? LastBeat { get; set; }
+
+    private DateTime _now = DateTime.Now;
+    private Timer? _timer;
+
+    protected override void OnInitialized()
+    {
+        _timer = new Timer(_ => InvokeAsync(() =>
+        {
+            _now = DateTime.Now;
+            StateHasChanged();
+        }), null, 1000, 1000);
+    }
+
+    private string CadenceText
+    {
+        get
+        {
+            if (LastBeat is null) return "尚无节拍";
+            var span = _now - LastBeat.Value;
+            if (span.TotalSeconds < 5) return "刚刚";
+            if (span.TotalSeconds < 60) return $"{(int)span.TotalSeconds} 秒前";
+            if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes} 分前";
+            return LastBeat.Value.ToString("HH:mm:ss");
+        }
+    }
+
+    private Color CadenceColor
+    {
+        get
+        {
+            if (LastBeat is not { } beat) return Color.Default;
+            var idle = _now - beat;
+            if (idle < TimeSpan.FromSeconds(30)) return Color.Success;
+            return idle < TimeSpan.FromMinutes(5) ? Color.Warning : Color.Default;
+        }
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}

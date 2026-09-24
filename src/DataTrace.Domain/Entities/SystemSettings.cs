@@ -3,7 +3,7 @@ namespace DataTrace.Domain.Entities;
 public class SystemSettings
 {
     public int Id { get; set; }
-    public int ScanIntervalMs { get; set; } = 80;
+    public int ScanIntervalMs { get; set; } = 200;
     public int WriteRetryCount { get; set; } = 3;
     public int WriteRetryDelayMs { get; set; } = 50;
     public int RetentionYears { get; set; } = 3;
