@@ -89,7 +89,9 @@ public class SettingsPageTests : WebTestBase
         TypeIntoAriaLabel(cut, "扫描间隔(ms)", "120");
         ClickButton(cut, "保存");
 
-        Assert.Equal(new[] { false }, Simulator.RunningChanges);
+        // 保存整条链是异步的（读快照 → 落库 → 通知模拟器）：断言要等它落定，
+        // 否则机器一忙就变成"还没轮到就断言"的偶发失败。
+        cut.WaitForAssertion(() => Assert.Equal(new[] { false }, Simulator.RunningChanges));
     }
 
     [Fact]

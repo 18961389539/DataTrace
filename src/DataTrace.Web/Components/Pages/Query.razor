@@ -290,7 +290,9 @@
             _recipeFilter = RecipeQuery.Trim();
         }
 
-        _stations = await Config.GetStationsAsync();
+        // 工站下拉与型号选项都取自同一份配置快照：它按版本号在本电路内缓存，
+        // 分头读一次工站图、再读一次型号，等于把同一批表读两遍（与报表页同一套做法）。
+        _stations = (await Config.GetSnapshotAsync()).Stations;
         await Load();
     }
 
@@ -549,7 +551,8 @@
 
         // 区间内出现过的编码（含空）+ 配置里已知型号，避免改码后旧码消失
         var fromRecords = await Store.ListRecipeCodesAsync(from, to);
-        var known = await Config.GetRecipesAsync();
+        // 走快照而不是再查一次型号：进页面时已经读过，这里只是命中缓存。
+        var known = (await Config.GetSnapshotAsync()).Recipes;
         _recipeNames = known
             .GroupBy(r => r.Code, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.First().Name ?? "", StringComparer.Ordinal);
