@@ -1,0 +1,25 @@
+@* 概念详解的三段呈现。
+   ⓘ 的 tooltip（InfoHint）与"包住芯片"的 tooltip（各页既有写法）共用它，
+   保证同一概念在两种形态下不会说出两种口径。 *@
+@if (Topic is not null)
+{
+    <div class="dt-help">
+        @if (!string.IsNullOrWhiteSpace(Extra))
+        {
+            @* 动态补充行：例如"连续失败 3 次，锁定到 14:05"或某个角色的权限范围。
+               它随数据变化，不属于可集中维护的概念文案。 *@
+            <div class="dt-help-line">@Extra</div>
+        }
+        <div class="dt-help-title">@Topic.Title</div>
+        <div class="dt-help-line">@Topic.How</div>
+        <div class="dt-help-line dt-help-impact">@Topic.Impact</div>
+    </div>
+}
+
+@code {
+    /// <summary>详解内容；为空则什么都不渲染（调用方常直接传一个可能为空的字段）。</summary>
+    [Parameter] public HelpTopic? Topic { get; set; }
+
+    /// <summary>可选的动态补充行，渲染在三段之前。</summary>
+    [Parameter] public string? Extra { get; set; }
+}

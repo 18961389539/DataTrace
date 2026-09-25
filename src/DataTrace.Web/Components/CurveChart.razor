@@ -1,7 +1,12 @@
 @using System.Globalization
+@using DataTrace.Application.Configuration
 @using DataTrace.Application.Runtime
+@using DataTrace.Domain.Constants
+@using Microsoft.AspNetCore.Components.Authorization
 @inject DtToast Toast
 @inject IJSRuntime Js
+@inject IAuditLogger Audit
+@inject AuthenticationStateProvider Auth
 
 @if (Payload is null || Payload.Series.Count == 0)
 {
@@ -12,10 +17,14 @@ else
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-1 flex-wrap">
         <MudText Typo="Typo.caption" Class="dt-muted">@Summary()</MudText>
         <MudSpacer />
-        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="Export" Disabled="_exporting"
-                   StartIcon="@(_exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)">
-            @(_exporting ? "导出中…" : "导出数据")
-        </MudButton>
+        @* 与查询/明细/报表三处导出同一套闸门：原始采样点属于可追溯数据，导出要留痕。 *@
+        @if (_canExport)
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="Export" Disabled="_exporting"
+                       StartIcon="@(_exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)">
+                @(_exporting ? "导出中…" : "导出数据")
+            </MudButton>
+        }
     </MudStack>
     <LineChart Series="_series" Height="300" SeriesAxisName="@_axisName"
                XStartText="@_xStartText" XEndText="@_xEndText" EmptyText="曲线点数为空" />
@@ -23,6 +32,9 @@ else
 
 @code {
     [Parameter] public CurvePayload? Payload { get; set; }
+
+    /// <summary>审计键：本组件不认识月库与记录号，由宿主页面（明细页）给出定位信息。</summary>
+    [Parameter] public string AuditKey { get; set; } = "";
 
     private IReadOnlyList<LineSeries> _series = [];
     private string _axisName = "序号";
@@ -32,6 +44,12 @@ else
     private string? _yName;
     private float[]? _xValues;
     private float[]? _yValues;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var auth = await Auth.GetAuthenticationStateAsync();
+        _canExport = auth.User.IsInRole(AppRoles.Administrator) || auth.User.IsInRole(AppRoles.Engineer);
+    }
 
     protected override void OnParametersSet() => Rebuild();
 
@@ -100,11 +118,19 @@ else
     }
 
     private bool _exporting;
+    private bool _canExport;
 
     private async Task Export()
     {
         if (_exporting)
         {
+            return;
+        }
+
+        // 按钮已经按角色渲染，这里再判一次：页面留着旧的一帧时点进来也不能绕过。
+        if (!_canExport)
+        {
+            Toast.Add("当前角色无权导出曲线数据（需要管理员或工程师）", Severity.Warning);
             return;
         }
 
@@ -124,20 +150,37 @@ else
         }
 
         _exporting = true;
+        // 条数先定格：下载是异步的，中途重渲染会把数据源换掉，提示与审计就对不上了。
+        var count = rows.Count;
         try
         {
             var csv = CsvExporter.Build([_xName ?? "X", _yName ?? "Y"], rows);
             await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName("datatrace_curve"), CsvExporter.ToBase64(csv));
-            Toast.Add($"已导出 {rows.Count} 个采样点", Severity.Success);
         }
         catch (Exception ex)
         {
             // JS 互操失败（连接断了、浏览器拦下下载）如果抛出去，整条 circuit 会断，页面直接卡死。
             Toast.Add($"导出失败：{ex.Message}", Severity.Error);
+            return;
         }
         finally
         {
             _exporting = false;
+        }
+
+        var message = $"已导出 {count} 个采样点";
+
+        // 文件已经在用户手里了：审计写库失败不能报成"导出失败"，否则现场会重导一次。
+        try
+        {
+            var auth = await Auth.GetAuthenticationStateAsync();
+            var summary = $"series={_xName}/{_yName};points={count}";
+            await Audit.WriteAsync(auth.User.Identity?.Name ?? "", "Export", "CurveDefinition", AuditKey, null, summary);
+            Toast.Add(message, Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"{message}，但审计记录写入失败：{ex.Message}", Severity.Warning);
         }
     }
 }

@@ -15,10 +15,10 @@ public sealed class CurveBaselineReport
     public SeriesRole Role { get; init; }
     public string? Unit { get; init; }
 
-    /// <summary>区间内取到的该序列样本总数（含不合格、含型号不匹配的）。</summary>
+    /// <summary>区间内该序列的样本总数（含不合格、含型号不匹配的），不受打分窗口上限影响。</summary>
     public int TotalSampleCount { get; init; }
 
-    /// <summary>因型号与当前生效型号不一致而被排除的样本数。</summary>
+    /// <summary>因型号与本型号范围（当前型号 + 它改码前的编码）不一致而被排除的样本数。</summary>
     public int MismatchedRecipeCount { get; init; }
 
     /// <summary>建立基线时使用的合格样本数。</summary>
@@ -27,7 +27,7 @@ public sealed class CurveBaselineReport
     /// <summary>建立基线时生效的产品型号编码；空串表示按未选型号（默认限值）判定。</summary>
     public string RecipeCode { get; init; } = "";
 
-    /// <summary>区间内不合格的样本数，用于对照偏离分是否真的抓到了不良。</summary>
+    /// <summary>区间内属于本型号但不合格的样本数，用于对照偏离分是否真的抓到了不良。</summary>
     public int NgCount { get; init; }
 
     public required CurveTemplate Template { get; init; }

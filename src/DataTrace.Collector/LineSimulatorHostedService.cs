@@ -26,8 +26,19 @@ public interface ILineSimulator
     LineSimulatorStatus Status { get; }
     event Action? Changed;
     void SetRunning(bool running);
-    Task RunOnePalletAsync(string? palletCode = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 走一托盘（逐站触发并等回写）。返回是否真的走完了 —— 中途超时/没有可跑的工站都会如实返回，
+    /// 调用方不能再把"点过按钮"当成"走完了"。
+    /// </summary>
+    Task<LineRunResult> RunOnePalletAsync(string? palletCode = null, CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// 一次走线的结果：<see cref="Completed"/> 为 false 时 <see cref="Message"/> 说明卡在哪、
+/// 以及该往哪个方向查（通常是采集是否停用、地址/扫描间隔是否配错）。
+/// </summary>
+public sealed record LineRunResult(bool Completed, string? StoppedAtStation, bool TimedOut, string Message);
 
 public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulator
 {
@@ -113,7 +124,7 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
         }
     }
 
-    public async Task RunOnePalletAsync(string? palletCode = null, CancellationToken cancellationToken = default)
+    public async Task<LineRunResult> RunOnePalletAsync(string? palletCode = null, CancellationToken cancellationToken = default)
     {
         await _runLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -131,9 +142,10 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
                 .ToList();
             if (stations.Count == 0)
             {
-                Status.LastMessage = "没有启用的模拟 PLC / 工站";
+                const string message = "没有启用的模拟 PLC / 工站";
+                Status.LastMessage = message;
                 Changed?.Invoke();
-                return;
+                return new LineRunResult(false, null, false, message);
             }
 
             var pool = Math.Max(1, snapshot.Settings.SimulatorPalletPool);
@@ -148,6 +160,8 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
             Changed?.Invoke();
 
             var completedAll = true;
+            string? stalledAt = null;
+            var timedOut = false;
             foreach (var station in stations)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -170,7 +184,6 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
 
                 var result = await WaitHandshakeAsync(driver, station, cancellationToken).ConfigureAwait(false);
                 Status.LastResultCode = result;
-                Status.CompletedStations++;
                 Status.LastMessage = result is null
                     ? $"{station.Code} 等待上位机回写超时"
                     : $"{station.Code} 回写 {ResultCodes.Describe(result.Value)}";
@@ -179,9 +192,13 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
                 if (result is null)
                 {
                     completedAll = false;
+                    stalledAt = station.Code;
+                    timedOut = true;
                     break;
                 }
 
+                // 只有真回写了才算走完这一站：超时也计数会让"累计工站"看起来像成功数。
+                Status.CompletedStations++;
                 await Task.Delay(350, cancellationToken).ConfigureAwait(false);
             }
 
@@ -193,6 +210,14 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
             }
 
             Changed?.Invoke();
+
+            return completedAll
+                ? new LineRunResult(true, null, false, $"托盘 {code} 已走完全线")
+                : new LineRunResult(
+                    false,
+                    stalledAt,
+                    timedOut,
+                    $"托盘 {code} 在 {stalledAt} 等待上位机回写超时，未走完；请确认采集已启用、该工站地址与扫描间隔是否正确");
         }
         finally
         {

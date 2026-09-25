@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using DataTrace.Domain.Constants;
 using DataTrace.Web.Components.Shared;
 using DataTrace.Web.Services;
 
@@ -400,8 +401,39 @@ public class DisplayLabelsTests
     [InlineData("Export", false)]
     [InlineData("Login", false)]
     [InlineData("Logout", false)]
+    [InlineData("LoginFailed", false)]
+    [InlineData("Unlock", false)]
     public void IsChangeAction_separates_edits_from_events(string action, bool expected)
         => Assert.Equal(expected, DisplayLabels.IsChangeAction(action));
+
+    [Theory]
+    [InlineData("Update", "修改")]
+    [InlineData("LoginFailed", "登录失败")]
+    [InlineData("Unlock", "解除锁定")]
+    public void AuditAction_names_the_user_management_actions(string action, string expected)
+        => Assert.Equal(expected, DisplayLabels.AuditAction(action));
+
+    [Fact]
+    public void KnownAuditActions_covers_every_action_the_user_page_writes()
+        => Assert.All(
+            new[] { "Create", "Update", "Delete", "ResetPassword", "Unlock" },
+            action => Assert.Contains(action, DisplayLabels.KnownAuditActions));
+
+    [Theory]
+    [InlineData(AppRoles.Administrator, "管理员")]
+    [InlineData(AppRoles.Engineer, "工程师")]
+    [InlineData(AppRoles.Operator, "操作员")]
+    [InlineData(AppRoles.Viewer, "访客")]
+    public void RoleText_names_each_role(string role, string expected)
+        => Assert.Equal(expected, DisplayLabels.RoleText(role));
+
+    [Fact]
+    public void RoleText_falls_back_to_the_raw_code_for_unknown_roles()
+        => Assert.Equal("Supervisor", DisplayLabels.RoleText("Supervisor"));
+
+    [Fact]
+    public void RoleHint_explains_every_known_role()
+        => Assert.All(AppRoles.All, role => Assert.False(string.IsNullOrWhiteSpace(DisplayLabels.RoleHint(role))));
 }
 
 /// <summary>登录后回跳：目标地址来自查询串/表单，属于用户可控输入，必须挡住站外地址。</summary>
@@ -451,4 +483,69 @@ public class ReturnUrlTests
         var value = failed.Split("ReturnUrl=")[1];
         Assert.Equal("/query?size=100", Uri.UnescapeDataString(value));
     }
+
+    [Fact]
+    public void Failure_reason_travels_with_the_target_so_the_login_page_can_explain_itself()
+    {
+        Assert.Equal("/login?error=locked&ReturnUrl=%2Fquery",
+            ReturnUrl.AfterSignInFailed("/query", ReturnUrl.LockedError));
+        Assert.Equal("/login?error=crosssite", ReturnUrl.AfterSignInFailed(null, ReturnUrl.CrossSiteError));
+        Assert.Equal("/login?error=crosssite&ReturnUrl=%2Fusers",
+            ReturnUrl.AfterSignInFailed("/users", ReturnUrl.CrossSiteError));
+    }
+
+    [Fact]
+    public void Default_error_code_stays_1_so_old_bookmarks_and_assertions_keep_working()
+        => Assert.Equal("/login?error=1", ReturnUrl.AfterSignInFailed(null));
+}
+
+/// <summary>登录/登出的跨站来源判定：请求不带凭据时，这是唯一一道防线。</summary>
+public class CrossSiteRequestGuardTests
+{
+    [Fact]
+    public void Same_origin_header_passes()
+        => Assert.True(CrossSiteRequestGuard.IsSameSite("http://machine:5080", null, "machine", 5080));
+
+    [Fact]
+    public void Host_case_does_not_matter()
+        => Assert.True(CrossSiteRequestGuard.IsSameSite("http://MACHINE:5080", null, "machine", 5080));
+
+    [Fact]
+    public void Default_port_is_normalised_away()
+        => Assert.True(CrossSiteRequestGuard.IsSameSite("http://machine", null, "machine", 80));
+
+    [Fact]
+    public void Foreign_origin_is_rejected()
+        => Assert.False(CrossSiteRequestGuard.IsSameSite("http://evil.example", null, "machine", 5080));
+
+    [Fact]
+    public void Same_host_on_another_port_is_rejected()
+        => Assert.False(CrossSiteRequestGuard.IsSameSite("http://machine:9999", null, "machine", 5080));
+
+    [Fact]
+    public void Scheme_downgrade_is_rejected_because_the_authority_differs()
+        => Assert.False(CrossSiteRequestGuard.IsSameSite("https://machine", null, "machine", 80));
+
+    [Fact]
+    public void Opaque_origin_is_rejected()
+        => Assert.False(CrossSiteRequestGuard.IsSameSite("null", null, "machine", 5080));
+
+    [Fact]
+    public void Referer_carries_the_decision_when_origin_is_missing()
+    {
+        Assert.True(CrossSiteRequestGuard.IsSameSite(null, "http://machine:5080/query?size=100", "machine", 5080));
+        Assert.False(CrossSiteRequestGuard.IsSameSite(null, "http://evil.example/attack", "machine", 5080));
+    }
+
+    [Fact]
+    public void Both_headers_missing_is_allowed_so_non_browser_clients_are_not_broken()
+    {
+        // 浏览器发起的跨站表单必然带 Origin；两个都没有说明不是浏览器表单。
+        Assert.True(CrossSiteRequestGuard.IsSameSite(null, null, "machine", 5080));
+        Assert.True(CrossSiteRequestGuard.IsSameSite("", "  ", "machine", 5080));
+    }
+
+    [Fact]
+    public void Malformed_origin_is_treated_as_foreign()
+        => Assert.False(CrossSiteRequestGuard.IsSameSite("not-a-url", null, "machine", 5080));
 }

@@ -1,4 +1,4 @@
-using DataTrace.Domain.Constants;
+﻿using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
@@ -273,6 +273,90 @@ public class DomainRuleTests
         Assert.Equal(Enumerable.Range(1, 8).Select(i => (short)i), codes);
     }
 
+    // ---------- 工站配置的硬性上限 ----------
+
+    [Theory]
+    [InlineData((short)1)]
+    [InlineData((short)9)]
+    [InlineData((short)100)]
+    [InlineData((short)-1)]
+    public void Trigger_value_allows_values_outside_the_write_back_range(short value)
+    {
+        Assert.Null(StationConfigLimits.TriggerValueError(value));
+        Assert.False(StationConfigLimits.IsWriteBackCode(value));
+    }
+
+    [Theory]
+    [InlineData((short)2)]
+    [InlineData((short)5)]
+    [InlineData((short)8)]
+    public void Trigger_value_rejects_write_back_codes(short value)
+    {
+        // 触发与回写共用寄存器：取值相同会让触发位永远清不掉，工站被反复触发。
+        var error = StationConfigLimits.TriggerValueError(value);
+        Assert.NotNull(error);
+        Assert.Contains("响应码", error);
+        Assert.True(StationConfigLimits.IsWriteBackCode(value));
+    }
+
+    [Fact]
+    public void Trigger_value_rejects_zero_because_registers_start_at_zero()
+    {
+        var error = StationConfigLimits.TriggerValueError(0);
+        Assert.NotNull(error);
+        Assert.Contains("为 0", error);
+        Assert.False(StationConfigLimits.IsWriteBackCode(0));
+    }
+
+    [Theory]
+    [InlineData(2, null)]
+    [InlineData(50, null)]
+    [InlineData(StationConfigLimits.MaxCurvePoints, null)]
+    [InlineData(1, "至少")]
+    [InlineData(0, "至少")]
+    [InlineData(StationConfigLimits.MaxCurvePoints + 1, "不能超过")]
+    public void Curve_point_count_is_bounded(int pointCount, string? expectedFragment)
+    {
+        var error = StationConfigLimits.PointCountError(pointCount);
+        if (expectedFragment is null)
+        {
+            Assert.Null(error);
+            return;
+        }
+
+        Assert.NotNull(error);
+        Assert.Contains(expectedFragment, error);
+    }
+
+    [Theory]
+    [InlineData(1, null)]
+    [InlineData(16, null)]
+    [InlineData(StationConfigLimits.MaxPalletCodeLength, null)]
+    [InlineData(0, "必须大于 0")]
+    [InlineData(-4, "必须大于 0")]
+    [InlineData(StationConfigLimits.MaxPalletCodeLength + 1, "不能超过")]
+    public void Pallet_code_length_is_bounded(int length, string? expectedFragment)
+    {
+        var error = StationConfigLimits.PalletCodeLengthError(length);
+        if (expectedFragment is null)
+        {
+            Assert.Null(error);
+            return;
+        }
+
+        Assert.NotNull(error);
+        Assert.Contains(expectedFragment, error);
+    }
+
+    [Fact]
+    public void Pallet_code_length_cap_matches_the_validator_limit()
+    {
+        // 上限只有和 PalletCodeValidator 的 64 字符对齐才有意义：
+        // 再长也读不出合法托盘码，只会白白多读几百字。
+        Assert.True(PalletCodeValidator.IsValid(new string('A', StationConfigLimits.MaxPalletCodeLength), out _));
+        Assert.False(PalletCodeValidator.IsValid(new string('A', StationConfigLimits.MaxPalletCodeLength + 1), out _));
+    }
+
     // ---------- 角色 ----------
 
     [Fact]
@@ -305,4 +389,59 @@ public class DomainRuleTests
         Assert.Equal(0, (int)LimitStatus.None);
         Assert.Equal(3, (int)LimitStatus.OutOfSpec);
     }
+
+    // ---------- 系统设置取值 ----------
+
+    [Fact]
+    public void Settings_limits_reject_out_of_range_values_with_a_readable_message()
+    {
+        Assert.Null(SettingsLimits.ScanIntervalError(SettingsLimits.MinScanIntervalMs));
+        Assert.Null(SettingsLimits.RetentionYearsError(SettingsLimits.MaxRetentionYears));
+        Assert.Null(SettingsLimits.MesTimeoutError(SettingsLimits.MinMesTimeoutSeconds));
+
+        // 0 会被清理任务当成 1 年（删数据），必须点名是哪个字段。
+        var retention = SettingsLimits.RetentionYearsError(0);
+        Assert.NotNull(retention);
+        Assert.Contains("保留年数", retention);
+
+        Assert.Contains("扫描间隔", SettingsLimits.ScanIntervalError(0));
+        Assert.Contains("写回重试次数", SettingsLimits.WriteRetryCountError(-1));
+        Assert.Contains("写回重试间隔", SettingsLimits.WriteRetryDelayError(60_000));
+    }
+
+    [Fact]
+    public void Settings_limits_report_the_first_offending_field()
+    {
+        Assert.Null(SettingsLimits.Error(new SystemSettings()));
+
+        var bad = new SystemSettings { ScanIntervalMs = 10_000, RetentionYears = 0 };
+        Assert.Contains("扫描间隔", SettingsLimits.Error(bad));
+    }
+
+    [Fact]
+    public void Simulator_bounds_are_covered_too()
+    {
+        // 仿真参数也在 SystemSettings 上：清空/越界会被输入框夹到边界（托盘池夹成 1、间隔夹成 500ms）。
+        Assert.Null(SettingsLimits.SimulatorIntervalError(SettingsLimits.MinSimulatorIntervalMs));
+        Assert.Contains("托盘间隔", SettingsLimits.SimulatorIntervalError(0));
+        Assert.Contains("NG 比例", SettingsLimits.SimulatorNgPercentError(101));
+        Assert.Contains("托盘池", SettingsLimits.SimulatorPalletPoolError(0));
+
+        var bad = new SystemSettings { SimulatorPalletPool = 0 };
+        Assert.Contains("托盘池", SettingsLimits.Error(bad));
+    }
+
+    [Fact]
+    public void Retention_cutoff_matches_the_cleanup_service_rule()
+    {
+        // 清理服务按 yyyyMM 比较、删掉小于边界的月份，所以"最新被删"是边界月的前一个月。
+        var now = new DateTime(2026, 9, 25);
+        Assert.Equal(new DateTime(2025, 8, 1), SettingsLimits.NewestDeletedMonth(now, 1));
+        Assert.Equal(new DateTime(2023, 8, 1), SettingsLimits.NewestDeletedMonth(now, 3));
+
+        // 传 0 与负数时按 1 年算，与 RetentionHostedService 的 Math.Max(1, …) 一致。
+        Assert.Equal(new DateTime(2025, 8, 1), SettingsLimits.NewestDeletedMonth(now, 0));
+        Assert.Equal(new DateTime(2025, 8, 1), SettingsLimits.NewestDeletedMonth(now, -5));
+    }
 }
+

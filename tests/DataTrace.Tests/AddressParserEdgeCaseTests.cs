@@ -235,6 +235,48 @@ public class AddressParserEdgeCaseTests
     public void Omron_rejects_invalid_text(string text)
         => Assert.False(Omron.TryParse(text, out _));
 
+    // ---------- 偏移单位 ----------
+
+    [Theory]
+    [InlineData("DB1.DBW10")]
+    [InlineData("DB108.DBD4")]
+    [InlineData("MW10")]
+    [InlineData("MB5")]
+    [InlineData("I64")]
+    public void Siemens_word_addresses_count_offsets_in_bytes(string text)
+    {
+        // S7 侧 DB1.DBW10 指的是第 10 个字节。偏移一旦被当成"第 10 个字"，
+        // 读计划算出的切片位置就会跑到 20 字节之后，取到的是另一段数据。
+        Assert.True(Siemens.TryParse(text, out var addr));
+        Assert.Equal(OffsetUnit.Byte, addr.OffsetUnit);
+    }
+
+    [Theory]
+    [InlineData("D100")]
+    [InlineData("W1A")]
+    [InlineData("ZR100")]
+    public void Mitsubishi_word_addresses_count_offsets_in_words(string text)
+    {
+        Assert.True(Mitsubishi.TryParse(text, out var addr));
+        Assert.Equal(OffsetUnit.Word, addr.OffsetUnit);
+    }
+
+    [Theory]
+    [InlineData("D100")]
+    [InlineData("CIO100")]
+    public void Omron_word_addresses_count_offsets_in_words(string text)
+    {
+        Assert.True(Omron.TryParse(text, out var addr));
+        Assert.Equal(OffsetUnit.Word, addr.OffsetUnit);
+    }
+
+    [Fact]
+    public void Modbus_word_addresses_count_offsets_in_words()
+    {
+        Assert.True(Modbus.TryParse("40011", out var addr));
+        Assert.Equal(OffsetUnit.Word, addr.OffsetUnit);
+    }
+
     // ---------- 公共契约 ----------
 
     [Fact]

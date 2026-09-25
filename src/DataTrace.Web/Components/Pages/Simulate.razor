@@ -4,6 +4,7 @@
 @using DataTrace.Application.Configuration
 @using DataTrace.Collector
 @using DataTrace.Domain.Entities
+@using DataTrace.Domain.Validation
 @using DataTrace.Plc.Simulator
 @inject IConfigRepository Config
 @inject ILineSimulator Simulator
@@ -11,9 +12,21 @@
 @inject IDialogService DialogService
 @inject DtToast Toast
 @inject CustomerBrandingStore Branding
+@inject IAuditLogger Audit
+@inject AuthenticationStateProvider Auth
 
 <PageHeader Title="PLC 仿真"
-             Description="模拟 PLC 内存与产线节拍：自动生成托盘码、点位、位移压力曲线，按工站顺序触发并等待上位机回写 2–8。" />
+            Description="模拟 PLC 内存与产线节拍：自动生成托盘码、点位、位移压力曲线，按工站顺序触发并等待上位机回写 2–8。"
+            HelpRoute="simulate">
+    <ChildContent>
+        @if (Dirty)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning">有未保存的参数</MudChip>
+        }
+    </ChildContent>
+</PageHeader>
+
+<NavigationLock ConfirmExternalNavigation="@Dirty" OnBeforeInternalNavigation="OnBeforeInternalNavigation" />
 
 <MudGrid>
     <MudItem xs="12" md="4">
@@ -30,12 +43,22 @@
             {
                 <MudSwitch T="bool" Value="_auto" ValueChanged="OnAutoChanged" Label="自动跑线" Color="Color.Primary" />
             }
-            <MudNumericField @bind-Value="_interval" Label="托盘间隔(ms)" Min="500" Max="30000" />
-            <MudNumericField @bind-Value="_ng" Label="NG 比例(%)" Min="0" Max="100" />
-            <MudNumericField @bind-Value="_pool" Label="托盘池数量(复用)" Min="1" Max="500" />
-            <MudButton Class="mt-2" Variant="Variant.Outlined" Color="Color.Primary" OnClick="SaveOptions" Disabled="_saving"
+            <MudNumericField @bind-Value="_interval" @bind-Value:after="() => _intervalError = null" Immediate="true"
+                             Label="托盘间隔(ms)" Min="@SettingsLimits.MinSimulatorIntervalMs" Max="@SettingsLimits.MaxSimulatorIntervalMs"
+                             Error="@(_intervalError is not null)" ErrorText="@_intervalError" />
+            <InfoHint Topic="HelpTexts.SimPalletInterval" />
+            <MudNumericField @bind-Value="_ng" @bind-Value:after="() => _ngError = null" Immediate="true"
+                             Label="NG 比例(%)" Min="@SettingsLimits.MinSimulatorNgPercent" Max="@SettingsLimits.MaxSimulatorNgPercent"
+                             Error="@(_ngError is not null)" ErrorText="@_ngError" />
+            <InfoHint Topic="HelpTexts.SimNgPercent" />
+            <MudNumericField @bind-Value="_pool" @bind-Value:after="() => _poolError = null" Immediate="true"
+                             Label="托盘池数量(复用)" Min="@SettingsLimits.MinSimulatorPalletPool" Max="@SettingsLimits.MaxSimulatorPalletPool"
+                             HelperText="自动跑线循环使用的托盘码个数；填 1 时每轮都是同一个码"
+                             Error="@(_poolError is not null)" ErrorText="@_poolError" />
+            <MudButton Class="mt-2" Variant="@(Dirty ? Variant.Filled : Variant.Outlined)" Color="Color.Primary"
+                       OnClick="SaveOptions" Disabled="_saving"
                        StartIcon="@(_saving ? Icons.Material.Filled.Sync : Icons.Material.Filled.Save)">
-                @(_saving ? "保存中…" : "保存参数")
+                @(_saving ? "保存中…" : Dirty ? "保存参数（有改动）" : "保存参数")
             </MudButton>
         </MudPaper>
     </MudItem>
@@ -68,7 +91,7 @@
                 </MudItem>
                 <MudItem xs="6" sm="3">
                     <div class="dt-metric">
-                        <div class="dt-metric-label">最近回写</div>
+                        <div class="dt-metric-label">最近回写<InfoHint Topic="HelpTexts.SimLastWriteBack" /></div>
                         <div class="dt-metric-value">@(_status.LastResultCode is { } c ? ResultCodes.Describe(c) : "-")</div>
                     </div>
                 </MudItem>
@@ -99,6 +122,7 @@
                        Disabled="_busy" StartIcon="@(_running ? Icons.Material.Filled.Sync : Icons.Material.Filled.PlayArrow)">
                 @(_running ? "走线中…" : "走完一条线")
             </MudButton>
+            <InfoHint Topic="HelpTexts.SimRunLine" />
             @foreach (var station in _stations)
             {
                 <MudButton Class="ma-1 mt-2" Variant="Variant.Outlined" OnClick="@(() => Trigger(station))"
@@ -113,6 +137,13 @@
                     还没有启用的工站，先到「工站配置」创建工站后再来仿真。
                 </MudText>
             }
+            else
+            {
+                <MudText Typo="Typo.caption" Class="dt-muted d-block mt-2">
+                    单站触发只把该站的触发寄存器置位；采集端下一轮扫描才会采集。
+                    从非首站开始时，若该托盘还没有在制会话，采集端会按「跳站」记一条异常记录。
+                </MudText>
+            }
         </MudPaper>
     </MudItem>
 </MudGrid>
@@ -125,15 +156,30 @@
     private Dictionary<int, PlcConnection> _plcs = new();
     private string _pallet = "P0001";
     private string? _palletError;
+
+    /// <summary>
+    /// 可编辑的仿真参数用可空 int 承接：输入框被清空或敲进非法字符时得到 null，
+    /// 而不是被 MudNumericField 悄悄夹成下限（托盘池被夹成 1 会让每轮都用同一个托盘码）。
+    /// </summary>
+    private int? _interval;
+    private int? _ng;
+    private int? _pool;
+    private int _loadedInterval;
+    private int _loadedNg;
+    private int _loadedPool;
+    private string? _intervalError;
+    private string? _ngError;
+    private string? _poolError;
     private bool _auto;
-    private int _interval = 2500;
-    private int _ng = 8;
-    private int _pool = 20;
     private bool _saving;
     private bool _running;
     private bool _disposed;
     private string? _triggering;
     private LineSimulatorStatus _status = new();
+
+    /// <summary>参数改了但没点「保存参数」：提示 + 拦一下离开本页。</summary>
+    private bool Dirty
+        => _interval != _loadedInterval || _ng != _loadedNg || _pool != _loadedPool;
 
     /// <summary>三个动作共用同一条模拟产线，任一在跑时全部按钮都锁住，避免交错触发把状态机搅乱。</summary>
     private bool _busy => _saving || _running || _triggering is not null;
@@ -155,6 +201,9 @@
         _interval = snapshot.Settings.SimulatorIntervalMs;
         _ng = snapshot.Settings.SimulatorNgPercent;
         _pool = snapshot.Settings.SimulatorPalletPool;
+        _loadedInterval = snapshot.Settings.SimulatorIntervalMs;
+        _loadedNg = snapshot.Settings.SimulatorNgPercent;
+        _loadedPool = snapshot.Settings.SimulatorPalletPool;
         _status = Simulator.Status;
     }
 
@@ -196,7 +245,8 @@
 
         _auto = value;
         Simulator.SetRunning(value);
-        await SaveOptions();
+        // 只落开关本身：三个参数各自由「保存参数」提交，避免开关把没点保存的改动顺手存下去（或反过来被参数校验挡住）。
+        await PersistAsync(value ? "Enable" : "Disable", includeOptions: false);
     }
 
     private void ValidatePallet()
@@ -204,7 +254,54 @@
             : _pallet.Trim().Length > 64 ? "托盘码最长 64 个字符"
             : null;
 
+    /// <summary>
+    /// 写审计日志。失败时单独提示一次，而不是吞掉 —— 仿真会往运行库写记录，
+    /// "谁开的仿真器、什么时候改的参数"必须留得下痕。
+    /// </summary>
+    private async Task AuditSafe(string action, string key, string? oldValue, string? newValue)
+    {
+        try
+        {
+            var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            await Audit.WriteAsync(user, action, "LineSimulator", key, oldValue, newValue);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"审计记录失败：{ex.Message}", Severity.Warning);
+        }
+    }
+
+    private async Task OnBeforeInternalNavigation(LocationChangingContext context)
+    {
+        if (!Dirty)
+        {
+            return;
+        }
+
+        var ok = await DialogService.ShowMessageBox(
+            "参数未保存",
+            "仿真参数改过但还没点「保存参数」，离开本页将丢失这些改动。确定离开？",
+            yesText: "离开", cancelText: "留下");
+        if (ok != true)
+        {
+            context.PreventNavigation();
+        }
+    }
+
     private async Task SaveOptions()
+    {
+        if (!ValidateOptions())
+        {
+            return;
+        }
+
+        await PersistAsync("SaveOptions", includeOptions: true);
+    }
+
+    /// <summary>
+    /// 落库仿真配置。<paramref name="includeOptions"/> 为 false 时只写"自动跑线"开关。
+    /// </summary>
+    private async Task PersistAsync(string auditAction, bool includeOptions)
     {
         if (_saving)
         {
@@ -215,12 +312,29 @@
         try
         {
             var settings = (await Config.GetSnapshotAsync()).Settings;
+            var oldValues = SummarizeOptions(settings);
             settings.SimulatorAutoRun = ProductionLocksAutoRun ? false : _auto;
-            settings.SimulatorIntervalMs = _interval;
-            settings.SimulatorNgPercent = _ng;
-            settings.SimulatorPalletPool = _pool;
+            if (includeOptions)
+            {
+                settings.SimulatorIntervalMs = _interval!.Value;
+                settings.SimulatorNgPercent = _ng!.Value;
+                settings.SimulatorPalletPool = _pool!.Value;
+            }
+
             await Config.SaveSettingsAsync(settings);
-            Toast.Add("仿真参数已保存", Severity.Success);
+            if (includeOptions)
+            {
+                _loadedInterval = settings.SimulatorIntervalMs;
+                _loadedNg = settings.SimulatorNgPercent;
+                _loadedPool = settings.SimulatorPalletPool;
+            }
+
+            await AuditSafe(auditAction, "simulator", oldValues, SummarizeOptions(settings));
+            Toast.Add(
+                includeOptions
+                    ? "仿真参数已保存"
+                    : settings.SimulatorAutoRun ? "自动跑线已开启" : "自动跑线已停止",
+                Severity.Success);
         }
         catch (Exception ex)
         {
@@ -231,6 +345,35 @@
         {
             _saving = false;
         }
+    }
+
+    private static string SummarizeOptions(SystemSettings s)
+        => $"autoRun={s.SimulatorAutoRun}; interval={s.SimulatorIntervalMs}; ng={s.SimulatorNgPercent}; pool={s.SimulatorPalletPool}";
+
+    /// <summary>
+    /// 保存前校验三个参数：空值（输入框被清空/敲进非法字符）与越界都拦下来。
+    /// </summary>
+    /// <remarks>
+    /// 不能任由输入框自己"夹到边界"：托盘间隔夹成 500ms 会让写库频率翻几倍、
+    /// 托盘池夹成 1 会让每轮都是同一个托盘码，而提示却是"仿真参数已保存"。
+    /// </remarks>
+    private bool ValidateOptions()
+    {
+        _intervalError = _interval is not { } interval ? "托盘间隔不能为空"
+            : SettingsLimits.SimulatorIntervalError(interval);
+        _ngError = _ng is not { } ng ? "NG 比例不能为空"
+            : SettingsLimits.SimulatorNgPercentError(ng);
+        _poolError = _pool is not { } pool ? "托盘池数量不能为空"
+            : SettingsLimits.SimulatorPalletPoolError(pool);
+
+        var bad = new[] { _intervalError, _ngError, _poolError }.Count(x => x is not null);
+        if (bad == 0)
+        {
+            return true;
+        }
+
+        Toast.Add($"{bad} 项填写有误，已标在对应输入框下（未保存）", Severity.Warning);
+        return false;
     }
 
     private async Task RunOne()
@@ -249,8 +392,11 @@
         _running = true;
         try
         {
-            await Simulator.RunOnePalletAsync(_pallet.Trim());
-            Toast.Add($"托盘 {_pallet.Trim()} 已仿真走线", Severity.Success);
+            // 按真实结果提示：中途超时只走了半条线，不能报成"已走线"。
+            var result = await Simulator.RunOnePalletAsync(_pallet.Trim());
+            await AuditSafe("RunPallet", _pallet.Trim(), null,
+                result.Completed ? "completed" : $"stopped; station={result.StoppedAtStation}");
+            Toast.Add(result.Message, result.Completed ? Severity.Success : Severity.Warning);
         }
         catch (Exception ex)
         {
@@ -275,6 +421,20 @@
             return;
         }
 
+        // 非首站单点触发：采集端找不到在制会话时会把这条记成"跳站"异常，先说清楚再动手。
+        if (!station.IsFirstStation)
+        {
+            var confirmed = await DialogService.ShowMessageBox(
+                $"触发 {station.Code}",
+                $"{station.Code} 不是首站。若托盘 {_pallet.Trim()} 当前没有在制会话，" +
+                "采集端会把这条记录判为「未找到在制托盘会话（可能跳站）」并建一个异常会话。确定继续？",
+                yesText: "继续触发", cancelText: "取消");
+            if (confirmed != true)
+            {
+                return;
+            }
+        }
+
         _triggering = station.Code;
         try
         {
@@ -285,6 +445,7 @@
             }
 
             SimulatorScenario.LoadStationCycle(driver, plc, station, _pallet.Trim());
+            await AuditSafe("TriggerStation", $"{station.Code}/{_pallet.Trim()}", null, "triggered");
             Toast.Add($"已触发 {station.Code}", Severity.Success);
         }
         catch (Exception ex)

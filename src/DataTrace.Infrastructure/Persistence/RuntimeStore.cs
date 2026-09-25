@@ -107,6 +107,8 @@ public sealed class RuntimeStore : IRuntimeStore
             // 曲线文件必须由写它的那个存储来删：只有它知道自己的根目录。
             // 以前这里自己拼 cwd + "data/curves"，Windows 服务的工作目录是 System32，
             // 而且 DataRoot 也可能指到别处，两种情况下回滚都静默失效、留下孤儿文件。
+            // 删的必须是 WriteAsync 返回的路径：它撞名会让开一格，因此只会删掉本次写的那个文件，
+            // 不会连带删掉之前记录在同名路径上的波形。
             foreach (var relative in writtenFiles)
             {
                 try
@@ -456,6 +458,7 @@ public sealed class RuntimeStore : IRuntimeStore
         DateTime from,
         DateTime to,
         int take,
+        IReadOnlyCollection<string>? recipeCodes = null,
         CancellationToken cancellationToken = default)
     {
         var points = new List<CurveFeaturePoint>();
@@ -464,7 +467,15 @@ public sealed class RuntimeStore : IRuntimeStore
             return points;
         }
 
-        foreach (var month in RuntimeDbFactory.MonthsInRange(from, to).Where(_factory.Exists))
+        // 型号过滤下推到 SQL，且必须在 Take 之前：take 要的是"最新 N 条"，
+        // 取回内存再筛的话，另一种型号最近产量大一点就会把本型号整段挤出去。
+        var codes = recipeCodes?.Where(c => c is not null).Distinct(StringComparer.Ordinal).ToList();
+
+        // 倒序走月库、取够即停：每个月都取 take 条的话，跨年区间的读取量会按月份数放大，
+        // 而更早的月库不可能提供更新的点。
+        var months = RuntimeDbFactory.MonthsInRange(from, to).Where(_factory.Exists).Reverse().ToList();
+
+        foreach (var month in months)
         {
             await using var db = _factory.Open(month);
 
@@ -489,6 +500,11 @@ public sealed class RuntimeStore : IRuntimeStore
             if (!string.IsNullOrWhiteSpace(seriesName))
             {
                 query = query.Where(x => x.feature.SeriesName == seriesName);
+            }
+
+            if (codes is { Count: > 0 })
+            {
+                query = query.Where(x => codes.Contains(x.record.RecipeCode));
             }
 
             var part = await query
@@ -530,14 +546,71 @@ public sealed class RuntimeStore : IRuntimeStore
                 .ConfigureAwait(false);
 
             points.AddRange(part);
+
+            if (points.Count >= take)
+            {
+                break;
+            }
         }
 
-        // 跨月合并后重新取全局最新 take 条：每月各取 take 条，
-        // 全局最新的 take 条必然落在并集里，不会漏样本。
+        // 跨月合并后重新取全局最新 take 条：已取到的点比所有未读的月库都新，
+        // 所以只要凑够 take 条，结果必然就是全局最新的那批。最后统一升序。
         return points
             .OrderByDescending(p => p.Time)
             .Take(take)
             .OrderBy(p => p.Time)
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<CurveRecipeSampleCount>> CountCurveFeaturesByRecipeAsync(
+        int curveDefinitionId,
+        string? seriesName,
+        DateTime from,
+        DateTime to,
+        CancellationToken cancellationToken = default)
+    {
+        var counts = new Dictionary<string, (int Total, int Ng)>(StringComparer.Ordinal);
+        foreach (var month in RuntimeDbFactory.MonthsInRange(from, to).Where(_factory.Exists))
+        {
+            await using var db = _factory.Open(month);
+            var part = await db.CurveFeatures
+                .AsNoTracking()
+                .Join(
+                    db.CurveRecords.AsNoTracking(),
+                    feature => feature.CurveRecordId,
+                    curve => curve.Id,
+                    (feature, curve) => new { feature, curve })
+                .Join(
+                    db.CollectRecords.AsNoTracking(),
+                    x => x.curve.CollectRecordId,
+                    record => record.Id,
+                    (x, record) => new { x.feature, x.curve, record })
+                .Where(x => x.curve.CurveDefinitionId == curveDefinitionId
+                            && x.record.TriggerTime >= from
+                            && x.record.TriggerTime <= to
+                            && (seriesName == null || x.feature.SeriesName == seriesName))
+                .GroupBy(x => x.record.RecipeCode)
+                .Select(g => new
+                {
+                    RecipeCode = g.Key,
+                    Total = g.Count(),
+                    Ng = g.Count(x => x.record.Judgement == Judgement.Ng)
+                })
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            foreach (var item in part)
+            {
+                var code = item.RecipeCode ?? "";
+                var current = counts.GetValueOrDefault(code);
+                counts[code] = (current.Total + item.Total, current.Ng + item.Ng);
+            }
+        }
+
+        return counts
+            .OrderByDescending(kv => kv.Value.Total)
+            .ThenBy(kv => kv.Key, StringComparer.Ordinal)
+            .Select(kv => new CurveRecipeSampleCount(kv.Key, kv.Value.Total, kv.Value.Ng))
             .ToList();
     }
 

@@ -2,6 +2,7 @@
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
+using DataTrace.Domain.Validation;
 using DataTrace.Infrastructure.Persistence;
 using DataTrace.Infrastructure.Evaluation;
 using DataTrace.Infrastructure.Realtime;
@@ -454,6 +455,261 @@ public class ConfigRepositoryTests
     }
 
     [Fact]
+    public async Task Save_plc_connection_rejects_duplicate_name()
+    {
+        var (workspace, db, plc) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = Repo(db);
+
+        // 库里 Name 有唯一索引：重名必须在这里被拦成一句中文提示，
+        // 而不是让用户看到 SQLite 的原始错误（保存按钮的 catch 会把它显示成 Toast）。
+        var sameName = new PlcConnection { Name = " 模拟PLC ", Brand = PlcBrand.Simulator, Host = "127.0.0.1" };
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => repo.SavePlcConnectionAsync(sameName));
+        Assert.Contains("模拟PLC", ex.Message);
+        Assert.Contains("已存在", ex.Message);
+
+        // 改成别的名字即可保存（顺带确认首尾空白会被裁掉）。
+        sameName.Name = " 二号PLC ";
+        await repo.SavePlcConnectionAsync(sameName);
+        Assert.Equal("二号PLC", (await repo.GetPlcConnectionAsync(sameName.Id))!.Name);
+
+        // 自己改自己（名称没变）不算重名。
+        plc.Name = "模拟PLC";
+        await repo.SavePlcConnectionAsync(plc);
+    }
+
+    [Fact]
+    public async Task Save_station_rejects_write_back_trigger_value()
+    {
+        var (workspace, db, plc) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = Repo(db);
+
+        // 触发与回写共用一个寄存器：取 2（采集成功的回写码）会让触发位永远清不掉。
+        var station = new Station
+        {
+            PlcConnectionId = plc.Id,
+            Code = "ST030",
+            Name = "压装",
+            Sequence = 30,
+            TriggerAddress = "D1300",
+            TriggerValue = 2,
+            PalletCodeAddress = "D1310"
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => repo.SaveStationAsync(station));
+        Assert.Contains("响应码", ex.Message);
+        Assert.DoesNotContain(db.Stations.Local, x => x.Code == "ST030");
+    }
+
+    [Fact]
+    public async Task Save_station_rejects_duplicate_code_sequence_and_flags()
+    {
+        var (workspace, db, plc) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = Repo(db);
+
+        Station Draft(string code, int sequence, bool first = false, bool last = false) => new()
+        {
+            PlcConnectionId = plc.Id,
+            Code = code,
+            Name = code,
+            Sequence = sequence,
+            IsFirstStation = first,
+            IsLastStation = last,
+            TriggerAddress = "D1400",
+            PalletCodeAddress = "D1410"
+        };
+
+        var duplicateCode = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => repo.SaveStationAsync(Draft("st010", 30)));
+        Assert.Contains("已存在", duplicateCode.Message);
+
+        var duplicateSequence = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => repo.SaveStationAsync(Draft("ST030", 10)));
+        Assert.Contains("产线顺序 10", duplicateSequence.Message);
+
+        // 种子里 ST010 已是首站：再来一个启用首站会让同一托盘拿到多个序列号。
+        var duplicateFirst = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => repo.SaveStationAsync(Draft("ST031", 31, first: true)));
+        Assert.Contains("已是首站", duplicateFirst.Message);
+
+        var zeroSequence = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => repo.SaveStationAsync(Draft("ST032", 0)));
+        Assert.Contains("必须大于 0", zeroSequence.Message);
+    }
+
+    [Fact]
+    public async Task Save_station_allows_disabled_duplicates_and_keeps_last_station_free()
+    {
+        var (workspace, db, plc) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = Repo(db);
+
+        // 停用的工站不参与采集：顺序重复、与启用工站抢首站都不该挡住维护操作。
+        var disabled = new Station
+        {
+            PlcConnectionId = plc.Id,
+            Code = "ST040",
+            Name = "备用站",
+            Sequence = 10,
+            IsFirstStation = true,
+            TriggerAddress = "D1500",
+            PalletCodeAddress = "D1510",
+            Enabled = false
+        };
+        await repo.SaveStationAsync(disabled);
+        Assert.NotEqual(0, disabled.Id);
+
+        // 启用中的工站之间，末站也只能有一个。
+        var first = new Station
+        {
+            PlcConnectionId = plc.Id,
+            Code = "ST050",
+            Name = "末站",
+            Sequence = 50,
+            IsLastStation = true,
+            TriggerAddress = "D1600",
+            PalletCodeAddress = "D1610"
+        };
+        await repo.SaveStationAsync(first);
+
+        var second = new Station
+        {
+            PlcConnectionId = plc.Id,
+            Code = "ST060",
+            Name = "另一个末站",
+            Sequence = 60,
+            IsLastStation = true,
+            TriggerAddress = "D1700",
+            PalletCodeAddress = "D1710"
+        };
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => repo.SaveStationAsync(second));
+        Assert.Contains("已是末站", ex.Message);
+    }
+
+    [Fact]
+    public async Task Save_station_keeps_the_occupied_address()
+    {
+        var (workspace, db, plc) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = Repo(db);
+
+        // 采集端仍按有料地址判空位：保存工站不能把它悄悄清掉。
+        var station = new Station
+        {
+            PlcConnectionId = plc.Id,
+            Code = "ST070",
+            Name = "空位检测站",
+            Sequence = 70,
+            TriggerAddress = "D1800",
+            PalletCodeAddress = "D1810",
+            Positions = [new ProductPositionDefinition { Index = 1, Name = "产品", OccupiedAddress = "D1899" }]
+        };
+        await repo.SaveStationAsync(station);
+
+        var reloaded = await repo.GetStationAsync(station.Id);
+        Assert.Equal("D1899", reloaded!.Positions.Single().OccupiedAddress);
+    }
+
+    [Fact]
+    public async Task Save_station_rejects_pallet_code_length_out_of_range()
+    {
+        var (workspace, db, plc) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = Repo(db);
+
+        var tooLong = new Station
+        {
+            PlcConnectionId = plc.Id,
+            Code = "ST080",
+            Name = "超长托盘码",
+            Sequence = 80,
+            TriggerAddress = "D1900",
+            PalletCodeAddress = "D1910",
+            PalletCodeLength = StationConfigLimits.MaxPalletCodeLength + 1
+        };
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => repo.SaveStationAsync(tooLong));
+        Assert.Contains("托盘码长度", ex.Message);
+    }
+
+    [Fact]
+    public async Task Save_tag_and_curve_reject_duplicate_codes_and_oversized_curves()
+    {
+        var (workspace, db, plc) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = Repo(db);
+        var station = (await repo.GetStationsAsync()).First(s => s.Code == "ST010");
+
+        var duplicateTag = new TagDefinition
+        {
+            StationId = station.Id,
+            Code = "st010_p1",
+            Name = "重名点位",
+            Address = "D1900",
+            DataType = PlcDataType.Float
+        };
+        var tagError = await Assert.ThrowsAsync<InvalidOperationException>(() => repo.SaveTagAsync(duplicateTag));
+        Assert.Contains("点位编码", tagError.Message);
+
+        var duplicateCurve = new CurveDefinition
+        {
+            StationId = station.Id,
+            Code = "st010_pd",
+            Name = "重名曲线",
+            PointCount = 50,
+            Series = [new CurveSeries { Name = "压力", Role = SeriesRole.Y, StartAddress = "D3000" }]
+        };
+        var curveError = await Assert.ThrowsAsync<InvalidOperationException>(() => repo.SaveCurveAsync(duplicateCurve));
+        Assert.Contains("曲线编码", curveError.Message);
+
+        var tooManyPoints = new CurveDefinition
+        {
+            StationId = station.Id,
+            Code = "ST010_BIG",
+            Name = "点数超限",
+            PointCount = StationConfigLimits.MaxCurvePoints + 1,
+            Series = [new CurveSeries { Name = "压力", Role = SeriesRole.Y, StartAddress = "D3000" }]
+        };
+        var pointError = await Assert.ThrowsAsync<InvalidOperationException>(() => repo.SaveCurveAsync(tooManyPoints));
+        Assert.Contains("点数", pointError.Message);
+    }
+
+    [Fact]
+    public async Task Save_curve_updates_existing_series_in_place()
+    {
+        var (workspace, db, plc) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = Repo(db);
+        var station = (await repo.GetStationsAsync()).First(s => s.Code == "ST010");
+        var curve = station.Curves.Single();
+
+        // 工站配置页的「编辑曲线」走的就是这条路：改完地址整体交回来，按主键更新。
+        curve.PointCount = 80;
+        curve.Series =
+        [
+            new CurveSeries { Name = "压力", Role = SeriesRole.Y, StartAddress = "D3100", DataType = PlcDataType.Float, StrideWords = 2 },
+            new CurveSeries { Name = "位移", Role = SeriesRole.X, StartAddress = "D3300", DataType = PlcDataType.Float, StrideWords = 2 }
+        ];
+        await repo.SaveCurveAsync(curve);
+
+        var reloaded = (await repo.GetStationsAsync()).First(s => s.Code == "ST010").Curves.Single();
+        Assert.Equal(80, reloaded.PointCount);
+        Assert.Equal(2, reloaded.Series.Count);
+        Assert.Equal("D3100", reloaded.Series.Single(s => s.Role == SeriesRole.Y).StartAddress);
+        Assert.Equal("D3300", reloaded.Series.Single(s => s.Role == SeriesRole.X).StartAddress);
+        Assert.Single(await db.Curves.Where(x => x.Code == "ST010_PD").ToListAsync());
+    }
+
+    [Fact]
     public async Task Save_tag_clamps_position_index_to_zero_or_one()
     {
         var (workspace, db, plc) = await SeedAsync();
@@ -587,7 +843,21 @@ public class ConfigRepositoryTests
         using var ws = workspace;
         await using var dbScope = db;
         var repo = Repo(db);
-        var tagId = (await repo.GetStationsAsync()).First(s => s.Code == "ST010").Tags.First().Id;
+        var station = (await repo.GetStationsAsync()).First(s => s.Code == "ST010");
+        var tagId = station.Tags.First().Id;
+        // 追加的那条必须挂在真实点位上：不存在的 TagId 会被同步逻辑直接丢掉（悬空覆盖行
+        // 在限值矩阵里看不见，却会被"覆盖点位 N 个"继续计数）。
+        await repo.SaveTagAsync(new TagDefinition
+        {
+            StationId = station.Id,
+            Code = "ST010_TEMP",
+            Name = "工站温度",
+            Address = "D1200",
+            DataType = PlcDataType.Float,
+            PositionIndex = 0
+        });
+        var secondTagId = (await repo.GetStationsAsync())
+            .First(s => s.Code == "ST010").Tags.Single(t => t.Code == "ST010_TEMP").Id;
 
         await repo.SaveRecipeAsync(new Recipe { Code = "B200", Name = "型号 B200" });
         Assert.True(await db.Recipes.AnyAsync(x => x.Code == "B200"));
@@ -610,18 +880,18 @@ public class ConfigRepositoryTests
         recipe.Limits =
         [
             new RecipeLimit { Id = firstId, TagId = tagId, UpperLimit = 15 },
-            new RecipeLimit { TagId = tagId + 1000, WarningUpperLimit = 45 }
+            new RecipeLimit { TagId = secondTagId, WarningUpperLimit = 45 }
         ];
         await repo.SaveRecipeAsync(recipe);
 
         var edited = db.RecipeLimits.ToList();
         Assert.Equal(2, edited.Count);
         Assert.Equal(15d, edited.Single(x => x.Id == firstId).UpperLimit!.Value);
-        Assert.Contains(edited, x => x.TagId == tagId + 1000 && x.WarningUpperLimit == 45);
+        Assert.Contains(edited, x => x.TagId == secondTagId && x.WarningUpperLimit == 45);
 
         // 减少：提交时去掉第一条，库里不能留下孤儿行。
         recipe = (await repo.GetRecipesAsync()).Single(r => r.Code == "B200");
-        var keep = recipe.Limits.Single(x => x.TagId == tagId + 1000);
+        var keep = recipe.Limits.Single(x => x.TagId == secondTagId);
         recipe.Limits = [new RecipeLimit { Id = keep.Id, TagId = keep.TagId, WarningUpperLimit = 45 }];
         await repo.SaveRecipeAsync(recipe);
         Assert.Equal(keep.Id, Assert.Single(db.RecipeLimits.ToList()).Id);
@@ -641,6 +911,84 @@ public class ConfigRepositoryTests
         ];
         await repo.SaveRecipeAsync(recipe);
         Assert.Equal(14d, Assert.Single(db.RecipeLimits.ToList()).UpperLimit!.Value);
+    }
+
+    [Fact]
+    public async Task Settings_bounds_are_enforced_before_touching_the_database()
+    {
+        var (workspace, db, plc) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = Repo(db);
+        // 用同一上下文里被跟踪的那一行：SaveSettingsAsync 走 Update，换一个实例会撞同主键的身份冲突。
+        var stored = await db.SystemSettings.FirstAsync();
+
+        // 界面上的 Min/Max 只是输入框行为；脚本与历史脏数据可以直接写库，仓储必须拦下来。
+        // 保留年数 0 会被清理任务当成 1 年（删数据），扫描间隔 0 会被采集端当成 20ms（压垮 PLC 通讯）。
+        stored.RetentionYears = 0;
+        var retention = await Assert.ThrowsAsync<InvalidOperationException>(() => repo.SaveSettingsAsync(stored));
+        Assert.Contains("保留年数", retention.Message);
+
+        stored.RetentionYears = 3;
+        stored.ScanIntervalMs = 0;
+        Assert.Contains("扫描间隔", (await Assert.ThrowsAsync<InvalidOperationException>(() => repo.SaveSettingsAsync(stored))).Message);
+
+        // 合法取值照旧能存。
+        stored.ScanIntervalMs = 200;
+        await repo.SaveSettingsAsync(stored);
+        Assert.Equal(3, (await repo.GetSnapshotAsync()).Settings.RetentionYears);
+    }
+
+    [Fact]
+    public async Task Mes_outbox_status_summarizes_backlog_and_last_results()
+    {
+        var (workspace, db, plc) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = Repo(db);
+
+        // 空表：没有积压也没有成功记录。
+        var empty = await repo.GetMesOutboxStatusAsync();
+        Assert.Equal(0, empty.PendingCount);
+        Assert.Null(empty.OldestPendingAt);
+        Assert.Null(empty.LastSuccessAt);
+        Assert.Null(empty.LastAttemptSucceeded);
+
+        var oldest = DateTime.Now.AddHours(-3);
+        db.MesOutbox.AddRange(
+            new MesOutboxItem { MonthKey = "202609", SerialNo = "SN-1", PalletCode = "P1", CreatedAt = oldest, Status = MesOutboxStatus.Pending },
+            new MesOutboxItem { MonthKey = "202609", SerialNo = "SN-2", PalletCode = "P2", CreatedAt = oldest.AddMinutes(5), Status = MesOutboxStatus.Pending },
+            new MesOutboxItem
+            {
+                MonthKey = "202609",
+                SerialNo = "SN-3",
+                PalletCode = "P3",
+                CreatedAt = oldest.AddMinutes(-30),
+                Status = MesOutboxStatus.Succeeded,
+                AttemptCount = 1,
+                LastAttemptAt = oldest.AddMinutes(-25)
+            },
+            new MesOutboxItem
+            {
+                MonthKey = "202609",
+                SerialNo = "SN-4",
+                PalletCode = "P4",
+                CreatedAt = oldest.AddMinutes(-10),
+                Status = MesOutboxStatus.Pending,
+                AttemptCount = 3,
+                LastAttemptAt = DateTime.Now.AddMinutes(-1),
+                LastError = "HTTP 503"
+            });
+        await db.SaveChangesAsync();
+
+        var status = await repo.GetMesOutboxStatusAsync();
+
+        Assert.Equal(3, status.PendingCount);
+        Assert.Equal(oldest.AddMinutes(-10), status.OldestPendingAt!.Value);
+        // 最近一次尝试是那条失败的（时间最新），成功时间取已成功项。
+        Assert.False(status.LastAttemptSucceeded);
+        Assert.Equal("HTTP 503", status.LastError);
+        Assert.Equal(oldest.AddMinutes(-25), status.LastSuccessAt!.Value);
     }
 
     [Fact]
@@ -898,3 +1246,4 @@ public class ConfigRepositoryTests
         Assert.Equal(7, await repo.GetVersionAsync());
     }
 }
+

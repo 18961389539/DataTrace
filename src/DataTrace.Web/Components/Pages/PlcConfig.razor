@@ -7,7 +7,7 @@
 @inject IDialogService DialogService
 @inject DtToast Toast
 
-<PageHeader Title="PLC 连接">
+<PageHeader Title="PLC 连接" HelpRoute="config/plc">
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">共 @_items.Count 台，被工站引用的连接不能删除</MudText>
     </Actions>
@@ -32,8 +32,8 @@
         <MudTh>品牌</MudTh>
         <MudTh>地址</MudTh>
         <MudTh>字序</MudTh>
-        <MudTh>心跳</MudTh>
-        <MudTh>启用</MudTh>
+        <MudTh>心跳 <InfoHint Topic="HelpTexts.Heartbeat" /></MudTh>
+        <MudTh>启用 <InfoHint Topic="HelpTexts.PlcEnabled" /></MudTh>
         <MudTh>工站</MudTh>
         <MudTh Class="dt-right">操作</MudTh>
     </HeaderContent>
@@ -123,7 +123,9 @@
             FloatWordOrder = FloatWordOrder.CDAB,
             Enabled = true
         };
-        await ShowDialog(model, isNew: true, heartbeatAddress: "D0", heartbeatMs: 1000);
+        // 心跳地址默认留空：D0 是三菱的写法，换个品牌就是一条必然写不进去的配置。
+        // 需要心跳的现场自己填，对话框里按品牌给了示例。
+        await ShowDialog(model, isNew: true, heartbeatAddress: "", heartbeatMs: 1000);
     }
 
     private async Task Edit(PlcConnection item)
@@ -156,13 +158,29 @@
         await Write(isNew ? "新增" : "保存", async () =>
         {
             await Config.SavePlcConnectionAsync(saved);
-            var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
-            await Audit.WriteAsync(user, isNew ? "Create" : "Save", "PlcConnection", saved.Name,
+            await AuditAsync(isNew ? "Create" : "Save", "PlcConnection", saved.Name,
                 isNew ? null : oldValue,
                 SummarizePlc(saved));
             await Reload();
             Toast.Add(isNew ? $"已新增 {saved.Name}" : $"已保存 {saved.Name}", Severity.Success);
         });
+    }
+
+    /// <summary>
+    /// 写审计日志。失败单独提示：连接已经保存并会下发给采集器，
+    /// 这时候报"保存失败"会让人反复保存，什么都不说又会留下追溯空洞。
+    /// </summary>
+    private async Task AuditAsync(string action, string entityType, string key, string? oldValue, string? newValue)
+    {
+        try
+        {
+            var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            await Audit.WriteAsync(user, action, entityType, key, oldValue, newValue);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"操作已完成，但审计记录失败：{ex.Message}", Severity.Warning);
+        }
     }
 
     /// <summary>审计用摘要：不含密码/密钥/令牌（当前实体无这些字段，Extra 也可能含敏感配置故不写入）。</summary>
@@ -196,8 +214,7 @@
         await Write("删除", async () =>
         {
             await Config.DeletePlcConnectionAsync(item.Id);
-            var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
-            await Audit.WriteAsync(user, "Delete", "PlcConnection", item.Name, $"{item.Host}:{item.Port}", null);
+            await AuditAsync("Delete", "PlcConnection", item.Name, $"{item.Host}:{item.Port}", null);
             await Reload();
             Toast.Add($"已删除 {item.Name}", Severity.Success);
         });

@@ -124,6 +124,8 @@ public class UiRegressionE2ETests : E2ETestBase
     {
         await Page.GotoAsync($"{App.BaseUrl}/query");
         await WaitForAsync(".dt-range button");
+        // 预设按钮在预渲染 HTML 里就有，但 circuit 没接管前点它不会写回地址栏。
+        await WaitForCircuitReadyAsync();
 
         await ClickAsync("近 7 天");
         await Page.WaitForFunctionAsync("() => location.search.includes('from=')");
@@ -131,6 +133,7 @@ public class UiRegressionE2ETests : E2ETestBase
 
         await Page.GotoAsync(filtered);
         await WaitForAsync(".dt-range input");
+        await WaitForCircuitReadyAsync();
         var from = await Page.InputValueAsync(".dt-range input");
 
         Assert.DoesNotContain("?", from);
@@ -171,8 +174,25 @@ public class UiRegressionE2ETests : E2ETestBase
         await Page.GotoAsync($"{App.BaseUrl}/query");
         await WaitForResultRowsAsync();
 
-        await Page.Locator("table tbody tr").First.ClickAsync();
-        await WaitForAsync("text=返回查询");
+        // 点的这一下同样可能落在 circuit 接手的窗口里被丢掉（什么都没发生），
+        // 所以点完复核地址栏：没跳转就再点一次。
+        for (var attempt = 0; ; attempt++)
+        {
+            if (new Uri(Page.Url).PathAndQuery != "/query")
+            {
+                break;
+            }
+
+            Assert.True(attempt < 10, "点了 10 次仍未打开记录明细");
+            await Page.Locator("table tbody tr").First.ClickAsync();
+            await Page.WaitForTimeoutAsync(400);
+        }
+
+        // 详情是异步取数的：骨架屏上就有"返回查询"链接，等它出现就读表头会读到还没渲染记录的壳
+        // （表头集合为空，或读到查询页残留的表头）。等表头里真的出现"规格限"再断言。
+        await Page.WaitForFunctionAsync("""
+            () => [...document.querySelectorAll('table thead th')].some(th => th.textContent.includes('规格限'))
+            """);
 
         var headers = await Page.Locator("table thead th").AllInnerTextsAsync();
         Assert.Contains("规格限", headers);

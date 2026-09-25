@@ -17,7 +17,7 @@
 @inject IJSRuntime Js
 @inject NavigationManager Nav
 
-<PageHeader Title="报表">
+<PageHeader Title="报表" HelpRoute="reports">
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">@DateRangeFilter.Format(_from, _to) 　共 @_fpy.Sum(x => x.Total) 条记录</MudText>
     </Actions>
@@ -75,7 +75,7 @@
 {
     @* 少算了就得说出来：不说的话图上那个偏窄的时间轴会被当成"区间内就这些点"。 *@
     <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mb-3">
-        该点位在所选区间内的采样点超过单次上限，参数趋势与过程能力只统计<b>最近 @TrendSampleLimit 点</b>。
+        该点位在所选区间内的采样点超过单次上限，参数趋势与过程能力只统计<b>最近 @SystemDefaults.TrendSampleLimit 点</b>。
         需要更早的数据请缩小区间。
     </MudAlert>
 }
@@ -95,7 +95,7 @@
                     <MudTh Class="dt-num">OK</MudTh>
                     <MudTh Class="dt-num">NG</MudTh>
                     <MudTh Class="dt-num">未判定</MudTh>
-<MudTh Class="dt-num">直通率</MudTh>
+<MudTh Class="dt-num">直通率 <InfoHint Topic="HelpTexts.YieldRate" /></MudTh>
                 </HeaderContent>
                 <RowTemplate>
                     <MudTd DataLabel="日期">@context.Day.ToString("yyyy-MM-dd")</MudTd>
@@ -126,7 +126,7 @@
             {
                 <MudText Typo="Typo.caption" Class="dt-muted mt-2">
                     区间合计：@_fpy.Sum(x => x.Total) 条，OK @_fpy.Sum(x => x.Ok) 条，
-                    平均直通率 @AverageYield().ToString("P1")
+                    平均直通率 @AverageYield().ToString("P1")<InfoHint Topic="HelpTexts.AverageYield" />
                 </MudText>
             }
         </MudPaper>
@@ -134,7 +134,7 @@
 
     <MudItem xs="12">
         <MudPaper Class="pa-4 dt-fill mt-3">
-            <MudText Typo="Typo.h6" Class="mb-2">按产品型号</MudText>
+            <MudText Typo="Typo.h6" Class="mb-2">按产品型号 <InfoHint Topic="HelpTexts.RecipeScope" /></MudText>
             <MudTable Items="_byRecipe" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading">
                 <HeaderContent>
                     <MudTh>型号</MudTh>
@@ -160,7 +160,7 @@
     </MudItem>
     <MudItem xs="12" md="6">
         <MudPaper Class="pa-4 dt-fill">
-            <MudText Typo="Typo.h6" Class="mb-2">不良 Top N</MudText>
+            <MudText Typo="Typo.h6" Class="mb-2">不良 Top N <InfoHint Topic="HelpTexts.IssueShare" /></MudText>
             <IssueTopTable Items="_defects.Items" Loading="_loading" Share="DefectShare"
                            EmptyText="区间内没有不良记录，工站状态良好。" />
             @if (_defects.Items.Count > 0)
@@ -176,7 +176,7 @@
     <MudItem xs="12">
         <MudPaper Class="pa-4">
             <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
-                <MudText Typo="Typo.h6">预警 Top N</MudText>
+                <MudText Typo="Typo.h6">预警 Top N <InfoHint Topic="HelpTexts.LimitThreeTiers" /></MudText>
                 <MudSpacer />
                 <MudText Typo="Typo.caption" Class="dt-muted">
                     落在黄区、尚未判废。这里先热起来，说明趋势正在往限值漂。
@@ -224,7 +224,7 @@
             else
             {
                 <MudStack Row="true" Spacing="3" Class="mb-2 flex-wrap">
-                    <MudText Typo="Typo.caption" Class="dt-muted dt-kpi">采样点 @_trend.Count</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted dt-kpi">采样点 @_trend.Count<InfoHint Topic="HelpTexts.TrendSampleLimit" /></MudText>
                     <MudText Typo="Typo.caption" Class="dt-muted dt-kpi">均值 @_trendAverage</MudText>
                     <MudText Typo="Typo.caption" Class="dt-muted dt-kpi">最小 @_trendMin</MudText>
                     <MudText Typo="Typo.caption" Class="dt-muted dt-kpi">最大 @_trendMax</MudText>
@@ -303,7 +303,7 @@
                     @if (_spc.Segments.Any(s => s.LimitsFromConfig))
                     {
                         <MudText Typo="Typo.caption" Class="dt-muted mb-2">
-                            带 * 的段没有落库规格限（那批数据早于"限值随记录落库"），按当前配置估计。
+                            带 * 的段没有落库规格限（那批数据早于"限值随记录落库"），按当前配置估计。<InfoHint Topic="HelpTexts.SegmentAsterisk" />
                         </MudText>
                     }
                 }
@@ -346,7 +346,7 @@
                         </MudItem>
                         <MudItem xs="6" sm="4" md="3" lg="2">
                             <div class="dt-metric">
-                                <div class="dt-metric-label">Cpk（组内）</div>
+                                <div class="dt-metric-label">Cpk（组内）<InfoHint Topic="HelpTexts.Capability" /></div>
                                 <div class="dt-metric-value">@SpcCalculator.Format(segment.Summary.Cpk)</div>
                             </div>
                         </MudItem>
@@ -467,12 +467,10 @@ private IssueTopReport _defects = new();
     private bool _loadFailed;
 
     /// <summary>
-    /// 趋势与过程能力单次最多统计的采样点数。区间取很大时（例如整年）不加限制会把
-    /// 百万级点位拉进内存，而且一张图最多也就画 600 个点、Cpk 也不该跨太久远的历史。
-    /// 截断时界面会明确说明只统计了最近 N 点，不会悄悄少算。
+    /// 趋势与过程能力单次最多统计的采样点数（值见 Domain 的 SystemDefaults，界面文案与它同源）：
+    /// 区间取很大时（例如整年）不加限制会把百万级点位拉进内存，而且一张图最多也就画 600 个点、
+    /// Cpk 也不该跨太久远的历史。截断时界面会明确说明只统计了最近 N 点，不会悄悄少算。
     /// </summary>
-    private const int TrendSampleLimit = 20000;
-
     private bool _trendTruncated;
 
     /// <summary>支持 /reports?from=…&amp;to=…&amp;station=…&amp;recipe=…&amp;tag=… 直达。</summary>
@@ -581,6 +579,9 @@ private async Task OnStationChanged(int? stationId)
 
     private IReadOnlyList<RecipeFilterOption> _recipeOptions = [];
     private Dictionary<string, string> _recipeNames = new(StringComparer.Ordinal);
+
+    /// <summary>配置里的型号（含历史编码），用于把旧码归一到当前编码。</summary>
+    private IReadOnlyList<Recipe> _knownRecipes = [];
     private DateTime? _recipeOptionsFrom;
     private DateTime? _recipeOptionsTo;
 
@@ -623,6 +624,7 @@ private async Task OnStationChanged(int? stationId)
         // 区间内出现过的编码（含空）+ 配置里已知型号，避免改码后旧码消失
         var fromRecords = await Store.ListRecipeCodesAsync(from, to);
         var known = await Config.GetRecipesAsync();
+        _knownRecipes = known;
         _recipeNames = known
             .GroupBy(r => r.Code, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.First().Name ?? "", StringComparer.Ordinal);
@@ -663,6 +665,29 @@ private async Task OnStationChanged(int? stationId)
     private string FormatRecipeRow(string? code)
         => string.IsNullOrEmpty(code) ? "未选型号" : FormatRecipeOption(code);
 
+    /// <summary>
+    /// 把改过编码的型号留下的历史编码并回当前编码，再按型号汇总。
+    /// </summary>
+    /// <remarks>
+    /// 改码后区间内会留下新旧两个编码的记录，按字面分组会让同一个型号在表里裂成两行
+    /// （旧码那行没有名称，显示成"旧编码 xxx"），而曲线基线是把旧码算作本型号的
+    /// （见 <see cref="CurveRecipeScope"/>）—— 两处必须给同一个答案。
+    /// </remarks>
+    private IReadOnlyList<RecipeThroughput> MergeByRecipe(IReadOnlyList<RecipeThroughput> rows)
+        => rows
+            .GroupBy(r => CurveRecipeScope.CanonicalCode(r.RecipeCode, _knownRecipes), StringComparer.Ordinal)
+            .Select(g => new RecipeThroughput
+            {
+                RecipeCode = g.Key,
+                Total = g.Sum(x => x.Total),
+                Ok = g.Sum(x => x.Ok),
+                Ng = g.Sum(x => x.Ng),
+                Pending = g.Sum(x => x.Pending)
+            })
+            // 与统计服务同一套排序：未选型号排最后。
+            .OrderBy(x => string.IsNullOrEmpty(x.RecipeCode) ? "~" : x.RecipeCode, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
     private async Task Load()
     {
         if (DateRangeFilter.IsReversed(_from, _to))
@@ -693,7 +718,7 @@ private async Task OnStationChanged(int? stationId)
                 var recipeArg = ToRecipeQueryArg();
                 var throughput = await ReportService.GetThroughputAsync(from, to, _stationId, recipeArg);
                 _fpy = throughput.ByDay;
-                _byRecipe = throughput.ByRecipe;
+                _byRecipe = MergeByRecipe(throughput.ByRecipe);
                 // 工站与型号一样是整份报表的筛选条件：不良/预警不跟着收窄，
                 // 选了 ST010 却看到全线的不良榜，现场就会去错工站找原因。
                 _defects = await ReportService.GetDefectTopAsync(from, to, _stationId, recipeCode: recipeArg);
@@ -701,10 +726,10 @@ private async Task OnStationChanged(int? stationId)
 
                 // 多取一点用来判断"到底有没有截断"，免得刚好等于上限时误报。
                 var trendPoints = _tagId != 0
-                    ? await ReportService.GetTrendAsync(from, to, _tagId, recipeArg, TrendSampleLimit + 1)
+                    ? await ReportService.GetTrendAsync(from, to, _tagId, recipeArg, SystemDefaults.TrendSampleLimit + 1)
                     : [];
-                _trendTruncated = trendPoints.Count > TrendSampleLimit;
-                _trend = _trendTruncated ? trendPoints.TakeLast(TrendSampleLimit).ToList() : trendPoints;
+                _trendTruncated = trendPoints.Count > SystemDefaults.TrendSampleLimit;
+                _trend = _trendTruncated ? trendPoints.TakeLast(SystemDefaults.TrendSampleLimit).ToList() : trendPoints;
                 _trendSeries = BuildTrendSeries();
                 RefreshTrendStats();
 
@@ -712,7 +737,7 @@ private async Task OnStationChanged(int? stationId)
                 // 这里会各自查一次窄投影（同 TagId、同列集）。刻意保留两次调用：
                 // 统计服务不该成为取趋势的唯一入口，而两次窄投影的量级远小于原先的整图加载。
                 _spc = _tagId != 0
-                    ? await SpcService.GetProcessCapabilityAsync(_tagId, from, to, recipeArg, TrendSampleLimit)
+                    ? await SpcService.GetProcessCapabilityAsync(_tagId, from, to, recipeArg, SystemDefaults.TrendSampleLimit)
                     : null;
                 _spcCharts = _spc?.Segments.Select(BuildSpcSeries).ToList() ?? [];
                 _loadFailed = false;

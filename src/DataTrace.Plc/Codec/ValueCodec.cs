@@ -70,27 +70,43 @@ public static class ValueCodec
 
     public static ushort[] EncodeInt16(short value) => [(ushort)value];
 
+    /// <summary>32 位整数按"高字在前"编码（与 <see cref="DecodeInt32"/> 互逆）。</summary>
+    public static ushort[] EncodeInt32(int value) => [(ushort)((value >> 16) & 0xFFFF), (ushort)(value & 0xFFFF)];
+
     public static ushort[] EncodeFloat(float value, FloatWordOrder order)
     {
-        Span<byte> le = stackalloc byte[4];
-        BinaryPrimitives.WriteSingleLittleEndian(le, value);
-        // IEEE little-endian bytes: D C B A
-        byte d = le[0], c = le[1], b = le[2], a = le[3];
-        var be = order switch
-        {
-            FloatWordOrder.ABCD => (a, b, c, d),
-            FloatWordOrder.BADC => (b, a, d, c),
-            FloatWordOrder.CDAB => (c, d, a, b),
-            FloatWordOrder.DCBA => (d, c, b, a),
-            _ => (a, b, c, d)
-        };
-
-        return
-        [
-            (ushort)((be.Item1 << 8) | be.Item2),
-            (ushort)((be.Item3 << 8) | be.Item4)
-        ];
+        Span<byte> ieeeBe = stackalloc byte[4];
+        BinaryPrimitives.WriteSingleBigEndian(ieeeBe, value);
+        var (w0, w1) = PackWord(ieeeBe[0], ieeeBe[1], ieeeBe[2], ieeeBe[3], order);
+        return [w0, w1];
     }
+
+    /// <summary>双精度按两对 float 字序编码（与 <see cref="DecodeDouble"/> 互逆）。</summary>
+    public static ushort[] EncodeDouble(double value, FloatWordOrder order)
+    {
+        Span<byte> ieeeBe = stackalloc byte[8];
+        BinaryPrimitives.WriteDoubleBigEndian(ieeeBe, value);
+        var (hi0, hi1) = PackWord(ieeeBe[0], ieeeBe[1], ieeeBe[2], ieeeBe[3], order);
+        var (lo0, lo1) = PackWord(ieeeBe[4], ieeeBe[5], ieeeBe[6], ieeeBe[7], order);
+        return [hi0, hi1, lo0, lo1];
+    }
+
+    /// <summary>
+    /// 按数据类型把数值编码成寄存器字（与 <see cref="DecodeNumeric"/> 互逆）。
+    /// </summary>
+    /// <remarks>
+    /// 写侧必须按类型给足字宽：Int32 是 2 字、Double 是 4 字。按"统一 1 字/2 字"写，
+    /// 读侧（按 <see cref="WordCountOf"/> 取数）就会把残留字拼进来，读回的值与写入值不是一回事。
+    /// </remarks>
+    public static ushort[] EncodeNumeric(double value, PlcDataType dataType, FloatWordOrder order) => dataType switch
+    {
+        PlcDataType.Bool => [(ushort)(value != 0 ? 1 : 0)],
+        PlcDataType.Int16 => EncodeInt16((short)Math.Clamp(Math.Round(value), short.MinValue, short.MaxValue)),
+        PlcDataType.Int32 => EncodeInt32((int)Math.Clamp(Math.Round(value), int.MinValue, int.MaxValue)),
+        PlcDataType.Float => EncodeFloat((float)value, order),
+        PlcDataType.Double => EncodeDouble(value, order),
+        _ => []
+    };
 
     public static ushort[] EncodeAscii(string value, int length, bool highByteFirst)
     {
@@ -183,4 +199,17 @@ public static class ValueCodec
             _ => [a, b, c, d]
         };
     }
+
+    /// <summary>
+    /// 把 4 个 IEEE 大端字节按字序还原成两个寄存器字（<see cref="ToIeeeBigEndian"/> 的逆）。
+    /// 单精度与双精度共用，避免两处各写一份字序映射、改了一边。
+    /// </summary>
+    private static (ushort W0, ushort W1) PackWord(byte a, byte b, byte c, byte d, FloatWordOrder order) => order switch
+    {
+        FloatWordOrder.ABCD => ((ushort)((a << 8) | b), (ushort)((c << 8) | d)),
+        FloatWordOrder.BADC => ((ushort)((b << 8) | a), (ushort)((d << 8) | c)),
+        FloatWordOrder.CDAB => ((ushort)((c << 8) | d), (ushort)((a << 8) | b)),
+        FloatWordOrder.DCBA => ((ushort)((d << 8) | c), (ushort)((b << 8) | a)),
+        _ => ((ushort)((a << 8) | b), (ushort)((c << 8) | d))
+    };
 }

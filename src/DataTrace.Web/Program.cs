@@ -183,31 +183,85 @@ app.Use(async (context, next) =>
 });
 app.UseAuthorization();
 app.UseAntiforgery();
-app.MapPost("/account/login", async (HttpContext http, SignInManager<ApplicationUser> signIn, IAuditLogger audit) =>
+
+// 不带凭据的表单 POST（登录）没法靠 SameSite 拦跨站提交，也用不上防伪令牌：
+// 登录页走交互式渲染，AntiforgeryToken 只在静态 SSR 才拿得到 HttpContext 输出令牌。
+// 于是用浏览器一定会带、页面脚本改不了的 Origin / Referer 判来源（详见 CrossSiteRequestGuard）。
+static bool SameSitePost(HttpContext http) => CrossSiteRequestGuard.IsSameSite(
+    http.Request.Headers.Origin,
+    http.Request.Headers.Referer,
+    http.Request.Host.Host ?? "",
+    http.Request.Host.Port ?? (http.Request.Scheme == "https" ? 443 : 80));
+
+app.MapPost("/account/login", async (
+    HttpContext http,
+    SignInManager<ApplicationUser> signIn,
+    IAuditLogger audit,
+    ILogger<Program> logger) =>
 {
     var form = await http.Request.ReadFormAsync();
     var userName = form["UserName"].ToString();
     var password = form["Password"].ToString();
     var returnUrl = form[ReturnUrl.QueryKey].ToString();
-    var result = await signIn.PasswordSignInAsync(userName, password, isPersistent: true, lockoutOnFailure: false);
+
+    if (!SameSitePost(http))
+    {
+        logger.LogWarning("登录请求来源与本站不一致，已拒绝：Origin={Origin} Referer={Referer}",
+            http.Request.Headers.Origin.ToString(), http.Request.Headers.Referer.ToString());
+        return Results.Redirect(ReturnUrl.AfterSignInFailed(returnUrl, ReturnUrl.CrossSiteError));
+    }
+
+    // lockoutOnFailure: true 才会累计失败次数（阈值与时长见 AddDataTraceInfrastructure 的 Lockout 配置）。
+    // 传 false 等于把 Identity 的锁定关掉：口令可以被无限次猜，且审计里只留成功登录。
+    var result = await signIn.PasswordSignInAsync(userName, password, isPersistent: true, lockoutOnFailure: true);
     if (result.Succeeded)
     {
         try
         {
             await audit.WriteAsync(userName, "Login", "User", userName, null, "success");
         }
-        catch
+        catch (Exception ex)
         {
-            // 审计失败不阻断登录。
+            // 登录是重定向流程，弹不出提示；但也不能静默，日志里必须留痕。
+            logger.LogWarning(ex, "登录成功但审计写入失败：{UserName}", userName);
         }
 
         return Results.Redirect(ReturnUrl.AfterSignIn(returnUrl));
     }
 
-    return Results.Redirect(ReturnUrl.AfterSignInFailed(returnUrl));
+    var error = result.IsLockedOut ? ReturnUrl.LockedError : ReturnUrl.BadCredentialsError;
+    if (!string.IsNullOrWhiteSpace(userName))
+    {
+        try
+        {
+            // 来源 IP 要一起记：只看到"某人失败了 200 次"是定位不到攻击面的。
+            var ip = http.Connection.RemoteIpAddress?.ToString() ?? "-";
+            await audit.WriteAsync(userName, "LoginFailed", "User", userName, null, $"reason={error}; ip={ip}");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "登录失败审计写入失败：{UserName}", userName);
+        }
+    }
+
+    return Results.Redirect(ReturnUrl.AfterSignInFailed(returnUrl, error));
 }).AllowAnonymous().DisableAntiforgery();
-app.MapGet("/account/logout", async (HttpContext http, SignInManager<ApplicationUser> signIn, IAuditLogger audit) =>
+
+// 登出必须是 POST：GET 带副作用时，一张 <img src="/account/logout"> 或一次顶层导航
+// 就能把在场操作员踢下线（SameSite=Lax 只挡跨站 POST 与子资源请求，挡不住顶层 GET 导航）。
+app.MapPost("/account/logout", async (
+    HttpContext http,
+    SignInManager<ApplicationUser> signIn,
+    IAuditLogger audit,
+    ILogger<Program> logger) =>
 {
+    if (!SameSitePost(http))
+    {
+        logger.LogWarning("登出请求来源与本站不一致，已拒绝：Origin={Origin} Referer={Referer}",
+            http.Request.Headers.Origin.ToString(), http.Request.Headers.Referer.ToString());
+        return Results.Redirect("/");
+    }
+
     var userName = http.User.Identity?.Name ?? "";
     await signIn.SignOutAsync();
     if (!string.IsNullOrWhiteSpace(userName))
@@ -216,9 +270,9 @@ app.MapGet("/account/logout", async (HttpContext http, SignInManager<Application
         {
             await audit.WriteAsync(userName, "Logout", "User", userName, null, null);
         }
-        catch
+        catch (Exception ex)
         {
-            // 审计失败不阻断退出。
+            logger.LogWarning(ex, "退出审计写入失败：{UserName}", userName);
         }
     }
 

@@ -119,6 +119,60 @@ public class ValueCodecTests
         Assert.Equal(-3d, ValueCodec.DecodeNumeric([unchecked((ushort)(-3))], PlcDataType.Int32, FloatWordOrder.ABCD, 1, 0));
     }
 
+    // ---------- 写入编码（仿真装载用） ----------
+
+    [Theory]
+    [InlineData(65538)]
+    [InlineData(-1)]
+    [InlineData(int.MaxValue)]
+    [InlineData(int.MinValue)]
+    public void Encode_int32_round_trips(int value)
+    {
+        var words = ValueCodec.EncodeInt32(value);
+        Assert.Equal(2, words.Length);
+        Assert.Equal(value, (int)ValueCodec.DecodeNumeric(words, PlcDataType.Int32, FloatWordOrder.ABCD, 1, 0));
+    }
+
+    [Theory]
+    [InlineData(FloatWordOrder.ABCD)]
+    [InlineData(FloatWordOrder.BADC)]
+    [InlineData(FloatWordOrder.CDAB)]
+    [InlineData(FloatWordOrder.DCBA)]
+    public void Encode_double_round_trips_in_every_word_order(FloatWordOrder order)
+    {
+        foreach (var value in new[] { 12.5, -0.001, 1e12 })
+        {
+            var words = ValueCodec.EncodeDouble(value, order);
+            Assert.Equal(4, words.Length);
+            Assert.Equal(value, ValueCodec.DecodeNumeric(words, PlcDataType.Double, order, 1, 0), 9);
+        }
+    }
+
+    [Theory]
+    [InlineData(PlcDataType.Int16, 1)]
+    [InlineData(PlcDataType.Int32, 2)]
+    [InlineData(PlcDataType.Float, 2)]
+    [InlineData(PlcDataType.Double, 4)]
+    [InlineData(PlcDataType.Bool, 1)]
+    public void Encode_numeric_matches_the_read_width(PlcDataType type, int expectedWords)
+    {
+        var words = ValueCodec.EncodeNumeric(11.4, type, FloatWordOrder.ABCD);
+        // 写多少个字必须与采集端按 WordCountOf 读的个数一致。
+        Assert.Equal(expectedWords, words.Length);
+        Assert.Equal(expectedWords, ValueCodec.WordCountOf(type));
+    }
+
+    [Fact]
+    public void Encode_numeric_round_trips_each_type()
+    {
+        Assert.Equal(11d, ValueCodec.DecodeNumeric(
+            ValueCodec.EncodeNumeric(11.4, PlcDataType.Int16, FloatWordOrder.ABCD), PlcDataType.Int16, FloatWordOrder.ABCD, 1, 0));
+        Assert.Equal(11d, ValueCodec.DecodeNumeric(
+            ValueCodec.EncodeNumeric(11.4, PlcDataType.Int32, FloatWordOrder.CDAB), PlcDataType.Int32, FloatWordOrder.CDAB, 1, 0));
+        Assert.Equal(11.4, ValueCodec.DecodeNumeric(
+            ValueCodec.EncodeNumeric(11.4, PlcDataType.Double, FloatWordOrder.DCBA), PlcDataType.Double, FloatWordOrder.DCBA, 1, 0), 9);
+    }
+
     [Fact]
     public void Decode_bool_maps_non_zero_to_one()
     {

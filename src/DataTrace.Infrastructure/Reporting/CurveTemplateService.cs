@@ -43,7 +43,16 @@ public sealed class CurveTemplateService : ICurveTemplateService
         var series = ResolveSeries(curve, seriesName);
         var effectiveName = series?.Name ?? seriesName ?? "";
 
+        // 型号隔离：不同型号的正常波形分布本来就不同（压力上限、保压时长都不一样），
+        // 混在一起建模板会让切换型号后的每一条都被判成异常。
+        // 范围与采集端共用 CurveRecipeScope：改过编码的型号要把历史旧码也算进来，
+        // 否则记录上带着偏离分、这个页面却说一条样本都没有。
+        var activeRecipeCode = snapshot.ActiveRecipe?.Code ?? "";
+        var allowedRecipeCodes = CurveRecipeScope.AllowedCodes(activeRecipeCode, snapshot.ActiveRecipe?.PreviousCodes);
+
         // 基线要反映"最近"的正常状态，而不是整段历史的平均，所以按样本量设上限。
+        // 型号过滤必须一起下推到 SQL（先过滤再取最新 N 条），否则另一种型号
+        // 最近产量大一点就会把本型号样本挤出去，模板直接建不起来。
         var take = Math.Max(recentCount, maxSamples);
         var points = await _store
             .QueryCurveFeaturesAsync(
@@ -52,22 +61,29 @@ public sealed class CurveTemplateService : ICurveTemplateService
                 from,
                 to,
                 take,
+                allowedRecipeCodes,
                 cancellationToken)
             .ConfigureAwait(false);
 
-        // 型号隔离：不同型号的正常波形分布本来就不同（压力上限、保压时长都不一样），
-        // 混在一起建模板会让切换型号后的每一条都被判成异常。
-        var activeRecipeCode = snapshot.ActiveRecipe?.Code ?? "";
-        var matched = points
-            .Where(p => string.Equals(p.RecipeCode, activeRecipeCode, StringComparison.Ordinal))
-            .ToList();
-        var mismatched = points.Count - matched.Count;
+        // 区间内的型号分布按真数统计（不受 take 截断影响），用于解释"型号不匹配"；
+        // 顺便让"取到多少条样本"是个真实数字而不是截断后的数字。
+        var byRecipe = await _store
+            .CountCurveFeaturesByRecipeAsync(
+                curve.Id,
+                string.IsNullOrWhiteSpace(effectiveName) ? null : effectiveName,
+                from,
+                to,
+                cancellationToken)
+            .ConfigureAwait(false);
+        var totalSampleCount = byRecipe.Sum(x => x.Total);
+        var inScope = byRecipe.Where(x => allowedRecipeCodes.Contains(x.RecipeCode, StringComparer.Ordinal)).ToList();
+        var mismatched = totalSampleCount - inScope.Sum(x => x.Total);
 
         // 基线只用合格样本：历史里的不良波形正是我们要检出的东西，不能拿它当"正常"。
-        var goodSamples = matched.Where(p => !p.IsNg).Select(p => p.Feature).ToList();
+        var goodSamples = points.Where(p => !p.IsNg).Select(p => p.Feature).ToList();
         var template = CurveTemplateBuilder.Build(goodSamples);
 
-        var recent = matched
+        var recent = points
             .OrderByDescending(p => p.Time)
             .Take(recentCount)
             .OrderBy(p => p.Time)
@@ -83,17 +99,17 @@ public sealed class CurveTemplateService : ICurveTemplateService
             CurveCode = curve.Code,
             CurveName = curve.Name,
             SeriesName = effectiveName,
-            Role = series?.Role ?? matched.FirstOrDefault()?.Role ?? SeriesRole.Y,
+            Role = series?.Role ?? points.FirstOrDefault()?.Role ?? SeriesRole.Y,
             Unit = series?.Unit,
-            TotalSampleCount = points.Count,
+            TotalSampleCount = totalSampleCount,
             MismatchedRecipeCount = mismatched,
             BaselineSampleCount = goodSamples.Count,
             RecipeCode = activeRecipeCode,
-            NgCount = matched.Count(p => p.IsNg),
+            NgCount = inScope.Sum(x => x.Ng),
             Template = template,
             Recent = scores,
             Shadow = Compare(scores),
-            EmptyReason = BuildEmptyReason(mismatched, matched.Count, goodSamples.Count, template, activeRecipeCode)
+            EmptyReason = BuildEmptyReason(mismatched, inScope.Sum(x => x.Total), goodSamples.Count, template, activeRecipeCode)
         };
     }
 
@@ -119,17 +135,19 @@ public sealed class CurveTemplateService : ICurveTemplateService
 
     private static string? BuildEmptyReason(
         int mismatched,
-        int matched,
+        int inScopeTotal,
         int goodSamples,
         CurveTemplate template,
         string activeRecipeCode)
     {
-        if (matched == 0)
+        if (inScopeTotal == 0)
         {
             if (mismatched > 0)
             {
-                var recipe = string.IsNullOrEmpty(activeRecipeCode) ? "(未选型号)" : activeRecipeCode;
-                return $"该区间内没有属于当前型号 {recipe} 的样本，另有 {mismatched} 条属于其他型号。" +
+                var scope = string.IsNullOrEmpty(activeRecipeCode)
+                    ? "本型号（当前未选型号）"
+                    : $"本型号 {activeRecipeCode}（含它改码前的编码）";
+                return $"该区间内没有属于{scope}的样本，另有 {mismatched} 条属于其他型号。" +
                        "不同型号的波形分布不同，混用会让基线失去意义。";
             }
 
@@ -138,7 +156,7 @@ public sealed class CurveTemplateService : ICurveTemplateService
 
         if (goodSamples == 0)
         {
-            return $"该区间内 {matched} 条样本全部不合格，没有可用于建立基线的合格样本。";
+            return $"该区间内本型号的 {inScopeTotal} 条样本全部不合格，没有可用于建立基线的合格样本。";
         }
 
         // 模板不可靠时把原因透出（样本不足 / 全部维度零波动），而不是让界面显示一个哑掉的分数。

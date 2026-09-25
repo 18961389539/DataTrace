@@ -41,6 +41,20 @@ public static class CurveCriterionEvaluator
     public static CurveSeries? PrimarySeries(CurveDefinition curve)
         => curve.Series.FirstOrDefault(s => s.Role == SeriesRole.Y) ?? curve.Series.FirstOrDefault();
 
+    /// <summary>
+    /// 判据指定的作用序列是否确实存在于这条曲线里（空串＝主序列，总是存在）。
+    /// </summary>
+    /// <remarks>
+    /// 配置页用它做保存前校验：序列名对不上时 <see cref="AppliesTo"/> 会静默返回 false，
+    /// 判据永不生效却在界面上看不出异常。两处必须用同一套匹配规则（忽略大小写与首尾空白）。
+    /// </remarks>
+    public static bool TargetsExistingSeries(CurveDefinition curve, CurveCriterion criterion)
+    {
+        var target = criterion.SeriesName?.Trim();
+        return string.IsNullOrEmpty(target)
+               || curve.Series.Any(s => string.Equals(s.Name?.Trim(), target, StringComparison.OrdinalIgnoreCase));
+    }
+
     /// <summary>逐项比对。返回全部违规描述，空列表表示合格。</summary>
     public static IReadOnlyList<string> Evaluate(CurveCriterion criterion, CurveFeatureSet feature)
     {

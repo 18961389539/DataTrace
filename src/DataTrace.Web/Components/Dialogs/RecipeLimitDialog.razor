@@ -28,6 +28,14 @@
             <MudText Typo="Typo.caption" Class="dt-muted mb-2">
                 共 @_rows.Count 个点位，其中 @_rows.Count(r => r.IsOverridden) 个被本型号覆盖。
             </MudText>
+            @if (_rows.Any(r => !r.Tag.Enabled))
+            {
+                @* 停用点位必须留在矩阵里：以前按"启用中"过滤，用户打开对话框什么都没改，
+                   一保存就把这些点位的覆盖值删了 —— 重新启用后判定会悄悄回落到点位默认限值。 *@
+                <MudText Typo="Typo.caption" Class="dt-muted mb-2">
+                    标着「已停用」的点位当前不参与采集，覆盖值仍会保留，重新启用后生效。
+                </MudText>
+            }
             @* 限值矩阵刻意不折叠成卡片：五个字段并排才能横向比对；窄屏改为整表横向滚动。 *@
             <div class="dt-scroll-x">
                 <MudTable Items="_rows" Dense="true" Hover="true" Breakpoint="Breakpoint.None"
@@ -45,6 +53,10 @@
                     <MudTd Class="dt-nowrap">
                         @context.StationCode · @context.Tag.Code
                         <MudText Typo="Typo.caption" Class="dt-muted">@context.Tag.Name</MudText>
+                        @if (!context.Tag.Enabled)
+                        {
+                            <MudText Typo="Typo.caption" Class="dt-muted">（已停用）</MudText>
+                        }
                         @if (context.Error is not null)
                         {
                             <MudText Typo="Typo.caption" Class="dt-text-error">@context.Error</MudText>
@@ -93,7 +105,9 @@
     {
         foreach (var station in Stations.OrderBy(s => s.Sequence))
         {
-            foreach (var tag in station.Tags.Where(t => t.Enabled && t.DataType is not (PlcDataType.String or PlcDataType.Bool)))
+            // 可覆盖点位 = 数值型，含已停用的（见 RecipeLimitScope）：停用点位的覆盖值
+            // 必须留在矩阵里，否则"打开→保存"这一步就会把没展示的行删掉。
+            foreach (var tag in station.Tags.Where(RecipeLimitScope.CanOverride))
             {
                 var existing = RecipeLimitResolver.FindOverride(Recipe, tag.Id);
                 _rows.Add(new Row

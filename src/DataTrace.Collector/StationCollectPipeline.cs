@@ -122,6 +122,8 @@ public sealed class StationCollectPipeline
             throw new PlcDriverException($"托盘码地址非法: {station.PalletCodeAddress}");
         }
 
+        RejectBitAddress(palletAddress, $"托盘码地址 {station.PalletCodeAddress}");
+
         var requests = new List<AddressReadRequest>
         {
             new()
@@ -139,6 +141,8 @@ public sealed class StationCollectPipeline
                 throw new PlcDriverException($"有料地址非法: {pos.OccupiedAddress}");
             }
 
+            RejectBitAddress(occ, $"有料地址 {pos.OccupiedAddress}");
+
             requests.Add(new AddressReadRequest { Key = $"occ_{pos.Index}", Address = occ, WordCount = 1 });
         }
 
@@ -148,6 +152,8 @@ public sealed class StationCollectPipeline
             {
                 throw new PlcDriverException($"点位地址非法: {tag.Address}");
             }
+
+            RejectBitAddress(addr, $"点位 {tag.Code} 的地址 {tag.Address}");
 
             requests.Add(new AddressReadRequest
             {
@@ -166,6 +172,8 @@ public sealed class StationCollectPipeline
                     throw new PlcDriverException($"曲线地址非法: {series.StartAddress}");
                 }
 
+                RejectBitAddress(addr, $"曲线 {curve.Code} 的 {series.Role} 起始地址 {series.StartAddress}");
+
                 var typeWords = ValueCodec.WordCountOf(series.DataType);
                 var stride = Math.Max(typeWords, series.StrideWords);
                 var wordCount = (curve.PointCount - 1) * stride + typeWords;
@@ -183,8 +191,8 @@ public sealed class StationCollectPipeline
         for (var i = 0; i < plan.Blocks.Count; i++)
         {
             var block = plan.Blocks[i];
-            var start = new PlcAddress(block.Area, block.StartOffset, -1, AddressKind.Word, $"{block.Area}{block.StartOffset}");
-            buffers[i] = await queue.ReadWordsAsync(start, block.WordCount, cancellationToken).ConfigureAwait(false);
+            buffers[i] = await queue.ReadWordsAsync(block.StartAddress(), block.WordCount, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         var palletWords = plan.GetWords("pallet", buffers);
@@ -303,7 +311,9 @@ public sealed class StationCollectPipeline
                 });
             }
 
-            foreach (var curve in station.Curves.Where(c => c.Enabled && c.PositionIndex == pos))
+            // 与读计划同一套过滤条件（Enabled + PointCount > 0）：点数非法的曲线读进来是空数组，
+            // 拿全 0 特征去跑判据会写出一条"峰值 0 低于下限"这种指向错误的判废原因。
+            foreach (var curve in station.Curves.Where(c => c.Enabled && c.PointCount > 0 && c.PositionIndex == pos))
             {
                 var seriesPayloads = new List<CurveSeriesPayload>();
                 var featureRows = new List<CurveFeature>();
@@ -365,11 +375,6 @@ public sealed class StationCollectPipeline
                         Role = series.Role,
                         Values = values
                     });
-                }
-
-                if (curve.PointCount <= 0)
-                {
-                    validationError = true;
                 }
 
                 curveWrites.Add(new CurvePayloadWrite
@@ -581,6 +586,12 @@ public sealed class StationCollectPipeline
             return;
         }
 
+        if (address.IsBit)
+        {
+            _logger.LogError("工站 {Station} 触发地址是位地址，响应码无法写回: {Address}", station.Code, station.TriggerAddress);
+            return;
+        }
+
         var retries = Math.Max(1, settings.WriteRetryCount);
         Exception? last = null;
         for (var i = 0; i < retries; i++)
@@ -602,7 +613,11 @@ public sealed class StationCollectPipeline
                 last = ex;
             }
 
-            await Task.Delay(settings.WriteRetryDelayMs, cancellationToken).ConfigureAwait(false);
+            // 等的是"下一次重试"：最后一次失败后没有下一次，再等就只是白拖工站的采集周期。
+            if (i < retries - 1)
+            {
+                await Task.Delay(settings.WriteRetryDelayMs, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         _logger.LogError(last, "工站 {Station} 响应码写回失败", station.Code);
@@ -708,6 +723,21 @@ public sealed class StationCollectPipeline
 
     /// <summary>本次判定所用的型号编码；未选择型号时为空串。</summary>
     private static string RecipeCode(AppConfigurationSnapshot config) => config.ActiveRecipe?.Code ?? "";
+
+    /// <summary>
+    /// 拒绝位地址：读计划只收字地址，位地址会被静默丢弃。
+    /// </summary>
+    /// <remarks>
+    /// 静默丢弃的后果很隐蔽 —— 位点位永远读回 0、Bool 恒为 false，现场只会怀疑"值不对"。
+    /// 这里直接抛错，采集记录上会留下明确的错误原因；配置页也会在保存前拦住同类地址。
+    /// </remarks>
+    private static void RejectBitAddress(PlcAddress address, string what)
+    {
+        if (address.IsBit)
+        {
+            throw new PlcDriverException($"{what} 是位地址，采集不支持位地址（请改用字地址，非 0 即 true）");
+        }
+    }
 
     /// <summary>
     /// 影子模式：拿缓存里的基线给刚算出的波形特征打分，只写入偏离字段。

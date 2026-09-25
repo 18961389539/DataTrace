@@ -1,4 +1,5 @@
 using System.Globalization;
+using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 
@@ -68,9 +69,9 @@ public static class DisplayLabels
     /// <summary>审计动作码全集：下拉与中文关键字扩展共用，避免漏映射。</summary>
     public static readonly string[] KnownAuditActions =
     [
-        "Create", "Save", "Delete", "Login", "Logout", "Toggle", "Switch", "Export",
+        "Create", "Update", "Save", "Delete", "Login", "LoginFailed", "Logout", "Toggle", "Switch", "Export",
         "Activate", "Deactivate", "Enable", "Disable", "Copy", "Recode", "SaveLimits",
-        "ResetPassword", "Backup"
+        "ResetPassword", "Unlock", "Backup"
     ];
 
     /// <summary>审计对象类型码全集。</summary>
@@ -83,9 +84,11 @@ public static class DisplayLabels
     public static string AuditAction(string? action) => action switch
     {
         "Create" => "新增",
+        "Update" => "修改",
         "Save" => "修改",
         "Delete" => "删除",
         "Login" => "登录",
+        "LoginFailed" => "登录失败",
         "Logout" => "退出",
         "Toggle" => "启停",
         "Switch" => "切换",
@@ -98,6 +101,7 @@ public static class DisplayLabels
         "Recode" => "改编码",
         "SaveLimits" => "保存限值",
         "ResetPassword" => "重置密码",
+        "Unlock" => "解除锁定",
         "Backup" => "备份",
         _ => NullOr(action)
     };
@@ -122,11 +126,11 @@ public static class DisplayLabels
 
     /// <summary>
     /// 这条审计是不是"改了什么"——只有变更类动作才有旧值/新值可对照。
-    /// 登录、退出、导出只是发生了一件事，日志页把它们的说明写成"新增 → …"会读成
-    /// "新增了导出 20 条"；未知动作按变更处理，宁可多显示箭头也不要吞掉内容。
+    /// 登录、退出、导出、登录失败、解除锁定只是发生了一件事，日志页把它们的说明写成"新增 → …"
+    /// 会读成"新增了导出 20 条"；未知动作按变更处理，宁可多显示箭头也不要吞掉内容。
     /// </summary>
     public static bool IsChangeAction(string? action)
-        => action is not ("Login" or "Logout" or "Export");
+        => action is not ("Login" or "LoginFailed" or "Logout" or "Unlock" or "Export");
 
     /// <summary>关键字若匹配某动作的中文标签，返回这些动作码，供服务端 OR 查询。</summary>
     public static IReadOnlyList<string> ActionsMatchingKeyword(string? keyword)
@@ -155,6 +159,26 @@ public static class DisplayLabels
             .Where(t => EntityType(t).Contains(k, StringComparison.OrdinalIgnoreCase))
             .ToArray();
     }
+
+    /// <summary>角色码 → 界面上的中文名。用户列表与角色编辑对话框共用一份，避免两处叫法不一致。</summary>
+    public static string RoleText(string? role) => role switch
+    {
+        AppRoles.Administrator => "管理员",
+        AppRoles.Engineer => "工程师",
+        AppRoles.Operator => "操作员",
+        AppRoles.Viewer => "访客",
+        _ => NullOr(role)
+    };
+
+    /// <summary>角色的权限范围说明：创建与编辑用户时都要给同一句解释。</summary>
+    public static string RoleHint(string? role) => role switch
+    {
+        AppRoles.Administrator => "全部权限：用户管理、配置、查询、报表、审计日志",
+        AppRoles.Engineer => "可改 PLC/工站/系统设置，可用 PLC 仿真、查询报表与审计日志",
+        AppRoles.Operator => "只能查看实时看板、查询数据与报表",
+        AppRoles.Viewer => "只读：看板、查询、报表",
+        _ => ""
+    };
 
     public static string DataType(PlcDataType dataType) => dataType switch
     {

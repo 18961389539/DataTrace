@@ -682,6 +682,84 @@ public class RuntimeStoreTests
         await env.Store.SaveAsync(request);
     }
 
+    /// <summary>
+    /// 波形特征查询的型号过滤要能翻译成 SQL（EF 翻不动会在这里炸，而不是等上线），
+    /// 且必须先过滤再取"最新 N 条"：先截断再筛会让另一种型号把本型号挤出去。
+    /// 同时覆盖按型号计数的分布查询。
+    /// </summary>
+    [Fact]
+    public async Task Curve_feature_query_filters_by_recipe_before_taking_the_newest()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+
+        // 本型号（未选型号）两条较早，A100 三条更近。
+        await SaveCurveFeatureAsync(env, "202609", "P0001", Day1, "", 1f);
+        await SaveCurveFeatureAsync(env, "202609", "P0002", Day1.AddHours(1), "", 2f);
+        await SaveCurveFeatureAsync(env, "202609", "B0001", Day1.AddHours(2), "A100", 3f);
+        await SaveCurveFeatureAsync(env, "202609", "B0002", Day1.AddHours(3), "A100", 4f);
+        await SaveCurveFeatureAsync(env, "202609", "B0003", Day1.AddHours(4), "A100", 5f);
+
+        const int curveId = 1;
+        var from = Day1;
+        var to = Day1.AddDays(1);
+
+        // 不限型号：take 2 → 最新两条是 A100 的 4 / 5。
+        var unlimited = await env.Store.QueryCurveFeaturesAsync(curveId, "压力", from, to, 2);
+        Assert.Equal(new[] { 4d, 5d }, unlimited.Select(p => p.Feature.Peak).ToArray());
+
+        // 只筛未选型号：take 2 必须落在本型号那两条上（旧写法会返回空）。
+        var scoped = await env.Store.QueryCurveFeaturesAsync(curveId, "压力", from, to, 2, [""]);
+        Assert.Equal(new[] { 1d, 2d }, scoped.Select(p => p.Feature.Peak).ToArray());
+
+        // 多个编码一起给（当前码 + 改码前的历史码）同样按集合过滤。
+        var twoCodes = await env.Store.QueryCurveFeaturesAsync(curveId, "压力", from, to, 2, ["", "A100"]);
+        Assert.Equal(new[] { 4d, 5d }, twoCodes.Select(p => p.Feature.Peak).ToArray());
+
+        // 分布查询不受 take 限制，是真数。
+        var byRecipe = await env.Store.CountCurveFeaturesByRecipeAsync(curveId, "压力", from, to);
+        Assert.Equal(2, byRecipe.Single(x => x.RecipeCode == "").Total);
+        Assert.Equal(3, byRecipe.Single(x => x.RecipeCode == "A100").Total);
+        Assert.Equal(5, byRecipe.Sum(x => x.Total));
+
+        // 序列名留空 = 该曲线的全部序列（这段 Where 也要能翻译成 SQL）。
+        Assert.Equal(5, (await env.Store.CountCurveFeaturesByRecipeAsync(curveId, null, from, to)).Sum(x => x.Total));
+        Assert.Equal(5, (await env.Store.QueryCurveFeaturesAsync(curveId, null, from, to, 10)).Count);
+    }
+
+    /// <summary>
+    /// 跨月取"最新 take 条"：从最新月库往回取、凑够即停，结果必须是全局最新那批。
+    /// </summary>
+    [Fact]
+    public async Task Curve_feature_take_across_months_keeps_the_globally_newest()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        await SaveCurveFeatureAsync(env, "202609", "P0901", new DateTime(2026, 9, 28, 8, 0, 0), "", 11f);
+        await SaveCurveFeatureAsync(env, "202610", "P1001", new DateTime(2026, 10, 2, 8, 0, 0), "", 13f);
+        await SaveCurveFeatureAsync(env, "202610", "P1002", new DateTime(2026, 10, 3, 8, 0, 0), "", 14f);
+        await SaveCurveFeatureAsync(env, "202610", "P1003", new DateTime(2026, 10, 4, 8, 0, 0), "", 15f);
+
+        var from = new DateTime(2026, 9, 1);
+        var to = new DateTime(2026, 11, 1);
+
+        var latestTwo = await env.Store.QueryCurveFeaturesAsync(1, "压力", from, to, 2);
+        Assert.Equal(new[] { 14d, 15d }, latestTwo.Select(p => p.Feature.Peak).ToArray());
+
+        var all = await env.Store.QueryCurveFeaturesAsync(1, "压力", from, to, 10);
+        Assert.Equal(new[] { 11d, 13d, 14d, 15d }, all.Select(p => p.Feature.Peak).ToArray());
+    }
+
+    private static async Task SaveCurveFeatureAsync(
+        RuntimeEnv env, string monthKey, string pallet, DateTime time, string recipeCode, float peak)
+    {
+        var request = FirstStation(monthKey, pallet, pallet, time, withCurve: true);
+        request.Record.RecipeCode = recipeCode;
+        request.Curves[0].Record.Features =
+        [
+            CurveFeatureExtractor.ToEntity("压力", SeriesRole.Y, CurveFeatureExtractor.Extract([peak, peak, peak]))
+        ];
+        await env.Store.SaveAsync(request);
+    }
+
     [Fact]
     public async Task Curve_features_round_trip_through_the_month_database()
     {
@@ -824,10 +902,9 @@ public class RuntimeStoreTests
         Assert.True(File.Exists(keptFile));
 
         // 会话序列号在月份库内有唯一索引，重复写入必须整体回滚。
-        // 曲线代码换个名字：文件名里带序列号，两次写的是同一个序列号，
-        // 不换代码的话两条曲线会落在同一个路径上，看不出回滚只清了自己写的那个。
+        // 曲线码故意与第一条相同：文件名按"序列号_工站_位号_曲线码"生成，
+        // 这才是序列号重复时的真实形状（配置库回滚后计数器重发同一号）。
         var duplicate = FirstStation("202609", "P0002", "S-UNIQUE", Day1.AddMinutes(1), withCurve: true);
-        duplicate.Curves[0].Record.CurveCode = "ST010_PD2";
         await Assert.ThrowsAnyAsync<Exception>(() => env.Store.SaveAsync(duplicate));
 
         Assert.Equal(0, (await env.Store.QueryAsync(Query(pallet: "P0002"))).Total);
@@ -840,8 +917,13 @@ public class RuntimeStoreTests
         Assert.NotEmpty(duplicate.Curves[0].Record.RelativePath!);
         Assert.False(File.Exists(CurveFile(env, duplicate)));
 
-        // 且只删自己刚写的那个。
+        // 且只删自己刚写的那个：第二条让开了同名路径，第一条的波形必须完好无损，
+        // 否则一次重号就会顺带毁掉上一条记录已经入库的曲线数据。
+        Assert.NotEqual(first.Curves[0].Record.RelativePath, duplicate.Curves[0].Record.RelativePath);
         Assert.True(File.Exists(keptFile));
+        var kept = await env.Curves.ReadAsync(
+            first.Curves[0].Record.RelativePath!, first.Curves[0].Record.Crc32);
+        Assert.Equal(first.Curves[0].Payload.PointCount, kept.PointCount);
     }
 
     private static string CurveFile(RuntimeEnv env, CollectSaveRequest request)

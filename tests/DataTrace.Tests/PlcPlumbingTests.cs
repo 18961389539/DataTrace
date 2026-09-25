@@ -446,4 +446,110 @@ public class PlcRequestQueueTests
         // ownsDriver=true 时队列负责释放驱动，连接状态随之复位。
         Assert.False(driver.IsConnected);
     }
+
+    // ---------- 断线熔断 ----------
+
+    [Fact]
+    public async Task Queue_failsFast_whileCoolingDownAfterLinkLoss()
+    {
+        var driver = new SwitchableDriver();
+        await using var queue = new PlcRequestQueue(driver);
+
+        driver.DropLinkOnRead = true;
+        await Assert.ThrowsAsync<PlcDriverException>(() => queue.ReadWordsAsync(Addr("D100"), 1));
+
+        // 链路断了 → 立刻进入冷却，之后的请求不再一个个去重连（重连要走满 3 次 × 2 秒）。
+        Assert.True(queue.IsCoolingDown);
+        var connectsAfterFailure = driver.ConnectCount;
+        driver.DropLinkOnRead = false;
+
+        var ex = await Assert.ThrowsAsync<PlcDriverException>(() => queue.ReadWordsAsync(Addr("D100"), 1));
+        Assert.Contains("冷却期", ex.Message);
+        Assert.Equal(connectsAfterFailure, driver.ConnectCount);
+    }
+
+    [Fact]
+    public async Task Queue_doesNotCoolDown_onAddressLevelErrors()
+    {
+        var driver = new SwitchableDriver();
+        await using var queue = new PlcRequestQueue(driver);
+
+        // 驱动仍处于连接状态（地址写错、写回校验失败之类）：只该报错，不该把这台 PLC 停采几十秒。
+        driver.FailReadWithoutDroppingLink = true;
+        await Assert.ThrowsAsync<PlcDriverException>(() => queue.ReadWordsAsync(Addr("D100"), 1));
+
+        Assert.False(queue.IsCoolingDown);
+
+        driver.FailReadWithoutDroppingLink = false;
+        Assert.Equal(new ushort[] { 7 }, await queue.ReadWordsAsync(Addr("D100"), 1));
+    }
+
+    [Fact]
+    public async Task Queue_resetsFailureStreak_afterSuccessfulRequest()
+    {
+        var driver = new SwitchableDriver();
+        await using var queue = new PlcRequestQueue(driver);
+
+        // 正常往返不该意外进入冷却，否则断线一次之后采集会莫名其妙停摆。
+        Assert.Equal(new ushort[] { 7 }, await queue.ReadWordsAsync(Addr("D100"), 1));
+        Assert.False(queue.IsCoolingDown);
+        Assert.Equal(1, driver.ConnectCount);
+    }
+
+    /// <summary>可切换"链路断开"与"仅本请求失败"的驱动，用来区分熔断与业务错误。</summary>
+    private sealed class SwitchableDriver : IPlcDriver
+    {
+        public PlcBrand Brand => PlcBrand.Simulator;
+
+        public PlcCapabilities Capabilities => PlcCapabilities.Simulator;
+
+        public bool IsConnected { get; private set; }
+
+        public int ConnectCount { get; private set; }
+
+        public bool DropLinkOnRead { get; set; }
+
+        public bool FailReadWithoutDroppingLink { get; set; }
+
+        public bool TryParseAddress(string text, out PlcAddress address)
+            => new MitsubishiAddressParser().TryParse(text, out address);
+
+        public Task ConnectAsync(CancellationToken cancellationToken = default)
+        {
+            ConnectCount++;
+            IsConnected = true;
+            return Task.CompletedTask;
+        }
+
+        public Task DisconnectAsync(CancellationToken cancellationToken = default)
+        {
+            IsConnected = false;
+            return Task.CompletedTask;
+        }
+
+        public Task<ushort[]> ReadWordsAsync(PlcAddress start, int wordCount, CancellationToken cancellationToken = default)
+        {
+            if (DropLinkOnRead)
+            {
+                IsConnected = false;
+                throw new PlcDriverException("链接已断开");
+            }
+
+            if (FailReadWithoutDroppingLink)
+            {
+                throw new PlcDriverException("地址不存在");
+            }
+
+            return Task.FromResult(new ushort[] { 7 });
+        }
+
+        public Task WriteWordsAsync(PlcAddress start, ushort[] words, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public ValueTask DisposeAsync()
+        {
+            IsConnected = false;
+            return ValueTask.CompletedTask;
+        }
+    }
 }

@@ -1,5 +1,6 @@
 @using DataTrace.Domain.Enums
-﻿@using DataTrace.Domain.Entities
+@using DataTrace.Domain.Entities
+@using DataTrace.Plc.Addresses
 <MudDialog>
     <TitleContent>
         <MudText Typo="Typo.h6">@(IsNew ? "新增 PLC 连接" : $"编辑 PLC · {Model.Name}")</MudText>
@@ -14,12 +15,13 @@
                               Error="@(_nameError is not null)" ErrorText="@_nameError" />
             </MudItem>
             <MudItem xs="12" md="6">
-                <MudSelect T="PlcBrand" @bind-Value="_draft.Brand" Label="品牌">
+                <MudSelect T="PlcBrand" @bind-Value="_draft.Brand" @bind-Value:after="Revalidate" Label="品牌">
                     @foreach (var brand in Enum.GetValues<PlcBrand>())
                     {
                         <MudSelectItem T="PlcBrand" Value="brand">@BrandText(brand)</MudSelectItem>
                     }
                 </MudSelect>
+                <InfoHint Topic="HelpTexts.SimulatorBrand" />
             </MudItem>
             <MudItem xs="12" md="6">
                 <MudTextField @bind-Value="_draft.Host" @bind-Value:after="Revalidate" Label="IP 地址" Required="true"
@@ -44,8 +46,9 @@
                 </MudSelect>
             </MudItem>
             <MudItem xs="12" md="6">
-                <MudTextField @bind-Value="HeartbeatAddress" Label="心跳地址" Immediate="true"
-                              HelperText="留空表示不写心跳" />
+                <MudTextField @bind-Value="HeartbeatAddress" @bind-Value:after="Revalidate" Label="心跳地址" Immediate="true"
+                              HelperText="@HeartbeatHelper"
+                              Error="@(_heartbeatError is not null)" ErrorText="@_heartbeatError" />
             </MudItem>
             <MudItem xs="12" md="6">
                 <MudNumericField @bind-Value="HeartbeatIntervalMs" Label="心跳周期 (ms)" Min="100" Max="60000" />
@@ -65,6 +68,7 @@
             <MudItem xs="12" md="6">
                 <MudNumericField @bind-Value="_draft.MergeGapWords" Label="合并间隙字数" Min="1" Max="512"
                                  HelperText="地址间隔小于该值时会合并成一次批量读取" />
+                <InfoHint Topic="HelpTexts.MergeGap" />
             </MudItem>
             <MudItem xs="12" md="6" Class="d-flex align-center">
                 <MudSwitch @bind-Value="_draft.StringHighByteFirst" Label="字符串高字节在前" Color="Color.Primary" />
@@ -88,7 +92,7 @@
 
     [Parameter] public bool IsNew { get; set; }
 
-    [Parameter] public string HeartbeatAddress { get; set; } = "D0";
+    [Parameter] public string HeartbeatAddress { get; set; } = "";
 
     [Parameter] public int HeartbeatIntervalMs { get; set; } = 1000;
 
@@ -96,6 +100,7 @@
     private string? _nameError;
     private string? _hostError;
     private string? _portError;
+    private string? _heartbeatError;
 
     /// <summary>
     /// 编辑副本。直接绑调用方实体的话，用户点「取消」后父页表格里仍留着改到一半的名称和 IP
@@ -163,13 +168,41 @@
         _nameError = string.IsNullOrWhiteSpace(_draft.Name) ? "请填写连接名称" : null;
         _hostError = string.IsNullOrWhiteSpace(_draft.Host) ? "请填写 PLC 的 IP 地址" : null;
         _portError = _draft.Port is <= 0 or > 65535 ? "端口需在 1–65535 之间" : null;
+        _heartbeatError = HeartbeatError();
         if (!ValidateExtra())
         {
             return false;
         }
 
-        return _nameError is null && _hostError is null && _portError is null;
+        return _nameError is null && _hostError is null && _portError is null && _heartbeatError is null;
     }
+
+    /// <summary>
+    /// 心跳地址按当前品牌校验；留空即不写心跳，不算错。
+    /// </summary>
+    /// <remarks>
+    /// 心跳写的是字（EncodeInt16），位地址与品牌不符的写法都进不了驱动，
+    /// 与其等到采集时看到"心跳写不进去"，不如在这里拦住。
+    /// </remarks>
+    private string? HeartbeatError()
+    {
+        if (string.IsNullOrWhiteSpace(HeartbeatAddress))
+        {
+            return null;
+        }
+
+        return PlcAddressValidator.TryValidate(_draft.Brand, HeartbeatAddress, out _, out var error) ? null : error;
+    }
+
+    private string HeartbeatHelper
+        => _draft.Brand switch
+        {
+            // 以前新建时预填 D0：那是三菱的写法，换成西门子/Modbus 就是一条永远写不进去的配置。
+            PlcBrand.SiemensS7 => "留空表示不写心跳；西门子示例 MW10、DB1.DBW0（不支持位地址）",
+            PlcBrand.ModbusTcp => "留空表示不写心跳；Modbus 示例 40001（不支持线圈）",
+            PlcBrand.OmronFins => "留空表示不写心跳；欧姆龙示例 D100、CIO100",
+            _ => "留空表示不写心跳；三菱示例 D100（不支持 M 等位地址）"
+        };
 
     /// <summary>给输入框的 change 回调用的无返回值版本（@bind-Value:after 不接受带值的委托）。</summary>
     private string? _extraError;

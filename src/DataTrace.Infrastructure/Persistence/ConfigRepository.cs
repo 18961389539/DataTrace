@@ -4,6 +4,7 @@ using DataTrace.Application.Evaluation;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
+using DataTrace.Domain.Validation;
 using Microsoft.EntityFrameworkCore;
 
 namespace DataTrace.Infrastructure.Persistence;
@@ -80,6 +81,17 @@ public sealed class ConfigRepository : IConfigRepository
 
     public async Task SavePlcConnectionAsync(PlcConnection connection, CancellationToken cancellationToken = default)
     {
+        connection.Name = connection.Name.Trim();
+
+        // 库里 Name 上有唯一索引，重名会抛出 SQLite 的原始错误；先在这里查出来，
+        // 用户看到的才是"哪台重名"而不是一串 SQL 报错（与型号保存同一套做法）。
+        if (await _db.PlcConnections.AnyAsync(
+                x => x.Id != connection.Id && x.Name == connection.Name,
+                cancellationToken).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException($"PLC 名称「{connection.Name}」已存在");
+        }
+
         if (connection.Id == 0)
         {
             _db.PlcConnections.Add(connection);
@@ -126,7 +138,11 @@ public sealed class ConfigRepository : IConfigRepository
 
     public async Task SaveStationAsync(Station station, CancellationToken cancellationToken = default)
     {
+        station.Code = station.Code.Trim();
+        station.Name = station.Name.Trim();
         SyncPositions(station);
+        await EnsureStationInvariantsAsync(station, cancellationToken).ConfigureAwait(false);
+
         var entry = _db.Entry(station);
         if (station.Id == 0)
         {
@@ -157,12 +173,94 @@ public sealed class ConfigRepository : IConfigRepository
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// 工站级的硬约束：编码唯一、握手参数可用、以及整条线的拓扑自洽。
+    /// </summary>
+    /// <remarks>
+    /// 界面也做同样的校验，但那只是 UI：这些规则一旦被绕过（历史脏配置、脚本直接写库），
+    /// 后果都落在采集端，而且表现形式很难往"配置错了"上想 ——
+    /// 触发值与回写码相同会让工站被无限重复触发；一条线没有末站则托盘会话永不关闭、MES 从不上报。
+    /// </remarks>
+    private async Task EnsureStationInvariantsAsync(Station station, CancellationToken cancellationToken)
+    {
+        if (station.Code.Length == 0)
+        {
+            throw new InvalidOperationException("工站编码不能为空");
+        }
+
+        if (StationConfigLimits.TriggerValueError(station.TriggerValue) is { } triggerError)
+        {
+            throw new InvalidOperationException($"工站 {station.Code} 的{triggerError}");
+        }
+
+        if (StationConfigLimits.PalletCodeLengthError(station.PalletCodeLength) is { } lengthError)
+        {
+            throw new InvalidOperationException($"工站 {station.Code} 的{lengthError}");
+        }
+
+        if (await _db.Stations.AnyAsync(
+                x => x.Id != station.Id && x.Code.ToLower() == station.Code.ToLower(),
+                cancellationToken).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException($"工站编码「{station.Code}」已存在");
+        }
+
+        // 顺序与首末站只按"启用的工站"判定：停用的工站不参与采集，
+        // 也就不该挡住维护期间的调整（例如临时停掉唯一的末站）。
+        var others = await _db.Stations.AsNoTracking()
+            .Where(x => x.Id != station.Id && x.Enabled)
+            .Select(x => new { x.Code, x.Sequence, x.IsFirstStation, x.IsLastStation })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        if (!station.Enabled)
+        {
+            return;
+        }
+
+        if (station.Sequence <= 0)
+        {
+            throw new InvalidOperationException($"工站 {station.Code} 的产线顺序必须大于 0");
+        }
+
+        if (others.FirstOrDefault(x => x.Sequence == station.Sequence) is { } sameOrder)
+        {
+            throw new InvalidOperationException($"产线顺序 {station.Sequence} 已被工站 {sameOrder.Code} 占用");
+        }
+
+        if (station.IsFirstStation && others.FirstOrDefault(x => x.IsFirstStation) is { } first)
+        {
+            throw new InvalidOperationException($"工站 {first.Code} 已是首站；一条线只能有一个启用的首站");
+        }
+
+        if (station.IsLastStation && others.FirstOrDefault(x => x.IsLastStation) is { } last)
+        {
+            throw new InvalidOperationException($"工站 {last.Code} 已是末站；一条线只能有一个启用的末站");
+        }
+    }
+
     public async Task DeleteStationAsync(int id, CancellationToken cancellationToken = default)
     {
         var item = await _db.Stations.FindAsync([id], cancellationToken).ConfigureAwait(false);
         if (item is null)
         {
             return;
+        }
+
+        // 点位随工站级联删除，它们的型号覆盖行必须一起清掉（与 DeleteTagAsync 同一套做法）：
+        // 留下的悬空行在限值矩阵里看不见，却会被"覆盖点位 N 个"继续算进去。
+        var tagIds = await _db.Tags.AsNoTracking()
+            .Where(x => x.StationId == id)
+            .Select(x => x.Id)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (tagIds.Count > 0)
+        {
+            var limits = await _db.RecipeLimits
+                .Where(x => tagIds.Contains(x.TagId))
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            _db.RecipeLimits.RemoveRange(limits);
         }
 
         _db.Stations.Remove(item);
@@ -172,6 +270,12 @@ public sealed class ConfigRepository : IConfigRepository
 
     public async Task SaveTagAsync(TagDefinition tag, CancellationToken cancellationToken = default)
     {
+        tag.Code = tag.Code.Trim();
+        if (tag.Code.Length == 0)
+        {
+            throw new InvalidOperationException("点位编码不能为空");
+        }
+
         if (tag.PositionIndex < 0)
         {
             tag.PositionIndex = 0;
@@ -179,6 +283,15 @@ public sealed class ConfigRepository : IConfigRepository
         else if (tag.PositionIndex > 1)
         {
             tag.PositionIndex = 1;
+        }
+
+        // 库里 (StationId, Code) 上有唯一索引，重名会抛出 SQLite 的原始错误；
+        // 先查出来，用户看到的才是"哪个点位重名"（与型号/PLC 同一套做法）。
+        if (await _db.Tags.AnyAsync(
+                x => x.StationId == tag.StationId && x.Id != tag.Id && x.Code.ToLower() == tag.Code.ToLower(),
+                cancellationToken).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException($"点位编码「{tag.Code}」在该工站下已存在");
         }
 
         // 对话框里也校验这一条，但那只是 UI：从 MES 或其它入口直接写库照样能留下自相矛盾的限值，
@@ -234,7 +347,27 @@ public sealed class ConfigRepository : IConfigRepository
 
     public async Task SaveCurveAsync(CurveDefinition curve, CancellationToken cancellationToken = default)
     {
+        curve.Code = curve.Code.Trim();
+        if (curve.Code.Length == 0)
+        {
+            throw new InvalidOperationException("曲线编码不能为空");
+        }
+
+        if (StationConfigLimits.PointCountError(curve.PointCount) is { } pointError)
+        {
+            throw new InvalidOperationException($"曲线 {curve.Code} 的{pointError}");
+        }
+
         curve.PositionIndex = 1;
+
+        // (StationId, Code) 上事实上唯一：PositionIndex 恒为 1，按主键之外的重复编码先给出中文提示。
+        if (await _db.Curves.AnyAsync(
+                x => x.StationId == curve.StationId && x.Id != curve.Id && x.Code.ToLower() == curve.Code.ToLower(),
+                cancellationToken).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException($"曲线编码「{curve.Code}」在该工站下已存在");
+        }
+
         if (curve.Id == 0)
         {
             _db.Curves.Add(curve);
@@ -354,7 +487,20 @@ public sealed class ConfigRepository : IConfigRepository
         recipe.Code = recipe.Code.Trim();
         recipe.Name = recipe.Name.Trim();
 
-        await EnsureRecipeLimitsConsistentAsync(recipe, cancellationToken).ConfigureAwait(false);
+        // 界面也校验编码，但那只是 UI：从 MES 或脚本直接写库照样能落一条空编码/带逗号的型号。
+        // 空编码的型号被设为当前后，记录里的 RecipeCode 是空串，在报表里与"未选型号"再也分不开。
+        if (RecipeCodeRules.Error(recipe.Code) is { } codeError)
+        {
+            throw new InvalidOperationException(codeError);
+        }
+
+        // 名称留空时回落为编码：列表与下拉里空名称就是一格空白，比编码还难认。
+        if (recipe.Name.Length == 0)
+        {
+            recipe.Name = recipe.Code;
+        }
+
+        await EnsureRecipeLimitsConsistentAsync(recipe.Code, recipe.Limits, cancellationToken).ConfigureAwait(false);
 
         if (recipe.Id == 0)
         {
@@ -365,6 +511,8 @@ public sealed class ConfigRepository : IConfigRepository
             {
                 throw new InvalidOperationException($"型号编码「{recipe.Code}」已存在");
             }
+
+            await ReleasePreviousCodeAsync(0, recipe.Code, cancellationToken).ConfigureAwait(false);
 
             // 先只落型号行，拿到主键后再同步限值 —— 与更新路径走同一套增量逻辑，
             // 避免级联插入和增量同步同时对同一批限值动手。
@@ -414,6 +562,10 @@ public sealed class ConfigRepository : IConfigRepository
                 _baselines.RetagRecipeCode(oldCode, newCode);
             }
 
+            // 新码若正被别的型号记作历史编码，要收回来：一个编码在某一刻只能属于一个型号，
+            // 否则两边都会把对方的样本算进自己的曲线基线。
+            await ReleasePreviousCodeAsync(existing.Id, newCode, cancellationToken).ConfigureAwait(false);
+
             existing.Name = recipe.Name;
             existing.Enabled = recipe.Enabled;
             existing.Remark = recipe.Remark;
@@ -436,24 +588,50 @@ public sealed class ConfigRepository : IConfigRepository
     }
 
     /// <summary>
+    /// 只保存型号的限值覆盖行（传入集合即最终状态），不碰名称/启用状态/备注。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="SaveRecipeAsync"/> 分开，是为了让限值编辑器不必把快照里的整份型号写回去：
+    /// 那份快照可能是几分钟前读的，另一会话刚把这个型号停用/改名，一保存就会把旧值盖回去
+    /// （甚至把已停用的型号重新启用，而当前型号指针早被清空，状态看上去毫无异常）。
+    /// </remarks>
+    public async Task SaveRecipeLimitsAsync(int recipeId, IReadOnlyList<RecipeLimit> limits, CancellationToken cancellationToken = default)
+    {
+        var recipe = await _db.Recipes.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == recipeId, cancellationToken)
+            .ConfigureAwait(false);
+        if (recipe is null)
+        {
+            throw new InvalidOperationException($"型号 {recipeId} 不存在");
+        }
+
+        await EnsureRecipeLimitsConsistentAsync(recipe.Code, limits, cancellationToken).ConfigureAwait(false);
+        await SyncLimitsAsync(recipeId, limits, cancellationToken).ConfigureAwait(false);
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        // 自增版本号 → 采集器下一轮拉到新快照、按新限值判定。
+        await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// 覆盖行必须与点位默认值<b>合并后</b>自洽：只查覆盖行自己是不成立的，
     /// 留空字段沿用点位默认值，"黄线跑到红线外"往往是改红线和改黄线各改了一半造成的。
     /// 与 <c>RecipeLimitDialog</c> 校验的是同一套口径（都走 <see cref="TagLimits.ConsistencyError"/>）。
     /// </summary>
-    private async Task EnsureRecipeLimitsConsistentAsync(Recipe recipe, CancellationToken cancellationToken)
+    private async Task EnsureRecipeLimitsConsistentAsync(string code, IEnumerable<RecipeLimit> limits, CancellationToken cancellationToken)
     {
-        if (recipe.Limits.Count == 0)
+        var rows = limits.ToList();
+        if (rows.Count == 0)
         {
             return;
         }
 
-        var tagIds = recipe.Limits.Select(x => x.TagId).Distinct().ToList();
+        var tagIds = rows.Select(x => x.TagId).Distinct().ToList();
         var tags = await _db.Tags.AsNoTracking()
             .Where(t => tagIds.Contains(t.Id))
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
-        foreach (var limit in recipe.Limits)
+        foreach (var limit in rows)
         {
             var tag = tags.FirstOrDefault(t => t.Id == limit.TagId);
             if (tag is null)
@@ -464,8 +642,38 @@ public sealed class ConfigRepository : IConfigRepository
 
             if (TagLimits.From(tag).Override(TagLimits.From(limit)).ConsistencyError() is { } error)
             {
-                throw new InvalidOperationException($"型号 {recipe.Code} 的点位 {tag.Code} 限值互相矛盾：{error}");
+                throw new InvalidOperationException($"型号 {code} 的点位 {tag.Code} 限值互相矛盾：{error}");
             }
+        }
+    }
+
+    /// <summary>
+    /// 把某个编码从其它型号的历史编码里收回来。
+    /// </summary>
+    /// <remarks>
+    /// 编码唯一性原本只比对型号当前的编码：把 A100 改名为 B300（历史编码记下 A100）之后，
+    /// 再新建一个 A100 是允许的，而 B300 的曲线基线仍然认 A100 的样本 ——
+    /// 新旧两个型号的样本就串到一条基线里了。一个编码在某一刻只能属于一个型号，这里按后者收权。
+    /// </remarks>
+    private async Task ReleasePreviousCodeAsync(int recipeId, string code, CancellationToken cancellationToken)
+    {
+        var others = await _db.Recipes
+            .Where(x => x.Id != recipeId && x.PreviousCodes != null)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        foreach (var other in others)
+        {
+            var parts = other.PreviousCodes!
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToList();
+            // 与编码唯一性检查同一个口径：忽略大小写。
+            if (parts.RemoveAll(p => string.Equals(p, code, StringComparison.OrdinalIgnoreCase)) == 0)
+            {
+                continue;
+            }
+
+            other.PreviousCodes = parts.Count == 0 ? null : string.Join(',', parts);
         }
     }
 
@@ -541,6 +749,22 @@ public sealed class ConfigRepository : IConfigRepository
     private async Task SyncLimitsAsync(int recipeId, IEnumerable<RecipeLimit> incoming, CancellationToken cancellationToken)
     {
         var targets = incoming.ToList();
+
+        // 只收"确实存在且能配数值限值"的点位。删掉整台工站时点位是级联删除的，
+        // 落进去的行会变成悬空覆盖：限值矩阵里根本看不到它，列表页的"覆盖点位 N 个"却照样计数，
+        // 只能靠保存一次限值或重启时的清理才消失。
+        if (targets.Count > 0)
+        {
+            var tagIds = targets.Select(x => x.TagId).Distinct().ToList();
+            var overridable = await _db.Tags.AsNoTracking()
+                .Where(t => tagIds.Contains(t.Id) && RecipeLimitScope.NumericTypes.Contains(t.DataType))
+                .Select(t => t.Id)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            var valid = overridable.ToHashSet();
+            targets = targets.Where(x => valid.Contains(x.TagId)).ToList();
+        }
+
         var stored = await _db.RecipeLimits
             .Where(x => x.RecipeId == recipeId)
             .ToListAsync(cancellationToken)
@@ -603,6 +827,13 @@ public sealed class ConfigRepository : IConfigRepository
 
     public async Task SaveSettingsAsync(SystemSettings settings, CancellationToken cancellationToken = default)
     {
+        // 界面的 Min/Max 只是输入框行为，脚本与历史脏数据可以直接写库：
+        // 保留年数为 0 会被清理任务当成 1 年（删数据），扫描间隔为 0 会被采集端当成 20ms（压垮 PLC 通讯）。
+        if (SettingsLimits.Error(settings) is { } error)
+        {
+            throw new InvalidOperationException(error);
+        }
+
         if (settings.Id == 0)
         {
             _db.SystemSettings.Add(settings);
@@ -617,6 +848,41 @@ public sealed class ConfigRepository : IConfigRepository
         // 采集开关等运行态字段变更时立刻唤醒看板，不依赖采集器循环。
         _status.NotifyChanged();
         await PushActiveRecipeToHubAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<MesOutboxSnapshot> GetMesOutboxStatusAsync(CancellationToken cancellationToken = default)
+    {
+        var pending = await _db.MesOutbox.AsNoTracking()
+            .Where(x => x.Status == MesOutboxStatus.Pending)
+            .GroupBy(_ => 1)
+            .Select(g => new { Count = g.Count(), Oldest = g.Min(x => x.CreatedAt) })
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        // 成功与失败都写 LastAttemptAt，所以按它倒序取第一行就是"最近一次尝试"。
+        var lastAttempt = await _db.MesOutbox.AsNoTracking()
+            .Where(x => x.LastAttemptAt != null)
+            .OrderByDescending(x => x.LastAttemptAt)
+            .Select(x => new { x.LastAttemptAt, x.Status, x.LastError })
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var lastSuccessAt = await _db.MesOutbox.AsNoTracking()
+            .Where(x => x.Status == MesOutboxStatus.Succeeded && x.LastAttemptAt != null)
+            .OrderByDescending(x => x.LastAttemptAt)
+            .Select(x => x.LastAttemptAt)
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return new MesOutboxSnapshot
+        {
+            PendingCount = pending?.Count ?? 0,
+            OldestPendingAt = pending?.Oldest,
+            LastAttemptAt = lastAttempt?.LastAttemptAt,
+            LastAttemptSucceeded = lastAttempt is null ? null : lastAttempt.Status == MesOutboxStatus.Succeeded,
+            LastError = lastAttempt?.LastError,
+            LastSuccessAt = lastSuccessAt
+        };
     }
 
 
@@ -669,7 +935,8 @@ public sealed class ConfigRepository : IConfigRepository
         else
         {
             keep.Index = 1;
-            keep.OccupiedAddress = null;
+            // 有料地址要原样保留：采集端仍按它做空位判定，
+            // 这里清掉就等于"点一次保存，空位检测悄悄失效"。
             if (string.IsNullOrWhiteSpace(keep.Name) || keep.Name.StartsWith("产品位", StringComparison.Ordinal))
             {
                 keep.Name = "产品";

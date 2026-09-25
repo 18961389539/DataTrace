@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 using DataTrace.Domain.Entities;
@@ -419,5 +420,119 @@ public class IoTClientDriverTests
 
         await Assert.ThrowsAsync<PlcDriverException>(() => driver.ReadWordsAsync(address, 1));
         await Assert.ThrowsAsync<PlcDriverException>(() => driver.WriteWordsAsync(address, [1]));
+    }
+
+    // ---------- 西门子真实组帧（假 PLC） ----------
+
+    [Fact]
+    public async Task Siemens_dbBlock_read_sendsByteOffsetInBitsAndByteLength()
+    {
+        await using var server = new FakeSiemensS7Server();
+        await using var driver = new IoTClientPlcDriver(Connection(PlcBrand.SiemensS7, server.Port));
+        await driver.ConnectAsync();
+
+        // 读计划给出的块起始地址是"DB108.4"（DB108 的第 4 个字节），长度 2 个字。
+        var start = new PlcAddress("DB108", 4, -1, AddressKind.Word, "DB108.4", OffsetUnit.Byte);
+        await driver.ReadWordsAsync(start, 2);
+
+        var request = Assert.Single(server.DataRequests);
+        Assert.Equal(0x04, request[17]);                                                // 读功能
+        Assert.Equal(0x01, request[18]);                                                // 1 个数据块
+        Assert.Equal(0x02, request[22]);                                                // 传输方式：按字节
+        Assert.Equal(4, BinaryPrimitives.ReadUInt16BigEndian(request.AsSpan(23)));       // 长度以字节计 = 2 字
+        Assert.Equal(108, BinaryPrimitives.ReadUInt16BigEndian(request.AsSpan(25)));     // DB 块号
+        Assert.Equal(0x84, request[27]);                                                // 数据区：DB
+        Assert.Equal(4 * 8, request[30]);                                               // 起始偏移按位计：4 字节 = 32
+    }
+
+    [Fact]
+    public async Task Siemens_read_singleWord_restoresBigEndianValue()
+    {
+        await using var server = new FakeSiemensS7Server();
+        await using var driver = new IoTClientPlcDriver(Connection(PlcBrand.SiemensS7, server.Port));
+        await driver.ConnectAsync();
+
+        Assert.True(driver.TryParseAddress("DB108.DBW4", out var address));
+        var words = await driver.ReadWordsAsync(address, 1);
+
+        // 服务端按大端回 0x1234；IoTClient 会把整段字节倒序，驱动按小端组字后必须仍是 0x1234。
+        Assert.Equal(new ushort[] { 0x1000 }, words);
+    }
+
+    [Fact]
+    public async Task Siemens_read_multipleWords_returnsWidgetsInPlcOrder()
+    {
+        await using var server = new FakeSiemensS7Server();
+        await using var driver = new IoTClientPlcDriver(Connection(PlcBrand.SiemensS7, server.Port));
+        await driver.ConnectAsync();
+
+        Assert.True(driver.TryParseAddress("DB108.DBW0", out var address));
+        var words = await driver.ReadWordsAsync(address, 3);
+
+        // 服务端给了 0x1000、0x1001、0x1002（PLC 顺序）。IoTClient 的整段倒序会把字序颠倒，
+        // 驱动必须把字序再倒回来；否则点位/曲线拿到的是镜像数据（看着合理，但顺序是反的）。
+        Assert.Equal(new ushort[] { 0x1000, 0x1001, 0x1002 }, words);
+    }
+
+    [Fact]
+    public async Task Siemens_write_reversesWordOrderBackBeforeIotClientDoes()
+    {
+        await using var server = new FakeSiemensS7Server();
+        await using var driver = new IoTClientPlcDriver(Connection(PlcBrand.SiemensS7, server.Port));
+        await driver.ConnectAsync();
+
+        Assert.True(driver.TryParseAddress("DB108.DBW0", out var address));
+        await driver.WriteWordsAsync(address, [0x1122, 0x3344]);
+
+        var request = Assert.Single(server.DataRequests);
+        Assert.Equal(0x05, request[17]);                                  // 写功能
+        Assert.Equal(4, BinaryPrimitives.ReadUInt16BigEndian(request.AsSpan(23)));
+
+        // IoTClient 写之前会把整段字节倒序；驱动先倒字序，两边抵消后到 PLC 的才是原顺序。
+        var data = request[^4..];
+        Assert.Equal(new byte[] { 0x11, 0x22, 0x33, 0x44 }, data);
+    }
+
+    [Fact]
+    public async Task Siemens_singleWordWrite_keepsItsByteOrder()
+    {
+        await using var server = new FakeSiemensS7Server();
+        await using var driver = new IoTClientPlcDriver(Connection(PlcBrand.SiemensS7, server.Port));
+        await driver.ConnectAsync();
+
+        // 回写响应码就是这条路（单字）：不能因为"多字要倒序"而把单字也倒了。
+        Assert.True(driver.TryParseAddress("DB108.DBW0", out var address));
+        await driver.WriteWordsAsync(address, [0x0102]);
+
+        var request = Assert.Single(server.DataRequests);
+        Assert.Equal(new byte[] { 0x01, 0x02 }, request[^2..]);
+    }
+
+    [Fact]
+    public async Task Siemens_rackAndSlot_arePassedInTheConstructorOrder()
+    {
+        await using var server = new FakeSiemensS7Server();
+        // Extra 写成 rack,slot。取一对"换位后数值完全不同"的值，才能真的验出顺序：
+        // rack=2、slot=0 → 0x40；若传成 (slot=2, rack=0) 会变成 0x02。
+        await using var driver = new IoTClientPlcDriver(Connection(PlcBrand.SiemensS7, server.Port, extra: "2,0"));
+        await driver.ConnectAsync();
+
+        // 握手报文（COTP 连接请求）的最后一个字节是 (Rack * 0x20) + Slot。
+        var handshake = server.Requests[0];
+        Assert.Equal(22, handshake.Length);
+        Assert.Equal(0x40, handshake[21]);
+    }
+
+    [Fact]
+    public async Task Siemens_reconnect_closesPreviousSocket()
+    {
+        await using var server = new FakeSiemensS7Server();
+        await using var driver = new IoTClientPlcDriver(Connection(PlcBrand.SiemensS7, server.Port));
+
+        await driver.ConnectAsync();
+        await driver.ConnectAsync();
+
+        // 换 client 前必须关掉旧的，否则现场反复掉线重连会一路漏 socket。
+        Assert.Equal(2, server.ConnectionCount);
     }
 }

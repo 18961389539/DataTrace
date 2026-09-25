@@ -1,0 +1,31 @@
+@* 页头的「本页说明」入口：一次性列出本页挂着的全部概念详解，方便新人一次看懂这一页。
+   内容来自 HelpTexts.ForPage —— 页面只写 HelpRoute，不自己列 topic，避免两处口径漂移。
+   Topics 为空时整枚按钮都不渲染（页面没挂详解就不该凭空多一个入口）。
+   和 ⓘ（InfoHint）一样用真按钮：只有可聚焦元素才让键盘与读屏用户拿得到，
+   代价是必须恒定带 aria-label（AccessibleNameE2ETests 会普查每个可见控件）。 *@
+@if (Topics.Count > 0)
+{
+    <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+        <ActivatorContent>
+            <MudIconButton Icon="@Icons.Material.Outlined.HelpCenter" Size="Size.Small"
+                           Class="dt-page-help" aria-label="本页说明" />
+        </ActivatorContent>
+        <ChildContent>
+            <MudText Typo="Typo.subtitle2" Class="px-2 pt-2 pb-1">本页说明</MudText>
+            @foreach (var topic in Topics)
+            {
+                <MudDivider Class="my-1" />
+                <div class="pa-2">
+                    <HelpContent Topic="topic" />
+                </div>
+            }
+        </ChildContent>
+    </MudMenu>
+}
+
+@code {
+    /// <summary>本页对应的路由（相对路径，见 <see cref="HelpTexts.ForPage"/>）。</summary>
+    [Parameter] public string Route { get; set; } = "";
+
+    private IReadOnlyList<HelpTopic> Topics => HelpTexts.ForPage(Route);
+}

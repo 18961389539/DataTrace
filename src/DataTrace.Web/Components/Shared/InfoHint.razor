@@ -1,0 +1,46 @@
+@* 概念详解的 ⓘ 触发器：悬停、键盘聚焦（Tab）或触屏单击都能出提示。
+   用真按钮而不是装饰图标 —— 只有可聚焦元素才让键盘与读屏用户拿得到，
+   代价是必须恒定带 aria-label（AccessibleNameE2ETests 会普查每个可见控件）。
+   aria-label 统一以「说明：」开头且只带概念名：E2E 用 GetByRole(Button, Name=…) 点按钮，
+   Playwright 的 Name 默认是子串匹配，名字里混进「保存」「重置」这类词会命中两个元素。 *@
+@if (Topic is not null)
+{
+    <MudTooltip Placement="Placement.Top" Arrow="true" Delay="@Delay" ShowOnFocus="true" ShowOnHover="true"
+                RootClass="dt-help-popover">
+        <ChildContent>
+            <MudIconButton Icon="@Icons.Material.Outlined.HelpOutline" Size="Size.Small"
+                           Class="dt-info-hint" aria-label="@($"说明：{Topic.Title}")"
+                           aria-describedby="@_descriptionId" />
+        </ChildContent>
+        <TooltipContent>
+            <HelpContent Topic="Topic" Extra="@Extra" />
+        </TooltipContent>
+    </MudTooltip>
+    @* MudTooltip 不给触发器做任何 ARIA 关联（见其源码：只有激活元素 + popover），
+       所以读屏用户只能听到「说明：直通率」这四个字，三段正文一个词都到不了。
+       这里另备一份视觉隐藏的完整说明，由上面的 aria-describedby 指过来。 *@
+    <span id="@_descriptionId" class="dt-sr-only">@AccessibleText</span>
+}
+
+@code {
+    /// <summary>要解释的概念；为空时整枚图标都不渲染，调用方不必自己包 if。</summary>
+    [Parameter] public HelpTopic? Topic { get; set; }
+
+    /// <summary>可选的动态补充行（例如"当前命中 12,345 条"），渲染在三段之前。</summary>
+    [Parameter] public string? Extra { get; set; }
+
+    /// <summary>悬停多久才出提示。默认比 MudBlazor 的全局值跟手一些。</summary>
+    [Parameter] public int Delay { get; set; } = 200;
+
+    /// <summary>实例级唯一 id：同一页上往往有十来枚 ⓘ，id 撞了会被指到别人的说明上。</summary>
+    private readonly string _descriptionId = $"dt-help-{Guid.NewGuid():N}";
+
+    private string AccessibleText
+    {
+        get
+        {
+            var prefix = Extra is { Length: > 0 } extra ? $"{extra} " : "";
+            return $"{prefix}{Topic!.Title}。{Topic.How} {Topic.Impact}";
+        }
+    }
+}

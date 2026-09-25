@@ -31,6 +31,9 @@ public abstract class WebTestBase : IDisposable
 
     protected DialogSpy Dialogs { get; }
 
+    /// <summary>popover 宿主只渲染一次：重复渲染会让同一批浮层挂到两个 provider 上。</summary>
+    private bool _popoverHostRendered;
+
     /// <summary>审计写库替身：页面上的关键动作都会经过它。</summary>
     protected Mock<IAuditLogger> Audit { get; } = new();
 
@@ -112,12 +115,30 @@ public abstract class WebTestBase : IDisposable
         }
     }
 
-    /// <summary>
-    /// 按角色重设身份，覆盖基类默认的管理员。
-    /// 页面读的是注入的 AuthenticationStateProvider，后注册的同类型服务生效。
-    /// </summary>
+    /// <summary>按角色重设身份，覆盖基类默认的管理员。
+    /// 页面读的是注入的 AuthenticationStateProvider，后注册的同类型服务生效。</summary>
     protected void UseRole(string role)
         => Context.Services.AddSingleton<AuthenticationStateProvider>(new StubAuthenticationStateProvider(role));
+
+    /// <summary>
+    /// 渲染 popover 宿主。
+    /// </summary>
+    /// <remarks>
+    /// MudTooltip / MudSelect / MudDatePicker 这些组件要把浮层挂进 MudPopoverProvider，
+    /// 真实应用由 MainLayout 提供；bUnit 里没有布局，渲染带这些组件的页面之前必须自己补一个，
+    /// 否则组件初始化就抛 "Missing &lt;MudPopoverProvider /&gt;"。
+    /// 幂等，可以放心放在各测试类的渲染辅助方法里。
+    /// </remarks>
+    protected void RenderPopoverHost()
+    {
+        if (_popoverHostRendered)
+        {
+            return;
+        }
+
+        Context.RenderComponent<MudPopoverProvider>();
+        _popoverHostRendered = true;
+    }
 
     /// <summary>按可见文字点击按钮，避开 Material 类名随版本漂移的问题。</summary>
     protected void ClickButton(IRenderedFragment cut, string text)

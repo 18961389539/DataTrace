@@ -488,6 +488,89 @@ public class CurveTemplateTests
         Assert.Equal(12d, report.Template[CurveFeatureDimension.Peak]!.Center, 6);
     }
 
+    /// <summary>
+    /// 型号过滤必须先于 take：先取"最新 N 条"再按型号筛的话，另一种型号最近产量大一点
+    /// 就会把本型号的样本整段挤出去，基线直接空掉、采集端那 5 分钟也不打分。
+    /// </summary>
+    [Fact]
+    public async Task Recipe_filter_applies_before_the_sample_cap()
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+        var curve = harness.Snapshot.Stations[0].Curves.First();
+        var fake = new FakeRuntimeStore();
+        var start = DateTime.Today.AddDays(-1).AddHours(8);
+
+        // 本型号 20 条（较早），另一种型号 60 条（更近）：按 take 截断后本型号一条不剩。
+        for (var i = 0; i < 20; i++)
+        {
+            fake.Saved.Add(Sample(curve.Id, "压力", SeriesRole.Y, start.AddMinutes(i), $"P{i:000}", Judgement.Ok, "", f => f.Peak = 12));
+        }
+
+        for (var i = 0; i < 60; i++)
+        {
+            fake.Saved.Add(Sample(curve.Id, "压力", SeriesRole.Y, start.AddHours(2).AddMinutes(i), $"B{i:000}", Judgement.Ok, "OTHER", f => f.Peak = 9));
+        }
+
+        var service = new CurveTemplateService(fake, harness.ConfigRepository);
+
+        // maxSamples 收窄到 30：截断窗口里全是 OTHER，只有"先过滤再取"才能拿到本型号样本。
+        var report = await service.GetBaselineAsync(
+            curve.Id, "压力", DateTime.Today.AddDays(-2), DateTime.Today.AddDays(1),
+            recentCount: 30, maxSamples: 30);
+
+        Assert.NotNull(report);
+        Assert.Equal(20, report!.BaselineSampleCount);
+        Assert.Equal(20, report.Recent.Count);
+        Assert.DoesNotContain(report.Recent, s => s.PalletCode.StartsWith("B", StringComparison.Ordinal));
+
+        // "取到多少条样本"是区间真数（80），不受打分窗口上限影响。
+        Assert.Equal(80, report.TotalSampleCount);
+        Assert.Equal(60, report.MismatchedRecipeCount);
+        Assert.Equal(12d, report.Template[CurveFeatureDimension.Peak]!.Center, 6);
+    }
+
+    /// <summary>
+    /// 改过编码的型号：历史样本仍写旧码，页面必须和采集端一样把旧码算作本型号，
+    /// 否则记录上带着偏离分，这个页面却说一条样本都没有。
+    /// </summary>
+    [Fact]
+    public async Task Baseline_treats_previous_recipe_codes_as_the_same_model()
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+        var curve = harness.Snapshot.Stations[0].Curves.First();
+
+        // 把 A100 改名成 B300：改名后 PreviousCodes 记着 A100，历史样本仍写着旧码。
+        var recipe = harness.Snapshot.Recipes.Single(r => r.Code == "A100");
+        await harness.ConfigRepository.SetActiveRecipeAsync(recipe.Id);
+        recipe.Code = "B300";
+        await harness.ConfigRepository.SaveRecipeAsync(recipe);
+        await harness.RefreshSnapshotAsync();
+        Assert.Equal("A100", harness.Snapshot.ActiveRecipe!.PreviousCodes);
+
+        var fake = new FakeRuntimeStore();
+        var start = DateTime.Today.AddDays(-1).AddHours(8);
+        // 峰值带抖动：全恒定的样本会被判成"零波动"而拒绝建基线（那是对的），
+        // 这条要验的是型号归属，不是零波动降级。
+        for (var i = 0; i < 25; i++)
+        {
+            var jitter = (i % 5 - 2) * 0.1;
+            fake.Saved.Add(Sample(curve.Id, "压力", SeriesRole.Y, start.AddMinutes(i), $"O{i:000}", Judgement.Ok, "A100", f => f.Peak = 12 + jitter));
+        }
+
+        var service = new CurveTemplateService(fake, harness.ConfigRepository);
+
+        var report = await service.GetBaselineAsync(
+            curve.Id, "压力", DateTime.Today.AddDays(-2), DateTime.Today.AddDays(1));
+
+        // 旧码算作本型号：基线建得起来，也不会被报成"型号不匹配"。
+        Assert.Equal("B300", report!.RecipeCode);
+        Assert.Equal(25, report.BaselineSampleCount);
+        Assert.Equal(0, report.MismatchedRecipeCount);
+        Assert.Equal(25, report.Recent.Count);
+        Assert.True(report.Template.IsReliable);
+        Assert.Null(report.EmptyReason);
+    }
+
     [Fact]
     public async Task Empty_series_selector_falls_back_to_the_primary_series()
     {
@@ -556,7 +639,7 @@ public class CurveTemplateTests
         Assert.NotNull(report);
         Assert.Equal(0, report!.BaselineSampleCount);
         Assert.Equal(8, report.MismatchedRecipeCount);
-        Assert.Contains("没有属于当前型号", report.EmptyReason);
+        Assert.Contains("没有属于本型号", report.EmptyReason);
     }
 
     // ---------- 夹具 ----------

@@ -125,6 +125,9 @@ public sealed class CurveFeaturePoint
     public CurveFeature Feature { get; init; } = new();
 }
 
+/// <summary>区间内某序列某个型号的样本计数。</summary>
+public sealed record CurveRecipeSampleCount(string RecipeCode, int Total, int Ng);
+
 public interface IRuntimeStore
 {
     Task SaveAsync(CollectSaveRequest request, CancellationToken cancellationToken = default);
@@ -162,12 +165,29 @@ public interface IRuntimeStore
     /// 因此用 take 限制样本量而不是把区间内全部特征拉进内存。
     /// </summary>
     /// <param name="seriesName">序列名；null 表示该曲线的全部序列。</param>
+    /// <param name="recipeCodes">
+    /// 型号过滤（服务端）；null 或空集合表示不限。必须传进来而不是取回内存再筛：
+    /// take 是"最新 N 条"，先截断再按型号过滤的话，另一种型号最近产量大一点
+    /// 就会把本型号的样本整段挤出去，基线直接空掉。
+    /// </param>
     Task<IReadOnlyList<CurveFeaturePoint>> QueryCurveFeaturesAsync(
         int curveDefinitionId,
         string? seriesName,
         DateTime from,
         DateTime to,
         int take,
+        IReadOnlyCollection<string>? recipeCodes = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 区间内某条曲线某序列的样本数按型号分布（型号编码 → 条数）。
+    /// 不受 take 限制，用于解释"型号不匹配"，也让"取到多少条样本"是真数而不是截断后的数。
+    /// </summary>
+    Task<IReadOnlyList<CurveRecipeSampleCount>> CountCurveFeaturesByRecipeAsync(
+        int curveDefinitionId,
+        string? seriesName,
+        DateTime from,
+        DateTime to,
         CancellationToken cancellationToken = default);
 
     Task MarkSessionAbnormalAsync(string monthKey, long sessionId, DateTime endTime, CancellationToken cancellationToken = default);
@@ -189,6 +209,15 @@ public interface ISerialNumberGenerator
 
 public interface ICurveFileStore
 {
+    /// <summary>
+    /// 写入一条曲线的采样负载，返回实际落盘的相对路径与校验信息。
+    /// </summary>
+    /// <remarks>
+    /// <b>不会覆盖已有文件</b>：目标路径被占用时自动让开一格（追加 <c>-2</c>、<c>-3</c>…）。
+    /// 文件名里没有记录的唯一标识，序列号重复时两条记录会争同一个路径；
+    /// 若覆盖后再因入库失败回滚，删掉的就是上一条记录的波形。因此调用方拿到的
+    /// <c>RelativePath</c> 未必等于按命名规则推出的那个路径，必须用它返回的这一份。
+    /// </remarks>
     Task<(string RelativePath, long FileSize, uint Crc32)> WriteAsync(
         DateTime triggerTime,
         string serialNo,
@@ -198,7 +227,12 @@ public interface ICurveFileStore
         CurvePayload payload,
         CancellationToken cancellationToken = default);
 
-    Task<CurvePayload> ReadAsync(string relativePath, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// 读回曲线负载。<paramref name="expectedCrc"/> 非空时校验内容，
+    /// 不一致抛 <see cref="InvalidDataException"/>（界面据此区分"损坏"与"缺失"）；
+    /// 传 null 表示不校验（历史行没有校验值时只能这样）。
+    /// </summary>
+    Task<CurvePayload> ReadAsync(string relativePath, uint? expectedCrc = null, CancellationToken cancellationToken = default);
 
     /// <summary>删掉某个已写入的曲线文件（相对路径由 <see cref="WriteAsync"/> 给出）。文件不在时静默返回。</summary>
     Task DeleteFileAsync(string relativePath, CancellationToken cancellationToken = default);

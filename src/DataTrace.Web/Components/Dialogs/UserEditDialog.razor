@@ -1,0 +1,105 @@
+@using DataTrace.Domain.Validation
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">编辑用户 · @UserName</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.caption" Class="dt-muted mb-3">
+            用户名创建后不可修改；角色决定可见菜单与可执行操作。
+        </MudText>
+        <MudTextField @bind-Value="_display" Label="显示名" Immediate="true" Required="true"
+                      Placeholder="如：张工（一号线）"
+                      Error="@(_displayError is not null)" ErrorText="@_displayError"
+                      @bind-Value:after="ValidateDisplay" />
+        <MudText Typo="Typo.body2" Class="mt-3 mb-1">角色（可多选）</MudText>
+        @* 只有 4 个固定角色，用复选框比多选下拉更直白：一眼能看到"这个账号到底有几个角色"，
+           也免去 MudSelect 多选绑定的类型体操。 *@
+        @foreach (var role in AppRoles.All)
+        {
+            <MudCheckBox T="bool" Dense="true" Color="Color.Primary"
+                         Label="@DisplayLabels.RoleText(role)"
+                         aria-label="@DisplayLabels.RoleText(role)"
+                         Value="@_roles.Contains(role)"
+                         ValueChanged="@(selected => ToggleRole(role, selected))" />
+        }
+        @if (_roleError is not null)
+        {
+            <MudText Typo="Typo.caption" Color="Color.Error" Class="d-block">@_roleError</MudText>
+        }
+        <MudText Typo="Typo.caption" Class="dt-muted">@HintText</MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudText Typo="Typo.caption" Class="dt-muted align-self-center mr-auto">用户名不可改，角色改动即时生效</MudText>
+        <MudButton OnClick="Cancel">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit">保存</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance? MudDialog { get; set; }
+
+    [Parameter] public string UserName { get; set; } = "";
+
+    [Parameter] public string DisplayName { get; set; } = "";
+
+    /// <summary>库里当前的角色，供页面做差集后只写变化的那部分。</summary>
+    [Parameter] public IReadOnlyList<string> CurrentRoles { get; set; } = [];
+
+    private string _display = "";
+    private List<string> _roles = [];
+    private string? _displayError;
+    private string? _roleError;
+
+    protected override void OnInitialized()
+    {
+        _display = DisplayName;
+        _roles = [.. CurrentRoles];
+    }
+
+    private void Cancel() => MudDialog?.Cancel();
+
+    private void ValidateDisplay()
+        => _displayError = string.IsNullOrWhiteSpace(_display) ? "请填写显示名" : null;
+
+    private void ToggleRole(string role, bool selected)
+    {
+        if (selected)
+        {
+            if (!_roles.Contains(role))
+            {
+                _roles.Add(role);
+            }
+        }
+        else
+        {
+            _roles.Remove(role);
+        }
+
+        // 改动即清掉上次的报错，别让"上一次提交失败"的提示挂在那里不走。
+        _roleError = null;
+    }
+
+    /// <summary>选中角色的权限范围说明；一个都没选时说清"为什么不能这么保存"。</summary>
+    private string HintText => _roles.Count == 0
+        ? "未选择任何角色：保存会被拒绝。账号至少要保留一个角色，否则能登录却什么也做不了。"
+        : string.Join("；", _roles.Select(DisplayLabels.RoleHint));
+
+    private void Submit()
+    {
+        ValidateDisplay();
+        _roleError = UserRoleRules.Error(_roles);
+        if (_displayError is not null || _roleError is not null)
+        {
+            return;
+        }
+
+        MudDialog?.Close(DialogResult.Ok(new UserEditRequest(
+            _display.Trim(),
+            // 按 AppRoles 的顺序归一：差集只关心成员，顺序稳定便于审计前后值对照。
+            [.. AppRoles.All.Where(_roles.Contains)])));
+    }
+
+    /// <summary>编辑结果：显示名 + 保存后的完整角色集合（页面据此算差集）。</summary>
+    public sealed record UserEditRequest(string DisplayName, IReadOnlyList<string> Roles);
+}

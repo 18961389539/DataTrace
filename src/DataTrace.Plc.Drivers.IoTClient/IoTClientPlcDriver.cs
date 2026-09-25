@@ -28,14 +28,7 @@ public sealed class IoTClientPlcDriver : IPlcDriver
     public IoTClientPlcDriver(PlcConnection connection)
     {
         _connection = connection;
-        _parser = connection.Brand switch
-        {
-            PlcBrand.MitsubishiMc3E => new MitsubishiAddressParser(),
-            PlcBrand.SiemensS7 => new SiemensAddressParser(),
-            PlcBrand.ModbusTcp => new ModbusAddressParser(),
-            PlcBrand.OmronFins => new OmronAddressParser(),
-            _ => new MitsubishiAddressParser()
-        };
+        _parser = AddressParsers.For(connection.Brand);
     }
 
     public PlcBrand Brand => _connection.Brand;
@@ -53,14 +46,23 @@ public sealed class IoTClientPlcDriver : IPlcDriver
 
     public bool TryParseAddress(string text, out PlcAddress address) => _parser.TryParse(text, out address);
 
+    /// <summary>
+    /// 建立连接。重连时会先把上一个 client 关掉再换新的。
+    /// </summary>
+    /// <remarks>
+    /// IoTClient 的 client 各持一条 socket，只覆盖字段而不关闭旧 client 会让 socket 一直挂着：
+    /// 反复掉线重连的现场会一处处泄露句柄，直到进程耗尽。
+    /// </remarks>
     public Task ConnectAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        CloseAndDiscardClient();
         _client = CreateClient();
         var result = Open();
         if (!result.IsSucceed)
         {
             _connected = false;
+            CloseAndDiscardClient();
             throw new PlcDriverException(result.Err ?? "PLC 连接失败");
         }
 
@@ -70,15 +72,7 @@ public sealed class IoTClientPlcDriver : IPlcDriver
 
     public Task DisconnectAsync(CancellationToken cancellationToken = default)
     {
-        try
-        {
-            Close();
-        }
-        catch
-        {
-            // ignore
-        }
-
+        CloseAndDiscardClient();
         _connected = false;
         return Task.CompletedTask;
     }
@@ -88,7 +82,7 @@ public sealed class IoTClientPlcDriver : IPlcDriver
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            EnsureOpen();
+            await EnsureOpenAsync(cancellationToken).ConfigureAwait(false);
             var address = ToClientAddress(start);
             Result<byte[]> result = _connection.Brand switch
             {
@@ -105,7 +99,16 @@ public sealed class IoTClientPlcDriver : IPlcDriver
                 throw new PlcDriverException(result.Err ?? "PLC 读取失败");
             }
 
-            return ToWords(result.Value, wordCount);
+            var words = ToWords(result.Value, wordCount);
+            // 西门子读路径会把整段响应字节倒序（IoTClient 的已知行为，见其 Read：result.Value = responseData.Reverse()）。
+            // ToWords 按小端组字，正好把每个字的字节序还原，但多字读取的"字与字"顺序会整体颠倒，
+            // 所以要再倒一次字序；单字没有顺序可倒。真机报文已用本地假 PLC 抓包核对过。
+            if (_connection.Brand == PlcBrand.SiemensS7 && words.Length > 1)
+            {
+                Array.Reverse(words);
+            }
+
+            return words;
         }
         finally
         {
@@ -118,8 +121,17 @@ public sealed class IoTClientPlcDriver : IPlcDriver
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            EnsureOpen();
+            await EnsureOpenAsync(cancellationToken).ConfigureAwait(false);
             var address = ToClientAddress(start);
+            if (_connection.Brand == PlcBrand.SiemensS7 && words.Length > 1)
+            {
+                // 与读路径同一件事的逆运算：IoTClient 写之前会把整段字节倒序，
+                // 多字写入若不先倒字序，PLC 侧收到的两个字是对调的。
+                var reversed = (ushort[])words.Clone();
+                Array.Reverse(reversed);
+                words = reversed;
+            }
+
             var bytes = ToBytes(words);
             Result result = _connection.Brand switch
             {
@@ -144,24 +156,40 @@ public sealed class IoTClientPlcDriver : IPlcDriver
 
     public ValueTask DisposeAsync()
     {
+        CloseAndDiscardClient();
+        _connected = false;
+        _gate.Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// 读/写前的自愈连接。
+    /// </summary>
+    /// <remarks>
+    /// 以前是 <c>ConnectAsync().GetAwaiter().GetResult()</c>：在同步阻塞里等网络超时，
+    /// 既可能抽干线程池，也拿不到调用方的取消意图。这里保持全异步，并把取消传下去。
+    /// </remarks>
+    private async Task EnsureOpenAsync(CancellationToken cancellationToken)
+    {
+        if (_client is null || !_connected)
+        {
+            await ConnectAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>关掉并丢弃当前 client：换连接前必须做，否则旧 socket 会一直挂着。</summary>
+    private void CloseAndDiscardClient()
+    {
         try
         {
             Close();
         }
         catch
         {
+            // 关闭失败也不能挡住重连：socket 可能已经半死，句柄由 GC 收尾。
         }
 
-        _gate.Dispose();
-        return ValueTask.CompletedTask;
-    }
-
-    private void EnsureOpen()
-    {
-        if (_client is null || !_connected)
-        {
-            ConnectAsync().GetAwaiter().GetResult();
-        }
+        _client = null;
     }
 
     private object CreateClient() => _connection.Brand switch
@@ -247,7 +275,9 @@ public sealed class IoTClientPlcDriver : IPlcDriver
     private SiemensClient CreateSiemensClient()
     {
         var (rack, slot) = ParseSiemensRackSlot();
-        return new SiemensClient(SiemensVersion.S7_1200, _connection.Host, _connection.Port, rack, slot, _connection.TimeoutMs);
+        // 构造顺序是 (version, ip, port, slot, rack, timeout)：slot 在 rack 前面，
+        // 按 (rack, slot) 原样传会把两者对调 —— 机架与插槽互换后连接握手可能就谈不成了。
+        return new SiemensClient(SiemensVersion.S7_1200, _connection.Host, _connection.Port, slot, rack, _connection.TimeoutMs);
     }
 
     private (byte rack, byte slot) ParseSiemensRackSlot()

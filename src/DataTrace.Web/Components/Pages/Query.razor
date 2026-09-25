@@ -12,11 +12,12 @@
 @inject IJSRuntime Js
 @inject NavigationManager Nav
 
-<PageHeader Title="数据查询">
+<PageHeader Title="数据查询" HelpRoute="query">
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">
             区间 @DateRangeFilter.Format(_from, _to)　共 @_total 条
         </MudText>
+        <InfoHint Topic="HelpTexts.RangeScope" />
     </Actions>
 </PageHeader>
 
@@ -74,10 +75,12 @@
             {
                 <MudButton Variant="Variant.Outlined" OnClick="ExportCsv" Disabled="_exporting || _total == 0"
                            StartIcon="@Icons.Material.Filled.FileDownload">
-                    @(_exporting ? "导出中…" : $"导出 CSV（最多 {ExportLimit:N0} 条）")
+                    @(_exporting ? "导出中…" : $"导出 CSV（最多 {SystemDefaults.ExportRowLimit:N0} 条）")
                 </MudButton>
+                <InfoHint Topic="HelpTexts.ExportLimit" Extra="@ExportHintExtra" />
             }
             <MudText Typo="Typo.caption" Class="dt-muted align-self-center">在输入框内按回车即查询</MudText>
+            <InfoHint Topic="HelpTexts.MatchMode" />
         </MudStack>
     </form>
 </MudPaper>
@@ -93,8 +96,8 @@
         <MudTh>流水号</MudTh>
         <MudTh>托盘码</MudTh>
         <MudTh>工站</MudTh>
-        <MudTh>型号</MudTh>
-        <MudTh>判定</MudTh>
+        <MudTh>型号 <InfoHint Topic="HelpTexts.RecipeScope" /></MudTh>
+        <MudTh>判定 <InfoHint Topic="HelpTexts.JudgementThreeState" /></MudTh>
         <MudTh Class="dt-nowrap">结果码</MudTh>
         <MudTh Class="dt-right">操作</MudTh>
     </HeaderContent>
@@ -111,8 +114,15 @@
             </MudChip>
         </MudTd>
         <MudTd DataLabel="结果码">
-            <MudTooltip Text="@($"结果码 {context.Record.ResultCode}")">
-                <span>@ResultCodes.Describe(context.Record.ResultCode)</span>
+            @* 单元格里已经有中文码名（如"PLC 读取失败"），tooltip 改讲这个概念本身：
+               结果码与限值判定是两件事，否则现场会把读取失败当成工艺问题。 *@
+            <MudTooltip Arrow="true" RootClass="dt-help-popover">
+                <ChildContent>
+                    <span>@ResultCodes.Describe(context.Record.ResultCode)</span>
+                </ChildContent>
+                <TooltipContent>
+                    <HelpContent Topic="HelpTexts.ResultCode" />
+                </TooltipContent>
             </MudTooltip>
         </MudTd>
         <MudTd Class="dt-right">
@@ -152,7 +162,6 @@
 
 @code {
     private static readonly int[] PageSizes = [20, 50, 100];
-    private const int ExportLimit = 10000;
 
     private DateTime? _from = DateTime.Today;
     private DateTime? _to = DateTime.Today;
@@ -172,6 +181,14 @@
     private bool _loadPending;
     private bool _exporting;
     private bool _canExport;
+
+    /// <summary>
+    /// 导出 ⓘ 的动态补充行：把"这次会不会被截断"在点按钮前就说清，
+    /// 而不是等导出完才在提示里看到"已导出前 N 条"。
+    /// </summary>
+    private string ExportHintExtra => _total > SystemDefaults.ExportRowLimit
+        ? $"当前命中 {_total:N0} 条，已超过单次上限。"
+        : $"当前命中 {_total:N0} 条。";
 
     /// <summary>支持 /query?pallet=XXX&days=30 直达，便于从明细页或工单跳转。</summary>
     [SupplyParameterFromQuery(Name = "pallet")]
@@ -589,7 +606,7 @@
         _exporting = true;
         try
         {
-            var result = await Store.QueryAsync(BuildRequest(0, ExportLimit));
+            var result = await Store.QueryAsync(BuildRequest(0, SystemDefaults.ExportRowLimit));
             if (result.Items.Count == 0)
             {
                 Toast.Add("没有可导出的记录", Severity.Warning);

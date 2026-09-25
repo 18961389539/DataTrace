@@ -59,8 +59,11 @@ public class JourneyE2ETests : E2ETestBase
         var firstRow = await rows.First.InnerHTMLAsync();
         Assert.Contains("ST0", firstRow);
 
-        await SearchAsync(Page.GetByLabel("托盘码", new() { Exact = true }), "ZZZ-不存在的托盘");
-        await WaitBodyContainsAsync("共 0 条");
+        // circuit 接手前发出的回车会被丢掉（什么都没发生），用重试兜住这个窗口。
+        await ActUntilAsync(
+            () => SearchAsync(Page.GetByLabel("托盘码", new() { Exact = true }), "ZZZ-不存在的托盘"),
+            "共 0 条",
+            "提交托盘码查询");
 
         // 空结果时 MudTable 仍留一行占位，所以按"结果行"数而不是 <tr> 总数。
         Assert.Equal(0, await rows.Filter(new() { HasText = "明细" }).CountAsync());

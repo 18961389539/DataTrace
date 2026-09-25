@@ -234,6 +234,16 @@ public class SpcServiceTests
         var noRecipe = await spc.GetProcessCapabilityAsync(tag.Id, from, to, "");
         Assert.Equal(tag.UpperLimit, Assert.Single(noRecipe!.Segments).UpperLimit);
         Assert.Equal("", noRecipe.RecipeCode);
+
+        // 型号改过编码：记录里写的是旧码，筛选下拉给的也是旧码（选项来自历史记录）。
+        // 旧码必须能反查到型号，否则兜底值会悄悄退回点位默认上限 20。
+        var renamed = (await harness.ConfigRepository.GetSnapshotAsync()).Recipes.Single(r => r.Code == "A100");
+        renamed.Code = "B300";
+        await harness.ConfigRepository.SaveRecipeAsync(renamed);
+
+        var byPreviousCode = await spc.GetProcessCapabilityAsync(tag.Id, from, to, "A100");
+        Assert.Equal(16d, Assert.Single(byPreviousCode!.Segments).UpperLimit);
+        Assert.Equal("B300", byPreviousCode.RecipeCode);
     }
 
     /// <summary>把压力点覆盖成确定值：两段的数值分布必须一样，Cpu 才可比。</summary>

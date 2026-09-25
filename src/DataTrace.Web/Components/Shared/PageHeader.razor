@@ -9,6 +9,10 @@
     @ChildContent
     <MudSpacer />
     @Actions
+    @if (!string.IsNullOrWhiteSpace(HelpRoute))
+    {
+        <PageHelp Route="@HelpRoute" />
+    }
 </MudStack>
 @if (!string.IsNullOrWhiteSpace(Description))
 {
@@ -26,4 +30,7 @@
 
     /// <summary>靠右的统计文字或操作按钮。</summary>
     [Parameter] public RenderFragment? Actions { get; set; }
+
+    /// <summary>本页「本页说明」入口对应的路由（相对路径，见 HelpTexts.ForPage）；留空则不显示。</summary>
+    [Parameter] public string? HelpRoute { get; set; }
 }

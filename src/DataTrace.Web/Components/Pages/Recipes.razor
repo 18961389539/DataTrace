@@ -4,6 +4,7 @@
 @using DataTrace.Application.Realtime
 @using DataTrace.Domain.Entities
 @using DataTrace.Domain.Evaluation
+@using DataTrace.Domain.Validation
 @using DataTrace.Web.Components.Dialogs
 @inject IConfigRepository Config
 @inject IAuditLogger Audit
@@ -13,7 +14,8 @@
 @inject DtToast Toast
 
 <PageHeader Title="产品型号"
-            Description="同一批生产数据，换型号就换一套限值 —— 不再需要为了换型去改动点位定义。切换在界面上手工完成，保存后立即下发给采集器。">
+            Description="同一批生产数据，换型号就换一套限值 —— 不再需要为了换型去改动点位定义。切换在界面上手工完成，保存后立即下发给采集器。"
+            HelpRoute="config/recipes">
     <ChildContent>
         @if (_active is null)
         {
@@ -41,7 +43,7 @@
             <MudTh>编码</MudTh>
             <MudTh>名称</MudTh>
             <MudTh>覆盖点位</MudTh>
-            <MudTh>启用</MudTh>
+            <MudTh>启用 <InfoHint Topic="HelpTexts.RecipeEnabled" /></MudTh>
             <MudTh>当前</MudTh>
             <MudTh>备注</MudTh>
             <MudTh></MudTh>
@@ -87,6 +89,7 @@
                            OnClick="@(() => EditLimits(context))">限值</MudButton>
                 <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_saving"
                            OnClick="@(() => CopyRecipe(context))">复制</MudButton>
+                <InfoHint Topic="HelpTexts.RecipeCopy" />
                 <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error" Disabled="_saving"
                            OnClick="@(() => DeleteRecipe(context))">删除</MudButton>
             </MudTd>
@@ -100,6 +103,7 @@
         <MudItem xs="12" md="2">
             <MudTextField @bind-Value="_newCode" @bind-Value:after="ValidateCode" Label="型号编码" Immediate="true"
                           Error="@(_codeError is not null)" ErrorText="@_codeError" />
+            <InfoHint Topic="HelpTexts.RecipeCode" />
         </MudItem>
         <MudItem xs="12" md="3"><MudTextField @bind-Value="_newName" Label="型号名称" /></MudItem>
         <MudItem xs="12" md="4"><MudTextField @bind-Value="_newRemark" Label="备注" /></MudItem>
@@ -154,8 +158,44 @@
         return state.User.Identity?.Name ?? "";
     }
 
+    /// <summary>
+    /// 写审计日志。失败时单独提示一次，而不是吞掉或者把已成功的保存说成失败。
+    /// </summary>
+    /// <remarks>
+    /// 配置已经落库并下发了，这时候告诉用户"保存失败"会让人反复保存；而审计之后的
+    /// 列表刷新与成功提示都排在同一段代码里，异常一冒出去连"列表没变化"都一起发生。
+    /// </remarks>
     private async Task AuditAsync(string action, string key, string? oldValue, string? newValue)
-        => await Audit.WriteAsync(await CurrentUserAsync(), action, "Recipe", key, oldValue, newValue);
+    {
+        try
+        {
+            await Audit.WriteAsync(await CurrentUserAsync(), action, "Recipe", key, oldValue, newValue);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"操作已完成，但审计记录失败：{ex.Message}", Severity.Warning);
+        }
+    }
+
+    /// <summary>
+    /// 编码校验：空值、格式（逗号会打散历史编码口径）、重名各一份提示。
+    /// 与仓储层同一套规则（<see cref="RecipeCodeRules"/>），界面只是先把话说清楚。
+    /// </summary>
+    private string? ValidateCodeFor(string? code, int? excludeId = null)
+    {
+        if (RecipeCodeRules.Error(code) is { } formatError)
+        {
+            return formatError;
+        }
+
+        return CodeTaken(code!, excludeId) ? $"型号编码「{code!.Trim()}」已存在" : null;
+    }
+
+    private void ValidateCode() => _codeError = ValidateCodeFor(_newCode);
+
+    private bool CodeTaken(string code, int? excludeId = null)
+        => _recipes.Any(r => r.Id != excludeId
+            && string.Equals(r.Code, code.Trim(), StringComparison.OrdinalIgnoreCase));
 
     private async Task Write(string what, Func<Task> action)
     {
@@ -178,15 +218,6 @@
             _saving = false;
         }
     }
-
-    private void ValidateCode()
-        => _codeError = string.IsNullOrWhiteSpace(_newCode) ? "型号编码不能为空"
-            : CodeTaken(_newCode) ? $"型号编码 {_newCode.Trim()} 已存在"
-            : null;
-
-    private bool CodeTaken(string code, int? excludeId = null)
-        => _recipes.Any(r => r.Id != excludeId
-            && string.Equals(r.Code, code.Trim(), StringComparison.OrdinalIgnoreCase));
 
     private Task AddRecipe() => Write("新增型号", async () =>
     {
@@ -216,7 +247,7 @@
             { x => x.Name, recipe.Name },
             { x => x.Remark, recipe.Remark },
             { x => x.CodeChangeHint, "若修改编码：历史采集记录仍显示旧编码，以保证追溯；曲线基线会迁移到新编码（内存标签 + PreviousCodes 认领旧样本）。若为本型号，采集器随配置版本切换到新编码。" },
-            { x => x.ValidateCode, (Func<string, string?>)(c => CodeTaken(c, recipe.Id) ? $"型号编码 {c} 已存在" : null) }
+            { x => x.ValidateCode, (Func<string, string?>)(c => ValidateCodeFor(c, recipe.Id)) }
         };
         var dialog = await DialogService.ShowAsync<RecipeEditDialog>("编辑型号", parameters);
         var result = await dialog.Result;
@@ -249,7 +280,7 @@
             { x => x.Name, $"{source.Name} 副本" },
             { x => x.Remark, source.Remark },
             { x => x.ExtraHint, $"将复制源型号 {source.Code} 的全部限值覆盖（{Overrides(source)} 项）；新型号不会自动设为当前。" },
-            { x => x.ValidateCode, (Func<string, string?>)(c => CodeTaken(c) ? $"型号编码 {c} 已存在" : string.IsNullOrWhiteSpace(c) ? "型号编码不能为空" : null) }
+            { x => x.ValidateCode, (Func<string, string?>)(c => ValidateCodeFor(c)) }
         };
         var dialog = await DialogService.ShowAsync<RecipeEditDialog>("复制型号", parameters);
         var result = await dialog.Result;
@@ -297,8 +328,9 @@
 
         await Write("保存型号限值", async () =>
         {
-            recipe.Limits = limits.ToList();
-            await Config.SaveRecipeAsync(recipe);
+            // 只写覆盖行：对话框里的型号信息是打开页面时的快照，
+            // 整份写回去会把期间别人的改名/停用一起盖掉。
+            await Config.SaveRecipeLimitsAsync(recipe.Id, limits);
             await AuditAsync("SaveLimits", recipe.Code, $"overrides={before}", $"overrides={limits.Count}");
             await Reload();
             Toast.Add(

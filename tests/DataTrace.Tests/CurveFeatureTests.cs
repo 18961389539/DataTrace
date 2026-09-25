@@ -301,6 +301,25 @@ public class CurveFeatureTests
     }
 
     [Fact]
+    public void Criterion_targeting_a_missing_series_is_detectable_before_saving()
+    {
+        var curve = CurveWithTwoSeries();
+
+        // 主序列（空串）总是存在。
+        Assert.True(CurveCriterionEvaluator.TargetsExistingSeries(curve, new CurveCriterion()));
+        Assert.True(CurveCriterionEvaluator.TargetsExistingSeries(curve, new CurveCriterion { SeriesName = "  压力 " }));
+
+        // 序列名对不上时必须被识别出来：采集端会静默认为这条判据不适用。
+        Assert.False(CurveCriterionEvaluator.TargetsExistingSeries(curve, new CurveCriterion { SeriesName = "旧序列名" }));
+
+        // 与 AppliesTo 用同一套匹配规则：可识别的序列名一定能作用到某个序列。
+        var primary = CurveCriterionEvaluator.PrimarySeries(curve);
+        var named = new CurveCriterion { SeriesName = " 位移 " };
+        Assert.True(CurveCriterionEvaluator.TargetsExistingSeries(curve, named));
+        Assert.True(CurveCriterionEvaluator.AppliesTo(named, curve.Series.First(s => s.Id == 72), primary));
+    }
+
+    [Fact]
     public void Disabled_criterion_never_applies()
     {
         var curve = CurveWithTwoSeries();

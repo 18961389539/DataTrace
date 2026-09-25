@@ -1,6 +1,7 @@
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
+using DataTrace.Domain.Evaluation;
 using DataTrace.Infrastructure.Identity;
 using DataTrace.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;
@@ -232,9 +233,9 @@ public sealed class DatabaseSeeder
             }
 
             var product = station.Positions.FirstOrDefault(p => p.Index == 1);
-            if (product is not null && (product.OccupiedAddress is not null || product.Name != "产品"))
+            // 只收敛名称：有料地址仍被采集端使用，启动时清掉等于把现场配的空位检测弄没。
+            if (product is not null && product.Name != "产品")
             {
-                product.OccupiedAddress = null;
                 product.Name = "产品";
                 changed = true;
             }
@@ -341,11 +342,14 @@ public sealed class DatabaseSeeder
     /// 一次性清理悬空/不可用的型号限值覆盖：Tag 已删，或 Tag 已改为 Bool/String。
     /// 幂等；日志打印清理行数，便于现场核对历史脏数据。
     /// </summary>
+    /// <remarks>
+    /// "哪些点位能配覆盖"这份名单来自 <see cref="RecipeLimitScope"/>，与限值对话框共用一份，
+    /// 免得一边放行一边判成脏数据。
+    /// </remarks>
     private async Task CleanupOrphanRecipeLimitsAsync(CancellationToken cancellationToken)
     {
-        var numericTypes = new[] { PlcDataType.Int16, PlcDataType.Int32, PlcDataType.Float, PlcDataType.Double };
         var validTagIds = await _db.Tags.AsNoTracking()
-            .Where(t => numericTypes.Contains(t.DataType))
+            .Where(t => RecipeLimitScope.NumericTypes.Contains(t.DataType))
             .Select(t => t.Id)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);

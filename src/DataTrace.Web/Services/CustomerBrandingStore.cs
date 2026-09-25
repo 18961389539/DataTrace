@@ -111,6 +111,40 @@ public sealed class CustomerBrandingStore
         }
     }
 
+    /// <summary>Logo 文件所在的安装目录子目录（静态文件中间件以 /branding 前缀提供）。</summary>
+    public string BrandingDirectory => Path.Combine(_env.ContentRootPath, "branding");
+
+    /// <summary>
+    /// Logo 文件名指向的文件是否真的存在；不存在时返回一句给用户看的提示，存在或未填返回 null。
+    /// </summary>
+    /// <remarks>
+    /// 填错文件名不会有任何报错，顶栏只是"什么都不显示"（img 的 alt 为空），
+    /// 现场很难判断是文件没放上去还是配置没生效，所以保存时提示一句。
+    /// </remarks>
+    public string? LogoFileWarning(string? logoPath)
+    {
+        if (string.IsNullOrWhiteSpace(logoPath))
+        {
+            return null;
+        }
+
+        var name = logoPath.Trim().Replace('\\', '/').TrimStart('/');
+        if (name.StartsWith("branding/", StringComparison.OrdinalIgnoreCase))
+        {
+            name = name["branding/".Length..];
+        }
+
+        // 带 ".." 的路径交给静态文件中间件兜底（它被限制在 branding 目录内），这里不误报。
+        if (name.Length == 0 || name.Contains("..", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return File.Exists(Path.Combine(BrandingDirectory, name))
+            ? null
+            : $"branding 目录下没有「{name}」，顶栏不会显示 Logo（文件名区分大小写与扩展名）";
+    }
+
     private static CustomerOptions Clone(CustomerOptions src) => new()
     {
         CustomerId = src.CustomerId,

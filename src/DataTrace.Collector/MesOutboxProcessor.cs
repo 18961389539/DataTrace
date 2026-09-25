@@ -41,10 +41,12 @@ public sealed class MesOutboxProcessor : BackgroundService
                 }
 
                 var db = scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
+                // 单轮多取一些：MES 停一段时间再恢复时积压是按托盘数累积的，
+                // 一轮 20 条、5 秒一轮只能排 4 条/秒，积压几万条要几小时才追平。
                 var pending = await db.MesOutbox
                     .Where(x => x.Status == MesOutboxStatus.Pending)
                     .OrderBy(x => x.CreatedAt)
-                    .Take(20)
+                    .Take(200)
                     .ToListAsync(stoppingToken)
                     .ConfigureAwait(false);
 

@@ -78,11 +78,74 @@ public sealed class AuthE2ETests : AuthE2ETestBase
         await Page.GotoAsync($"{App.BaseUrl}/users");
         Assert.Equal("/users", CurrentPath());
 
-        await Page.GotoAsync($"{App.BaseUrl}/account/logout");
+        // 退出改成 POST 了，得真的提交那个表单；GET 已不再受理（下一条用例盯着）。
+        await SubmitLogoutFormAsync();
         await Page.GotoAsync($"{App.BaseUrl}/users");
 
         // Development 下这里仍是 /users——免登录中间件会把 admin 重新登回来，越权与登出都验不到。
         Assert.Equal("/login?ReturnUrl=%2Fusers", CurrentPath());
+    }
+
+    [Fact]
+    public async Task GetLogoutIsRejectedSoAStrayNavigationOrImageCannotEndTheSession()
+    {
+        await SubmitLoginAsync("admin", "Admin@123");
+
+        // GET 带副作用时，一张 <img src="/account/logout"> 或一次顶层导航就能把在场操作员踢下线。
+        var response = await Context.APIRequest.GetAsync(
+            $"{App.BaseUrl}/account/logout", new APIRequestContextOptions { MaxRedirects = 0 });
+
+        // 只注册了 POST：GET 落到 soft-404 页（"页面不存在"），不会执行退出。
+        Assert.NotEqual(302, response.Status);
+        Assert.Contains("页面不存在", await response.TextAsync());
+
+        await Page.GotoAsync($"{App.BaseUrl}/users");
+        Assert.Equal("/users", CurrentPath());
+    }
+
+    [Fact]
+    public async Task LoginPostFromAnotherOriginIsRejected()
+    {
+        await Page.GotoAsync($"{App.BaseUrl}/login");
+
+        // 登录请求不带凭据，SameSite 帮不上忙；页面又拿不到防伪令牌（交互式渲染），
+        // 所以来源校验是这一条链路上唯一的防线，必须有用例盯着。
+        // 用 Context.APIRequest 直接发：浏览器里发起时 Origin 由浏览器写死成自己，伪造不出来。
+        var response = await Context.APIRequest.PostAsync($"{App.BaseUrl}/account/login",
+            new APIRequestContextOptions
+            {
+                Headers = new Dictionary<string, string>
+                {
+                    ["Content-Type"] = "application/x-www-form-urlencoded",
+                    ["Origin"] = "http://evil.example"
+                },
+                Data = "UserName=admin&Password=Admin%40123",
+                MaxRedirects = 0
+            });
+
+        Assert.Equal(302, response.Status);
+        Assert.Contains("error=crosssite", response.Headers["location"]);
+    }
+
+    [Fact]
+    public async Task RepeatedFailuresLockTheAccountAndThePageSaysSo()
+    {
+        // operator 只在本用例里登录，锁掉它不会影响其他用例（它们用 admin/engineer/viewer）。
+        for (var i = 0; i < 4; i++)
+        {
+            await SubmitLoginAsync("operator", "wrong-password");
+            Assert.Contains("error=1", CurrentPath());
+        }
+
+        // 第 5 次失败即触发锁定（阈值 5 次 / 5 分钟）。
+        await SubmitLoginAsync("operator", "wrong-password");
+        Assert.Contains("error=locked", CurrentPath());
+
+        // 锁定期间连正确口令也不再校验，页面必须说清原因：否则操作员会一直重试，
+        // 每失败一次锁定时间就往后推一次。
+        await SubmitLoginAsync("operator", "Operator@123");
+        Assert.Contains("error=locked", CurrentPath());
+        await WaitBodyContainsAsync("已被临时锁定");
     }
 
     [Fact]

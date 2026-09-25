@@ -1,5 +1,6 @@
 using DataTrace.Application.Configuration;
 using DataTrace.Application.Runtime;
+using DataTrace.Domain.Constants;
 using DataTrace.Infrastructure.Persistence;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -59,7 +60,7 @@ public sealed class RetentionHostedService : BackgroundService
                 _logger.LogError(ex, "数据保留任务异常");
             }
 
-            await Task.Delay(TimeSpan.FromHours(6), stoppingToken).ConfigureAwait(false);
+            await Task.Delay(TimeSpan.FromHours(SystemDefaults.RetentionCheckHours), stoppingToken).ConfigureAwait(false);
         }
     }
 }

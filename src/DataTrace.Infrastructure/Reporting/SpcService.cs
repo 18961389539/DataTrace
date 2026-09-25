@@ -101,14 +101,15 @@ public sealed class SpcService : ISpcService
     /// <summary>
     /// 报表的型号筛选 → 兜底限值所依据的型号。
     /// null（不限型号）沿用当前生效型号；""（未选型号）只用点位默认限值；
-    /// 指定编码取该型号（编码不存在或已停用时 <see cref="RecipeLimitResolver"/> 自会回落到默认限值）。
+    /// 指定编码取该型号 —— 既认当前编码也认历史编码（筛选下拉的选项来自历史记录，里面就有旧码），
+    /// 编码不存在或已停用时 <see cref="RecipeLimitResolver"/> 自会回落到默认限值。
     /// </summary>
     private static Recipe? ResolveLimitsRecipe(AppConfigurationSnapshot snapshot, string? recipeCode)
         => recipeCode switch
         {
             null => snapshot.ActiveRecipe,
             "" => null,
-            var code => snapshot.Recipes.FirstOrDefault(r => string.Equals(r.Code, code, StringComparison.Ordinal))
+            var code => CurveRecipeScope.FindByAnyCode(snapshot.Recipes, code)
         };
 
     private static ProcessCapabilitySegment BuildSegment(

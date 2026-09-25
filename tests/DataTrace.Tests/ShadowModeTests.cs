@@ -192,6 +192,68 @@ public class ShadowModeTests
         Assert.Equal(12d, template[CurveFeatureDimension.Peak]!.Center, 6);
     }
 
+    /// <summary>
+    /// 型号过滤在 SQL 侧先于取样上限：另一种型号最近产量大一点的时候，
+    /// "先取最新 500 条再筛"会让本型号一条都不剩，采集侧整段时间不打分。
+    /// </summary>
+    [Fact]
+    public async Task Factory_filters_by_recipe_before_the_sample_cap()
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+        var curve = harness.Snapshot.Stations[0].Curves.First();
+        var fake = new FakeRuntimeStore();
+        var start = DateTime.Today.AddDays(-1).AddHours(8);
+
+        // 本型号（未选型号，编码为空）25 条在前，另一种型号的样本在后面且更多。
+        for (var index = 0; index < 25; index++)
+        {
+            fake.Saved.Add(Sample(curve.Id, start.AddMinutes(index), $"P{index:000}", Judgement.Ok, "",
+                12 + (index % 5 - 2) * 0.1));
+        }
+
+        for (var index = 0; index < CurveBaselineFactory.MaxSamplesPerSeries + 50; index++)
+        {
+            fake.Saved.Add(Sample(curve.Id, start.AddHours(3).AddMinutes(index), $"B{index:000}", Judgement.Ok, "A100",
+                9 + (index % 5 - 2) * 0.1));
+        }
+
+        var factory = new CurveBaselineFactory(harness.ConfigRepository, fake);
+        var snapshot = await factory.BuildAsync(DateTime.Now.AddMinutes(5));
+
+        var template = snapshot.Find(curve.Id, "压力");
+        Assert.NotNull(template);
+        Assert.Equal(25, template!.SampleCount);
+        Assert.Equal(12d, template[CurveFeatureDimension.Peak]!.Center, 6);
+    }
+
+    /// <summary>改过编码的型号：历史样本写着旧码，也要算作本型号的来源。</summary>
+    [Fact]
+    public async Task Factory_claims_samples_written_under_the_previous_recipe_code()
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+        var curve = harness.Snapshot.Stations[0].Curves.First();
+
+        var recipe = harness.Snapshot.Recipes.Single(r => r.Code == "A100");
+        await harness.ConfigRepository.SetActiveRecipeAsync(recipe.Id);
+        recipe.Code = "B300";
+        await harness.ConfigRepository.SaveRecipeAsync(recipe);
+        await harness.RefreshSnapshotAsync();
+
+        var fake = new FakeRuntimeStore();
+        var start = DateTime.Today.AddDays(-1).AddHours(8);
+        for (var index = 0; index < 25; index++)
+        {
+            fake.Saved.Add(Sample(curve.Id, start.AddMinutes(index), $"O{index:000}", Judgement.Ok, "A100",
+                12 + (index % 5 - 2) * 0.1));
+        }
+
+        var factory = new CurveBaselineFactory(harness.ConfigRepository, fake);
+        var snapshot = await factory.BuildAsync(DateTime.Now.AddMinutes(5));
+
+        Assert.Equal("B300", snapshot.RecipeCode);
+        Assert.Equal(25, snapshot.Find(curve.Id, "压力")!.SampleCount);
+    }
+
     [Fact]
     public async Task Shadow_comparison_crosses_the_deviation_with_the_actual_judgement()
     {

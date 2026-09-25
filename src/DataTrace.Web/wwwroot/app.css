@@ -835,7 +835,12 @@ body.dt-shopfloor .mud-main-content {
     margin-left: 0 !important;
     padding: 12px 16px 24px !important;
 }
-body.dt-shopfloor .mud-appbar .mud-button-root[href="/account/logout"],
+/* 退出按钮包在 POST 表单里（GET 带副作用），外观仍是顶栏按钮。 */
+.dt-logout-form {
+    display: inline-flex;
+    align-items: center;
+}
+body.dt-shopfloor .mud-appbar .dt-logout-form,
 body.dt-shopfloor .dt-appbar-chip {
     /* 保留身份与退出，避免大屏锁死 */
 }
@@ -880,3 +885,56 @@ body.dt-shopfloor .dt-recent-panels .mud-expand-panel-header {
 body.dt-shopfloor .dt-recent-panels .mud-expand-panel-content {
     display: none !important;
 }
+
+
+/* ---------- 概念详解：ⓘ 图标与它的 tooltip ---------- */
+
+/* 不突兀但看得见：与 dt-muted 同色系，悬停/聚焦时提亮。
+   margin-left 只要一点点，否则表头与字段标签会被顶宽（430px 下会撑出横向滚动）。 */
+.dt-info-hint {
+    color: var(--mud-palette-text-secondary) !important;
+    opacity: .65;
+    vertical-align: middle;
+    /* 落在 MudStack Row 这类 flex 行里时不要被拉满一行高。 */
+    align-self: center;
+    margin-left: 2px;
+}
+.dt-info-hint:hover,
+.dt-info-hint:focus-visible {
+    opacity: 1;
+}
+
+/* MudBlazor 的 tooltip 默认 nowrap，三段会拉成一条长线；这里允许换行并限宽。
+   white-space 是继承属性，在内容容器上覆盖即可透传下去。 */
+.dt-help {
+    max-width: 320px;
+    white-space: normal;
+    line-height: 1.5;
+    text-align: left;
+}
+.dt-help-title {
+    font-weight: 600;
+    margin-bottom: 2px;
+}
+.dt-help-line {
+    font-size: .8rem;
+}
+.dt-help-impact {
+    color: var(--mud-palette-text-secondary);
+    margin-top: 2px;
+}
+
+/* 只给读屏用的文本：视觉上不占位，但可被 aria-describedby 引用。
+   tooltip 的正文不在无障碍树里（MudTooltip 不做 ARIA 关联），所以另备一份。 */
+.dt-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+

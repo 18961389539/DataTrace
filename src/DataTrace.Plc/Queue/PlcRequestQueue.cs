@@ -5,14 +5,24 @@ using DataTrace.Plc.Addresses;
 namespace DataTrace.Plc.Queue;
 
 /// <summary>单连接串行请求队列，避免 IoTClient 并发串包。</summary>
+/// <remarks>
+/// 断线时这里会熔断：连续失败后进入一段冷却期，期间不再尝试重连而是立刻失败，
+/// 并给上层一个 <see cref="IsCoolingDown"/> 用来跳过本轮扫描。
+/// 否则每次请求都要走满"重连 3 次 × 2 秒"，采集循环会被一台掉线的 PLC 拖到几秒一轮。
+/// </remarks>
 public sealed class PlcRequestQueue : IAsyncDisposable
 {
+    private static readonly TimeSpan InitialCooldown = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan MaxCooldown = TimeSpan.FromSeconds(60);
+
     private readonly IPlcDriver _driver;
     private readonly Channel<WorkItem> _channel;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _loop;
     private readonly TimeSpan _reconnectDelay = TimeSpan.FromSeconds(2);
     private readonly bool _ownsDriver;
+    private int _failureStreak;
+    private long _coolingUntilMs;
 
     public PlcRequestQueue(IPlcDriver driver, bool ownsDriver = false)
     {
@@ -27,6 +37,9 @@ public sealed class PlcRequestQueue : IAsyncDisposable
     }
 
     public IPlcDriver Driver => _driver;
+
+    /// <summary>是否处于断线冷却期：此时请求会立刻失败，上层可据此跳过本轮扫描。</summary>
+    public bool IsCoolingDown => Environment.TickCount64 < Interlocked.Read(ref _coolingUntilMs);
 
     public async Task<ushort[]> ReadWordsAsync(PlcAddress start, int wordCount, CancellationToken cancellationToken = default)
     {
@@ -62,6 +75,12 @@ public sealed class PlcRequestQueue : IAsyncDisposable
             return;
         }
 
+        if (IsCoolingDown)
+        {
+            // 冷却期内立刻失败：重连的代价（超时 + 退避延迟）不该由每一轮扫描承担。
+            throw new PlcDriverException($"PLC 处于重连冷却期（{RemainingCooldownSeconds()} 秒后重试）");
+        }
+
         Exception? last = null;
         for (var i = 0; i < 3; i++)
         {
@@ -77,8 +96,26 @@ public sealed class PlcRequestQueue : IAsyncDisposable
             }
         }
 
+        OpenCooldown();
         throw new PlcDriverException("PLC 连接失败", last ?? new InvalidOperationException());
     }
+
+    /// <summary>失败越连续，冷却越久（5s→10s→20s→40s→60s 封顶），避免无限重连打满网络与日志。</summary>
+    private void OpenCooldown()
+    {
+        var streak = Interlocked.Increment(ref _failureStreak);
+        var seconds = Math.Min(MaxCooldown.TotalSeconds, InitialCooldown.TotalSeconds * Math.Pow(2, Math.Min(streak - 1, 4)));
+        Interlocked.Exchange(ref _coolingUntilMs, Environment.TickCount64 + (long)TimeSpan.FromSeconds(seconds).TotalMilliseconds);
+    }
+
+    private void ResetCooldown()
+    {
+        Interlocked.Exchange(ref _failureStreak, 0);
+        Interlocked.Exchange(ref _coolingUntilMs, 0);
+    }
+
+    private int RemainingCooldownSeconds()
+        => Math.Max(1, (int)Math.Ceiling((Interlocked.Read(ref _coolingUntilMs) - Environment.TickCount64) / 1000.0));
 
     private async Task ProcessLoopAsync()
     {
@@ -96,6 +133,11 @@ public sealed class PlcRequestQueue : IAsyncDisposable
                 {
                     using var linked = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, item.Cancellation);
                     var result = await item.Execute(linked.Token).ConfigureAwait(false);
+                    if (_driver.IsConnected)
+                    {
+                        ResetCooldown();
+                    }
+
                     item.Completion.TrySetResult(result);
                 }
                 catch (OperationCanceledException oce)
@@ -104,6 +146,13 @@ public sealed class PlcRequestQueue : IAsyncDisposable
                 }
                 catch (Exception ex)
                 {
+                    // 只在"连接确实断了"时熔断：地址写错之类的业务错误不该牵连整条链路，
+                    // 否则一个配错的点位会让整台 PLC 停采几十秒。已在冷却期里的失败不重复加长冷却。
+                    if (!_driver.IsConnected && !IsCoolingDown)
+                    {
+                        OpenCooldown();
+                    }
+
                     item.Completion.TrySetException(ex);
                 }
             }

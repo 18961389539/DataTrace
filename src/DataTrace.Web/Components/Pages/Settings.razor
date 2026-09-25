@@ -5,6 +5,7 @@
 @using DataTrace.Collector
 @using DataTrace.Web.Services
 @using DataTrace.Domain.Entities
+@using DataTrace.Domain.Validation
 @using DataTrace.Web.Options
 @inject IConfigRepository Config
 @inject ILineSimulator Simulator
@@ -16,7 +17,7 @@
 @inject IJSRuntime JS
 @inject AuthenticationStateProvider AuthState
 
-<PageHeader Title="系统设置">
+<PageHeader Title="系统设置" HelpRoute="config/settings">
     <ChildContent>
         @if (Dirty)
         {
@@ -25,6 +26,7 @@
     </ChildContent>
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">改动要点「保存」才会下发；采集端下一轮查询周期起用新参数</MudText>
+        <InfoHint Topic="HelpTexts.SaveToDispatch" />
     </Actions>
 </PageHeader>
 
@@ -121,7 +123,7 @@ else
                     </MudText>
                     <MudStack Row="true" Spacing="3" Class="flex-wrap mb-3">
                         <div class="dt-metric">
-                            <div class="dt-metric-label">客户标识 <span class="dt-src-badge ro">客户配置·只读</span></div>
+                            <div class="dt-metric-label">客户标识 <span class="dt-src-badge ro">客户配置·只读</span><InfoHint Topic="HelpTexts.ConfigSource" /></div>
                             <div class="dt-metric-value">@(_identity.CustomerId is { Length: > 0 } ? _identity.CustomerId : "—")</div>
                         </div>
                         <div class="dt-metric">
@@ -188,22 +190,38 @@ else
 
                     <div class="dt-settings-row">
                         <div>
-                            <div class="dt-settings-row-name">扫描间隔(ms)</div>
+                            <div class="dt-settings-row-name">扫描间隔(ms)<InfoHint Topic="HelpTexts.ScanInterval" /></div>
                             <div class="dt-settings-row-hint">采集端查询 PLC 的间隔；越小越快，也越加重 PLC 通讯</div>
                         </div>
-                        <MudNumericField @bind-Value="_settings.ScanIntervalMs" Min="20" Max="5000" Step="10"
+                        <MudNumericField @bind-Value="_edit.ScanIntervalMs" @bind-Value:after="() => _scanError = null"
+                                         Min="@SettingsLimits.MinScanIntervalMs" Max="@SettingsLimits.MaxScanIntervalMs" Step="10"
                                          Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true"
+                                         Error="@(_scanError is not null)" ErrorText="@_scanError"
                                          aria-label="扫描间隔(ms)" />
                         <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
                     <div class="dt-settings-row">
                         <div>
-                            <div class="dt-settings-row-name">写回重试次数</div>
-                            <div class="dt-settings-row-hint">0 表示只写一次；NG 位写失败会导致 PLC 侧不更新</div>
+                            <div class="dt-settings-row-name">写回重试次数 <InfoHint Topic="HelpTexts.WriteRetry" /></div>
+                            <div class="dt-settings-row-hint">总尝试次数：0 与 1 都只写一次；NG 位写失败会导致 PLC 侧不更新</div>
                         </div>
-                        <MudNumericField @bind-Value="_settings.WriteRetryCount" Min="0" Max="10"
+                        <MudNumericField @bind-Value="_edit.WriteRetryCount" @bind-Value:after="() => _retryError = null"
+                                         Min="@SettingsLimits.MinWriteRetryCount" Max="@SettingsLimits.MaxWriteRetryCount"
                                          Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true"
+                                         Error="@(_retryError is not null)" ErrorText="@_retryError"
                                          aria-label="写回重试次数" />
+                        <span class="dt-src-badge edit">可在此修改·配置库</span>
+                    </div>
+                    <div class="dt-settings-row">
+                        <div>
+                            <div class="dt-settings-row-name">写回重试间隔(ms)</div>
+                            <div class="dt-settings-row-hint">每次写回失败后等待多久再试；配得太大，一次写失败就把该工站的采集周期拖长</div>
+                        </div>
+                        <MudNumericField @bind-Value="_edit.WriteRetryDelayMs" @bind-Value:after="() => _retryDelayError = null"
+                                         Min="@SettingsLimits.MinWriteRetryDelayMs" Max="@SettingsLimits.MaxWriteRetryDelayMs" Step="10"
+                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true"
+                                         Error="@(_retryDelayError is not null)" ErrorText="@_retryDelayError"
+                                         aria-label="写回重试间隔(ms)" />
                         <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
 
@@ -254,11 +272,13 @@ else
 
                     <div class="dt-settings-row">
                         <div>
-                            <div class="dt-settings-row-name">保留年数</div>
-                            <div class="dt-settings-row-hint">仅清理超过年限的运行时整月记录库和曲线文件（RetentionHostedService，约每 6 小时检查一次）。配置库中的审计日志（AuditLogs）不受此项影响，不会被按年数自动清除。</div>
+                            <div class="dt-settings-row-name">保留年数<InfoHint Topic="HelpTexts.Retention" /></div>
+                            <div class="dt-settings-row-hint">仅清理超过年限的运行时整月记录库和曲线文件（RetentionHostedService，约每 @SystemDefaults.RetentionCheckHours 小时检查一次）。配置库中的审计日志（AuditLogs）不受此项影响，不会被按年数自动清除。</div>
                         </div>
-                        <MudNumericField @bind-Value="_settings.RetentionYears" Min="1" Max="30"
+                        <MudNumericField @bind-Value="_edit.RetentionYears" @bind-Value:after="() => _retentionError = null"
+                                         Min="@SettingsLimits.MinRetentionYears" Max="@SettingsLimits.MaxRetentionYears"
                                          Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true"
+                                         Error="@(_retentionError is not null)" ErrorText="@_retentionError"
                                          aria-label="保留年数" />
                         <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
@@ -273,7 +293,13 @@ else
                         <span class="dt-src-badge ro">客户配置·只读</span>
                     </div>
 
-                    @if (_backupStatus is null)
+                    @if (_backupStatusError is { } backupError)
+                    {
+                        <MudText Typo="Typo.caption" Class="mt-3" Style="color:var(--mud-palette-error)">
+                            备份状态读取失败：@backupError
+                        </MudText>
+                    }
+                    else if (_backupStatus is null)
                     {
                         <MudSkeleton Width="60%" Class="mt-3" />
                     }
@@ -285,7 +311,7 @@ else
                                 自动备份已关闭（Backup:Enabled=false）。请在配置中重新打开，并把备份目录放到独立磁盘/NAS。完整说明见本区上方文案。
                             </MudText>
                         }
-                        else if (_backupStatus.IsStaleOrFailed(TimeSpan.FromHours(48)))
+                        else if (_backupStatus.IsStaleOrFailed(TimeSpan.FromHours(SystemDefaults.BackupStaleHours)))
                         {
                             <MudText Typo="Typo.caption" Class="mb-2" Style="color:var(--mud-palette-error)">
                                 @if (_backupStatus.LastSucceeded == false)
@@ -294,7 +320,7 @@ else
                                 }
                                 else
                                 {
-                                    <text>超过 48 小时没有成功备份（或尚无成功记录）。请确认定时任务与配置后点「立即备份」。</text>
+                                    <text>超过 @SystemDefaults.BackupStaleHours 小时没有成功备份（或尚无成功记录）。请确认定时任务与配置后点「立即备份」。</text>
                                 }
                             </MudText>
                         }
@@ -347,8 +373,8 @@ else
                         <div>
                             <div class="dt-settings-row-name">启用 MES HTTP 推送</div>
                         </div>
-                        <MudSwitch @bind-Value="_settings.MesEnabled" Color="Color.Primary"
-                                   Label="@(_settings.MesEnabled ? "已启用" : "已关闭")" />
+                        <MudSwitch @bind-Value="_edit.MesEnabled" Color="Color.Primary"
+                                   Label="@(_edit.MesEnabled ? "已启用" : "已关闭")" />
                         <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
                     <div class="dt-settings-row">
@@ -356,7 +382,7 @@ else
                             <div class="dt-settings-row-name">MES 地址</div>
                             <div class="dt-settings-row-hint">启用推送时必须填写合法 http(s) 地址</div>
                         </div>
-                        <MudTextField @bind-Value="_settings.MesEndpoint" Immediate="true" Margin="Margin.Dense"
+                        <MudTextField @bind-Value="_edit.MesEndpoint" Immediate="true" Margin="Margin.Dense"
                                       Variant="Variant.Outlined" Placeholder="http://mes.local/api/collect"
                                       aria-label="MES 地址" />
                         <span class="dt-src-badge edit">可在此修改·配置库</span>
@@ -365,11 +391,58 @@ else
                         <div>
                             <div class="dt-settings-row-name">MES 超时(秒)</div>
                         </div>
-                        <MudNumericField @bind-Value="_settings.MesTimeoutSeconds" Min="1" Max="300"
+                        <MudNumericField @bind-Value="_edit.MesTimeoutSeconds" @bind-Value:after="() => _mesTimeoutError = null"
+                                         Min="@SettingsLimits.MinMesTimeoutSeconds" Max="@SettingsLimits.MaxMesTimeoutSeconds"
                                          Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true"
+                                         Error="@(_mesTimeoutError is not null)" ErrorText="@_mesTimeoutError"
                                          aria-label="MES 超时(秒)" />
                         <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
+
+                    @* 只有开关和地址时，"配了但推不出去"现场是看不出来的：这里把积压与最近一次结果摆出来。 *@
+                    @if (!_edit.MesEnabled)
+                    {
+                        <MudText Typo="Typo.caption" Class="dt-muted mt-2">推送已关闭，记录不会进入推送队列。</MudText>
+                    }
+                    else if (_mesStatus is null)
+                    {
+                        <MudText Typo="Typo.caption" Class="dt-muted mt-2">推送状态读取失败，暂无法显示积压情况。</MudText>
+                    }
+                    else
+                    {
+                        <MudStack Row="true" Spacing="3" Class="flex-wrap dt-settings-readonly pa-3 rounded mt-1">
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">待推送 <span class="dt-src-badge rt">运行时</span><InfoHint Topic="HelpTexts.MesOutbox" /></div>
+                                <div class="dt-metric-value">@_mesStatus.PendingCount</div>
+                            </div>
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">最久未推送</div>
+                                <div class="dt-metric-value" style="font-size:.9rem">
+                                    @(_mesStatus.OldestPendingAt?.ToString("MM-dd HH:mm") ?? "—")
+                                </div>
+                            </div>
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">最近成功</div>
+                                <div class="dt-metric-value" style="font-size:.9rem">
+                                    @(_mesStatus.LastSuccessAt?.ToString("MM-dd HH:mm") ?? "尚无")
+                                </div>
+                            </div>
+                            <div class="dt-metric" style="min-width:220px;max-width:420px;flex:1">
+                                <div class="dt-metric-label">最近一次尝试</div>
+                                <div class="dt-metric-value" style="font-size:.9rem">@LastAttemptText</div>
+                            </div>
+                        </MudStack>
+                        @if (MesBacklogWarning is { } backlogWarning)
+                        {
+                            <MudText Typo="Typo.caption" Class="mt-1" Style="color:var(--mud-palette-error)">@backlogWarning</MudText>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption" Class="dt-muted mt-1">
+                                推送失败会按退避一直重试并留在队列里，不会丢记录；积压增长时请先确认 MES 地址与网络。
+                            </MudText>
+                        }
+                    }
                 </MudPaper>
 
                 <MudPaper Class="pa-4 mb-3 dt-settings-section" id="sec-security" Elevation="1">
@@ -388,10 +461,10 @@ else
                         <div class="dt-danger-zone-title">危险操作</div>
                         <MudText Typo="Typo.caption" Class="dt-muted mb-3">
                             停用采集后采集端不再读取任何工站；实时看板与查询仍可看历史数据。开关只改页面值，需点「保存」才会下发。
-                            当前状态：<b>@(_settings.CollectEnabled ? "采集已启用" : "采集已停用")</b>
+                            当前状态：<b>@(_edit.CollectEnabled ? "采集已启用" : "采集已停用")</b>
                             <span class="dt-src-badge edit" style="margin-left:8px">可在此修改·配置库</span>
                         </MudText>
-                        @if (_settings.CollectEnabled)
+                        @if (_edit.CollectEnabled)
                         {
                             <MudButton Variant="Variant.Outlined" Color="Color.Error" Disabled="_saving"
                                        StartIcon="@Icons.Material.Filled.PowerSettingsNew"
@@ -464,7 +537,8 @@ else
     ];
 
     private SystemSettings? _settings;
-    private string _savedKey = "";
+    private EditFields _edit = new();
+    private EditFields _loaded = new();
     private string _savedSiteName = "";
     private string? _savedLogoPath;
     private bool _loading = true;
@@ -481,9 +555,92 @@ else
     private string? _softCapWarning;
     private bool _productionSimWarning;
     private BackupStatusSnapshot? _backupStatus;
+    private string? _backupStatusError;
+    private MesOutboxSnapshot? _mesStatus;
+    private string? _scanError;
+    private string? _retryError;
+    private string? _retryDelayError;
+    private string? _retentionError;
+    private string? _mesTimeoutError;
     private string _activeSection = "sec-basic";
 
-    private bool SettingsDirty => _settings is not null && Key(_settings) != _savedKey;
+    /// <summary>
+    /// 页面上可编辑的字段。
+    /// </summary>
+    /// <remarks>
+    /// 数值一律用可空 int 承接输入：输入框被清空或敲进非法字符时拿到的是 null，
+    /// 而不是被 MudNumericField 悄悄夹成下限 —— "保留年数"夹成 1 会在 6 小时内
+    /// 把超过一年的整月库与曲线文件全删掉，而界面只提示"配置已保存"。
+    /// </remarks>
+    private sealed class EditFields
+    {
+        public int? ScanIntervalMs { get; set; }
+        public int? WriteRetryCount { get; set; }
+        public int? WriteRetryDelayMs { get; set; }
+        public int? RetentionYears { get; set; }
+        public int? MesTimeoutSeconds { get; set; }
+        public bool CollectEnabled { get; set; }
+        public bool MesEnabled { get; set; }
+        public string? MesEndpoint { get; set; }
+
+        public EditFields Clone() => (EditFields)MemberwiseClone();
+
+        /// <summary>逐字段比较（脏检查用）：任何一个字段与载入值不同就算有未保存的更改。</summary>
+        public bool DiffersFrom(EditFields other)
+            => ScanIntervalMs != other.ScanIntervalMs
+               || WriteRetryCount != other.WriteRetryCount
+               || WriteRetryDelayMs != other.WriteRetryDelayMs
+               || RetentionYears != other.RetentionYears
+               || MesTimeoutSeconds != other.MesTimeoutSeconds
+               || CollectEnabled != other.CollectEnabled
+               || MesEnabled != other.MesEnabled
+               || !string.Equals(MesEndpoint ?? "", other.MesEndpoint ?? "", StringComparison.Ordinal);
+
+        public static EditFields From(SystemSettings s) => new()
+        {
+            ScanIntervalMs = s.ScanIntervalMs,
+            WriteRetryCount = s.WriteRetryCount,
+            WriteRetryDelayMs = s.WriteRetryDelayMs,
+            RetentionYears = s.RetentionYears,
+            MesTimeoutSeconds = s.MesTimeoutSeconds,
+            CollectEnabled = s.CollectEnabled,
+            MesEnabled = s.MesEnabled,
+            MesEndpoint = s.MesEndpoint
+        };
+    }
+
+    private bool SettingsDirty => _settings is not null && _edit.DiffersFrom(_loaded);
+
+    private string LastAttemptText =>
+        _mesStatus?.LastAttemptAt is not { } at ? "尚无"
+        : _mesStatus.LastAttemptSucceeded == true ? $"{at:MM-dd HH:mm} 成功"
+        : $"{at:MM-dd HH:mm} 失败：{_mesStatus.LastError ?? "未知错误"}";
+
+    /// <summary>积压或连续失败时给一句明确的判断，而不是让人自己看数字。</summary>
+    private string? MesBacklogWarning
+    {
+        get
+        {
+            if (_mesStatus is null)
+            {
+                return null;
+            }
+
+            if (_mesStatus.LastAttemptSucceeded == false)
+            {
+                return $"最近一次推送失败：{_mesStatus.LastError ?? "未知错误"}；记录仍在队列里按退避重试。";
+            }
+
+            if (_mesStatus.PendingCount > 0
+                && _mesStatus.OldestPendingAt is { } oldest
+                && DateTime.Now - oldest > TimeSpan.FromHours(SystemDefaults.MesBacklogWarnHours))
+            {
+                return $"有 {_mesStatus.PendingCount} 条记录已排队超过 {(int)(DateTime.Now - oldest).TotalHours} 小时未推送成功。";
+            }
+
+            return null;
+        }
+    }
 
     private bool BrandingDirty =>
         _canEditBrand
@@ -494,19 +651,22 @@ else
 
     private Color BackupChipColor =>
         _backupStatus is null ? Color.Default
-        : !_backupStatus.Enabled || _backupStatus.IsStaleOrFailed(TimeSpan.FromHours(48)) ? Color.Error
+        : _backupStatusError is not null ? Color.Error
+        : !_backupStatus.Enabled || _backupStatus.IsStaleOrFailed(TimeSpan.FromHours(SystemDefaults.BackupStaleHours)) ? Color.Error
         : Color.Success;
 
     private string BackupChipText =>
         _backupStatus is null ? "未知"
+        : _backupStatusError is not null ? "读取失败"
         : !_backupStatus.Enabled ? "已关闭"
-        : _backupStatus.IsStaleOrFailed(TimeSpan.FromHours(48)) ? "异常"
+        : _backupStatus.IsStaleOrFailed(TimeSpan.FromHours(SystemDefaults.BackupStaleHours)) ? "异常"
         : "正常";
 
     private string BackupDetail
     {
         get
         {
+            if (_backupStatusError is { } error) return $"读取失败：{error}";
             if (_backupStatus is null) return "状态加载中…";
             if (!_backupStatus.Enabled) return "Backup:Enabled=false";
             if (_backupStatus.LastSucceeded == false)
@@ -539,9 +699,16 @@ else
     }
 
         private static string SummarizeSettings(SystemSettings s)
-        => $"scan={s.ScanIntervalMs}ms; retry={s.WriteRetryCount}; retentionYears={s.RetentionYears}; " +
+        => $"scan={s.ScanIntervalMs}ms; retry={s.WriteRetryCount}×{s.WriteRetryDelayMs}ms; retentionYears={s.RetentionYears}; " +
            $"collect={s.CollectEnabled}; mes={s.MesEnabled}; mesTimeout={s.MesTimeoutSeconds}s; endpoint={s.MesEndpoint}";
 
+    /// <summary>
+    /// 写审计日志，失败时单独提示一次。
+    /// </summary>
+    /// <remarks>
+    /// 这里吞掉异常只是"不阻断主操作"，不等于可以不告诉人：停用采集、改 MES 地址、手动备份
+    /// 都是需要留痕的动作，审计写失败却没提示时，"谁改的"就永久缺了一条而没人知道。
+    /// </remarks>
     private async Task AuditSafe(string action, string entityType, string key, string? oldValue, string? newValue)
     {
         try
@@ -549,15 +716,11 @@ else
             var user = (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
             await Audit.WriteAsync(user, action, entityType, key, oldValue, newValue);
         }
-        catch
+        catch (Exception ex)
         {
-            // 审计失败不阻断设置保存 / 备份。
+            Toast.Add($"审计记录失败：{ex.Message}", Severity.Warning);
         }
     }
-
-private static string Key(SystemSettings s) => string.Join('|',
-        s.ScanIntervalMs, s.WriteRetryCount, s.RetentionYears, s.CollectEnabled,
-        s.MesEnabled, s.MesEndpoint, s.MesTimeoutSeconds);
 
     protected override async Task OnInitializedAsync()
     {
@@ -629,10 +792,13 @@ private static string Key(SystemSettings s) => string.Join('|',
             }
 
             _settings = snap.Settings;
+            _edit = EditFields.From(_settings);
+            _loaded = _edit.Clone();
+            _scanError = _retryError = _retryDelayError = _retentionError = _mesTimeoutError = null;
             _productionSimWarning = Branding.EnvironmentName.Equals("Production", StringComparison.OrdinalIgnoreCase)
                 && _settings is { SimulatorAutoRun: true };
-            _savedKey = _settings is null ? "" : Key(_settings);
             RefreshBackupStatus();
+            await RefreshMesOutboxStatusAsync();
         }
         catch (Exception ex)
         {
@@ -655,23 +821,28 @@ private static string Key(SystemSettings s) => string.Join('|',
             yesText: "停用采集", cancelText: "取消");
         if (confirmed == true)
         {
-            _settings.CollectEnabled = false;
+            _edit.CollectEnabled = false;
         }
     }
 
     private void EnableCollect()
     {
         if (_settings is null) return;
-        _settings.CollectEnabled = true;
+        _edit.CollectEnabled = true;
     }
 
     private async Task Save()
     {
         if (_settings is null || _saving) return;
 
-        if (_settings.MesEnabled && !IsHttpUrl(_settings.MesEndpoint))
+        if (_edit.MesEnabled && !IsHttpUrl(_edit.MesEndpoint))
         {
             Toast.Add("已启用 MES 推送，但地址不是合法的 http(s) 地址", Severity.Warning);
+            return;
+        }
+
+        if (!ValidateEditFields())
+        {
             return;
         }
 
@@ -680,6 +851,12 @@ private static string Key(SystemSettings s) => string.Join('|',
         if (!needSettings && !needBrand)
         {
             Toast.Add("没有需要保存的更改", Severity.Info);
+            return;
+        }
+
+        // 保留年数是破坏性的：改小之后每 6 小时的清理任务就会把更近的历史删掉，且不可恢复。
+        if (needSettings && _edit.RetentionYears != _loaded.RetentionYears && !await ConfirmRetentionChange())
+        {
             return;
         }
 
@@ -695,20 +872,30 @@ private static string Key(SystemSettings s) => string.Join('|',
             {
                 try
                 {
+                    // 库里的最新一行：只把本页真的改过的字段写回去。
+                    // 整行覆盖会把另一会话刚保存的其它字段悄悄回滚（两边都看到"保存成功"）。
                     var target = (await Config.GetSnapshotAsync()).Settings;
                     var oldSnap = SummarizeSettings(target);
-                    target.ScanIntervalMs = _settings.ScanIntervalMs;
-                    target.WriteRetryCount = _settings.WriteRetryCount;
-                    target.RetentionYears = _settings.RetentionYears;
-                    target.CollectEnabled = _settings.CollectEnabled;
-                    target.MesEnabled = _settings.MesEnabled;
-                    target.MesEndpoint = _settings.MesEndpoint;
-                    target.MesTimeoutSeconds = _settings.MesTimeoutSeconds;
+                    if (_edit.ScanIntervalMs != _loaded.ScanIntervalMs) target.ScanIntervalMs = _edit.ScanIntervalMs!.Value;
+                    if (_edit.WriteRetryCount != _loaded.WriteRetryCount) target.WriteRetryCount = _edit.WriteRetryCount!.Value;
+                    if (_edit.WriteRetryDelayMs != _loaded.WriteRetryDelayMs) target.WriteRetryDelayMs = _edit.WriteRetryDelayMs!.Value;
+                    if (_edit.RetentionYears != _loaded.RetentionYears) target.RetentionYears = _edit.RetentionYears!.Value;
+                    if (_edit.MesTimeoutSeconds != _loaded.MesTimeoutSeconds) target.MesTimeoutSeconds = _edit.MesTimeoutSeconds!.Value;
+                    if (_edit.CollectEnabled != _loaded.CollectEnabled) target.CollectEnabled = _edit.CollectEnabled;
+                    // 地址统一去掉首尾空白：带空格的 URL 能过校验、也会被原样存进库与审计里。
+                    var endpoint = string.IsNullOrWhiteSpace(_edit.MesEndpoint) ? null : _edit.MesEndpoint.Trim();
+                    if (!string.Equals(endpoint, _loaded.MesEndpoint ?? "", StringComparison.Ordinal)
+                        || _edit.MesEnabled != _loaded.MesEnabled)
+                    {
+                        target.MesEndpoint = endpoint;
+                        target.MesEnabled = _edit.MesEnabled;
+                    }
 
                     await Config.SaveSettingsAsync(target);
                     await AuditSafe("Save", "SystemSettings", "settings", oldSnap, SummarizeSettings(target));
                     _settings = target;
-                    _savedKey = Key(target);
+                    _edit = EditFields.From(target);
+                    _loaded = _edit.Clone();
                     Simulator.SetRunning(target.SimulatorAutoRun);
                     settingsSaved = true;
                 }
@@ -741,6 +928,13 @@ private static string Key(SystemSettings s) => string.Join('|',
             _saving = false;
         }
 
+        // 保存成功但 Logo 文件不在：顶栏会是一片空白，用户很难想到是文件名写错了。
+        // 放在成功提示之后，免得被"已写入 customer.json"盖住。
+        if (settingsSaved)
+        {
+            await RefreshMesOutboxStatusAsync();
+        }
+
         if (settingsErr is null && brandErr is null)
         {
             var bits = new List<string>();
@@ -768,16 +962,83 @@ private static string Key(SystemSettings s) => string.Join('|',
         {
             Toast.Add($"品牌保存失败：{brandErr}", Severity.Error);
         }
+
+        // 放在成功提示之后：文件名写错时顶栏是一片空白，用户很难想到是文件名的问题。
+        if (brandSaved && Branding.LogoFileWarning(_savedLogoPath) is { } logoWarning)
+        {
+            Toast.Add(logoWarning, Severity.Warning);
+        }
     }
 
     private static bool IsHttpUrl(string? url)
         => Uri.TryCreate(url, UriKind.Absolute, out var uri)
            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
+    /// <summary>
+    /// 数值字段的保存前校验：空值（输入框被清空或敲进非法字符）与越界都拦下来。
+    /// </summary>
+    /// <remarks>
+    /// 不能任由输入框自己"夹到边界"：清空"保留年数"会得到 1，6 小时后历史整月库就被删了；
+    /// 清空"扫描间隔"会得到 20ms，采集端会以十倍频率轮询 PLC。两种都显示成"保存成功"。
+    /// </remarks>
+    private bool ValidateEditFields()
+    {
+        _scanError = _edit.ScanIntervalMs is not { } scan ? "扫描间隔不能为空"
+            : SettingsLimits.ScanIntervalError(scan);
+        _retryError = _edit.WriteRetryCount is not { } retry ? "写回重试次数不能为空"
+            : SettingsLimits.WriteRetryCountError(retry);
+        _retryDelayError = _edit.WriteRetryDelayMs is not { } delay ? "写回重试间隔不能为空"
+            : SettingsLimits.WriteRetryDelayError(delay);
+        _retentionError = _edit.RetentionYears is not { } years ? "保留年数不能为空"
+            : SettingsLimits.RetentionYearsError(years);
+        _mesTimeoutError = _edit.MesTimeoutSeconds is not { } timeout ? "MES 超时不能为空"
+            : SettingsLimits.MesTimeoutError(timeout);
+
+        var bad = new[] { _scanError, _retryError, _retryDelayError, _retentionError, _mesTimeoutError }
+            .Count(x => x is not null);
+        if (bad == 0)
+        {
+            return true;
+        }
+
+        Toast.Add($"{bad} 项填写有误，已在对应输入框标出（未保存）", Severity.Warning);
+        return false;
+    }
+
+    /// <summary>改小保留年数前的确认：把"会删到哪个月"说清楚，避免事后才发现历史没了。</summary>
+    private async Task<bool> ConfirmRetentionChange()
+    {
+        var years = _edit.RetentionYears!.Value;
+        var newestDeleted = SettingsLimits.NewestDeletedMonth(DateTime.Today, years);
+        var confirmed = await DialogService.ShowMessageBox(
+            "确认保留年数",
+            $"保留年数 {_loaded.RetentionYears?.ToString() ?? "默认"} → {years} 年。\n\n"
+            + $"清理任务（约每 {SystemDefaults.RetentionCheckHours} 小时一次）会删除 {newestDeleted:yyyy-MM} 及更早月份的整月记录库与曲线文件，"
+            + "删除后不可恢复（配置库里的审计日志不受影响）。",
+            yesText: "确认修改", cancelText: "取消");
+        return confirmed == true;
+    }
+
     private void RefreshBackupStatus()
     {
-        try { _backupStatus = BackupService.GetStatus(); }
-        catch { _backupStatus = null; }
+        try
+        {
+            _backupStatus = BackupService.GetStatus();
+            _backupStatusError = null;
+        }
+        catch (Exception ex)
+        {
+            // 吞掉异常会让这一区永久停在"状态加载中…"的骨架，倒查备份时看不出是"读不到"还是"没备份过"。
+            _backupStatus = null;
+            _backupStatusError = ex.Message;
+        }
+    }
+
+    /// <summary>MES 推送积压情况：对接区只有开关和地址时，"推不出去"没人看得出来。</summary>
+    private async Task RefreshMesOutboxStatusAsync()
+    {
+        try { _mesStatus = await Config.GetMesOutboxStatusAsync(); }
+        catch { _mesStatus = null; }
     }
 
     private async Task RunBackupNow()

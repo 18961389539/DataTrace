@@ -199,6 +199,44 @@ public class ReportsPageTests : WebTestBase
         Assert.Equal(chosen, bound);
     }
 
+    /// <summary>
+    /// 改过编码的型号，"按产品型号"表里只能有一行：旧码那行既没有名称（显示成"旧编码 xxx"），
+    /// 又会让人以为区间里有两个型号；而曲线基线是把旧码算作本型号的（见 CurveRecipeScope）。
+    /// </summary>
+    [Fact]
+    public void Previous_codes_are_merged_into_the_current_one_in_the_recipe_table()
+    {
+        Config.Snapshot = new AppConfigurationSnapshot
+        {
+            Stations = Config.Snapshot.Stations,
+            Recipes = [new Recipe { Id = 7, Code = "B300", Name = "改码后的型号", PreviousCodes = "A100" }]
+        };
+        _reports
+            .Setup(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ThroughputReport
+            {
+                ByDay = [],
+                ByRecipe =
+                [
+                    new RecipeThroughput { RecipeCode = "B300", Total = 5, Ok = 5 },
+                    new RecipeThroughput { RecipeCode = "A100", Total = 3, Ok = 2, Ng = 1 }
+                ]
+            });
+
+        var cut = Render();
+
+        // 按日表也有「直通率」，靠首列表头区分：这张表首列是「型号」。
+        var table = cut.FindAll("table").Single(t => t.QuerySelectorAll("th").First().TextContent.Contains("型号"));
+        var row = Assert.Single(table.QuerySelectorAll("tbody tr"));
+        Assert.Contains("B300 · 改码后的型号", row.TextContent);
+        Assert.DoesNotContain("旧编码 A100", row.TextContent);
+
+        // 产量与 OK/NG 都按合并后的口径累加。
+        var cells = row.QuerySelectorAll("td").Select(td => td.TextContent.Trim()).ToList();
+        Assert.Equal(new[] { "产量", "OK", "NG", "未判定" }, table.QuerySelectorAll("th").Skip(1).Take(4).Select(th => th.TextContent.Trim()));
+        Assert.Equal(new[] { "8", "7", "1", "0" }, cells.Skip(1).Take(4));
+    }
+
     [Fact]
     public async Task A_failed_reload_clears_every_table_including_the_recipe_breakdown()
     {

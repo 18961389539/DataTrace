@@ -181,7 +181,7 @@ else
                     <MudSpacer />
                     @if (PayloadFor(curve.Id) is null)
                     {
-                        <MudText Typo="Typo.caption" Color="Color.Warning">曲线文件缺失</MudText>
+                        <MudText Typo="Typo.caption" Color="Color.Warning">@(_curveErrors.GetValueOrDefault(curve.Id, "曲线文件缺失"))</MudText>
                     }
                     else
                     {
@@ -205,7 +205,7 @@ else
                         </MudText>
                     </MudStack>
                 }
-                <CurveChart Payload="PayloadFor(curve.Id)" />
+                <CurveChart Payload="PayloadFor(curve.Id)" AuditKey="@CurveAuditKey(curve.CurveCode)" />
             </MudPaper>
         }
     }
@@ -228,6 +228,8 @@ else
     private bool _loaded;
     private bool _canExport;
     private readonly Dictionary<long, CurvePayload> _curvePayloads = [];
+    /// <summary>读不出来的曲线：曲线 Id → 界面提示。损坏与缺失的说明不同。</summary>
+    private readonly Dictionary<long, string> _curveErrors = [];
     private List<TagValue> _tagRows = [];
     private int _outOfLimitCount;
     private int _warningCount;
@@ -242,6 +244,7 @@ else
     {
         _loaded = false;
         _curvePayloads.Clear();
+        _curveErrors.Clear();
         _record = await Store.GetRecordAsync(MonthKey, RecordId);
         if (_record is null)
         {
@@ -265,11 +268,20 @@ else
         {
             try
             {
-                _curvePayloads[curve.Id] = await Curves.ReadAsync(curve.RelativePath);
+                // Crc32 是后加的列，历史行是 0：那种行没有校验值，只能不校验。
+                _curvePayloads[curve.Id] = await Curves.ReadAsync(
+                    curve.RelativePath,
+                    curve.Crc32 == 0 ? null : curve.Crc32);
+            }
+            catch (InvalidDataException)
+            {
+                // 损坏与缺失要分开说：都报"缺失"的话，现场会去查备份而不是查磁盘或权限。
+                _curveErrors[curve.Id] = "曲线文件损坏（内容与入库校验值不一致）";
             }
             catch
             {
-                // 文件缺失时在界面上提示，不阻断其余内容展示
+                // 其余（文件缺失、权限、半截文件）一律按读不到处理，不阻断其余内容展示。
+                _curveErrors[curve.Id] = "曲线文件缺失或无法读取";
             }
         }
 
@@ -278,6 +290,9 @@ else
 
     private CurvePayload? PayloadFor(long curveId)
         => _curvePayloads.TryGetValue(curveId, out var payload) ? payload : null;
+
+    /// <summary>曲线导出的审计键：定位到"哪条记录的哪条曲线"，与明细页导出同一套约定。</summary>
+    private string CurveAuditKey(string curveCode) => $"{MonthKey}/{RecordId}/{curveCode}";
 
     private string PalletHistoryUrl()
     {

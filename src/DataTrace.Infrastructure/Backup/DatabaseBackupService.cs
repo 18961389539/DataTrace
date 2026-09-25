@@ -92,6 +92,7 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
         }
 
         var started = DateTimeOffset.Now;
+        string? createdSet = null;
         try
         {
             var opts = _options.CurrentValue;
@@ -107,13 +108,17 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
             }
 
             Directory.CreateDirectory(unique);
+            createdSet = unique;
 
             var sources = DiscoverSqliteFiles();
             if (sources.Count == 0)
             {
                 const string emptyMsg = "未找到可备份的 SQLite 数据库（config.db / runtime/data_*.db）";
                 _logger.LogWarning(emptyMsg);
-                PersistStatus(started, false, emptyMsg, unique, 0, 0);
+                // 失败就不留目录：空目录/半套目录会让人以为"备份过一次"，保留策略也只清成功备份。
+                TryDeleteSet(unique);
+                createdSet = null;
+                PersistStatus(started, false, emptyMsg, null, 0, 0);
                 return new BackupRunResult
                 {
                     Success = false,
@@ -150,7 +155,9 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
                 {
                     var err = $"完整性校验失败: {src.LogicalName}: {detail}";
                     _logger.LogError("{Error}", err);
-                    PersistStatus(started, false, err, unique, total, files.Count);
+                    TryDeleteSet(unique);
+                    createdSet = null;
+                    PersistStatus(started, false, err, null, total, files.Count);
                     return new BackupRunResult
                     {
                         Success = false,
@@ -205,6 +212,8 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
         catch (Exception ex)
         {
             _logger.LogError(ex, "数据库备份失败");
+            // 异常也要收尾：留下的半套目录没有 manifest，保留策略又只在成功时才清理。
+            TryDeleteSet(createdSet);
             PersistStatus(started, false, ex.Message, null, 0, 0);
             return new BackupRunResult
             {
@@ -217,6 +226,28 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
         finally
         {
             _gate.Release();
+        }
+    }
+
+    /// <summary>删除本次未完成的备份集目录（best-effort，失败只记日志）。</summary>
+    private void TryDeleteSet(string? path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+                _logger.LogInformation("已清理未完成的备份集目录 {Path}", path);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "清理未完成的备份集目录失败 {Path}", path);
         }
     }
 

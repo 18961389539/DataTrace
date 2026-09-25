@@ -318,11 +318,51 @@ public abstract class E2ETestBase : IAsyncLifetime
             text,
             new PageWaitForFunctionOptions { Timeout = timeoutMs });
 
+    /// <summary>
+    /// 等 SignalR circuit 真的接管。
+    /// </summary>
+    /// <remarks>
+    /// 本应用的"导航后把焦点移到页标题"只在接管之后发生，所以它是个现成的就绪信号
+    /// （见 AccessibleNameE2ETests；那里用它判断页面是不是只渲染了静态预渲染的一半）。
+    /// 需要它的场景：元素在预渲染 HTML 里就已经存在（按钮、输入框），
+    /// 而 circuit 接管时会把这段 DOM 整段重建 —— 在那之前发出的点击/回车会被丢掉，
+    /// 失败方式往往是"什么都没发生"。页面上浮层（tooltip/下拉）越多，这个窗口越明显。
+    /// </remarks>
+    protected Task WaitForCircuitReadyAsync()
+        => Page.WaitForFunctionAsync(
+            "() => document.activeElement === document.querySelector('h5')",
+            arg: null,
+            new PageWaitForFunctionOptions { Timeout = 20000 });
+
     /// <summary>在查询表单里填条件并回车提交——页面自己就提示"在输入框内按回车即查询"。</summary>
     protected async Task SearchAsync(ILocator input, string value)
     {
         await input.FillAsync(value);
         await input.PressAsync("Enter");
+    }
+
+    /// <summary>
+    /// 反复执行一个动作直到页面出现预期文字。
+    /// 预渲染的 DOM 会在 circuit 接手时被整段重建，这个窗口里发出的点击/回车会被丢掉
+    /// （与登录表被抹空是同一个根因），而失败方式往往是"什么都没发生"，后续断言静默空过。
+    /// </summary>
+    protected async Task ActUntilAsync(Func<Task> action, string expectedText, string label, int attempts = 10)
+    {
+        for (var i = 0; i < attempts; i++)
+        {
+            await action();
+            try
+            {
+                await WaitBodyContainsAsync(expectedText, 3000);
+                return;
+            }
+            catch (TimeoutException)
+            {
+                await Task.Delay(500);
+            }
+        }
+
+        throw new TimeoutException($"{attempts} 次{label}后页面仍未出现「{expectedText}」");
     }
 }
 
@@ -370,6 +410,22 @@ public abstract class AuthE2ETestBase : E2ETestBase
               }",
             new[] { userName, password });
 
+        await Page.WaitForURLAsync(url => url != from);
+    }
+
+    /// <summary>
+    /// 提交顶栏的退出表单。退出是 POST，GET /account/logout 已不再受理，
+    /// 所以不能再像以前那样直接 Goto 那个地址。
+    /// </summary>
+    protected async Task SubmitLogoutFormAsync()
+    {
+        await Page.WaitForSelectorAsync("form[action='/account/logout'] button[type=submit]");
+        var from = Page.Url;
+        await Page.EvaluateAsync(
+            @"() => {
+                  const form = document.querySelector('form[action=""/account/logout""]');
+                  form.requestSubmit(form.querySelector('button[type=submit]'));
+              }");
         await Page.WaitForURLAsync(url => url != from);
     }
 

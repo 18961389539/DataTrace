@@ -7,9 +7,20 @@ public class SystemSettings
     public int WriteRetryCount { get; set; } = 3;
     public int WriteRetryDelayMs { get; set; } = 50;
     public int RetentionYears { get; set; } = 3;
+
+    /// <summary>
+    /// 历史遗留列，<b>不生效</b>：曲线 / spool / 月库的实际路径来自安装目录的 customer.json
+    /// （Customer:DataRoot → DataRootPaths），没有代码读取这三个字段。
+    /// 保留列是为了不改动已部署库的表结构；改它们不会改变任何行为。
+    /// </summary>
     public string CurveRootPath { get; set; } = "data/curves";
+
+    /// <inheritdoc cref="CurveRootPath"/>
     public string SpoolPath { get; set; } = "data/spool";
+
+    /// <inheritdoc cref="CurveRootPath"/>
     public string RuntimeDbPath { get; set; } = "data/runtime";
+
     public bool CollectEnabled { get; set; } = true;
     public bool MesEnabled { get; set; }
     public string? MesEndpoint { get; set; }

@@ -152,6 +152,62 @@ public class SimulatorScenarioTests
         }
     }
 
+    private static ushort[] ReadWords(InMemoryPlcDriver driver, string address, int count)
+    {
+        var prefix = new string(address.TakeWhile(char.IsLetter).ToArray());
+        var offset = int.Parse(address[prefix.Length..]);
+        var words = new ushort[count];
+        for (var i = 0; i < count; i++)
+        {
+            words[i] = driver.GetWord($"{prefix}{offset + i}");
+        }
+
+        return words;
+    }
+
+    [Fact]
+    public async Task Multi_word_tags_are_written_at_full_width()
+    {
+        await using var driver = await DriverAsync();
+        var station = Station(includeStringTag: false);
+        station.Tags.Clear();
+        // 采集端按 WordCountOf(DataType) 读（Int32=2 字、Double=4 字），
+        // 仿真必须按同一宽度写，否则读回的值是"写入值 + 残留字"拼出来的。
+        station.Tags.Add(new TagDefinition { Id = 11, Code = "CNT", Name = "计数", Address = "D4000", DataType = PlcDataType.Int32, LowerLimit = 1000, UpperLimit = 100_000, PositionIndex = 1, Enabled = true });
+        station.Tags.Add(new TagDefinition { Id = 12, Code = "P", Name = "压力", Address = "D4100", DataType = PlcDataType.Double, LowerLimit = 5, UpperLimit = 20, PositionIndex = 1, Enabled = true });
+        station.Tags.Add(new TagDefinition { Id = 13, Code = "N", Name = "负区间", Address = "D4200", DataType = PlcDataType.Int16, LowerLimit = -40, UpperLimit = -10, PositionIndex = 1, Enabled = true });
+
+        Load(driver, station, "P0009");
+
+        foreach (var tag in station.Tags)
+        {
+            var words = ReadWords(driver, tag.Address, ValueCodec.WordCountOf(tag.DataType));
+            var value = ValueCodec.DecodeNumeric(words, tag.DataType, FloatWordOrder.CDAB, 1, 0);
+            Assert.False(
+                LimitEvaluator.IsOutOfLimit(tag, value),
+                $"{tag.Code} 读回 {value}，不在仿真区间内（写入宽度与读取宽度不一致）");
+        }
+    }
+
+    [Fact]
+    public async Task Int16_curve_series_is_written_as_int16()
+    {
+        await using var driver = await DriverAsync();
+        var station = Station(includeStringTag: false);
+        var curve = station.Curves.Single(c => c.Enabled);
+        var y = curve.Series.Single(s => s.Role == SeriesRole.Y);
+        y.DataType = PlcDataType.Int16;
+        y.StrideWords = 1;
+
+        Load(driver, station, "P0010");
+
+        // 按 Float 写会让 Int16 序列读到浮点低位字（约等于 0），这里按 1 字整型读应当落在峰形区间内。
+        var first = ValueCodec.DecodeNumeric(ReadWords(driver, y.StartAddress, 1), PlcDataType.Int16, FloatWordOrder.CDAB, 1, 0);
+        Assert.InRange(first, 4, 12);
+        var last = ValueCodec.DecodeNumeric(ReadWords(driver, "D2003", 1), PlcDataType.Int16, FloatWordOrder.CDAB, 1, 0);
+        Assert.InRange(last, 4, 12);
+    }
+
     [Fact]
     public async Task String_tag_receives_ok_marker()
     {

@@ -2,6 +2,7 @@ using System.Net.Http;
 using DataTrace.Collector;
 using DataTrace.Infrastructure;
 using DataTrace.Infrastructure.Seeding;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -29,6 +30,30 @@ internal sealed class CollectingLoggerProvider : ILoggerProvider
                 Entries
                     .Where(x => x.Level >= LogLevel.Warning)
                     .Select(x => $"{x.Category}:{x.Message}{(x.Error is null ? "" : " -> " + x.Error.Message)}"));
+        }
+    }
+
+    /// <summary>日志是在后台线程写的，直接遍历 <see cref="Entries"/> 会撞上"集合已被修改"，一律走这个快照。</summary>
+    public List<(LogLevel Level, string Category, string Message, Exception? Error)> Snapshot()
+    {
+        lock (Entries)
+        {
+            return [.. Entries];
+        }
+    }
+
+    /// <summary>全部日志（含 Information/Debug）的紧凑转储，用于超时报错时给出完整上下文。</summary>
+    public string Dump()
+    {
+        lock (Entries)
+        {
+            return string.Join(
+                " | ",
+                Entries
+                    .Where(x => x.Category.StartsWith("DataTrace", StringComparison.Ordinal)
+                                || x.Level >= LogLevel.Warning)
+                    .Select(x => $"{x.Level}:{x.Category}:{x.Message}{(x.Error is null ? "" : " -> " + x.Error.Message)}")
+                    .TakeLast(40));
         }
     }
 
@@ -212,6 +237,18 @@ internal sealed class InfrastructureContext : IAsyncDisposable
     /// <summary>跑一轮后台服务直到条件成立。</summary>
     public Task RunAsync(BackgroundService service, Func<bool> condition, int timeoutMs = 10000)
         => HostedServiceProbe.RunUntilAsync(service, condition, Logs.Summarize, timeoutMs);
+
+    /// <summary>
+    /// 绕过仓储直接改设置行：模拟历史脏数据或脚本直写。
+    /// 越界取值（保留年数 0、MES 超时 0）现在会被仓储层拒绝，消费端的兜底仍要扛得住这类存量数据。
+    /// </summary>
+    public async Task ForceSettingsAsync(Action<DataTrace.Domain.Entities.SystemSettings> mutate)
+    {
+        var db = Scope.ServiceProvider.GetRequiredService<DataTrace.Infrastructure.Persistence.ConfigDbContext>();
+        var settings = await db.SystemSettings.FirstAsync();
+        mutate(settings);
+        await db.SaveChangesAsync();
+    }
 
     public async ValueTask DisposeAsync()
     {

@@ -1,9 +1,14 @@
 @implements IDisposable
 
-<MudTooltip Text="最近一次工站完成的时间。产线本就没料时变慢不算异常。">
-    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@CadenceColor">
-        最近节拍 @CadenceText
-    </MudChip>
+<MudTooltip Arrow="true" RootClass="dt-help-popover">
+    <ChildContent>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@CadenceColor">
+            最近节拍 @CadenceText
+        </MudChip>
+    </ChildContent>
+    <TooltipContent>
+        <HelpContent Topic="HelpTexts.Cadence" />
+    </TooltipContent>
 </MudTooltip>
 
 @code {
@@ -40,8 +45,8 @@
         {
             if (LastBeat is not { } beat) return Color.Default;
             var idle = _now - beat;
-            if (idle < TimeSpan.FromSeconds(30)) return Color.Success;
-            return idle < TimeSpan.FromMinutes(5) ? Color.Warning : Color.Default;
+            if (idle < TimeSpan.FromSeconds(SystemDefaults.CadenceWarnSeconds)) return Color.Success;
+            return idle < TimeSpan.FromSeconds(SystemDefaults.CadenceIdleSeconds) ? Color.Warning : Color.Default;
         }
     }
 

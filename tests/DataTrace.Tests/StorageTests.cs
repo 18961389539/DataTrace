@@ -138,18 +138,61 @@ public class CurveFileStoreTests
     }
 
     [Fact]
-    public async Task Rewriting_same_key_is_atomic_and_leaves_no_temp_file()
+    public async Task Rewriting_same_key_never_clobbers_the_previous_file()
     {
         using var workspace = new TempWorkspace();
         var root = workspace.Path("curves");
         var store = new CurveFileStore(root);
 
-        await store.WriteAsync(TriggerTime, "P0001", 3, 1, "ST030_PD", Payload());
-        var (relative, _, _) = await store.WriteAsync(TriggerTime, "P0001", 3, 1, "ST030_PD", Payload(5));
+        var first = await store.WriteAsync(TriggerTime, "P0001", 3, 1, "ST030_PD", Payload());
+        var second = await store.WriteAsync(TriggerTime, "P0001", 3, 1, "ST030_PD", Payload(5));
 
         Assert.Empty(Directory.GetFiles(root, "*.tmp", SearchOption.AllDirectories));
-        var restored = await store.ReadAsync(relative);
-        Assert.Equal(5, restored.PointCount);
+        Assert.NotEqual(first.RelativePath, second.RelativePath);
+
+        // 同名路径上的第一份必须还在：文件名里没有记录唯一标识，序列号重复时
+        // 两条记录会争同一个路径；覆盖之后再因入库失败回滚，删掉的就是上一条记录的波形。
+        var restoredFirst = await store.ReadAsync(first.RelativePath);
+        Assert.Equal(3, restoredFirst.PointCount);
+        var restoredSecond = await store.ReadAsync(second.RelativePath);
+        Assert.Equal(5, restoredSecond.PointCount);
+    }
+
+    /// <summary>读取时校验 CRC：内容被动过要报"损坏"，而不是当成"文件不存在"。</summary>
+    [Fact]
+    public async Task Read_detects_corruption_via_crc()
+    {
+        using var workspace = new TempWorkspace();
+        var store = new CurveFileStore(workspace.Path("curves"));
+
+        var (relative, _, crc) = await store.WriteAsync(TriggerTime, "P0001", 3, 1, "ST030_PD", Payload());
+
+        // 校验值一致时正常读回。
+        Assert.Equal(3, (await store.ReadAsync(relative, crc)).PointCount);
+
+        // 改动内容（且保持可解压）后 CRC 必然对不上。
+        var full = Path.Combine(workspace.Path("curves"), relative.Replace('/', Path.DirectorySeparatorChar));
+        var bytes = await File.ReadAllBytesAsync(full);
+        bytes[^1] ^= 0xFF;
+        await File.WriteAllBytesAsync(full, bytes);
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => store.ReadAsync(relative, crc));
+        // 不传校验值时按老行为尽力读（历史行没有校验值）。
+        Assert.Equal(3, (await store.ReadAsync(relative)).PointCount);
+    }
+
+    /// <summary>损坏文件里的长度字段是任意的，解序列化前必须挡住，不能让一次大内存分配打穿进程。</summary>
+    [Fact]
+    public void Deserialize_rejects_absurd_lengths_instead_of_allocating()
+    {
+        var header = new byte[13];
+        "DTCR"u8.ToArray().CopyTo(header, 0);
+        header[4] = 1;                                   // 版本
+        BitConverter.GetBytes(3).CopyTo(header, 5);      // 点数
+        BitConverter.GetBytes(int.MaxValue).CopyTo(header, 9);  // 序列数：任意值
+
+        var ex = Assert.Throws<InvalidDataException>(() => CurveFileStore.Deserialize(header));
+        Assert.Contains("序列数非法", ex.Message);
     }
 
     [Fact]

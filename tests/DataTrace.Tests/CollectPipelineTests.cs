@@ -1,3 +1,4 @@
+using DataTrace.Application.Realtime;
 using DataTrace.Application.Runtime;
 using DataTrace.Collector;
 using DataTrace.Domain.Constants;
@@ -254,6 +255,68 @@ public class CollectPipelineTests
         Assert.Equal("位移压力曲线", live.Name);
         Assert.Equal(50, live.Values.Length);
         Assert.Equal(2, status.LastTags.Count);
+    }
+
+    /// <summary>
+    /// 点数非法的曲线（历史/手工改库留下的 PointCount = 0）必须被整条跳过：
+    /// 读计划本来就不给它安排读取，求值侧若照样跑，会拿全 0 特征去判据，
+    /// 把一条本来合格的记录拖成 NG，还写下一个指向错误的判废原因。
+    /// </summary>
+    [Fact]
+    public async Task Curve_with_invalid_point_count_is_skipped_instead_of_failing_the_record()
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+        var station = harness.Station(0);
+        station.Curves.First().PointCount = 0;
+        Load(harness, station, "P0004");
+
+        Assert.Equal(ResultCodes.Success, await harness.RunAsync(station));
+
+        var item = Assert.Single((await harness.QueryAsync("P0004")).Items);
+        Assert.Equal(Judgement.Ok, item.Record.Judgement);
+        // 也不该为它留下一条空曲线记录（点数 0、无特征）。
+        var record = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
+        Assert.Empty(record!.Curves);
+    }
+
+    /// <summary>
+    /// 位地址必须明确失败，而不是静默按 0 采集。
+    /// </summary>
+    /// <remarks>
+    /// 读计划只收字地址，位地址会被丢掉：点位会读到空数组（Bool 恒 false）、
+    /// 有料点位会被当成"未占用"、触发位则永远不触发。这些表现都指向"设备/程序有问题"，
+    /// 现场很难想到是地址写法的事，所以这里要求工站状态上留下明确原因。
+    /// </remarks>
+    [Fact]
+    public async Task BitAddress_for_a_tag_fails_with_an_explicit_reason()
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+        var station = harness.Station(0);
+        station.Tags.First().Address = "M100";
+        Load(harness, station, "P0006");
+
+        Assert.Equal(ResultCodes.PlcReadFailed, await harness.RunAsync(station));
+
+        // 读不到数据就不能判定，因此这条不落采集记录，只在工站状态上报错。
+        var status = harness.StatusHub.Stations.Single(x => x.StationId == station.Id);
+        Assert.Equal(StationRuntimeState.Fault, status.State);
+        Assert.Contains("位地址", status.LastError);
+        Assert.Contains("M100", status.LastError);
+    }
+
+    [Fact]
+    public async Task BitAddress_for_the_pallet_code_fails_with_an_explicit_reason()
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+        var station = harness.Station(0);
+        station.PalletCodeAddress = "M200";
+        Load(harness, station, "P0007");
+
+        Assert.Equal(ResultCodes.PlcReadFailed, await harness.RunAsync(station));
+
+        var status = harness.StatusHub.Stations.Single(x => x.StationId == station.Id);
+        Assert.Contains("位地址", status.LastError);
+        Assert.Contains("托盘码", status.LastError);
     }
 
     [Fact]

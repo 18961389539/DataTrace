@@ -12,7 +12,7 @@
 @inject ICurveBaselineCache BaselineCache
 @inject DtToast Toast
 
-<PageHeader Title="波形基线" Description="用历史合格波形建立基线，再对新波形做多维度偏离打分">
+<PageHeader Title="波形基线" Description="用历史合格波形建立基线，再对新波形做多维度偏离打分" HelpRoute="curve-baseline">
     <ChildContent>
         <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Info">
             @(_recipeCode == "" ? "未选型号（默认限值）" : $"型号 {_recipeCode}")
@@ -23,6 +23,7 @@
                 在线基线 @CacheText()
             </MudChip>
         </MudTooltip>
+        <InfoHint Topic="HelpTexts.OnlineBaseline" />
     </ChildContent>
 </PageHeader>
 
@@ -89,7 +90,7 @@ else
                     <MudSpacer />
                     <MudText Typo="Typo.caption" Class="dt-muted">
                         @(string.IsNullOrEmpty(_report.Unit) ? "" : $"单位 {_report.Unit} 　")
-                        取到 @_report.TotalSampleCount 条样本（不合格 @_report.NgCount 条）
+                        取到 @_report.TotalSampleCount 条样本 · 本型号不合格 @_report.NgCount 条
                     </MudText>
                 </MudStack>
 
@@ -106,7 +107,7 @@ else
                         <div class="dt-metric"><div class="dt-metric-label">可比对维度</div><div class="dt-metric-value">@_report.Template.ScorableDimensionCount</div></div>
                     </MudItem>
                     <MudItem xs="6" sm="4" md="2">
-                        <div class="dt-metric"><div class="dt-metric-label">参与打分</div><div class="dt-metric-value">@_report.Recent.Count</div></div>
+                        <div class="dt-metric"><div class="dt-metric-label">参与打分<InfoHint Topic="HelpTexts.BaselineSampleCounts" /></div><div class="dt-metric-value">@_report.Recent.Count</div></div>
                     </MudItem>
                     <MudItem xs="6" sm="4" md="2">
                         <div class="dt-metric">
@@ -121,7 +122,7 @@ else
                         </div>
                     </MudItem>
                     <MudItem xs="6" sm="4" md="2">
-                        <div class="dt-metric"><div class="dt-metric-label">型号不匹配</div><div class="dt-metric-value">@_report.MismatchedRecipeCount</div></div>
+                        <div class="dt-metric"><div class="dt-metric-label">型号不匹配<InfoHint Topic="HelpTexts.RecipeMismatch" /></div><div class="dt-metric-value">@_report.MismatchedRecipeCount</div></div>
                     </MudItem>
                 </MudGrid>
 
@@ -182,7 +183,7 @@ else
                             <MudTh>时间</MudTh>
                             <MudTh>托盘码</MudTh>
                             <MudTh>判定</MudTh>
-                            <MudTh>综合偏离（RMS z）</MudTh>
+                            <MudTh>综合偏离（RMS z） <InfoHint Topic="HelpTexts.DeviationThresholds" /></MudTh>
                             <MudTh>最大偏离</MudTh>
                             <MudTh>偏离维度</MudTh>
                             <MudTh>结论</MudTh>
@@ -365,6 +366,7 @@ else
     private CurveTemplateScore? _selected;
     private string _recipeCode = "";
     private bool _loading;
+    private bool _loadPending;
 
     protected override async Task OnInitializedAsync()
     {
@@ -439,20 +441,34 @@ else
             return;
         }
 
+        // 加载中直接丢弃请求不行：日期控件在加载中没禁用，快速改两次区间会丢掉后者，
+        // 界面停在旧区间的报表上却显示新日期。记下来，本轮结束立刻按最新条件重跑。
+        if (_loading)
+        {
+            _loadPending = true;
+            return;
+        }
+
         _loading = true;
         try
         {
-            var from = DateRangeFilter.StartOf(_from, DefaultFrom);
-            var to = DateRangeFilter.EndOfInclusive(_to);
+            do
+            {
+                _loadPending = false;
 
-            _report = await TemplateService.GetBaselineAsync(
-                _curveId,
-                _seriesName == PrimarySeries ? null : _seriesName,
-                from,
-                to);
+                var from = DateRangeFilter.StartOf(_from, DefaultFrom);
+                var to = DateRangeFilter.EndOfInclusive(_to);
 
-            // 换了曲线/序列之后旧的选中项就不再属于当前结果集了。
-            _selected = null;
+                _report = await TemplateService.GetBaselineAsync(
+                    _curveId,
+                    _seriesName == PrimarySeries ? null : _seriesName,
+                    from,
+                    to);
+
+                // 换了曲线/序列之后旧的选中项就不再属于当前结果集了。
+                _selected = null;
+            }
+            while (_loadPending);
         }
         catch (Exception ex)
         {

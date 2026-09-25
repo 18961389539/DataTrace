@@ -5,7 +5,7 @@
 @inject IJSRuntime Js
 @inject DtToast Toast
 
-<PageHeader Title="审计日志">
+<PageHeader Title="审计日志" HelpRoute="logs">
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">
             共命中 @_total 条（配置库 AuditLogs；每页 @PageSize 条）
@@ -28,6 +28,7 @@
             <MudTextField @bind-Value="_keyword" @bind-Value:after="OnFilterChanged" Label="关键字"
                           Placeholder="用户 / 对象 / 键 / 变更内容"
                           Immediate="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" />
+            <InfoHint Topic="HelpTexts.LogKeyword" />
         </MudItem>
         <MudItem xs="12" sm="6" md="3">
             <MudSelect T="string" @bind-Value="_action" @bind-Value:after="OnFilterChanged" Label="动作" Clearable="true">
@@ -44,6 +45,7 @@
                 <MudSelectItem T="int" Value="7">近 7 天</MudSelectItem>
                 <MudSelectItem T="int" Value="30">近 30 天</MudSelectItem>
             </MudSelect>
+            <InfoHint Topic="HelpTexts.LogTimeRange" />
         </MudItem>
         <MudItem xs="12" sm="6" md="2" Class="d-flex align-center gap-2">
             <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="@(() => Reload())"
@@ -63,8 +65,8 @@
         <MudTh>用户</MudTh>
         <MudTh>动作</MudTh>
         <MudTh>对象</MudTh>
-        <MudTh>键</MudTh>
-        <MudTh>变更</MudTh>
+        <MudTh>键 <InfoHint Topic="HelpTexts.LogEntityKey" /></MudTh>
+        <MudTh>变更 <InfoHint Topic="HelpTexts.LogChange" /></MudTh>
     </HeaderContent>
     <RowTemplate>
         <MudTd DataLabel="时间">@context.Time.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>

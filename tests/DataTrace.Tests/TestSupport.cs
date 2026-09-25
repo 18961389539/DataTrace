@@ -71,15 +71,19 @@ internal sealed class CollectHarness : IAsyncDisposable
 {
     private readonly TempWorkspace _workspace;
 
-    private CollectHarness(TempWorkspace workspace, ServiceProvider provider)
+    private CollectHarness(TempWorkspace workspace, ServiceProvider provider, CollectingLoggerProvider logs)
     {
         _workspace = workspace;
         Provider = provider;
+        Logs = logs;
     }
 
     public string Root => _workspace.Root;
 
     public ServiceProvider Provider { get; }
+
+    /// <summary>内存日志：用来断言采集侧对坏配置给出了明确说明，而不是静默跳过。</summary>
+    public CollectingLoggerProvider Logs { get; }
 
     public AppConfigurationSnapshot Snapshot { get; private set; } = new();
 
@@ -100,8 +104,13 @@ internal sealed class CollectHarness : IAsyncDisposable
     {
         var workspace = new TempWorkspace();
         var root = workspace.Root;
+        var logs = new CollectingLoggerProvider();
         var services = new ServiceCollection();
-        services.AddLogging(b => b.AddDebug());
+        services.AddLogging(b =>
+        {
+            b.AddDebug();
+            b.AddProvider(logs);
+        });
         services.AddDataTraceInfrastructure(root);
         services.AddDataTracePlc();
         services.AddSingleton<StationCollectPipeline>();
@@ -112,7 +121,7 @@ internal sealed class CollectHarness : IAsyncDisposable
             await seedScope.ServiceProvider.GetRequiredService<DatabaseSeeder>().SeedAsync();
         }
 
-        var harness = new CollectHarness(workspace, provider);
+        var harness = new CollectHarness(workspace, provider, logs);
         harness.Scope = provider.CreateScope();
         harness.Snapshot = await harness.Scope.ServiceProvider.GetRequiredService<IConfigRepository>().GetSnapshotAsync();
         harness.Plc = harness.Snapshot.PlcConnections.Single();
@@ -304,6 +313,7 @@ internal class FakeRuntimeStore : IRuntimeStore
         DateTime from,
         DateTime to,
         int take,
+        IReadOnlyCollection<string>? recipeCodes = null,
         CancellationToken cancellationToken = default)
     {
         if (take <= 0)
@@ -313,6 +323,8 @@ internal class FakeRuntimeStore : IRuntimeStore
 
         var points = Saved
             .Where(r => r.Record.TriggerTime >= from && r.Record.TriggerTime <= to)
+            // 型号过滤与真身同语义：先过滤再 take（"最新 N 条"针对的是筛出来的那批）。
+            .Where(r => recipeCodes is null || recipeCodes.Count == 0 || recipeCodes.Contains(r.Record.RecipeCode))
             .SelectMany(r => r.Curves
                 .Where(c => c.Record.CurveDefinitionId == curveDefinitionId)
                 .SelectMany(c => c.Features
@@ -335,4 +347,27 @@ internal class FakeRuntimeStore : IRuntimeStore
 
         return Task.FromResult<IReadOnlyList<CurveFeaturePoint>>(points);
     }
+
+    public Task<IReadOnlyList<CurveRecipeSampleCount>> CountCurveFeaturesByRecipeAsync(
+        int curveDefinitionId,
+        string? seriesName,
+        DateTime from,
+        DateTime to,
+        CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<CurveRecipeSampleCount>>(
+            Saved
+                .Where(r => r.Record.TriggerTime >= from && r.Record.TriggerTime <= to)
+                .SelectMany(r => r.Curves
+                    .Where(c => c.Record.CurveDefinitionId == curveDefinitionId)
+                    .SelectMany(c => c.Features
+                        .Where(f => seriesName is null || f.SeriesName == seriesName)
+                        .Select(f => new { f, r })))
+                .GroupBy(x => x.r.Record.RecipeCode ?? "")
+                .Select(g => new CurveRecipeSampleCount(
+                    g.Key,
+                    g.Count(),
+                    g.Count(x => x.r.Record.Judgement == DataTrace.Domain.Enums.Judgement.Ng)))
+                .OrderByDescending(x => x.Total)
+                .ThenBy(x => x.RecipeCode, StringComparer.Ordinal)
+                .ToList());
 }

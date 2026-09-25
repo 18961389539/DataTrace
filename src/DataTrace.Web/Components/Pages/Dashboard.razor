@@ -16,7 +16,7 @@
 @inject IReportService Reports
 @inject IJSRuntime Js
 
-<PageHeader Title="实时看板">
+<PageHeader Title="实时看板" HelpRoute="/">
     <ChildContent>
         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_stations.Count 台工站</MudChip>
         <LiveCadenceChip LastBeat="LastBeat" />
@@ -37,11 +37,14 @@
         }
 
         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" aria-label="今日（Asia/Shanghai）采集件数">今日 @_shiftTotal</MudChip>
+        <InfoHint Topic="HelpTexts.TodayScope" />
         <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">OK @_shiftOk</MudChip>
         <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined">NG @_shiftNg</MudChip>
         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">未判定 @_shiftNone</MudChip>
+        <InfoHint Topic="HelpTexts.JudgementThreeState" />
         <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined"
                  aria-label="直通率 = OK/(OK+NG)，未判定不进分母">直通率 @_shiftYieldText</MudChip>
+        <InfoHint Topic="HelpTexts.YieldRate" />
     </ChildContent>
     <Actions>
         <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="mr-2"
@@ -55,6 +58,7 @@
             · 采集中 @_stations.Count(s => s.State == StationRuntimeState.Busy)
             · <LiveClock />
         </MudText>
+        <InfoHint Topic="HelpTexts.StaleData" />
     </Actions>
 </PageHeader>
 
@@ -71,7 +75,7 @@
 @if (_dataStale)
 {
     <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3" Variant="Variant.Filled">
-        连接中断或数据已停止更新，显示可能过期（采集心跳超过 @StaleSeconds 秒未刷新）。
+        连接中断或数据已停止更新，显示可能过期（采集心跳超过 @SystemDefaults.StaleHeartbeatSeconds 秒未刷新）。
     </MudAlert>
 }
 
@@ -156,14 +160,24 @@ else
                                         @tag.Name
                                         @if (tag.OutOfLimit)
                                         {
-                                            <MudTooltip Text="超出规格限，判废">
-                                                <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined" Class="ml-1">超限</MudChip>
+                                            <MudTooltip Arrow="true" RootClass="dt-help-popover">
+                                                <ChildContent>
+                                                    <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined" Class="ml-1">超限</MudChip>
+                                                </ChildContent>
+                                                <TooltipContent>
+                                                    <HelpContent Topic="HelpTexts.LimitThreeTiers" />
+                                                </TooltipContent>
                                             </MudTooltip>
                                         }
                                         else if (tag.Warning)
                                         {
-                                            <MudTooltip Text="落在预警带，尚未判废">
-                                                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Class="ml-1">预警</MudChip>
+                                            <MudTooltip Arrow="true" RootClass="dt-help-popover">
+                                                <ChildContent>
+                                                    <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Class="ml-1">预警</MudChip>
+                                                </ChildContent>
+                                                <TooltipContent>
+                                                    <HelpContent Topic="HelpTexts.LimitThreeTiers" />
+                                                </TooltipContent>
                                             </MudTooltip>
                                         }
                                     </span>
@@ -266,7 +280,6 @@ else
 </MudExpansionPanels>
 
 @code {
-    private const int StaleSeconds = 30;
     private const int ShiftCacheSeconds = 15;
     private const string ShopFloorKey = "dt-shopfloor";
 
@@ -311,7 +324,7 @@ else
                 _isAdmin = auth.User?.IsInRole("Administrator") == true;
                 _canManageRecipes = _isAdmin || auth.User?.IsInRole("Engineer") == true;
                 var bak = BackupService.GetStatus();
-                _backupStale = bak.IsStaleOrFailed(TimeSpan.FromHours(48));
+                _backupStale = bak.IsStaleOrFailed(TimeSpan.FromHours(SystemDefaults.BackupStaleHours));
             }
             catch
             {
@@ -395,7 +408,7 @@ else
         }
 
         var age = DateTime.UtcNow - Status.LastCollectorUtc;
-        _dataStale = age.TotalSeconds > StaleSeconds;
+        _dataStale = age.TotalSeconds > SystemDefaults.StaleHeartbeatSeconds;
     }
 
     private async Task RefreshConfigAlertsAsync()

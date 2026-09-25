@@ -54,6 +54,25 @@ public sealed class InMemoryPlcDriver : IPlcDriver
 
     public void SetInt16(string address, short value) => SetWord(address, (ushort)value);
 
+    /// <summary>按顺序写入多个寄存器字（Int32 2 字、Double 4 字这类多字类型用）。</summary>
+    public void SetWords(string address, ushort[] words)
+    {
+        if (words.Length == 0)
+        {
+            return;
+        }
+
+        if (!_parser.TryParse(address, out var parsed))
+        {
+            throw new ArgumentException($"非法地址 {address}");
+        }
+
+        for (var i = 0; i < words.Length; i++)
+        {
+            _words[(parsed.Area, parsed.Offset + i)] = words[i];
+        }
+    }
+
     public void SetFloat(string address, float value, FloatWordOrder order)
     {
         if (!_parser.TryParse(address, out var parsed))

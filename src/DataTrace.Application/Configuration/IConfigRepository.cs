@@ -21,6 +21,28 @@ public sealed class AppConfigurationSnapshot
     public int Version { get; init; }
 }
 
+/// <summary>
+/// MES 推送积压状态：有多少条还没推出去、最近一次成功/失败是什么时候。
+/// </summary>
+public sealed class MesOutboxSnapshot
+{
+    /// <summary>待推送条数。</summary>
+    public int PendingCount { get; init; }
+
+    /// <summary>最久未推出去的那条进入队列的时间；没有积压时为 null。</summary>
+    public DateTime? OldestPendingAt { get; init; }
+
+    /// <summary>最近一次推送尝试的时间与结果。</summary>
+    public DateTime? LastAttemptAt { get; init; }
+
+    public bool? LastAttemptSucceeded { get; init; }
+
+    public string? LastError { get; init; }
+
+    /// <summary>最近一次成功推送的时间。</summary>
+    public DateTime? LastSuccessAt { get; init; }
+}
+
 public interface IConfigRepository
 {
     Task<AppConfigurationSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default);
@@ -47,7 +69,15 @@ public interface IConfigRepository
     Task SaveCurveCriteriaAsync(int curveId, IReadOnlyList<CurveCriterion> criteria, CancellationToken cancellationToken = default);
 
     Task SaveHeartbeatAsync(HeartbeatSettings heartbeat, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 保存系统设置。越界的取值（如保留年数为 0）会被拒绝并抛出 <see cref="InvalidOperationException"/>：
+    /// 界面上的 Min/Max 只是输入框行为，脚本与历史脏数据可以直接写库，而这类值会删数据或压垮 PLC 通讯。
+    /// </summary>
     Task SaveSettingsAsync(SystemSettings settings, CancellationToken cancellationToken = default);
+
+    /// <summary>MES 推送积压与最近一次推送结果，供设置页显示对接健康状态。</summary>
+    Task<MesOutboxSnapshot> GetMesOutboxStatusAsync(CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<Recipe>> GetRecipesAsync(CancellationToken cancellationToken = default);
 
@@ -56,6 +86,12 @@ public interface IConfigRepository
     /// 传入的 <see cref="Recipe.Limits"/> 即最终状态（空字段 = 沿用点位默认值）。
     /// </summary>
     Task SaveRecipeAsync(Recipe recipe, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 只保存型号的限值覆盖行：传入的集合即最终状态，名称/启用状态/备注一律不动。
+    /// 限值编辑器用它，免得把可能已过期的整份型号写回去。
+    /// </summary>
+    Task SaveRecipeLimitsAsync(int recipeId, IReadOnlyList<RecipeLimit> limits, CancellationToken cancellationToken = default);
 
     Task DeleteRecipeAsync(int id, CancellationToken cancellationToken = default);
 

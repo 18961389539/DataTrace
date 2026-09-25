@@ -50,7 +50,9 @@ public static class SimulatorScenario
             }
 
             var value = tag == ngTag ? OutOfLimit(tag) : InRange(tag, random);
-            WriteNumeric(plc, connection, tag, value);
+            // 按点位自己的类型编码：采集端按 WordCountOf(DataType) 取数（Int32=2 字、Double=4 字），
+            // 统一按 Int16/Float 写会让读回的值与这里写进去的值不是一回事。
+            plc.SetWords(tag.Address, ValueCodec.EncodeNumeric(value, tag.DataType, connection.FloatWordOrder));
         }
 
         foreach (var curve in station.Curves.Where(c => c.Enabled))
@@ -63,8 +65,8 @@ public static class SimulatorScenario
                 {
                     var ratio = curve.PointCount <= 1 ? 0 : (double)i / (curve.PointCount - 1);
                     var value = series.Role == SeriesRole.X
-                        ? (float)(ratio * (4.5 + random.NextDouble()))
-                        : (float)(7.5 + amp * Math.Sin(ratio * Math.PI + phase) + random.NextDouble() * 0.15);
+                        ? ratio * (4.5 + random.NextDouble())
+                        : 7.5 + amp * Math.Sin(ratio * Math.PI + phase) + random.NextDouble() * 0.15;
                     var typeWords = ValueCodec.WordCountOf(series.DataType);
                     var stride = Math.Max(typeWords, series.StrideWords);
                     if (!plc.TryParseAddress(series.StartAddress, out var start))
@@ -72,27 +74,13 @@ public static class SimulatorScenario
                         continue;
                     }
 
-                    var words = ValueCodec.EncodeFloat(value, connection.FloatWordOrder);
                     var offset = start.Offset + i * stride;
-                    plc.SetWord($"{start.Area}{offset}", words[0]);
-                    plc.SetWord($"{start.Area}{offset + 1}", words[1]);
+                    plc.SetWords($"{start.Area}{offset}", ValueCodec.EncodeNumeric(value, series.DataType, connection.FloatWordOrder));
                 }
             }
         }
 
         plc.Trigger(station.TriggerAddress, station.TriggerValue);
-    }
-
-    private static void WriteNumeric(InMemoryPlcDriver plc, PlcConnection connection, TagDefinition tag, double value)
-    {
-        if (tag.DataType is PlcDataType.Float or PlcDataType.Double)
-        {
-            plc.SetFloat(tag.Address, (float)value, connection.FloatWordOrder);
-        }
-        else
-        {
-            plc.SetInt16(tag.Address, (short)Math.Clamp(Math.Round(value), short.MinValue, short.MaxValue));
-        }
     }
 
     private static double InRange(TagDefinition tag, Random random)

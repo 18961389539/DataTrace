@@ -10,6 +10,13 @@ public sealed class CurveFileStore : ICurveFileStore
 {
     private readonly string _root;
     private const byte Version = 1;
+
+    /// <summary>单条序列的点数上限。仅用于挡住损坏文件里的非法长度，远高于任何真实配置。</summary>
+    private const int MaxPointsPerSeries = 1_000_000;
+
+    /// <summary>单条曲线的序列数上限，同为防御性上限。</summary>
+    private const int MaxSeriesPerCurve = 64;
+
     private static readonly byte[] Magic = "DTCR"u8.ToArray();
 
     public CurveFileStore(string root)
@@ -33,8 +40,14 @@ public sealed class CurveFileStore : ICurveFileStore
             triggerTime.ToString("dd"),
             $"{Sanitize(serialNo)}_{stationId}_{positionIndex}_{Sanitize(curveCode)}.curve");
         var finalFull = Path.Combine(_root, relative);
-        var tempFull = finalFull + ".tmp";
         Directory.CreateDirectory(Path.GetDirectoryName(finalFull)!);
+
+        // 绝不覆盖已存在的文件：文件名里没有记录的唯一标识，序列号重复时
+        // （配置库回滚/恢复后计数器重发同一号，或人工改库）两条记录会争同一个路径。
+        // 覆盖之后再回滚，删掉的就是上一条记录的波形 —— 而它已经不在事务里，救不回来。
+        // 撞名就让开一格，本次写的永远是自己那份。
+        finalFull = AvailablePath(finalFull);
+        var tempFull = finalFull + ".tmp";
 
         var raw = Serialize(payload);
         await using (var output = File.Create(tempFull))
@@ -46,13 +59,22 @@ public sealed class CurveFileStore : ICurveFileStore
         var bytes = await File.ReadAllBytesAsync(tempFull, cancellationToken).ConfigureAwait(false);
         var crc = Crc32Util.Compute(bytes);
         File.Move(tempFull, finalFull, overwrite: true);
-        return (relative.Replace('\\', '/'), bytes.LongLength, crc);
+        return (Path.GetRelativePath(_root, finalFull).Replace('\\', '/'), bytes.LongLength, crc);
     }
 
-    public async Task<CurvePayload> ReadAsync(string relativePath, CancellationToken cancellationToken = default)
+    public async Task<CurvePayload> ReadAsync(string relativePath, uint? expectedCrc = null, CancellationToken cancellationToken = default)
     {
         var full = Path.Combine(_root, relativePath.Replace('/', Path.DirectorySeparatorChar));
         var compressed = await File.ReadAllBytesAsync(full, cancellationToken).ConfigureAwait(false);
+
+        // 校验的是压缩后的字节，与写入口径一致。损坏与缺失必须区分开：
+        // 都报"文件缺失"的话，现场会去查备份而不是查磁盘。
+        if (expectedCrc is { } expected && Crc32Util.Compute(compressed) != expected)
+        {
+            throw new InvalidDataException(
+                $"曲线文件校验失败：CRC 与入库值不一致（{relativePath}）");
+        }
+
         using var input = new MemoryStream(compressed);
         using var brotli = new BrotliStream(input, CompressionMode.Decompress);
         using var output = new MemoryStream();
@@ -124,6 +146,16 @@ public sealed class CurveFileStore : ICurveFileStore
 
         var pointCount = reader.ReadInt32();
         var seriesCount = reader.ReadInt32();
+        if (pointCount < 0 || pointCount > MaxPointsPerSeries)
+        {
+            throw new InvalidDataException($"曲线点数非法：{pointCount}");
+        }
+
+        if (seriesCount < 0 || seriesCount > MaxSeriesPerCurve)
+        {
+            throw new InvalidDataException($"曲线序列数非法：{seriesCount}");
+        }
+
         var series = new List<CurveSeriesPayload>(seriesCount);
         for (var i = 0; i < seriesCount; i++)
         {
@@ -131,6 +163,13 @@ public sealed class CurveFileStore : ICurveFileStore
             var name = Encoding.UTF8.GetString(reader.ReadBytes(nameLen));
             var role = (SeriesRole)reader.ReadByte();
             var n = reader.ReadInt32();
+            // 长度先校验再分配：损坏文件里的长度字段是任意的，
+            // 直接 new float[n] 会变成一次大内存分配（或直接抛 OverflowException）。
+            if (n < 0 || n > MaxPointsPerSeries)
+            {
+                throw new InvalidDataException($"曲线序列点数非法：{n}");
+            }
+
             var values = new float[n];
             for (var j = 0; j < n; j++)
             {
@@ -148,6 +187,27 @@ public sealed class CurveFileStore : ICurveFileStore
         var invalid = Path.GetInvalidFileNameChars();
         var chars = value.Select(ch => invalid.Contains(ch) ? '_' : ch).ToArray();
         return new string(chars);
+    }
+
+    /// <summary>路径被占用时依次尝试 <c>-2</c>、<c>-3</c>… 后缀，返回一个当前不存在的路径。</summary>
+    private static string AvailablePath(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return path;
+        }
+
+        var directory = Path.GetDirectoryName(path)!;
+        var stem = Path.GetFileNameWithoutExtension(path);
+        var extension = Path.GetExtension(path);
+        for (var i = 2; ; i++)
+        {
+            var candidate = Path.Combine(directory, $"{stem}-{i}{extension}");
+            if (!File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
     }
 }
 

@@ -1,3 +1,4 @@
+@using DataTrace.Domain.Evaluation
 @inject IDialogService Dialogs
 <MudDialog>
     <TitleContent>
@@ -179,6 +180,14 @@
                 return;
             }
 
+            // 序列名对不上任何序列时，采集端会静默认为"这条判据不适用"，
+            // 界面上却看不出异常，等于配了一条永不生效的判据。
+            if (StaleSeries(item) is { } stale)
+            {
+                _error = $"第 {i + 1} 条判据的作用序列「{stale}」在这条曲线里不存在，该判据不会生效；请重新选择或改成主序列。";
+                return;
+            }
+
             var rangeError = ValidateRanges(item);
             if (rangeError is not null)
             {
@@ -200,6 +209,10 @@
            && c.HoldSlopeMin is null && c.HoldSlopeMax is null
            && c.FallRatioMax is null && c.MaxStepMax is null
            && c.StdDevMax is null && c.OscillationMax is null;
+
+    /// <summary>返回对不上的序列名；空串（主序列）或能匹配到序列时返回 null。</summary>
+    private string? StaleSeries(CurveCriterion c)
+        => CurveCriterionEvaluator.TargetsExistingSeries(Curve, c) ? null : c.SeriesName?.Trim();
 
     private static string? ValidateRanges(CurveCriterion c)
     {

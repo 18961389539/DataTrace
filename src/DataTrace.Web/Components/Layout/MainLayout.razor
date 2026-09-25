@@ -30,8 +30,12 @@
                 </MudChip>
                 <MudIcon Icon="@Icons.Material.Filled.AccountCircle" Class="mr-1" aria-label="@context.User.Identity?.Name" />
                 <MudText Class="mr-4 d-none d-sm-flex">@context.User.Identity?.Name</MudText>
-                <MudButton Variant="Variant.Text" Color="Color.Inherit" Href="/account/logout"
-                           StartIcon="@Icons.Material.Filled.Logout">退出</MudButton>
+                @* 退出走 POST 表单：GET 带副作用会被一张 <img src="/account/logout"> 或一次
+                   顶层导航点掉登录态。原生提交（data-enhance="false"）后由服务端 302 回看板。 *@
+                <form method="post" action="/account/logout" data-enhance="false" class="dt-logout-form">
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Text" Color="Color.Inherit"
+                               StartIcon="@Icons.Material.Filled.Logout">退出</MudButton>
+                </form>
             </Authorized>
         </AuthorizeView>
     </MudAppBar>

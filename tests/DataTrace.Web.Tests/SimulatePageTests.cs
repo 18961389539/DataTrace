@@ -3,6 +3,7 @@ using DataTrace.Collector;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Web.Components.Pages;
+using Moq;
 
 namespace DataTrace.Web.Tests;
 
@@ -44,6 +45,8 @@ public class SimulatePageTests : WebTestBase
             Settings = settings ?? new SystemSettings()
         };
 
+        // 页面上有 ⓘ（MudTooltip）——浮层宿主由基类统一补。
+        RenderPopoverHost();
         return Context.RenderComponent<Simulate>();
     }
 
@@ -113,6 +116,7 @@ public class SimulatePageTests : WebTestBase
     [Fact]
     public void RunTrimsPalletCodeAndReportsSuccess()
     {
+        Simulator.RunResult = new LineRunResult(true, null, false, "托盘 P0007 已走完全线");
         var cut = Render();
 
         TypeInto(cut, "指定托盘码", "  P0007  ");
@@ -120,7 +124,132 @@ public class SimulatePageTests : WebTestBase
 
         Assert.Equal(new[] { "P0007" }, Simulator.RunRequests);
         Assert.Equal(Severity.Success, Toast.LastSeverity);
-        Assert.Contains("P0007 已仿真走线", Toast.LastMessage);
+        Assert.Contains("P0007 已走完全线", Toast.LastMessage);
+    }
+
+    [Fact]
+    public void RunThatStopsMidLineIsReportedAsAWarning()
+    {
+        // 采集停用/地址配错时会在某一站等回写超时：这时只走了半条线，不能再报"已仿真走线"。
+        Simulator.RunResult = new LineRunResult(
+            false, "ST020", true, "托盘 P0007 在 ST020 等待上位机回写超时，未走完；请确认采集已启用、该工站地址与扫描间隔是否正确");
+        var cut = Render();
+
+        TypeInto(cut, "指定托盘码", "P0007");
+        ClickButton(cut, "走完一条线");
+
+        Assert.Equal(Severity.Warning, Toast.LastSeverity);
+        Assert.Contains("未走完", Toast.LastMessage);
+        Assert.Contains("ST020", Toast.LastMessage);
+    }
+
+    [Fact]
+    public void ClearingIntervalBlocksTheSaveInsteadOfFallingToTheMinimum()
+    {
+        var cut = Render();
+
+        // 清空后落下限 500ms 会让写库频率翻几倍，而提示却是"仿真参数已保存"。
+        TypeInto(cut, "托盘间隔(ms)", "");
+        ClickButton(cut, "保存参数");
+
+        Assert.Empty(Config.SavedSettings);
+        Assert.Contains("托盘间隔不能为空", cut.Markup);
+        Assert.Equal(Severity.Warning, Toast.LastSeverity);
+    }
+
+    [Fact]
+    public void ClearingPalletPoolBlocksTheSave()
+    {
+        var cut = Render();
+
+        // 落下限 1 会让每轮都用同一个托盘码，报表里按托盘分不开。
+        TypeInto(cut, "托盘池数量(复用)", "");
+        ClickButton(cut, "保存参数");
+
+        Assert.Empty(Config.SavedSettings);
+        Assert.Contains("托盘池数量不能为空", cut.Markup);
+    }
+
+    [Fact]
+    public void UnsavedOptionsAreFlaggedInTheHeader()
+    {
+        var cut = Render();
+
+        Assert.DoesNotContain("有未保存的参数", cut.Markup);
+
+        TypeInto(cut, "托盘间隔(ms)", "1000");
+
+        Assert.Contains("有未保存的参数", cut.Markup);
+    }
+
+    [Fact]
+    public void NonFirstStationTriggerAsksBeforeWritingAJumpRecord()
+    {
+        var cut = Render(stations: [St(1, "ST020", 2, 1)]);
+
+        // 非首站触发会让采集端把这条记成"跳站异常"，先确认。
+        ClickButton(cut, "触发 ST020");
+        var box = Assert.Single(Dialogs.MessageBoxes);
+        Assert.Contains("不是首站", box.Message);
+        Assert.Contains("跳站", box.Message);
+
+        Dialogs.MessageBoxResult = false;
+        ClickButton(cut, "触发 ST020");
+        Assert.Empty(Simulator.RunRequests);
+    }
+
+    [Fact]
+    public void FirstStationTriggerNeedsNoConfirmation()
+    {
+        var station = St(1, "ST010", 1, 1);
+        station.IsFirstStation = true;
+        var cut = Render(stations: [station]);
+
+        ClickButton(cut, "触发 ST010");
+
+        Assert.Empty(Dialogs.MessageBoxes);
+        Assert.True(Simulators.TryGet(1, out var driver));
+        Assert.Equal(1, (short)driver!.GetWord("D200"));
+    }
+
+    [Fact]
+    public void SimulatorActionsAreAudited()
+    {
+        var cut = Render(settings: new SystemSettings { SimulatorAutoRun = false });
+
+        ClickButton(cut, "触发 ST010");
+        ClickButton(cut, "走完一条线");
+        ClickButton(cut, "保存参数");
+        ToggleSwitch(cut, true);
+
+        foreach (var action in new[] { "TriggerStation", "RunPallet", "SaveOptions", "Enable" })
+        {
+            Audit.Verify(
+                a => a.WriteAsync(It.IsAny<string>(), action, "LineSimulator", It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+                Times.Once,
+                $"动作 {action} 应留下审计记录");
+        }
+    }
+
+    [Fact]
+    public void AuditFailureIsReportedWithoutHidingTheAction()
+    {
+        Audit
+            .Setup(a => a.WriteAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("审计库只读"));
+
+        var cut = Render();
+        ClickButton(cut, "走完一条线");
+
+        Assert.Contains(Toast.Messages, m => m.Contains("审计记录失败") && m.Contains("审计库只读"));
+        Assert.Contains(Toast.Messages, m => m.Contains("已走完全线"));
     }
 
     [Fact]

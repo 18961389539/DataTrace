@@ -1,10 +1,11 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using DataTrace.Application.Configuration;
 using DataTrace.Application.Evaluation;
 using DataTrace.Application.Runtime;
 using DataTrace.Collector;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
+using DataTrace.Domain.Validation;
 using DataTrace.Infrastructure.Persistence;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -105,7 +106,8 @@ public class RetentionServiceTests
     public async Task RetentionYearsBelowOneIsFlooredToOne()
     {
         await using var ctx = await InfrastructureContext.CreateAsync();
-        await SetRetentionAsync(ctx, 0);
+        // 0 只能来自存量脏数据（仓储已拒绝写 0）：清理任务必须把它当成 1 年，而不是"永久保留"。
+        await ctx.ForceSettingsAsync(s => s.RetentionYears = 0);
 
         var factory = ctx.Provider.GetRequiredService<RuntimeDbFactory>();
         var tooOld = DateTime.Now.AddMonths(-13);
@@ -306,7 +308,7 @@ public class MesOutboxProcessorTests
     }
 
     [Fact]
-    public async Task ProcessesOldestTwentyFirst()
+    public async Task PushesPendingInCreatedOrderWithinTheBatch()
     {
         await using var ctx = await InfrastructureContext.CreateAsync();
         await EnableMesAsync(ctx, "http://mes.local/push");
@@ -324,9 +326,9 @@ public class MesOutboxProcessorTests
             new MesOutboxProcessor(ctx.ScopeFactory, http, ctx.Logger<MesOutboxProcessor>()),
             () => ReadStatus(ctx, ids[19]) == MesOutboxStatus.Succeeded);
 
-        Assert.Equal(20, http.Handler.Requests.Count);
-        Assert.Equal(20, ids.Count(id => ReadStatus(ctx, id) == MesOutboxStatus.Succeeded));
-        Assert.All(ids.Skip(20), id => Assert.Equal(MesOutboxStatus.Pending, ReadStatus(ctx, id)));
+        // 单轮批量远大于这里的 25 条，一轮就该按排队顺序全部推完（停机恢复后要能追上积压）。
+        Assert.Equal(25, http.Handler.Requests.Count);
+        Assert.All(ids, id => Assert.Equal(MesOutboxStatus.Succeeded, ReadStatus(ctx, id)));
     }
 
     [Theory]
@@ -336,7 +338,13 @@ public class MesOutboxProcessorTests
     public async Task ClientTimeoutIsFlooredAtThreeSeconds(int configured, int expectedSeconds)
     {
         await using var ctx = await InfrastructureContext.CreateAsync();
-        await EnableMesAsync(ctx, "http://mes.local/push", timeoutSeconds: configured);
+        await EnableMesAsync(ctx, "http://mes.local/push", timeoutSeconds: Math.Max(SettingsLimits.MinMesTimeoutSeconds, configured));
+        if (configured < SettingsLimits.MinMesTimeoutSeconds)
+        {
+            // 0 只能来自存量脏数据：仓储层已拒绝，处理器的兜底仍要把它夹到 3 秒。
+            await ctx.ForceSettingsAsync(s => s.MesTimeoutSeconds = configured);
+        }
+
         var id = await AddPendingAsync(ctx, "SN-0005", "P005");
         var http = new FakeHttpClientFactory(new FakeHttpMessageHandler(200));
 

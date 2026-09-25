@@ -1,6 +1,7 @@
 using DataTrace.Application.Configuration;
 using DataTrace.Collector;
 using DataTrace.Domain.Entities;
+using DataTrace.Web.Components.Dialogs;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -15,6 +16,13 @@ public sealed class FakeConfigRepository : IConfigRepository
     public List<string> Calls { get; } = [];
 
     public List<SystemSettings> SavedSettings { get; } = [];
+
+    /// <summary>页面交回来的实体，供断言"界面把什么写下去了"。</summary>
+    public List<Station> SavedStations { get; } = [];
+
+    public List<TagDefinition> SavedTags { get; } = [];
+
+    public List<CurveDefinition> SavedCurves { get; } = [];
 
     /// <summary>置为异常工厂即可让读取/保存失败，用于验证页面的降级分支。</summary>
     public Func<Exception>? FailWith { get; set; }
@@ -68,6 +76,15 @@ public sealed class FakeConfigRepository : IConfigRepository
         return Task.CompletedTask;
     }
 
+    /// <summary>MES 推送状态：默认给一份"没有积压"的快照，用例可覆盖。</summary>
+    public MesOutboxSnapshot MesOutboxStatus { get; set; } = new();
+
+    public Task<MesOutboxSnapshot> GetMesOutboxStatusAsync(CancellationToken cancellationToken = default)
+    {
+        Calls.Add(nameof(GetMesOutboxStatusAsync));
+        return Task.FromResult(MesOutboxStatus);
+    }
+
     public Task<int> GetVersionAsync(CancellationToken cancellationToken = default) => Task.FromResult(Snapshot.Version);
 
     public Task<IReadOnlyList<PlcConnection>> GetPlcConnectionsAsync(CancellationToken cancellationToken = default)
@@ -89,19 +106,28 @@ public sealed class FakeConfigRepository : IConfigRepository
         => Task.FromResult(Snapshot.Stations.FirstOrDefault(x => x.Id == id));
 
     public Task SaveStationAsync(Station station, CancellationToken cancellationToken = default)
-        => Recorded(nameof(SaveStationAsync));
+    {
+        SavedStations.Add(station);
+        return Recorded(nameof(SaveStationAsync));
+    }
 
     public Task DeleteStationAsync(int id, CancellationToken cancellationToken = default)
         => Recorded(nameof(DeleteStationAsync));
 
     public Task SaveTagAsync(TagDefinition tag, CancellationToken cancellationToken = default)
-        => Recorded(nameof(SaveTagAsync));
+    {
+        SavedTags.Add(tag);
+        return Recorded(nameof(SaveTagAsync));
+    }
 
     public Task DeleteTagAsync(int id, CancellationToken cancellationToken = default)
         => Recorded(nameof(DeleteTagAsync));
 
     public Task SaveCurveAsync(CurveDefinition curve, CancellationToken cancellationToken = default)
-        => Recorded(nameof(SaveCurveAsync));
+    {
+        SavedCurves.Add(curve);
+        return Recorded(nameof(SaveCurveAsync));
+    }
 
     public Task DeleteCurveAsync(int id, CancellationToken cancellationToken = default)
         => Recorded(nameof(DeleteCurveAsync));
@@ -117,6 +143,9 @@ public sealed class FakeConfigRepository : IConfigRepository
 
     public Task SaveRecipeAsync(Recipe recipe, CancellationToken cancellationToken = default)
         => Recorded(nameof(SaveRecipeAsync));
+
+    public Task SaveRecipeLimitsAsync(int recipeId, IReadOnlyList<RecipeLimit> limits, CancellationToken cancellationToken = default)
+        => Recorded(nameof(SaveRecipeLimitsAsync));
 
     public Task DeleteRecipeAsync(int id, CancellationToken cancellationToken = default)
         => Recorded(nameof(DeleteRecipeAsync));
@@ -154,13 +183,16 @@ public sealed class FakeLineSimulator : ILineSimulator
 
     public Func<Exception>? FailRunWith { get; set; }
 
+    /// <summary>默认"走完了"；用例可改成超时/中断，验证页面不再无脑报成功。</summary>
+    public LineRunResult RunResult { get; set; } = new(true, null, false, "托盘已走完全线");
+
     public event Action? Changed;
 
     public void RaiseChanged() => Changed?.Invoke();
 
     public void SetRunning(bool running) => RunningChanges.Add(running);
 
-    public Task RunOnePalletAsync(string? palletCode = null, CancellationToken cancellationToken = default)
+    public Task<LineRunResult> RunOnePalletAsync(string? palletCode = null, CancellationToken cancellationToken = default)
     {
         RunRequests.Add(palletCode);
         if (FailRunWith is { } factory)
@@ -168,7 +200,7 @@ public sealed class FakeLineSimulator : ILineSimulator
             throw factory();
         }
 
-        return Task.CompletedTask;
+        return Task.FromResult(RunResult);
     }
 }
 
@@ -204,12 +236,18 @@ public sealed class ToastSpy
     }
 }
 
-/// <summary>确认框替身：记录弹了几次、什么文案，并按脚本返回是/否。</summary>
+/// <summary>确认框替身：记录弹了几次、什么文案，并按脚本返回是/否；同时记录编辑类对话框的下发参数。</summary>
 public sealed class DialogSpy
 {
     public List<(string Title, string Message)> MessageBoxes { get; } = [];
 
+    /// <summary>打开过的编辑对话框：(标题, 参数)。用来断言页面下发了什么默认值。</summary>
+    public List<(string Title, DialogParameters Parameters)> Shown { get; } = [];
+
     public bool? MessageBoxResult { get; set; } = true;
+
+    /// <summary>对话框的返回结果；不设则视为用户取消（页面据此不做任何写入）。</summary>
+    public DialogResult? DialogResult { get; set; }
 
     public Mock<IDialogService> Mock { get; } = new();
 
@@ -237,6 +275,22 @@ public sealed class DialogSpy
             .Callback<string?, MarkupString, string, string?, string?, DialogOptions?>(
                 (title, message, yes, cancel, secondary, options) => Record(title, message.ToString(), yes, cancel, secondary, options))
             .Returns(() => Task.FromResult(MessageBoxResult));
+
+        Mock.Setup(d => d.ShowAsync<PlcEditDialog>(
+                It.IsAny<string>(),
+                It.IsAny<DialogParameters>(),
+                It.IsAny<DialogOptions>()))
+            .Returns((string title, DialogParameters parameters, DialogOptions _) =>
+            {
+                lock (Shown)
+                {
+                    Shown.Add((title, parameters));
+                }
+
+                var reference = new Mock<IDialogReference>();
+                reference.SetupGet(r => r.Result).Returns(() => Task.FromResult(DialogResult));
+                return Task.FromResult(reference.Object);
+            });
     }
 
     private void Record(string? title, string message, string? yesText = null, string? cancelText = null, string? secondaryText = null, DialogOptions? options = null)

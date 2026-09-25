@@ -37,13 +37,13 @@ public sealed class SiemensAddressParser : IAddressParser
                 }
 
                 var bit = int.Parse(db.Groups["bit"].Value);
-                address = new PlcAddress(area, offset, bit, AddressKind.Bit, raw);
+                address = new PlcAddress(area, offset, bit, AddressKind.Bit, raw, OffsetUnit.Byte);
                 return true;
             }
 
-            // S7 偏移是字节。内部统一按字（2 字节）对齐时，WordOffset = offset / 2 不够通用。
-            // 这里 Offset 保存字节偏移，Kind=Word，由驱动按字节读取。
-            address = new PlcAddress(area, offset, -1, AddressKind.Word, raw);
+            // S7 的偏移是字节：DB1.DBW10 指第 10 个字节，而不是第 10 个字。
+            // 内部按字读时靠 OffsetUnit.Byte 让读计划按字节步进，避免把偏移当字数算。
+            address = new PlcAddress(area, offset, -1, AddressKind.Word, raw, OffsetUnit.Byte);
             return true;
         }
 
@@ -58,11 +58,12 @@ public sealed class SiemensAddressParser : IAddressParser
         if (simple.Groups["bit"].Success)
         {
             var bit = int.Parse(simple.Groups["bit"].Value);
-            address = new PlcAddress(areaName, offset2, bit, AddressKind.Bit, raw);
+            address = new PlcAddress(areaName, offset2, bit, AddressKind.Bit, raw, OffsetUnit.Byte);
             return true;
         }
 
-        address = new PlcAddress(areaName, offset2, -1, AddressKind.Word, raw);
+        // 与 DB 区同理：MW10 / MB5 / M10 里的数字都是字节偏移。
+        address = new PlcAddress(areaName, offset2, -1, AddressKind.Word, raw, OffsetUnit.Byte);
         return true;
     }
 
