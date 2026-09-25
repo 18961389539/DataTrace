@@ -282,6 +282,8 @@ else
 
 @code {
     private const int ShiftCacheSeconds = 15;
+    /// <summary>页面级刷新节拍（毫秒）。</summary>
+    private const int UiTickMs = 5000;
     private const string ShopFloorKey = "dt-shopfloor";
 
     private bool _productionSimWarning;
@@ -340,7 +342,9 @@ else
         Refresh();
         EvaluateStale();
         Status.Changed += OnChanged;
-        _uiTimer = new Timer(_ => _ = InvokeAsync(OnUiTickAsync), null, 1000, 1000);
+        // 5 秒一跳：这一跳只做"轻活"（比版本号 + 推进卡片上的相对时间），
+        // 时钟与节拍芯片各自有 1 秒计时器，不受这里影响。
+        _uiTimer = new Timer(_ => _ = InvokeAsync(OnUiTickAsync), null, UiTickMs, UiTickMs);
         await RefreshShiftAsync(force: true);
     }
 
@@ -367,8 +371,10 @@ else
     }
     private void OnChanged() => _ = InvokeAsync(async () =>
     {
+        // 这里只碰内存里的运行时快照。配置快照（GetSnapshotAsync 要拉整条
+        // 工站→点位/曲线/序列/判据 与 型号→限值 的关联链）挪到下面的定时跳里按版本号比对，
+        // 否则采集侧每秒推好几次事件，这条重查询就跟着跑好几次。
         Refresh();
-        await RefreshConfigAlertsAsync();
         await RefreshShiftAsync(force: false);
         EvaluateStale();
         StateHasChanged();
@@ -396,6 +402,8 @@ else
             // ignore tick errors
         }
 
+        // 这一跳还得重画：卡片上的「30 秒前」只能靠它推进 —— hub 只在状态真的变了时才推事件，
+        // 停机（或采集关闭）之后就没有事件了，不重画的话那些相对时间会一直冻在最后一次采集上。
         StateHasChanged();
     }
 
