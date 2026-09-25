@@ -37,6 +37,7 @@
                         }
                     </MudSelect>
                     <MudSwitch @bind-Value="item.Enabled" Label="启用" Color="Color.Primary" />
+                    <InfoHint Topic="HelpTexts.CriterionDisabled" />
                     <MudSpacer />
                     <MudTooltip Text="删除这条判据">
                         <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline" Color="Color.Error" Size="Size.Small"
@@ -61,7 +62,7 @@
                     </MudItem>
                 </MudGrid>
 
-                <MudText Typo="Typo.caption" Class="dt-muted">面积与波动</MudText>
+                <MudText Typo="Typo.caption" Class="dt-muted">面积与波动<InfoHint Topic="HelpTexts.CurveFeatureAxis" /></MudText>
                 <MudGrid Class="dt-filters">
                     <MudItem xs="6" md="3">
                         <MudNumericField @bind-Value="item.AreaMin" Label="面积下限" HelperText="做功不足" Disabled="!item.Enabled" />

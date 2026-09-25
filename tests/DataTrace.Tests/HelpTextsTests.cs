@@ -146,14 +146,15 @@ public class HelpTextsTests
     [InlineData("", 6)]
     [InlineData("query", 6)]
     [InlineData("reports", 8)]
-    [InlineData("curve-baseline", 4)]
+    [InlineData("curve-baseline", 6)]
     [InlineData("logs", 4)]
     [InlineData("config/plc", 4)]
     [InlineData("config/stations", 4)]
-    [InlineData("config/recipes", 3)]
+    [InlineData("config/recipes", 7)]
     [InlineData("config/settings", 6)]
     [InlineData("simulate", 5)]
-    [InlineData("users", 4)]
+    [InlineData("users", 5)]
+    [InlineData("record", 7)]
     public void Every_page_mapping_lists_topics_that_exist(string route, int expected)
     {
         // 页头「本页说明」按这份映射取条目；写错路由会让整页入口凭空消失，且没有任何别的检查能发现。

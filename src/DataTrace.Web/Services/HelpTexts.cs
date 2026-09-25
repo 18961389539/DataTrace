@@ -119,7 +119,7 @@ public static class HelpTexts
     public static readonly HelpTopic RoleScope = new(
         "角色权限",
         "调岗改角色即可，不必删号重建；一个账号可以同时有多个角色。",
-        "改动即时生效；撤掉某人的管理员角色时，注意别把最后一个管理员撤掉。");
+        "角色写在登录凭据里，对方要重新登录才受限；撤管理员角色时注意别撤掉最后一个。");
 
     public static readonly HelpTopic DeleteUser = new(
         "删除用户",
@@ -238,7 +238,7 @@ public static class HelpTexts
 
     public static readonly HelpTopic DeviationThresholds = new(
         "偏离门槛",
-        "综合偏离是各维度 z 值的均方根，明细里只列出偏离 ≥ 2σ 的维度。",
+        "综合偏离是各维度 z 值的均方根（明细与芯片上显示的就是它），明细只列偏离 ≥ 2σ 的维度。",
         "综合 ≥ 3σ 或单维 ≥ 4σ 判异常，综合 ≥ 2σ 判可疑；零波动维度被打破也会计入。");
 
     public static readonly HelpTopic OnlineBaseline = new(
@@ -295,6 +295,62 @@ public static class HelpTexts
         "显示采集端写回触发寄存器的响应码：2 是采集成功，3–8 分别是读失败、托盘码非法、校验失败等。",
         "它不是 PLC 写的值；仿真等不到这个回写（寄存器一直等于触发值）就判超时。");
 
+    // ---------- 记录明细 ----------
+
+    public static readonly HelpTopic LimitColumns = new(
+        "限值列",
+        "四道限值随记录一起落库，界面按记录当时的值显示。",
+        "上下限都空的旧记录（早于限值落库那一版）看起来像没配限值，导出时这类格子也留空。");
+
+    public static readonly HelpTopic OverTolerance = new(
+        "超差",
+        "必填点位取到空值时直接算超规格，所以数值列显示「-」的行也可能判超差。",
+        "这种行要按结果码与错误信息去查取数失败，不是核对差了多少。");
+
+    public static readonly HelpTopic CurvePointCount = new(
+        "曲线点数",
+        "点数栏是采集时配置、随记录落库的值；图上是抽稀后的样子（最多画 600 点）。",
+        "导出的是成对全量数据，按图上数点会误以为丢了点。");
+
+    // ---------- 型号限值与曲线判据的对话框 ----------
+
+    public static readonly HelpTopic LimitMergeRule = new(
+        "生效限值",
+        "对话框里的生效值是「本型号覆盖值 ⊕ 点位默认值」逐字段合并出来的。",
+        "留空表示沿用默认值：只改一侧黄线，就可能撞上你没看到的默认红线而被拦下。");
+
+    public static readonly HelpTopic TargetValue = new(
+        "目标值",
+        "目标值只作为 SPC 的中心线，不随记录落库。",
+        "报表里的目标线取当前配置：改了目标值，历史区间的对照线也会跟着变。");
+
+    public static readonly HelpTopic LimitEffect = new(
+        "限值生效",
+        "保存后配置版本自增，采集端下一轮取快照时才用新限值。",
+        "已采集的记录不会重算；型号未启用或不是当前型号时，覆盖值一律回落默认限值。");
+
+    public static readonly HelpTopic CoverablePoints = new(
+        "可覆盖点位",
+        "只有数值型点位（整型与浮点）能配覆盖值。",
+        "布尔与字符串点位不在这张矩阵里，只能靠点位默认限值与曲线判据管。");
+
+    public static readonly HelpTopic CriterionDisabled = new(
+        "停用判据",
+        "关掉「启用」再保存，这一条判据会被移除，阈值不再保留。",
+        "只是临时不想用的话请先记下阈值：系统只留启用中的判据，历史判异也不看它。");
+
+    public static readonly HelpTopic CurveFeatureAxis = new(
+        "特征口径",
+        "面积与上升/保压斜率都按采样序号轴算，不是按时间或位移。",
+        "改采样点数或扫描周期后，同一波形的数值会变，历史阈值需要重新标定。");
+
+    // ---------- 编辑用户 ----------
+
+    public static readonly HelpTopic DisplayName = new(
+        "显示名",
+        "显示名只出现在用户列表里；审计日志的操作人用的是登录名。",
+        "改显示名不会改变历史操作的归属；登录名创建后不可修改。");
+
     // ---------- 页面 → 详解的映射 ----------
 
     /// <summary>某一页挂了哪些详解 —— 供页头的「本页说明」入口使用。</summary>
@@ -310,14 +366,15 @@ public static class HelpTexts
             "" => [YieldRate, TodayScope, JudgementThreeState, LimitThreeTiers, StaleData, Cadence],
             "query" => [RangeScope, MatchMode, ExportLimit, ResultCode, RecipeScope, JudgementThreeState],
             "reports" => [YieldRate, AverageYield, RecipeScope, IssueShare, LimitThreeTiers, TrendSampleLimit, Capability, SegmentAsterisk],
-            "curve-baseline" => [BaselineSampleCounts, RecipeMismatch, DeviationThresholds, OnlineBaseline],
+            "curve-baseline" => [BaselineSampleCounts, RecipeMismatch, DeviationThresholds, OnlineBaseline, CriterionDisabled, CurveFeatureAxis],
             "logs" => [LogTimeRange, LogEntityKey, LogChange, LogKeyword],
             "config/plc" => [Heartbeat, PlcEnabled, MergeGap, SimulatorBrand],
             "config/stations" => [TriggerValue, BoolAddress, PositionScope, FirstLastStation],
-            "config/recipes" => [RecipeCode, RecipeEnabled, RecipeCopy],
+            "config/recipes" => [RecipeCode, RecipeEnabled, RecipeCopy, LimitMergeRule, TargetValue, LimitEffect, CoverablePoints],
             "config/settings" => [SaveToDispatch, ScanInterval, WriteRetry, ConfigSource, Retention, MesOutbox],
             "simulate" => [SimAutoRun, SimPalletInterval, SimNgPercent, SimRunLine, SimLastWriteBack],
-            "users" => [Lockout, RoleScope, DeleteUser, UserNameImmutable],
+            "users" => [Lockout, RoleScope, DeleteUser, UserNameImmutable, DisplayName],
+            "record" => [LimitThreeTiers, JudgementThreeState, LimitColumns, OverTolerance, CurvePointCount, DeviationThresholds, RecipeScope],
             _ => []
         };
     }

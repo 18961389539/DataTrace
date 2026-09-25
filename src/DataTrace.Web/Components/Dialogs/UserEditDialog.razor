@@ -12,6 +12,7 @@
                       Placeholder="如：张工（一号线）"
                       Error="@(_displayError is not null)" ErrorText="@_displayError"
                       @bind-Value:after="ValidateDisplay" />
+        <InfoHint Topic="HelpTexts.DisplayName" />
         <MudText Typo="Typo.body2" Class="mt-3 mb-1">角色（可多选）</MudText>
         @* 只有 4 个固定角色，用复选框比多选下拉更直白：一眼能看到"这个账号到底有几个角色"，
            也免去 MudSelect 多选绑定的类型体操。 *@
@@ -30,7 +31,7 @@
         <MudText Typo="Typo.caption" Class="dt-muted">@HintText</MudText>
     </DialogContent>
     <DialogActions>
-        <MudText Typo="Typo.caption" Class="dt-muted align-self-center mr-auto">用户名不可改，角色改动即时生效</MudText>
+        <MudText Typo="Typo.caption" Class="dt-muted align-self-center mr-auto">用户名不可改，角色改动在对方下次登录生效</MudText>
         <MudButton OnClick="Cancel">取消</MudButton>
         <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit">保存</MudButton>
     </DialogActions>

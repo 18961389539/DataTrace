@@ -10,7 +10,7 @@
 
         <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-3">
             这里填的是<b>本型号的覆盖值</b>，留空的项沿用点位默认限值（不是「不判」）。
-            五个字段全部留空的点位等于没有覆盖，保存时会被丢弃。
+            五个字段全部留空的点位等于没有覆盖，保存时会被丢弃。<InfoHint Topic="HelpTexts.CoverablePoints" />
         </MudAlert>
 
         @if (!string.IsNullOrEmpty(_error))
@@ -26,7 +26,7 @@
         else
         {
             <MudText Typo="Typo.caption" Class="dt-muted mb-2">
-                共 @_rows.Count 个点位，其中 @_rows.Count(r => r.IsOverridden) 个被本型号覆盖。
+                共 @_rows.Count 个点位，其中 @_rows.Count(r => r.IsOverridden) 个被本型号覆盖。<InfoHint Topic="HelpTexts.LimitMergeRule" />
             </MudText>
             @if (_rows.Any(r => !r.Tag.Enabled))
             {
@@ -47,7 +47,7 @@
                     <MudTh>规格上限</MudTh>
                     <MudTh>预警下限</MudTh>
                     <MudTh>预警上限</MudTh>
-                    <MudTh>目标值</MudTh>
+                    <MudTh>目标值 <InfoHint Topic="HelpTexts.TargetValue" /></MudTh>
                 </HeaderContent>
                 <RowTemplate>
                     <MudTd Class="dt-nowrap">
@@ -88,6 +88,7 @@
         <MudButton OnClick="Cancel">取消</MudButton>
         <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save"
                    OnClick="Submit">保存</MudButton>
+        <InfoHint Topic="HelpTexts.LimitEffect" />
     </DialogActions>
 </MudDialog>
 

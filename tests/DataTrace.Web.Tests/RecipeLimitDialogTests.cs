@@ -60,6 +60,8 @@ public class RecipeLimitDialogTests : WebTestBase
 
         // 走真对话框路径（真 DialogService + MudDialogProvider），否则测不到对话框自己列了哪些点位。
         Context.Services.AddSingleton<IDialogService, DialogService>();
+        // 对话框里现在有 ⓘ（MudTooltip）——浮层宿主由基类统一补。
+        RenderPopoverHost();
         var provider = Context.RenderComponent<MudDialogProvider>();
         var dialogs = Context.Services.GetRequiredService<IDialogService>();
         await dialogs.ShowAsync<RecipeLimitDialog>("型号限值", new DialogParameters

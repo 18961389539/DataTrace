@@ -17,7 +17,7 @@
 
 @if (!_loaded)
 {
-    <PageHeader Title="记录明细">
+    <PageHeader Title="记录明细" HelpRoute="record">
         <Actions>
             <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Href="@BackUrl">返回查询</MudButton>
         </Actions>
@@ -26,7 +26,7 @@
 }
 else if (_record is null)
 {
-    <PageHeader Title="记录明细">
+    <PageHeader Title="记录明细" HelpRoute="record">
         <Actions>
             <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Href="@BackUrl">返回查询</MudButton>
         </Actions>
@@ -37,7 +37,7 @@ else if (_record is null)
 }
 else
 {
-    <PageHeader Title="@_record.StationCode">
+    <PageHeader Title="@_record.StationCode" HelpRoute="record">
         <ChildContent>
             <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
                      Color="@(_record.Judgement == Judgement.Ng ? Color.Error : _record.Judgement == Judgement.Ok ? Color.Success : Color.Default)">
@@ -107,7 +107,7 @@ else
             </MudChip>
         }
         <MudText Typo="Typo.caption" Class="dt-muted">
-            共 @_record.TagValues.Count 项 · 限值取判定那一刻生效的配置（含型号覆盖），不随后续改动重算
+            共 @_record.TagValues.Count 项 · 限值取判定那一刻生效的配置（含型号覆盖），不随后续改动重算<InfoHint Topic="HelpTexts.LimitColumns" />
         </MudText>
     </MudStack>
     <MudTable Items="_tagRows" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
@@ -117,7 +117,7 @@ else
             <MudTh>数值</MudTh>
             <MudTh>规格限</MudTh>
             <MudTh>预警限</MudTh>
-            <MudTh>判定</MudTh>
+            <MudTh>判定 <InfoHint Topic="HelpTexts.OverTolerance" /></MudTh>
         </HeaderContent>
         <RowTemplate>
             <MudTd DataLabel="点位">@context.TagName</MudTd>
@@ -145,17 +145,27 @@ else
             <MudTd DataLabel="判定">
                 @if (context.IsOutOfLimit)
                 {
-                    <MudTooltip Text="超出规格限（判废）">
-                        <MudIcon Icon="@Icons.Material.Filled.ErrorOutline" Size="Size.Small"
-                                 Color="Color.Error" aria-label="超出规格限" />
+                    <MudTooltip Arrow="true" RootClass="dt-help-popover">
+                        <ChildContent>
+                            <MudIcon Icon="@Icons.Material.Filled.ErrorOutline" Size="Size.Small"
+                                     Color="Color.Error" aria-label="超出规格限" />
+                        </ChildContent>
+                        <TooltipContent>
+                            <HelpContent Topic="HelpTexts.LimitThreeTiers" />
+                        </TooltipContent>
                     </MudTooltip>
                     <MudText Typo="Typo.caption" Class="dt-text-error ml-1">超差</MudText>
                 }
                 else if (context.IsWarning)
                 {
-                    <MudTooltip Text="落在预警带（不判废）">
-                        <MudIcon Icon="@Icons.Material.Filled.WarningAmber" Size="Size.Small"
-                                 Color="Color.Warning" aria-label="落在预警带" />
+                    <MudTooltip Arrow="true" RootClass="dt-help-popover">
+                        <ChildContent>
+                            <MudIcon Icon="@Icons.Material.Filled.WarningAmber" Size="Size.Small"
+                                     Color="Color.Warning" aria-label="落在预警带" />
+                        </ChildContent>
+                        <TooltipContent>
+                            <HelpContent Topic="HelpTexts.LimitThreeTiers" />
+                        </TooltipContent>
                     </MudTooltip>
                     <MudText Typo="Typo.caption" Class="dt-text-warning ml-1">预警</MudText>
                 }
@@ -176,7 +186,7 @@ else
                     <MudText Typo="Typo.subtitle1">@curve.CurveName</MudText>
                     <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@curve.CurveCode</MudChip>
                     <MudText Typo="Typo.caption" Class="dt-muted">
-                        @curve.PointCount 点 · @FileSizeText(curve.FileSize)
+                        @curve.PointCount 点 · @FileSizeText(curve.FileSize)<InfoHint Topic="HelpTexts.CurvePointCount" />
                     </MudText>
                     <MudSpacer />
                     @if (PayloadFor(curve.Id) is null)
@@ -193,11 +203,16 @@ else
                     <MudStack Row="true" Spacing="2" Class="flex-wrap mb-2">
                         @foreach (var feature in curve.Features.OrderBy(f => f.Role))
                         {
-                            <MudTooltip Text="@DeviationTitle(feature)">
-                                <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
-                                         Color="@DeviationColor(feature)">
-                                    @feature.SeriesName @DeviationText(feature)
-                                </MudChip>
+                            <MudTooltip Arrow="true" RootClass="dt-help-popover">
+                                <ChildContent>
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                                             Color="@DeviationColor(feature)">
+                                        @feature.SeriesName @DeviationText(feature)
+                                    </MudChip>
+                                </ChildContent>
+                                <TooltipContent>
+                                    <HelpContent Topic="HelpTexts.DeviationThresholds" Extra="@DeviationTitle(feature)" />
+                                </TooltipContent>
                             </MudTooltip>
                         }
                         <MudText Typo="Typo.caption" Class="dt-muted align-self-center">

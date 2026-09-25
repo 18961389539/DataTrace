@@ -108,6 +108,42 @@ public sealed class InfoHintE2ETests : E2ETestBase
     }
 
     [Fact]
+    public async Task A_tooltip_fits_inside_a_narrow_viewport()
+    {
+        // "提示看不全"现场不会当成 bug 上报，但它是真的看不见：文案最长的那条在 430px 上
+        // 一旦被裁到屏幕外，用户只能看到半句话，还以为这就是全部内容。
+        await Page.SetViewportSizeAsync(430, 932);
+        await Page.GotoAsync($"{App.BaseUrl}/query");
+        await WaitForAsync(".mud-layout");
+        await WaitForCircuitReadyAsync();
+
+        // 挑正文最长的一枚：导出上限那条还带动态命中条数，Extra + 三段一起撑到最宽。
+        var hint = Page.Locator("button[aria-label='说明：导出上限']");
+        Assert.Equal(1, await hint.CountAsync());
+        await hint.HoverAsync();
+
+        await Page.WaitForFunctionAsync("""
+            () => [...document.querySelectorAll('.mud-tooltip')].some(t => (t.innerText || '').trim().length > 10)
+            """);
+
+        var box = await Page.EvaluateAsync<double[]>("""
+            () => {
+                const tip = [...document.querySelectorAll('.mud-tooltip')]
+                    .find(t => (t.innerText || '').trim().length > 10);
+                const r = tip.getBoundingClientRect();
+                return [r.left, r.top, r.right, r.bottom, window.innerWidth, window.innerHeight];
+            }
+            """);
+
+        Assert.NotNull(box);
+        var (left, top, right, bottom, width, height) = (box[0], box[1], box[2], box[3], box[4], box[5]);
+        Assert.True(left >= -1, $"浮层左边被裁：left={left:0}");
+        Assert.True(top >= -1, $"浮层上边被裁：top={top:0}");
+        Assert.True(right <= width + 1, $"浮层右边出屏：right={right:0} > 视口 {width:0}");
+        Assert.True(bottom <= height + 1, $"浮层下边出屏：bottom={bottom:0} > 视口 {height:0}");
+    }
+
+    [Fact]
     public async Task A_hint_can_be_read_with_the_keyboard_alone()
     {
         await Page.GotoAsync($"{App.BaseUrl}/reports");

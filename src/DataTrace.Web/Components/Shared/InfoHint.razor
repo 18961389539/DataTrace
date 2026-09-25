@@ -18,7 +18,12 @@
     </MudTooltip>
     @* MudTooltip 不给触发器做任何 ARIA 关联（见其源码：只有激活元素 + popover），
        所以读屏用户只能听到「说明：直通率」这四个字，三段正文一个词都到不了。
-       这里另备一份视觉隐藏的完整说明，由上面的 aria-describedby 指过来。 *@
+       这里另备一份视觉隐藏的完整说明，由上面的 aria-describedby 指过来。
+
+       注意：这份文本虽然看不见，却会进入 innerText —— 所以
+       ① 不要把它放进表头之类的单元格里（E2E 有按表头文字全等断言的用例）；
+       ② HelpTexts 的文案必须避开「未保存」「未配置」这类被断言"页面不该出现"的词
+          （有单测强制，见 HelpTextsTests）。 *@
     <span id="@_descriptionId" class="dt-sr-only">@AccessibleText</span>
 }
 

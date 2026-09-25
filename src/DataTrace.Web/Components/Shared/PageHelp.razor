@@ -7,8 +7,12 @@
 {
     <MudMenu AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
         <ActivatorContent>
-            <MudIconButton Icon="@Icons.Material.Outlined.HelpCenter" Size="Size.Small"
-                           Class="dt-page-help" aria-label="本页说明" />
+            @* 宽屏带文字便于新人发现这个入口；窄屏只剩图标，避免页头被顶宽（430px 有溢出用例在盯）。 *@
+            <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Default"
+                       StartIcon="@Icons.Material.Outlined.HelpCenter" Class="dt-page-help"
+                       aria-label="本页说明">
+                <span class="d-none d-md-inline">本页说明</span>
+            </MudButton>
         </ActivatorContent>
         <ChildContent>
             <MudText Typo="Typo.subtitle2" Class="px-2 pt-2 pb-1">本页说明</MudText>
