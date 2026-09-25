@@ -75,7 +75,7 @@ public class ReportsPageTests : WebTestBase
             .Setup(r => r.GetTrendAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync([new TrendPoint { Time = SampleTime, Value = 12.5, PalletCode = "P0001" }]);
         _spc
-            .Setup(s => s.GetProcessCapabilityAsync(It.IsAny<int>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.AnalyzeAsync(It.IsAny<int>(), It.IsAny<IReadOnlyList<TrendPoint>>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProcessCapabilityReport?)null);
     }
 
@@ -119,7 +119,7 @@ public class ReportsPageTests : WebTestBase
         _reports.Verify(r => r.GetDefectTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<int>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
         _reports.Verify(r => r.GetWarningTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<int>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
         _reports.Verify(r => r.GetTrendAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), 1, "A100", It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
-        _spc.Verify(s => s.GetProcessCapabilityAsync(1, It.IsAny<DateTime>(), It.IsAny<DateTime>(), "A100", It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
+        _spc.Verify(s => s.AnalyzeAsync(1, It.IsAny<IReadOnlyList<TrendPoint>>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
 
         // 每次加载只查一次产量：按日与按型号是同一份数据的两个切面，不该把区间内记录查两遍。
         // 上面那条 A100 断言覆盖改筛选后那一次加载，这条覆盖首次加载（不限型号）。
@@ -292,6 +292,35 @@ public class ReportsPageTests : WebTestBase
         var cut = Render();
 
         Assert.Equal(visible, cut.FindAll("button").Any(b => b.TextContent.Contains("导出趋势")));
+    }
+
+    /// <summary>
+    /// 过程能力与参数趋势是同一点位、同一区间：趋势那批点直接交给统计服务算。
+    /// 各查一次的话，同一条窄投影要跑两遍，而"图上画的是哪些点、Cpk 按哪些点算"还得靠人工对齐。
+    /// </summary>
+    [Fact]
+    public void Process_capability_reuses_the_trend_samples_instead_of_querying_again()
+    {
+        TrendPoint[] samples =
+        [
+            new TrendPoint { Time = SampleTime, Value = 12.5, PalletCode = "P0001", LowerLimit = 10, UpperLimit = 15 },
+            new TrendPoint { Time = SampleTime.AddSeconds(1), Value = 12.6, PalletCode = "P0002", LowerLimit = 10, UpperLimit = 15 }
+        ];
+        _reports
+            .Setup(r => r.GetTrendAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(samples);
+
+        Render();
+
+        _spc.Verify(
+            s => s.AnalyzeAsync(
+                1,
+                It.Is<IReadOnlyList<TrendPoint>>(list => ReferenceEquals(list, samples)),
+                It.IsAny<DateTime>(),
+                It.IsAny<DateTime>(),
+                null,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     /// <summary>

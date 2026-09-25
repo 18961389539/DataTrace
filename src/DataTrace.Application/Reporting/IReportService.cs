@@ -44,6 +44,12 @@ public sealed class TrendPoint
     public DateTime Time { get; init; }
     public double Value { get; init; }
     public string PalletCode { get; init; } = "";
+
+    /// <summary>采集当时落库的规格下限；两列都为 null 表示那批数据早于"限值随记录落库"。</summary>
+    public double? LowerLimit { get; init; }
+
+    /// <summary>采集当时落库的规格上限；过程能力靠它按"限值有没有动过"分段。</summary>
+    public double? UpperLimit { get; init; }
 }
 
 

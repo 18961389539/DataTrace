@@ -174,17 +174,31 @@ else
         _seriesMarkup = body.ToString();
     }
 
-    /// <summary>抽稀与量程计算交给 <see cref="ChartUtil.SampleEnvelope"/>，那里才是能直接单测的地方。</summary>
+    /// <summary>
+    /// 抽稀与量程计算交给 <see cref="ChartUtil.SampleEnvelope"/>，那里才是能直接单测的地方。
+    /// X 就是点序号的情形（XValues 为空）先拿下标再建两列：否则要为一列最终只会留下
+    /// <see cref="MaxPoints"/> 个元素的序号，先铺满整条原始长度（最多两万个）。
+    /// </summary>
     private (float[] X, float[] Y, double Min, double Max) Prepare(LineSeries series)
     {
         var values = series.Values;
-        var xs = new float[values.Length];
-        for (var i = 0; i < values.Length; i++)
+        // 自带 X 轴（如位移曲线）时按它抽稀；X 列比数据短就不认这一列，退回按点序号画。
+        if (series.XValues is { Length: > 0 } custom && custom.Length >= values.Length)
         {
-            xs[i] = series.XValues is { Length: > 0 } custom && i < custom.Length ? custom[i] : i;
+            return ChartUtil.SampleEnvelope(values, custom, MaxPoints);
         }
 
-        return ChartUtil.SampleEnvelope(values, xs, MaxPoints);
+        var (min, max) = ChartUtil.Range(values);
+        var indices = ChartUtil.SampleIndices(values, MaxPoints);
+        var xs = new float[indices.Length];
+        var ys = new float[indices.Length];
+        for (var i = 0; i < indices.Length; i++)
+        {
+            xs[i] = indices[i];
+            ys[i] = values[indices[i]];
+        }
+
+        return (xs, ys, min, max);
     }
 
     private double MapX(double x)

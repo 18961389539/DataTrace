@@ -206,6 +206,26 @@ public class ChartUtilTests
         Assert.Equal(10.5, flat.Max, precision: 6);
     }
 
+    /// <summary>
+    /// "X 就是点序号"的调用方（折线图）靠这份下标只给留下的点建 X 列：
+    /// 留下的点数必须受上限约束，且末点要在，否则曲线右端会被截短一截。
+    /// </summary>
+    [Fact]
+    public void SampleIndices_stays_within_the_limit_and_keeps_the_last_point()
+    {
+        var values = Enumerable.Range(0, 5000).Select(i => (float)(i % 13)).ToArray();
+
+        var indices = ChartUtil.SampleIndices(values, 600);
+
+        Assert.True(indices.Length <= 602, $"抽稀没起作用：{indices.Length} 个点");
+        Assert.Equal(0, indices[0]);
+        Assert.Equal(4999, indices[^1]);
+        Assert.Equal(indices.OrderBy(i => i), indices);
+
+        // 短序列原样全留，图上的点数与数据一致。
+        Assert.Equal(Enumerable.Range(0, 5), ChartUtil.SampleIndices([3f, 1f, 4f, 1f, 5f], 600));
+    }
+
     [Fact]
     public void SampleEnvelope_keeps_a_spike_that_even_sampling_would_miss()
     {

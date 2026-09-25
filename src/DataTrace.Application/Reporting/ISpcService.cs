@@ -111,4 +111,21 @@ public interface ISpcService
         string? recipeCode = null,
         int take = 0,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 用调用方已经取到的样本做过程能力分析，不再查运行库。
+    /// 报表页的「参数趋势」与「过程能力」是同一点位、同一区间，趋势那批点自带规格限
+    /// （<see cref="TrendPoint.LowerLimit"/>），直接拿来算即可 —— 再查一遍只是把同一条窄投影跑两次。
+    /// </summary>
+    /// <param name="samples">采样值；顺序不限，内部会按时间升序重排。</param>
+    /// <param name="from">区间起点，仅用于"区间内没有采样数据"那一段的起止时间。</param>
+    /// <param name="to">区间终点。</param>
+    /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
+    Task<ProcessCapabilityReport?> AnalyzeAsync(
+        int tagId,
+        IReadOnlyList<TrendPoint> samples,
+        DateTime from,
+        DateTime to,
+        string? recipeCode = null,
+        CancellationToken cancellationToken = default);
 }

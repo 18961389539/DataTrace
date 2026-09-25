@@ -397,6 +397,12 @@ public sealed class RuntimeStore : IRuntimeStore
         foreach (var month in months)
         {
             await using var db = _factory.Open(month);
+
+            // 别把这对 join 反过来写（以采集记录为驱动表）：SQLite 会自己重排内连接，
+            // 两种写法的计划一模一样；而真去锁死循环顺序（CROSS JOIN）时，内层拿不到
+            // 等值条件、只能按 IX_TagValues_TagId_NumericValue 每个记录全扫一遍，直接退化成嵌套扫描。
+            // 这个计划的成本与"该点位当月有多少行"成正比、与区间取多窄无关：区间再窄也省不下来，
+            // 但它已经是索引驱动的最优解（实测某点位 1.5 万行约 0.1~0.2 s），take 提前到也帮不上。
             var query = db.TagValues
                 .AsNoTracking()
                 .Join(

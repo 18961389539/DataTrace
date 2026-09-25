@@ -7,7 +7,8 @@ using DataTrace.Domain.Evaluation;
 namespace DataTrace.Infrastructure.Reporting;
 
 /// <summary>
-/// 过程能力分析：规格限来自配置库（点位定义），样本值来自运行库的窄投影查询。
+/// 过程能力分析：规格限来自配置库（点位定义），样本值来自运行库的窄投影查询
+/// （或由调用方直接交进来，见 <see cref="AnalyzeAsync"/>）。
 /// 计算本身全部在 <see cref="SpcCalculator"/> / <see cref="SpcRuleEvaluator"/> 里，本类只负责取数与组装。
 /// </summary>
 public sealed class SpcService : ISpcService
@@ -29,6 +30,29 @@ public sealed class SpcService : ISpcService
         int take = 0,
         CancellationToken cancellationToken = default)
     {
+        var points = await _store.QueryTagTrendAsync(from, to, tagId, recipeCode, take, cancellationToken).ConfigureAwait(false);
+        var samples = points
+            .Select(p => new TrendPoint
+            {
+                Time = p.Time,
+                Value = p.Value,
+                PalletCode = p.PalletCode,
+                LowerLimit = p.LowerLimit,
+                UpperLimit = p.UpperLimit
+            })
+            .ToList();
+
+        return await AnalyzeAsync(tagId, samples, from, to, recipeCode, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<ProcessCapabilityReport?> AnalyzeAsync(
+        int tagId,
+        IReadOnlyList<TrendPoint> samples,
+        DateTime from,
+        DateTime to,
+        string? recipeCode = null,
+        CancellationToken cancellationToken = default)
+    {
         var snapshot = await _config.GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
         var tag = snapshot.Stations.SelectMany(s => s.Tags).FirstOrDefault(t => t.Id == tagId);
         if (tag is null)
@@ -36,11 +60,8 @@ public sealed class SpcService : ISpcService
             return null;
         }
 
-        // 窄投影已按 TagId（与可选的型号）在服务端过滤；但跨月拼接后必须重新按时间排序，
-        // 否则移动极差会算到"上个月最后一点与本月第一点"这种假相邻关系上。
-        var points = (await _store.QueryTagTrendAsync(from, to, tagId, recipeCode, take, cancellationToken).ConfigureAwait(false))
-            .OrderBy(p => p.Time)
-            .ToList();
+        // 跨月拼接后必须重新按时间排序，否则移动极差会算到"上个月最后一点与本月第一点"这种假相邻关系上。
+        var points = samples.OrderBy(p => p.Time).ToList();
 
         // 配置里的生效限值（点位默认 + 型号覆盖）。它有两个用途：
         // 目标值（没有随记录落库），以及给"限值列还是 null"的老数据兜底。
@@ -50,7 +71,7 @@ public sealed class SpcService : ISpcService
         var configLimits = RecipeLimitResolver.Resolve(tag, limitsRecipe);
 
         // 按采集时落库的规格限切连续段：限值一动就断，每段各自算能力指数与控制限。
-        var runs = new List<(double? Lower, double? Upper, bool FromConfig, List<TagTrendPoint> Points)>();
+        var runs = new List<(double? Lower, double? Upper, bool FromConfig, List<TrendPoint> Points)>();
         foreach (var point in points)
         {
             // 两列都没值 = 那批数据还没有"限值随记录落库"，只能按当前配置估；
@@ -91,9 +112,7 @@ public sealed class SpcService : ISpcService
             Unit = tag.Unit,
             TargetValue = configLimits.Target,
             RecipeCode = limitsRecipe?.Code ?? "",
-            Samples = points
-                .Select(p => new TrendPoint { Time = p.Time, Value = p.Value, PalletCode = p.PalletCode })
-                .ToList(),
+            Samples = points,
             Segments = segments
         };
     }
@@ -115,7 +134,7 @@ public sealed class SpcService : ISpcService
     private static ProcessCapabilitySegment BuildSegment(
         int number,
         int startIndex,
-        (double? Lower, double? Upper, bool FromConfig, List<TagTrendPoint> Points) run,
+        (double? Lower, double? Upper, bool FromConfig, List<TrendPoint> Points) run,
         TagLimits configLimits)
     {
         var values = run.Points.Select(p => p.Value).ToList();

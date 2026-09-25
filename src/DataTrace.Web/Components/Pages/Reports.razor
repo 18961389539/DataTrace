@@ -24,7 +24,7 @@
 </PageHeader>
 
 <MudPaper Class="dt-filter-card mb-3">
-    @* 统计要串行动四段查询，期间下面的图表还是上一轮的值；没有这根进度条就是"看着有数、其实是旧的"。 *@
+    @* 统计要动几组查询，期间下面的图表还是上一轮的值；没有这根进度条就是"看着有数、其实是旧的"。 *@
     @if (_loading)
     {
         <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-2" />
@@ -710,34 +710,54 @@ private async Task OnStationChanged(int? stationId)
             do
             {
                 _loadPending = false;
-                await RefreshRecipeOptionsAsync();
 
                 var from = DateRangeFilter.StartOf(_from);
                 var to = DateRangeFilter.EndOfInclusive(_to);
                 // 型号筛选作用于整份报表：口径一致才不会"选了 A100 却看到全部型号的不良"。
                 var recipeArg = ToRecipeQueryArg();
-                var throughput = await ReportService.GetThroughputAsync(from, to, _stationId, recipeArg);
-                _fpy = throughput.ByDay;
-                _byRecipe = MergeByRecipe(throughput.ByRecipe);
+
+                // 下面 5 组查询彼此没有依赖，可以并行：
+                // ReportService / RuntimeStore 是无状态的运行时取数 —— 每次调用都用
+                // RuntimeDbFactory.Open 新建自己的 RuntimeDbContext（RuntimeStore.cs:42/138/258），
+                // 工厂里共享的 _ensured/_gate 也已加锁（RuntimeDbFactory.cs:60-96）；
+                // 配置读（配方选项与 SpcService 的快照）走 ConfigRepository 的临时 context，
+                // 各查各的，不再共用电路里那个 scoped DbContext，所以也能并进来。
                 // 工站与型号一样是整份报表的筛选条件：不良/预警不跟着收窄，
                 // 选了 ST010 却看到全线的不良榜，现场就会去错工站找原因。
-                _defects = await ReportService.GetDefectTopAsync(from, to, _stationId, recipeCode: recipeArg);
-                _warnings = await ReportService.GetWarningTopAsync(from, to, _stationId, recipeCode: recipeArg);
-
+                var recipeOptionsTask = RefreshRecipeOptionsAsync();
+                var throughputTask = ReportService.GetThroughputAsync(from, to, _stationId, recipeArg);
+                var defectsTask = ReportService.GetDefectTopAsync(from, to, _stationId, recipeCode: recipeArg);
+                var warningsTask = ReportService.GetWarningTopAsync(from, to, _stationId, recipeCode: recipeArg);
+                // 只有选了点位才查趋势：不为并行就无条件多查。
                 // 多取一点用来判断"到底有没有截断"，免得刚好等于上限时误报。
-                var trendPoints = _tagId != 0
-                    ? await ReportService.GetTrendAsync(from, to, _tagId, recipeArg, SystemDefaults.TrendSampleLimit + 1)
-                    : [];
+                var trendTask = _tagId != 0
+                    ? ReportService.GetTrendAsync(from, to, _tagId, recipeArg, SystemDefaults.TrendSampleLimit + 1)
+                    : Task.FromResult<IReadOnlyList<TrendPoint>>([]);
+
+                // 任一失败，WhenAll 一并抛出 → 走下面的 catch 统一 ClearResults，
+                // 与串行时"一次失败整体失败"的语义一致。
+                await Task.WhenAll(recipeOptionsTask, throughputTask, defectsTask, warningsTask, trendTask);
+
+                // 数据全部到手之后，再按原顺序串行做派生计算：MergeByRecipe / BuildTrendSeries /
+                // RefreshTrendStats / 过程能力 都依赖各自的上游结果，提前执行只会拿到旧值。
+                // MergeByRecipe 还依赖 RefreshRecipeOptionsAsync 填好的 _knownRecipes，所以它必须先完成。
+                var throughput = await throughputTask;
+                _fpy = throughput.ByDay;
+                _byRecipe = MergeByRecipe(throughput.ByRecipe);
+                _defects = await defectsTask;
+                _warnings = await warningsTask;
+
+                var trendPoints = await trendTask;
                 _trendTruncated = trendPoints.Count > SystemDefaults.TrendSampleLimit;
                 _trend = _trendTruncated ? trendPoints.TakeLast(SystemDefaults.TrendSampleLimit).ToList() : trendPoints;
                 _trendSeries = BuildTrendSeries();
                 RefreshTrendStats();
 
-                // 过程能力与趋势用同一点位、同一区间、同一采样上限：趋势看单点、能力看整段分布。
-                // 这里会各自查一次窄投影（同 TagId、同列集）。刻意保留两次调用：
-                // 统计服务不该成为取趋势的唯一入口，而两次窄投影的量级远小于原先的整图加载。
+                // 过程能力与趋势是同一点位、同一区间、同一批 2 万点：直接拿趋势那批（它自带落库规格限）
+                // 交给统计服务算，不再让它自己查一遍 —— 那是同一条窄投影跑两次。
+                // 顺带把口径钉死：图上画多少点，Cpk 就是按哪些点算的。
                 _spc = _tagId != 0
-                    ? await SpcService.GetProcessCapabilityAsync(_tagId, from, to, recipeArg, SystemDefaults.TrendSampleLimit)
+                    ? await SpcService.AnalyzeAsync(_tagId, _trend, from, to, recipeArg)
                     : null;
                 _spcCharts = _spc?.Segments.Select(BuildSpcSeries).ToList() ?? [];
                 _loadFailed = false;
@@ -993,32 +1013,23 @@ private async Task OnStationChanged(int? stationId)
                 Color = ChartColors.Primary,
                 Unit = _spc.Unit
             },
-            new LineSeries
-            {
-                Name = "UCL",
-                Values = Repeated((float)summary.UpperControlLimit, values.Length),
-                Color = ChartColors.Alert
-            },
-            new LineSeries
-            {
-                Name = "CL",
-                Values = Repeated((float)summary.CenterLine, values.Length),
-                Color = ChartColors.Secondary
-            },
-            new LineSeries
-            {
-                Name = "LCL",
-                Values = Repeated((float)summary.LowerControlLimit, values.Length),
-                Color = ChartColors.Alert
-            }
+            ConstantSeries("UCL", summary.UpperControlLimit, values.Length, ChartColors.Alert),
+            ConstantSeries("CL", summary.CenterLine, values.Length, ChartColors.Secondary),
+            ConstantSeries("LCL", summary.LowerControlLimit, values.Length, ChartColors.Alert)
         ];
     }
 
-    private static float[] Repeated(float value, int count)
+    /// <summary>
+    /// 控制限的常量线：两点就够 —— 它画出来就是一条水平线，X 轴靠首尾两点定位。
+    /// 原来按样本数铺一条等长数组（最多两万个相同的值 × 3 条线 × 每段），
+    /// 而折线图反正只会留下几百个点：白造数组，还白扫两万个数一遍。
+    /// </summary>
+    private static LineSeries ConstantSeries(string name, double value, int count, string color)
     {
-        var array = new float[count];
-        Array.Fill(array, value);
-        return array;
+        var v = (float)value;
+        return count > 1
+            ? new LineSeries { Name = name, Values = [v, v], XValues = [0f, count - 1], Color = color }
+            : new LineSeries { Name = name, Values = [v], XValues = [0f], Color = color };
     }
 
     private string TimeText(int sampleIndex)

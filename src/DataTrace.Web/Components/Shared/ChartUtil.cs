@@ -102,27 +102,31 @@ public static class ChartUtil
     }
 
     /// <summary>
-    /// 按 X 分桶抽稀：每桶保留该桶的最小点与最大点（按 x 先后写入），并返回<b>抽稀前</b>的真实极值。
+    /// 按 X 分桶抽稀时保留下来的下标（升序，含末点），桶内保留最小值点与最大值点（按 x 先后写入）。
+    /// 给"X 就是点序号"的调用方用：先拿下标，再只给留下的点建 X 列，
+    /// 不必为一列最终用不上的序号铺满整条原始长度。
     /// </summary>
-    /// <remarks>
-    /// 就近取点会把尖峰整条抹掉，而压力曲线与 SPC 要看的恰恰是尖峰。
-    /// 极值也必须在抽稀之前算：否则图例上的最小/最大不是真实最值，
-    /// Y 轴还会按抽稀后的量程画，把尖峰裁到画框外面。
-    /// </remarks>
-    public static (float[] X, float[] Y, double Min, double Max) SampleEnvelope(
-        float[] values, float[] xs, int maxPoints)
+    public static int[] SampleIndices(float[] values, int maxPoints)
     {
         var count = values.Length;
-        var (min, max) = Range(values);
-
-        if (count == 0 || count <= maxPoints)
+        if (count == 0)
         {
-            return (xs, values, min, max);
+            return [];
+        }
+
+        if (count <= maxPoints)
+        {
+            var all = new int[count];
+            for (var i = 0; i < count; i++)
+            {
+                all[i] = i;
+            }
+
+            return all;
         }
 
         var buckets = Math.Max(1, maxPoints / 2);
-        var outX = new List<float>(buckets * 2 + 2);
-        var outY = new List<float>(buckets * 2 + 2);
+        var picks = new List<int>(buckets * 2 + 2);
         var size = (double)count / buckets;
 
         for (var b = 0; b < buckets; b++)
@@ -151,23 +155,51 @@ public static class ChartUtil
 
             var first = Math.Min(low, high);
             var second = Math.Max(low, high);
-            outX.Add(xs[first]);
-            outY.Add(values[first]);
+            picks.Add(first);
             if (second != first)
             {
-                outX.Add(xs[second]);
-                outY.Add(values[second]);
+                picks.Add(second);
             }
         }
 
         // 末点补齐，曲线右端不会被截短一截。
-        if (outX.Count == 0 || outX[^1] != xs[count - 1])
+        if (picks.Count == 0 || picks[^1] != count - 1)
         {
-            outX.Add(xs[count - 1]);
-            outY.Add(values[count - 1]);
+            picks.Add(count - 1);
         }
 
-        return (outX.ToArray(), outY.ToArray(), min, max);
+        return picks.ToArray();
+    }
+
+    /// <summary>
+    /// 按 X 分桶抽稀：每桶保留该桶的最小点与最大点（按 x 先后写入），并返回<b>抽稀前</b>的真实极值。
+    /// </summary>
+    /// <remarks>
+    /// 就近取点会把尖峰整条抹掉，而压力曲线与 SPC 要看的恰恰是尖峰。
+    /// 极值也必须在抽稀之前算：否则图例上的最小/最大不是真实最值，
+    /// Y 轴还会按抽稀后的量程画，把尖峰裁到画框外面。
+    /// </remarks>
+    public static (float[] X, float[] Y, double Min, double Max) SampleEnvelope(
+        float[] values, float[] xs, int maxPoints)
+    {
+        var count = values.Length;
+        var (min, max) = Range(values);
+
+        if (count == 0 || count <= maxPoints)
+        {
+            return (xs, values, min, max);
+        }
+
+        var indices = SampleIndices(values, maxPoints);
+        var outX = new float[indices.Length];
+        var outY = new float[indices.Length];
+        for (var i = 0; i < indices.Length; i++)
+        {
+            outX[i] = xs[indices[i]];
+            outY[i] = values[indices[i]];
+        }
+
+        return (outX, outY, min, max);
     }
 
     /// <summary>把一列数值转成 SVG polyline 的 points 属性。</summary>
