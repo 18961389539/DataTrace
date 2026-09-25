@@ -66,16 +66,18 @@ public sealed class CollectQueryResult
 }
 
 /// <summary>
-/// 吞吐量统计的窄投影：只带时间、判定与所属工站。
-/// 报表只需要计数，没必要把记录整图（含 Products / TagValues）拉进内存。
+/// 产量统计的一格：某天 × 某型号 × 某判定的记录数。
+/// 报表最终只画十来个格子，所以计数在 SQL 侧完成 ——
+/// 区间内有几万条记录时，把行拉进内存再分组是纯浪费（实测占页面进入耗时的一大半）。
 /// </summary>
-public sealed class JudgementPoint
+public sealed class JudgementCount
 {
-    public DateTime Time { get; init; }
-    public int StationId { get; init; }
-    public Judgement Judgement { get; init; }
+    /// <summary>所在自然日（当天 00:00）。</summary>
+    public DateTime Day { get; init; }
     /// <summary>判定时生效的型号编码；空字符串表示当时未选型号。</summary>
     public string RecipeCode { get; init; } = "";
+    public Judgement Judgement { get; init; }
+    public int Count { get; init; }
 }
 
 /// <summary>不良 / 预警统计的窄投影：只带点位名称与代码。</summary>
@@ -137,9 +139,12 @@ public interface IRuntimeStore
     Task<IReadOnlyList<CollectRecord>> GetSessionRecordsAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<CollectRecord>> QueryForReportAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default);
 
-    /// <summary>吞吐量统计的窄投影查询（服务端过滤 + 只取三列）。</summary>
+    /// <summary>
+    /// 产量统计：按 日 × 型号 × 判定 在服务端聚合好的计数。
+    /// </summary>
+    /// <param name="stationId">工站过滤：null = 全部工站。</param>
     /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
-    Task<IReadOnlyList<JudgementPoint>> QueryJudgementPointsAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<JudgementCount>> CountJudgementsAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default);
 
     /// <summary>日期范围内出现过的型号编码（含空串）；跨月库去重。</summary>
     Task<IReadOnlyList<string>> ListRecipeCodesAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default);

@@ -1,5 +1,6 @@
 @page "/reports"
 @attribute [Authorize]
+@implements IDisposable
 @using System.Globalization
 @using DataTrace.Application.Configuration
 @using DataTrace.Application.Reporting
@@ -212,10 +213,14 @@
             {
                 <MudText Typo="Typo.body2" Class="dt-muted py-3">当前工站没有可画趋势的数值点位。</MudText>
             }
-            else if (_loadFailed)
+            else if (_loadFailed || _trendFailed)
             {
                 @* 失败时结果已被清空，这里若沿用"没有采集数据"，现场会照着"点位没数据"去查传感器。 *@
                 <MudText Typo="Typo.body2" Class="dt-text-error py-3">统计失败，本页结果已清空。请重试；若持续失败请检查月库是否被占用。</MudText>
+            }
+            else if (_trendLoading)
+            {
+                <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="my-3" />
             }
             else if (_trend.Count == 0)
             {
@@ -261,9 +266,13 @@
                 <MudText Typo="Typo.caption" Class="dt-muted">I-MR 单值移动极差控制图</MudText>
             </MudStack>
 
-            @if (_loadFailed)
+            @if (_loadFailed || _trendFailed)
             {
                 <MudText Typo="Typo.body2" Class="dt-text-error py-3">统计失败，本页结果已清空。请重试；若持续失败请检查月库是否被占用。</MudText>
+            }
+            else if (_trendLoading)
+            {
+                <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="my-3" />
             }
             else if (_spc is null)
             {
@@ -499,10 +508,17 @@ private IssueTopReport _defects = new();
         _canExport = auth.User.IsInRole(AppRoles.Administrator) || auth.User.IsInRole(AppRoles.Engineer);
 
         ApplyQueryParameters();
-        _stations = await Config.GetStationsAsync();
+        // 工站列表与型号列表都取自同一份配置快照：它按版本号在本电路内缓存，
+        // 分头调 GetStationsAsync / GetRecipesAsync 等于把同一批表读两遍、后面 SpcService 再读第三遍。
+        var snapshot = await Config.GetSnapshotAsync();
+        _stations = snapshot.Stations;
+        _knownRecipes = snapshot.Recipes;
         RefreshTags();
         ApplyTagQuery();
         await Load();
+
+        // 首屏（直通率那一屏）已经取完：趋势与过程能力放到它后面去取，进入页面不用干等。
+        StartTrendLoadInBackground();
     }
 
     /// <summary>
@@ -623,8 +639,7 @@ private async Task OnStationChanged(int? stationId)
 
         // 区间内出现过的编码（含空）+ 配置里已知型号，避免改码后旧码消失
         var fromRecords = await Store.ListRecipeCodesAsync(from, to);
-        var known = await Config.GetRecipesAsync();
-        _knownRecipes = known;
+        var known = _knownRecipes;
         _recipeNames = known
             .GroupBy(r => r.Code, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.First().Name ?? "", StringComparer.Ordinal);
@@ -716,50 +731,39 @@ private async Task OnStationChanged(int? stationId)
                 // 型号筛选作用于整份报表：口径一致才不会"选了 A100 却看到全部型号的不良"。
                 var recipeArg = ToRecipeQueryArg();
 
-                // 下面 5 组查询彼此没有依赖，可以并行：
+                // 下面 4 组查询彼此没有依赖，可以并行：
                 // ReportService / RuntimeStore 是无状态的运行时取数 —— 每次调用都用
                 // RuntimeDbFactory.Open 新建自己的 RuntimeDbContext（RuntimeStore.cs:42/138/258），
                 // 工厂里共享的 _ensured/_gate 也已加锁（RuntimeDbFactory.cs:60-96）；
-                // 配置读（配方选项与 SpcService 的快照）走 ConfigRepository 的临时 context，
-                // 各查各的，不再共用电路里那个 scoped DbContext，所以也能并进来。
+                // 配置读（配方选项）走 ConfigRepository 的临时 context，各查各的，
+                // 不再共用电路里那个 scoped DbContext，所以也能并进来。
                 // 工站与型号一样是整份报表的筛选条件：不良/预警不跟着收窄，
                 // 选了 ST010 却看到全线的不良榜，现场就会去错工站找原因。
                 var recipeOptionsTask = RefreshRecipeOptionsAsync();
                 var throughputTask = ReportService.GetThroughputAsync(from, to, _stationId, recipeArg);
                 var defectsTask = ReportService.GetDefectTopAsync(from, to, _stationId, recipeCode: recipeArg);
                 var warningsTask = ReportService.GetWarningTopAsync(from, to, _stationId, recipeCode: recipeArg);
-                // 只有选了点位才查趋势：不为并行就无条件多查。
-                // 多取一点用来判断"到底有没有截断"，免得刚好等于上限时误报。
-                var trendTask = _tagId != 0
-                    ? ReportService.GetTrendAsync(from, to, _tagId, recipeArg, SystemDefaults.TrendSampleLimit + 1)
-                    : Task.FromResult<IReadOnlyList<TrendPoint>>([]);
 
                 // 任一失败，WhenAll 一并抛出 → 走下面的 catch 统一 ClearResults，
                 // 与串行时"一次失败整体失败"的语义一致。
-                await Task.WhenAll(recipeOptionsTask, throughputTask, defectsTask, warningsTask, trendTask);
+                await Task.WhenAll(recipeOptionsTask, throughputTask, defectsTask, warningsTask);
 
-                // 数据全部到手之后，再按原顺序串行做派生计算：MergeByRecipe / BuildTrendSeries /
-                // RefreshTrendStats / 过程能力 都依赖各自的上游结果，提前执行只会拿到旧值。
-                // MergeByRecipe 还依赖 RefreshRecipeOptionsAsync 填好的 _knownRecipes，所以它必须先完成。
+                // 数据全部到手之后，再按原顺序串行做派生计算：MergeByRecipe 依赖
+                // RefreshRecipeOptionsAsync 填好的 _knownRecipes，提前执行只会拿到旧值。
                 var throughput = await throughputTask;
                 _fpy = throughput.ByDay;
                 _byRecipe = MergeByRecipe(throughput.ByRecipe);
                 _defects = await defectsTask;
                 _warnings = await warningsTask;
 
-                var trendPoints = await trendTask;
-                _trendTruncated = trendPoints.Count > SystemDefaults.TrendSampleLimit;
-                _trend = _trendTruncated ? trendPoints.TakeLast(SystemDefaults.TrendSampleLimit).ToList() : trendPoints;
-                _trendSeries = BuildTrendSeries();
-                RefreshTrendStats();
+                // 趋势与过程能力属于另外两个页签，进入本页时用户看的是「直通率」：
+                // 那条 2 万点的窄投影（实测 ~170 ms）不该挡在首屏前面，首屏之后再由
+                // StartTrendLoadInBackground 补上；这里只在已经取过时跟着条件重取一遍。
+                if (_trendLoaded)
+                {
+                    await LoadTrendAsync();
+                }
 
-                // 过程能力与趋势是同一点位、同一区间、同一批 2 万点：直接拿趋势那批（它自带落库规格限）
-                // 交给统计服务算，不再让它自己查一遍 —— 那是同一条窄投影跑两次。
-                // 顺带把口径钉死：图上画多少点，Cpk 就是按哪些点算的。
-                _spc = _tagId != 0
-                    ? await SpcService.AnalyzeAsync(_tagId, _trend, from, to, recipeArg)
-                    : null;
-                _spcCharts = _spc?.Segments.Select(BuildSpcSeries).ToList() ?? [];
                 _loadFailed = false;
             }
             while (_loadPending);
@@ -841,6 +845,26 @@ private async Task OnStationChanged(int? stationId)
         _byRecipe = [];
         _defects = new();
         _warnings = new();
+        ClearTrend();
+    }
+
+    /// <summary>
+    /// 趋势那一轮已经取过（进入页面时首屏不等它，之后再改条件就跟着一起重取）。
+    /// </summary>
+    private bool _trendLoaded;
+
+    private bool _trendLoading;
+
+    /// <summary>趋势那一轮的失败：只影响这两个页签，不能把「直通率」也标成失败。</summary>
+    private bool _trendFailed;
+
+    /// <summary>页面已销毁：后台那一轮趋势回来时不再碰组件（否则会撞上已释放的渲染器）。</summary>
+    private bool _disposed;
+
+    public void Dispose() => _disposed = true;
+
+    private void ClearTrend()
+    {
         _spc = null;
         _spcCharts = [];
         _trend = [];
@@ -848,6 +872,74 @@ private async Task OnStationChanged(int? stationId)
         _trendSeries = [];
         _trendAverage = _trendMin = _trendMax = "-";
         _trendRangeText = _trendFromText = _trendToText = "";
+        _trendLoaded = false;
+        _trendFailed = false;
+    }
+
+    /// <summary>
+    /// 首屏出来之后再去取趋势与过程能力（这两个页签不在首屏）。
+    /// </summary>
+    /// <remarks>
+    /// 不 await：进入页面时用户看的是「直通率」，不该为另一屏的那条 2 万点窄投影（真实库上 ~170 ms）
+    /// 干等。结果回来时自己重画一次；页面已销毁就直接丢掉，不再碰它。
+    /// </remarks>
+    private void StartTrendLoadInBackground()
+    {
+        _ = LoadTrendThenRenderAsync();
+    }
+
+    private async Task LoadTrendThenRenderAsync()
+    {
+        await LoadTrendAsync().ConfigureAwait(true);
+        if (!_disposed)
+        {
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// 取趋势样本，并把同一批样本交给过程能力分析（图上画哪些点，Cp/Cpk 就是按哪些点算的）。
+    /// 单次上限 +1 是为了分辨"刚好到上限"和"被截断"，截断时要说明白。
+    /// </summary>
+    private async Task LoadTrendAsync()
+    {
+        var from = DateRangeFilter.StartOf(_from);
+        var to = DateRangeFilter.EndOfInclusive(_to);
+        var recipeArg = ToRecipeQueryArg();
+        var tagId = _tagId;
+
+        _trendLoading = true;
+        try
+        {
+            var points = tagId != 0
+                ? await ReportService.GetTrendAsync(from, to, tagId, recipeArg, SystemDefaults.TrendSampleLimit + 1)
+                : [];
+            _trendTruncated = points.Count > SystemDefaults.TrendSampleLimit;
+            _trend = _trendTruncated ? points.TakeLast(SystemDefaults.TrendSampleLimit).ToList() : points;
+            _trendSeries = BuildTrendSeries();
+            RefreshTrendStats();
+
+            // 过程能力与趋势是同一点位、同一区间、同一批 2 万点：拿趋势那批（它自带落库规格限）
+            // 交给统计服务算，不再让它自己查一遍 —— 那是同一条窄投影跑两次。
+            _spc = tagId != 0
+                ? await SpcService.AnalyzeAsync(tagId, _trend, from, to, recipeArg)
+                : null;
+            _spcCharts = _spc?.Segments.Select(BuildSpcSeries).ToList() ?? [];
+
+            _trendLoaded = true;
+            _trendFailed = false;
+        }
+        catch (Exception ex)
+        {
+            // 与整页失败同一套说法：清掉再报，别让上一轮的图配着新条件的标题。
+            ClearTrend();
+            _trendFailed = true;
+            Toast.Add($"统计失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _trendLoading = false;
+        }
     }
 
     private IReadOnlyList<LineSeries> BuildTrendSeries()
@@ -921,6 +1013,23 @@ private async Task OnStationChanged(int? stationId)
         if (!_canExport)
         {
             Toast.Add("当前角色无权导出报表数据（需要管理员或工程师）", Severity.Warning);
+            return;
+        }
+
+        // 趋势样本按需取：用户可能一次都没点开那两个页签就直接导出。
+        if (!_trendLoaded)
+        {
+            await LoadTrendAsync();
+        }
+
+        if (_trend.Count == 0)
+        {
+            // 取数失败时 LoadTrendAsync 已经报过原因，这里不再叠一条。
+            if (!_trendFailed)
+            {
+                Toast.Add("当前条件下没有可导出的趋势点", Severity.Warning);
+            }
+
             return;
         }
 

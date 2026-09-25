@@ -538,15 +538,15 @@ public class RuntimeStoreTests
         await env.Store.SaveAsync(FirstStation("202609", "P0002", "S2", Day1.AddHours(2), Judgement.Ng));
         await env.Store.SaveAsync(FirstStation("202609", "P0003", "S3", Day1.AddDays(10)));
 
-        // 吞吐投影：只带时间 / 工站 / 判定，区间过滤在 SQL 侧完成。
-        var points = await env.Store.QueryJudgementPointsAsync(Day1, Day1.AddHours(3), null);
-        Assert.Equal(2, points.Count);
-        Assert.All(points, p => Assert.Equal(10, p.StationId));
-        Assert.Single(points, p => p.Judgement == Judgement.Ng);
+        // 吞吐统计：计数在 SQL 侧按 日×型号×判定 数好，区间过滤也在 SQL 侧完成。
+        var counts = await env.Store.CountJudgementsAsync(Day1, Day1.AddHours(3), null);
+        Assert.Equal(2, counts.Sum(x => x.Count));
+        Assert.Equal(1, counts.Where(x => x.Judgement == Judgement.Ng).Sum(x => x.Count));
+        Assert.All(counts, c => Assert.Equal(Day1.Date, c.Day));
 
         // 工站过滤同样下推到 SQL。
-        Assert.Empty(await env.Store.QueryJudgementPointsAsync(Day1, Day1.AddHours(3), 99));
-        Assert.Equal(3, (await env.Store.QueryJudgementPointsAsync(Day1, Day1.AddDays(30), null)).Count);
+        Assert.Empty(await env.Store.CountJudgementsAsync(Day1, Day1.AddHours(3), 99));
+        Assert.Equal(3, (await env.Store.CountJudgementsAsync(Day1, Day1.AddDays(30), null)).Sum(x => x.Count));
 
         // 不良投影：只回带超限点位的名称与代码。
         var defects = await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddHours(3), null);
@@ -596,14 +596,14 @@ public class RuntimeStoreTests
         const int tagId = 10 * 10 + 1;
 
         // null = 不限。
-        Assert.Equal(3, (await env.Store.QueryJudgementPointsAsync(Day1, Day1.AddDays(1), null)).Count);
+        Assert.Equal(3, (await env.Store.CountJudgementsAsync(Day1, Day1.AddDays(1), null)).Sum(x => x.Count));
         // 精确匹配。
-        var onlyA = await env.Store.QueryJudgementPointsAsync(Day1, Day1.AddDays(1), null, "A100");
+        var onlyA = await env.Store.CountJudgementsAsync(Day1, Day1.AddDays(1), null, "A100");
         Assert.Equal("A100", Assert.Single(onlyA).RecipeCode);
         // "" = 仅「未选型号」，不能顺带把别的型号也带出来。
-        Assert.Equal("", Assert.Single(await env.Store.QueryJudgementPointsAsync(Day1, Day1.AddDays(1), null, "")).RecipeCode);
+        Assert.Equal("", Assert.Single(await env.Store.CountJudgementsAsync(Day1, Day1.AddDays(1), null, "")).RecipeCode);
         // 不存在的编码回空，而不是回全部。
-        Assert.Empty(await env.Store.QueryJudgementPointsAsync(Day1, Day1.AddDays(1), null, "ZZZ"));
+        Assert.Empty(await env.Store.CountJudgementsAsync(Day1, Day1.AddDays(1), null, "ZZZ"));
 
         // 不良与预警：超限点在 A100 那条上。
         Assert.Single(await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddDays(1), null, "A100"));

@@ -245,14 +245,14 @@ public sealed class RuntimeStore : IRuntimeStore
         return list;
     }
 
-    public async Task<IReadOnlyList<JudgementPoint>> QueryJudgementPointsAsync(
+    public async Task<IReadOnlyList<JudgementCount>> CountJudgementsAsync(
         DateTime from,
         DateTime to,
         int? stationId,
         string? recipeCode = null,
         CancellationToken cancellationToken = default)
     {
-        var points = new List<JudgementPoint>();
+        var counts = new List<JudgementCount>();
         foreach (var month in RuntimeDbFactory.MonthsInRange(from, to).Where(_factory.Exists))
         {
             await using var db = _factory.Open(month);
@@ -265,20 +265,32 @@ public sealed class RuntimeStore : IRuntimeStore
 
             query = ApplyRecipeFilter(query, recipeCode);
 
+            // 数格子交给 SQLite：区间内几万条记录只回十几行（日 × 型号 × 判定）。
+            // 日期按 年/月/日 三个字段分组，翻译出来是 strftime，不会把整行拉回来在内存里算日期。
             var part = await query
-                .Select(x => new JudgementPoint
+                .GroupBy(x => new { x.TriggerTime.Year, x.TriggerTime.Month, x.TriggerTime.Day, x.RecipeCode, x.Judgement })
+                .Select(g => new
                 {
-                    Time = x.TriggerTime,
-                    StationId = x.StationId,
-                    Judgement = x.Judgement,
-                    RecipeCode = x.RecipeCode
+                    g.Key.Year,
+                    g.Key.Month,
+                    g.Key.Day,
+                    g.Key.RecipeCode,
+                    g.Key.Judgement,
+                    Count = g.Count()
                 })
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
-            points.AddRange(part);
+
+            counts.AddRange(part.Select(x => new JudgementCount
+            {
+                Day = new DateTime(x.Year, x.Month, x.Day),
+                RecipeCode = x.RecipeCode ?? "",
+                Judgement = x.Judgement,
+                Count = x.Count
+            }));
         }
 
-        return points;
+        return counts;
     }
 
     public async Task<IReadOnlyList<string>> ListRecipeCodesAsync(

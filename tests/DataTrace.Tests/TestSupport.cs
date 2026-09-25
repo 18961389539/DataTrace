@@ -242,18 +242,19 @@ internal class FakeRuntimeStore : IRuntimeStore
         => Task.FromResult<IReadOnlyList<DataTrace.Domain.Entities.CollectRecord>>(
             Records.Where(x => x.Record.TriggerTime >= from && x.Record.TriggerTime <= to).Select(x => x.Record).ToList());
 
-    public Task<IReadOnlyList<JudgementPoint>> QueryJudgementPointsAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default)
-        => Task.FromResult<IReadOnlyList<JudgementPoint>>(
+    public Task<IReadOnlyList<JudgementCount>> CountJudgementsAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<JudgementCount>>(
             Records
                 .Where(x => x.Record.TriggerTime >= from && x.Record.TriggerTime <= to)
                 .Where(x => stationId is null || x.Record.StationId == stationId)
                 .Where(x => recipeCode is null || x.Record.RecipeCode == recipeCode)
-                .Select(x => new JudgementPoint
+                .GroupBy(x => new { Day = x.Record.TriggerTime.Date, x.Record.RecipeCode, x.Record.Judgement })
+                .Select(g => new JudgementCount
                 {
-                    Time = x.Record.TriggerTime,
-                    StationId = x.Record.StationId,
-                    Judgement = x.Record.Judgement,
-                    RecipeCode = x.Record.RecipeCode
+                    Day = g.Key.Day,
+                    RecipeCode = g.Key.RecipeCode ?? "",
+                    Judgement = g.Key.Judgement,
+                    Count = g.Count()
                 })
                 .ToList());
 

@@ -112,6 +112,11 @@ public class ReportsPageTests : WebTestBase
     {
         var cut = Render();
 
+        // 首屏之后那一轮趋势要先落定，再改条件 —— 否则断言分不清是哪一轮取回来的。
+        cut.WaitForAssertion(() => _reports.Verify(
+            r => r.GetTrendAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Once));
+
         await SelectRecipeAsync(cut, "A100");
 
         // 一条都不能漏：漏了就会出现"选了 A100 却看到全部型号的不良"。
@@ -125,6 +130,34 @@ public class ReportsPageTests : WebTestBase
         // 上面那条 A100 断言覆盖改筛选后那一次加载，这条覆盖首次加载（不限型号）。
         _reports.Verify(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), null, It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    /// <summary>
+    /// 首屏不等趋势：那条 2 万点的窄投影属于另外两个页签（真实库上实测 ~170 ms，是进入页面耗时的大头），
+    /// 它慢一点也不能挡住「直通率」那一屏。
+    /// </summary>
+    [Fact]
+    public void The_first_screen_does_not_wait_for_the_trend()
+    {
+        var gate = new TaskCompletionSource<IReadOnlyList<TrendPoint>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _reports
+            .Setup(r => r.GetTrendAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns(gate.Task);
+
+        var cut = Render();
+
+        // 趋势一条都还没回来，直通率那一屏（含按型号表）已经在页面上了，导出按钮也如实地说"没有点可导"。
+        Assert.Contains("A100", cut.Markup);
+        Assert.True(ExportButtonDisabled(cut));
+
+        gate.SetResult([new TrendPoint { Time = SampleTime, Value = 12.5, PalletCode = "P0001" }]);
+
+        cut.WaitForAssertion(() => Assert.False(ExportButtonDisabled(cut)));
+    }
+
+    private static bool ExportButtonDisabled(IRenderedComponent<Reports> cut)
+        => cut.FindAll("button")
+            .First(b => b.TextContent.Contains("导出趋势"))
+            .HasAttribute("disabled");
 
     [Fact]
     public async Task Selecting_no_recipe_asks_for_records_without_a_recipe()
@@ -310,9 +343,10 @@ public class ReportsPageTests : WebTestBase
             .Setup(r => r.GetTrendAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(samples);
 
-        Render();
+        var cut = Render();
 
-        _spc.Verify(
+        // 趋势样本由首屏之后那一轮取回来，取到的这批直接交给过程能力。
+        cut.WaitForAssertion(() => _spc.Verify(
             s => s.AnalyzeAsync(
                 1,
                 It.Is<IReadOnlyList<TrendPoint>>(list => ReferenceEquals(list, samples)),
@@ -320,7 +354,7 @@ public class ReportsPageTests : WebTestBase
                 It.IsAny<DateTime>(),
                 null,
                 It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Once));
     }
 
     /// <summary>
@@ -330,6 +364,11 @@ public class ReportsPageTests : WebTestBase
     public void Trend_truncation_is_stated_on_the_page_only_when_it_happens()
     {
         var cut = Render();
+
+        // 首屏之后那一轮趋势先落定（默认桩值只有一个点，没截断），再改桩值刷新 —— 断言才说得清是谁的结果。
+        cut.WaitForAssertion(() => _reports.Verify(
+            r => r.GetTrendAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Once));
         Assert.DoesNotContain("单次上限", cut.Markup);
 
         // 页面多取一点来判断有没有截断，所以超过上限就是"上限 + 1"。
@@ -341,8 +380,7 @@ public class ReportsPageTests : WebTestBase
             .ReturnsAsync(overLimit);
 
         ClickButton(cut, "刷新报表");
-
-        Assert.Contains("单次上限", cut.Markup);
+        cut.WaitForAssertion(() => Assert.Contains("单次上限", cut.Markup));
 
         // 上限之外的那一点不进内存、也不进导出。
         ClickButton(cut, "导出趋势");

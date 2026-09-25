@@ -21,31 +21,32 @@ public sealed class ReportService : IReportService
     public async Task<ThroughputReport> GetThroughputAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default)
     {
         // 按日与按型号是同一次取数上的两种分组：分两次查会把区间内全部记录查两遍。
-        var points = await _store.QueryJudgementPointsAsync(from, to, stationId, recipeCode, cancellationToken).ConfigureAwait(false);
+        // 计数已经在 SQL 侧数好（日 × 型号 × 判定），这里只是把格子摊到两张表上。
+        var counts = await _store.CountJudgementsAsync(from, to, stationId, recipeCode, cancellationToken).ConfigureAwait(false);
 
-        var byDay = points
-            .GroupBy(p => p.Time.Date)
+        var byDay = counts
+            .GroupBy(x => x.Day)
             .OrderBy(g => g.Key)
             .Select(g => new DailyThroughput
             {
                 Day = g.Key,
-                Total = g.Count(),
-                Ok = g.Count(x => x.Judgement == Judgement.Ok),
-                Ng = g.Count(x => x.Judgement == Judgement.Ng),
-                None = g.Count(x => x.Judgement == Judgement.None)
+                Total = g.Sum(x => x.Count),
+                Ok = g.Where(x => x.Judgement == Judgement.Ok).Sum(x => x.Count),
+                Ng = g.Where(x => x.Judgement == Judgement.Ng).Sum(x => x.Count),
+                None = g.Where(x => x.Judgement == Judgement.None).Sum(x => x.Count)
             })
             .ToList();
 
-        var byRecipe = points
-            .GroupBy(p => p.RecipeCode ?? "")
+        var byRecipe = counts
+            .GroupBy(x => x.RecipeCode)
             .OrderBy(g => string.IsNullOrEmpty(g.Key) ? "~" : g.Key, StringComparer.OrdinalIgnoreCase)
             .Select(g => new RecipeThroughput
             {
                 RecipeCode = g.Key,
-                Total = g.Count(),
-                Ok = g.Count(x => x.Judgement == Judgement.Ok),
-                Ng = g.Count(x => x.Judgement == Judgement.Ng),
-                Pending = g.Count(x => x.Judgement == Judgement.None)
+                Total = g.Sum(x => x.Count),
+                Ok = g.Where(x => x.Judgement == Judgement.Ok).Sum(x => x.Count),
+                Ng = g.Where(x => x.Judgement == Judgement.Ng).Sum(x => x.Count),
+                Pending = g.Where(x => x.Judgement == Judgement.None).Sum(x => x.Count)
             })
             .ToList();
 
