@@ -257,8 +257,8 @@ else
                     </MudStack>
                     @if (_productionSimWarning)
                     {
-                        <MudText Typo="Typo.caption" Class="mt-2" Style="color:var(--mud-palette-error)">
-                            Production 环境下数据库仍开启「启动后自动跑仿真」（SimulatorAutoRun=true）。客户现场须保持关闭；应到「PLC 仿真」页改回 false。
+                        <MudText Typo="Typo.caption" Class="mt-2" Style="color:var(--mud-palette-warning)">
+                            当前开着「启动后自动跑仿真」：采集记录来自内置模拟器，不代表真实产线。可在「PLC 仿真」页切换。
                         </MudText>
                     }
                 </MudPaper>
@@ -680,21 +680,19 @@ else
     }
 
     private Color SimChipColor =>
-        _productionSimWarning ? Color.Error
-        : (_settings?.SimulatorAutoRun == true ? Color.Warning : Color.Default);
+        _settings?.SimulatorAutoRun == true ? Color.Warning : Color.Default;
 
     private string SimChipText =>
-        _productionSimWarning ? "异常"
-        : (_settings?.SimulatorAutoRun == true ? "需关注" : "已关闭");
+        _settings?.SimulatorAutoRun == true ? "需关注" : "已关闭";
 
     private string SimDetail
     {
         get
         {
-            if (_productionSimWarning)
-                return $"Production 仍开启 AutoRun · {_envName}";
             var auto = _settings?.SimulatorAutoRun == true ? "AutoRun 开" : "AutoRun 关";
-            return $"{auto} · {_envName}";
+            return _productionSimWarning
+                ? $"{auto} · 数据来自内置模拟器 · {_envName}"
+                : $"{auto} · {_envName}";
         }
     }
 

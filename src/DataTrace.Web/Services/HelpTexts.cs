@@ -270,6 +270,11 @@ public static class HelpTexts
 
     // ---------- PLC 仿真 ----------
 
+    public static readonly HelpTopic SimAutoRun = new(
+        "自动跑线",
+        "由后台按托盘间隔持续触发仿真工站，模拟真实产线的产出。",
+        "写进去的是本机模拟器寄存器，采集会照常落库：Production 下开着时，看板数字不代表真实产线。");
+
     public static readonly HelpTopic SimPalletInterval = new(
         "托盘间隔",
         "只是走完一个托盘之后的等待时间。",
@@ -311,7 +316,7 @@ public static class HelpTexts
             "config/stations" => [TriggerValue, BoolAddress, PositionScope, FirstLastStation],
             "config/recipes" => [RecipeCode, RecipeEnabled, RecipeCopy],
             "config/settings" => [SaveToDispatch, ScanInterval, WriteRetry, ConfigSource, Retention, MesOutbox],
-            "simulate" => [SimPalletInterval, SimNgPercent, SimRunLine, SimLastWriteBack],
+            "simulate" => [SimAutoRun, SimPalletInterval, SimNgPercent, SimRunLine, SimLastWriteBack],
             "users" => [Lockout, RoleScope, DeleteUser, UserNameImmutable],
             _ => []
         };

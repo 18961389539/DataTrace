@@ -88,8 +88,9 @@
 
 @if (_productionSimWarning)
 {
-    <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3" Variant="Variant.Outlined">
-        Production 环境下仍开启「启动后自动跑仿真」。客户现场请关闭；下次启动会强制写回 false。
+    @* 开着仿真在 Production 是允许的（现场可以自己决定），所以这里只陈述事实、不再要求关闭。 *@
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
+        当前开着「启动后自动跑仿真」：看板与采集记录来自内置模拟器，不代表真实产线。可在「PLC 仿真」页关闭。
     </MudAlert>
 }
 @if (!_collectEnabled)

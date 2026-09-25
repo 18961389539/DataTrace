@@ -152,7 +152,7 @@ public class HelpTextsTests
     [InlineData("config/stations", 4)]
     [InlineData("config/recipes", 3)]
     [InlineData("config/settings", 6)]
-    [InlineData("simulate", 4)]
+    [InlineData("simulate", 5)]
     [InlineData("users", 4)]
     public void Every_page_mapping_lists_topics_that_exist(string route, int expected)
     {

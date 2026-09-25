@@ -113,23 +113,12 @@ using (var scope = app.Services.CreateScope())
     var seeder = scope.ServiceProvider.GetRequiredService<DatabaseSeeder>();
     var customer = scope.ServiceProvider.GetRequiredService<IOptions<CustomerOptions>>().Value;
     var env = scope.ServiceProvider.GetRequiredService<IHostEnvironment>();
-    // Development 默认开仿真；Production 默认关。customer.json / Customer:SimulatorAutoRun 可显式覆盖。
+    // 建库时的默认值：Development 默认开仿真、Production 默认关，customer.json / Customer:SimulatorAutoRun
+    // 可显式覆盖。它只在新建库时写入一次 —— 之后现场可以在「PLC 仿真」页随时开或关，
+    // 启动流程不再把它改回去：以前每次启动都强制写 false，界面上的开关实际上是个摆设。
     var simulatorAutoRunSeed = customer.SimulatorAutoRun
         ?? (env.IsDevelopment() ? true : false);
     await seeder.SeedAsync(simulatorAutoRunSeed);
-
-    // Production：配置/环境为准，启动后强制把库内 SimulatorAutoRun 写成 false（幂等）。
-    // Development/演示不动，避免把本地演示库关掉。
-    if (env.IsProduction())
-    {
-        var config = scope.ServiceProvider.GetRequiredService<IConfigRepository>();
-        var snap = await config.GetSnapshotAsync();
-        if (snap.Settings.SimulatorAutoRun)
-        {
-            snap.Settings.SimulatorAutoRun = false;
-            await config.SaveSettingsAsync(snap.Settings);
-        }
-    }
 }
 
 if (!app.Environment.IsDevelopment())

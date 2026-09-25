@@ -11,7 +11,6 @@
 @inject SimulatorCatalog Simulators
 @inject IDialogService DialogService
 @inject DtToast Toast
-@inject CustomerBrandingStore Branding
 @inject IAuditLogger Audit
 @inject AuthenticationStateProvider Auth
 
@@ -31,18 +30,10 @@
 <MudGrid>
     <MudItem xs="12" md="4">
         <MudPaper Class="pa-4">
-            @if (ProductionLocksAutoRun)
-            {
-                <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mb-2">
-                    Production 环境已锁定关闭「启动后自动跑仿真」（SimulatorAutoRun），避免现场误开仿真。
-                    开发/演示环境仍可在本页切换。
-                </MudAlert>
-                <MudSwitch T="bool" Value="false" Disabled="true" Label="自动跑线（Production 已锁定关闭）" Color="Color.Primary" />
-            }
-            else
-            {
-                <MudSwitch T="bool" Value="_auto" ValueChanged="OnAutoChanged" Label="自动跑线" Color="Color.Primary" />
-            }
+            @* Production 与开发/演示一样可以在这里切换：安装脚本给的只是建库默认值，
+               以前启动时强制写回 false，等于把界面上的开关变成了摆设。 *@
+            <MudSwitch T="bool" Value="_auto" ValueChanged="OnAutoChanged" Label="自动跑线" Color="Color.Primary" />
+            <InfoHint Topic="HelpTexts.SimAutoRun" />
             <MudNumericField @bind-Value="_interval" @bind-Value:after="() => _intervalError = null" Immediate="true"
                              Label="托盘间隔(ms)" Min="@SettingsLimits.MinSimulatorIntervalMs" Max="@SettingsLimits.MaxSimulatorIntervalMs"
                              Error="@(_intervalError is not null)" ErrorText="@_intervalError" />
@@ -149,9 +140,6 @@
 </MudGrid>
 
 @code {
-    private bool ProductionLocksAutoRun =>
-        Branding.EnvironmentName.Equals("Production", StringComparison.OrdinalIgnoreCase);
-
     private IReadOnlyList<Station> _stations = [];
     private Dictionary<int, PlcConnection> _plcs = new();
     private string _pallet = "P0001";
@@ -194,10 +182,6 @@
         _stations = snapshot.Stations.Where(s => s.Enabled).OrderBy(s => s.Sequence).ToList();
         _plcs = snapshot.PlcConnections.ToDictionary(x => x.Id);
         _auto = snapshot.Settings.SimulatorAutoRun || Simulator.Status.Running;
-        if (ProductionLocksAutoRun)
-        {
-            _auto = false;
-        }
         _interval = snapshot.Settings.SimulatorIntervalMs;
         _ng = snapshot.Settings.SimulatorNgPercent;
         _pool = snapshot.Settings.SimulatorPalletPool;
@@ -313,7 +297,7 @@
         {
             var settings = (await Config.GetSnapshotAsync()).Settings;
             var oldValues = SummarizeOptions(settings);
-            settings.SimulatorAutoRun = ProductionLocksAutoRun ? false : _auto;
+            settings.SimulatorAutoRun = _auto;
             if (includeOptions)
             {
                 settings.SimulatorIntervalMs = _interval!.Value;
