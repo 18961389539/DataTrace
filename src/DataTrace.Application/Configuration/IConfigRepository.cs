@@ -45,6 +45,14 @@ public sealed class MesOutboxSnapshot
 
 public interface IConfigRepository
 {
+    /// <summary>
+    /// 取整份配置视图：设置 + PLC + 工站(点位/曲线/序列/判据) + 型号(限值)。
+    /// </summary>
+    /// <remarks>
+    /// 结果按配置版本号缓存（缓存在本仓储实例内，即一个电路/一次作用域，配置一改就自然失效），
+    /// 因此返回值是<b>只读共享实例</b>：调用方不得就地修改（保存前要打补丁请先
+    /// <c>SystemSettings.Clone()</c>），也不要把它交给 EF 跟踪。
+    /// </remarks>
     Task<AppConfigurationSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default);
     Task<int> GetVersionAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<PlcConnection>> GetPlcConnectionsAsync(CancellationToken cancellationToken = default);

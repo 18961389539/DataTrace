@@ -286,7 +286,7 @@ public class AuditLoggerTests
 public class ConfigRepositoryTests
 {
     private static ConfigRepository Repo(ConfigDbContext db)
-        => new(db, new CurveBaselineCache(), new RuntimeStatusHub());
+        => new(db, TestDatabase.FactoryFor(db), new CurveBaselineCache(), new RuntimeStatusHub());
 
     private static async Task<(TempWorkspace Workspace, ConfigDbContext Db, PlcConnection Plc)> SeedAsync()
     {
@@ -377,6 +377,50 @@ public class ConfigRepositoryTests
         Assert.Empty(snapshot.Stations);
         Assert.Equal(0, snapshot.Version);
         Assert.Equal(0, await repo.GetVersionAsync());
+    }
+
+    /// <summary>
+    /// 快照按版本号缓存：版本没变就复用同一份图（看板每秒要问好几次，不能再跑那五条查询）；
+    /// 配置一改（版本自增）必须换一份新的，不能继续发旧的。
+    /// </summary>
+    [Fact]
+    public async Task Snapshot_is_cached_until_the_config_version_changes()
+    {
+        var (workspace, db, _) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = Repo(db);
+
+        var first = await repo.GetSnapshotAsync();
+        Assert.Same(first, await repo.GetSnapshotAsync());
+
+        // 等同另一个会话改了配置：库里换个值 + 版本号自增。
+        await db.Database.ExecuteSqlRawAsync("UPDATE SystemSettings SET ScanIntervalMs = 111");
+        await repo.BumpVersionAsync();
+
+        var second = await repo.GetSnapshotAsync();
+        Assert.NotSame(first, second);
+        Assert.Equal(111, second.Settings.ScanIntervalMs);
+    }
+
+    /// <summary>
+    /// 只读查询各开一个临时 context：同一个仓储上并发读不会撞 EF 的"DbContext 不支持并发操作"。
+    /// 读要是都挤在那个 scoped 上下文里，页面上的并行取数就只能靠人工串行规避（报表页原先就是这样）。
+    /// </summary>
+    [Fact]
+    public async Task Concurrent_reads_do_not_share_one_context()
+    {
+        var (workspace, db, _) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = Repo(db);
+
+        await Task.WhenAll(
+            Task.Run(() => repo.GetSnapshotAsync()),
+            Task.Run(() => repo.GetStationsAsync()),
+            Task.Run(() => repo.GetRecipesAsync()),
+            Task.Run(() => repo.GetPlcConnectionsAsync()),
+            Task.Run(() => repo.GetMesOutboxStatusAsync()));
     }
 
     [Fact]

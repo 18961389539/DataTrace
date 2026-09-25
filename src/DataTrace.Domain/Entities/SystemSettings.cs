@@ -35,4 +35,15 @@ public class SystemSettings
     /// 由人在界面上手工切换；切换会自增配置版本，采集器下一次轮询即换用新限值。
     /// </summary>
     public int? ActiveRecipeId { get; set; }
+
+    /// <summary>
+    /// 复制一份用于"先打补丁再保存"的副本。
+    /// </summary>
+    /// <remarks>
+    /// 配置快照是全局共享的只读实例（见 <c>IConfigRepository.GetSnapshotAsync</c>），
+    /// 页面上"取库里那一行、只改本页动过的字段、再整体保存"的写法必须作用在副本上：
+    /// 直接改共享实例的话，哪怕保存失败，改动也会留在快照里被别的页面当成已保存的值读走。
+    /// 本类型只有值类型与 string 成员，所以浅拷贝就是完整副本，新加字段也不会漏。
+    /// </remarks>
+    public SystemSettings Clone() => (SystemSettings)MemberwiseClone();
 }

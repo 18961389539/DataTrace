@@ -69,8 +69,16 @@ public static class InfrastructureServiceCollectionExtensions
         var curvePath = Path.Combine(dataRoot, "curves");
         var spoolPath = Path.Combine(dataRoot, "spool");
 
-        services.AddDbContext<ConfigDbContext>(options =>
-            options.UseSqlite($"Data Source={configPath}"));
+        // optionsLifetime 必须是 Singleton：下面的工厂也是单例，它注入的就是这份 options，
+        // 让单例去解析一个 scoped 服务会在运行时直接报"不能从根容器解析 scoped 服务"。
+        services.AddDbContext<ConfigDbContext>(
+            options => options.UseSqlite($"Data Source={configPath}"),
+            optionsLifetime: ServiceLifetime.Singleton);
+
+        // 只读查询走工厂：每次查询一个自己的 context，读与读、读与写互不干扰。
+        // scoped 的那个在 Blazor Server 里是整个电路共用的（EF 的 DbContext 不支持并发），
+        // 读也挤在它上面时，页面上任何并行取数都会撞车，配置读被迫串行（见 ConfigRepository.ReadAsync）。
+        services.AddDbContextFactory<ConfigDbContext>(options => options.UseSqlite($"Data Source={configPath}"));
 
         services.AddDataTraceIdentity();
 

@@ -64,6 +64,25 @@ internal static class TestDatabase
         await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
         return db;
     }
+
+    /// <summary>
+    /// 与 <paramref name="db"/> 指向同一个库文件的"每查询一个新 context"工厂。
+    /// 配置仓储的只读路径走它，所以单测构造仓储时也得给一个，否则读到的是另一套（空）库。
+    /// </summary>
+    public static IDbContextFactory<ConfigDbContext> FactoryFor(ConfigDbContext db)
+    {
+        var connectionString = db.Database.GetConnectionString()
+            ?? throw new InvalidOperationException("测试库没有连接串");
+        var options = new DbContextOptionsBuilder<ConfigDbContext>().UseSqlite(connectionString).Options;
+        return new TestConfigDbContextFactory(options);
+    }
+}
+
+/// <summary>测试用的上下文工厂：直接按给定 options 造 context，不走 DI 池化。</summary>
+internal sealed class TestConfigDbContextFactory(DbContextOptions<ConfigDbContext> options)
+    : IDbContextFactory<ConfigDbContext>
+{
+    public ConfigDbContext CreateDbContext() => new(options);
 }
 
 /// <summary>成套启动一个完整的采集环境：配置库 + 运行库 + 模拟 PLC + 采集流水线。</summary>
@@ -134,7 +153,8 @@ internal sealed class CollectHarness : IAsyncDisposable
         if (configureMes)
         {
             var repo = harness.Scope.ServiceProvider.GetRequiredService<IConfigRepository>();
-            var settings = harness.Snapshot.Settings;
+            // 快照是共享只读实例，改前先克隆。
+            var settings = harness.Snapshot.Settings.Clone();
             settings.MesEnabled = true;
             settings.MesEndpoint = "http://localhost/mes";
             await repo.SaveSettingsAsync(settings);

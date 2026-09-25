@@ -872,7 +872,9 @@ else
                 {
                     // 库里的最新一行：只把本页真的改过的字段写回去。
                     // 整行覆盖会把另一会话刚保存的其它字段悄悄回滚（两边都看到"保存成功"）。
-                    var target = (await Config.GetSnapshotAsync()).Settings;
+                    // 但快照是全局共享的只读实例（见 IConfigRepository.GetSnapshotAsync），
+                    // 必须先克隆再打补丁 —— 否则改动会留在共享快照里，保存失败也照样被别的页面读走。
+                    var target = (await Config.GetSnapshotAsync()).Settings.Clone();
                     var oldSnap = SummarizeSettings(target);
                     if (_edit.ScanIntervalMs != _loaded.ScanIntervalMs) target.ScanIntervalMs = _edit.ScanIntervalMs!.Value;
                     if (_edit.WriteRetryCount != _loaded.WriteRetryCount) target.WriteRetryCount = _edit.WriteRetryCount!.Value;

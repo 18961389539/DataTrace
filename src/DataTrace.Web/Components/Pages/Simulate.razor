@@ -295,7 +295,8 @@
         _saving = true;
         try
         {
-            var settings = (await Config.GetSnapshotAsync()).Settings;
+            // 快照是全局共享的只读实例：先克隆再打补丁，避免改到共享对象上（见 IConfigRepository.GetSnapshotAsync）。
+            var settings = (await Config.GetSnapshotAsync()).Settings.Clone();
             var oldValues = SummarizeOptions(settings);
             settings.SimulatorAutoRun = _auto;
             if (includeOptions)

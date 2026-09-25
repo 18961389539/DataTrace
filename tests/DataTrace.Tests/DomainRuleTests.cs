@@ -8,6 +8,52 @@ namespace DataTrace.Tests;
 
 public class DomainRuleTests
 {
+    // ---------- 配置快照的只读副本 ----------
+
+    /// <summary>
+    /// 配置快照是全局共享的只读实例，页面上"取库里那一行、改几个字段、再保存"必须先克隆：
+    /// 克隆必须是另一份实例（改它不能影响共享快照），且每个字段都要带过去。
+    /// </summary>
+    [Fact]
+    public void Settings_clone_is_a_separate_instance_with_every_field()
+    {
+        var source = new SystemSettings
+        {
+            Id = 3,
+            ScanIntervalMs = 201,
+            WriteRetryCount = 4,
+            WriteRetryDelayMs = 51,
+            RetentionYears = 6,
+            CurveRootPath = "a/curves",
+            SpoolPath = "a/spool",
+            RuntimeDbPath = "a/runtime",
+            CollectEnabled = false,
+            MesEnabled = true,
+            MesEndpoint = "http://mes/api",
+            MesTimeoutSeconds = 11,
+            SimulatorAutoRun = false,
+            SimulatorIntervalMs = 1234,
+            SimulatorNgPercent = 9,
+            SimulatorPalletPool = 21,
+            ActiveRecipeId = 7
+        };
+
+        var clone = source.Clone();
+
+        Assert.NotSame(source, clone);
+        // 逐字段比对：任一新加的列漏出副本，这里就会红（页面按字段打补丁的前提是副本完整）。
+        foreach (var property in typeof(SystemSettings).GetProperties())
+        {
+            Assert.Equal(property.GetValue(source), property.GetValue(clone));
+        }
+
+        // 改副本不影响原件 —— 这正是"共享快照不能就地改"的原因。
+        clone.ScanIntervalMs = 999;
+        clone.ActiveRecipeId = null;
+        Assert.Equal(201, source.ScanIntervalMs);
+        Assert.Equal(7, source.ActiveRecipeId);
+    }
+
     // ---------- 托盘码校验 ----------
 
     [Theory]
