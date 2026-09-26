@@ -581,6 +581,13 @@ h5:focus,
     cursor: pointer;
 }
 
+/* 表格里的图标按钮视觉只有 28px：工控平板戴手套、手指带油污时很难点中。
+   只放大命中区、不动视觉尺寸，避免挤乱表格行高（WCAG 2.5.5 目标尺寸）。 */
+.mud-table .mud-icon-button {
+    min-width: 36px;
+    min-height: 36px;
+}
+
 /* 看板数值刷新：元素用 @key 重建，动画随之重放，操作工一眼能看出哪一格刚变化 */
 .dt-flash {
     animation: dt-flash 1.4s ease-out;

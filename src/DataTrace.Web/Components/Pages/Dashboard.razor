@@ -206,7 +206,7 @@ else
                         }
                     </MudTd>
                     <MudTd DataLabel="耗时" Class="dt-num dt-nowrap">@context.DurationMs ms</MudTd>
-                    <MudTd>
+                    <MudTd DataLabel="操作">
                         <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
                                    Href="@($"/query/{context.MonthKey}/{context.RecordId}")">明细</MudButton>
                     </MudTd>

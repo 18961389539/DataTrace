@@ -143,13 +143,13 @@ else
                         <MudTh>状态</MudTh>
                     </HeaderContent>
                     <RowTemplate>
-                        <MudTd>@CurveFeatureDimensions.Label(context.Dimension)</MudTd>
-                        <MudTd>@Num(context.Center)</MudTd>
-                        <MudTd>@(context.IsConstant ? "—" : Num(context.Sigma))</MudTd>
-                        <MudTd>@(context.IsConstant ? "—" : $"{Num(context.LowerBound)} ~ {Num(context.UpperBound)}")</MudTd>
-                        <MudTd>@Num(context.Min) ~ @Num(context.Max)</MudTd>
-                        <MudTd>@(context.OutlierCount > 0 ? context.OutlierCount.ToString() : "—")</MudTd>
-                        <MudTd>
+                        <MudTd DataLabel="维度">@CurveFeatureDimensions.Label(context.Dimension)</MudTd>
+                        <MudTd DataLabel="基线">@Num(context.Center)</MudTd>
+                        <MudTd DataLabel="离散度 σ">@(context.IsConstant ? "—" : Num(context.Sigma))</MudTd>
+                        <MudTd DataLabel="正常范围（±3σ）">@(context.IsConstant ? "—" : $"{Num(context.LowerBound)} ~ {Num(context.UpperBound)}")</MudTd>
+                        <MudTd DataLabel="历史范围">@Num(context.Min) ~ @Num(context.Max)</MudTd>
+                        <MudTd DataLabel="离群样本">@(context.OutlierCount > 0 ? context.OutlierCount.ToString() : "—")</MudTd>
+                        <MudTd DataLabel="状态">
                             @if (context.IsConstant)
                             {
                                 <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Default">恒定</MudChip>
@@ -189,9 +189,9 @@ else
                             <MudTh>结论</MudTh>
                         </HeaderContent>
                         <RowTemplate>
-                            <MudTd>@context.Time.ToString("MM-dd HH:mm:ss")</MudTd>
-                            <MudTd>@context.PalletCode</MudTd>
-                            <MudTd>
+                            <MudTd DataLabel="时间">@context.Time.ToString("MM-dd HH:mm:ss")</MudTd>
+                            <MudTd DataLabel="托盘码">@context.PalletCode</MudTd>
+                            <MudTd DataLabel="判定">
                                 @if (context.IsNg)
                                 {
                                     <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Error">NG</MudChip>
@@ -201,9 +201,9 @@ else
                                     <MudText Typo="Typo.caption" Class="dt-muted">OK</MudText>
                                 }
                             </MudTd>
-                            <MudTd>@Num(context.RmsZ, "0.00")</MudTd>
-                            <MudTd>@Num(context.MaxAbsZ, "0.00") σ</MudTd>
-                            <MudTd>
+                            <MudTd DataLabel="综合偏离（RMS z）">@Num(context.RmsZ, "0.00")</MudTd>
+                            <MudTd DataLabel="最大偏离">@Num(context.MaxAbsZ, "0.00") σ</MudTd>
+                            <MudTd DataLabel="偏离维度">
                                 @if (context.WorstDimension is { } worst)
                                 {
                                     @CurveFeatureDimensions.Label(worst)
@@ -218,7 +218,7 @@ else
                                              Class="ml-1">恒定维变化 @context.ConstantBreachCount</MudChip>
                                 }
                             </MudTd>
-                            <MudTd>
+                            <MudTd DataLabel="结论">
                                 <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@VerdictColor(context.Verdict)">
                                     @VerdictLabel(context.Verdict)
                                 </MudChip>
@@ -253,11 +253,11 @@ else
                                     <MudTh>类型</MudTh>
                                 </HeaderContent>
                                 <RowTemplate>
-                                    <MudTd>@CurveFeatureDimensions.Label(context.Dimension)</MudTd>
-                                    <MudTd>@Num(context.Value)</MudTd>
-                                    <MudTd>@Num(context.BaselineCenter)</MudTd>
-                                    <MudTd>@(context.IsConstantBreach ? "0（恒定）" : Num(context.BaselineSigma))</MudTd>
-                                    <MudTd>
+                                    <MudTd DataLabel="维度">@CurveFeatureDimensions.Label(context.Dimension)</MudTd>
+                                    <MudTd DataLabel="实测值">@Num(context.Value)</MudTd>
+                                    <MudTd DataLabel="基线">@Num(context.BaselineCenter)</MudTd>
+                                    <MudTd DataLabel="离散度 σ">@(context.IsConstantBreach ? "0（恒定）" : Num(context.BaselineSigma))</MudTd>
+                                    <MudTd DataLabel="偏离倍数">
                                         @if (context.ZScore is { } z)
                                         {
                                             <span style="@(Math.Abs(z) >= CurveTemplateMatcher.AbnormalMaxZ ? "color:var(--mud-palette-error);font-weight:600" : "")">
@@ -269,7 +269,7 @@ else
                                             <span style="color:var(--mud-palette-warning)">历史上从未变化</span>
                                         }
                                     </MudTd>
-                                    <MudTd>@(context.IsConstantBreach ? "恒定维被打破" : "超出范围")</MudTd>
+                                    <MudTd DataLabel="类型">@(context.IsConstantBreach ? "恒定维被打破" : "超出范围")</MudTd>
                                 </RowTemplate>
                             </MudTable>
                         }
