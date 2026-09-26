@@ -18,7 +18,7 @@
             </MudText>
         </div>
         <MudSpacer />
-        <MudChip T="string" Size="Size.Small" Color="@StateColor">@StateLabel</MudChip>
+        <MudChip T="string" Size="Size.Small" Color="@StateColor" Icon="@StateIcon">@StateLabel</MudChip>
     </MudStack>
 
     <div class="dt-station-meta">
@@ -44,7 +44,8 @@
                         {
                             <MudTooltip Arrow="true" RootClass="dt-help-popover">
                                 <ChildContent>
-                                    <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined" Class="ml-1">超限</MudChip>
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined" Class="ml-1"
+                                             Icon="@Icons.Material.Filled.Error">超限</MudChip>
                                 </ChildContent>
                                 <TooltipContent>
                                     <HelpContent Topic="HelpTexts.LimitThreeTiers" />
@@ -55,7 +56,8 @@
                         {
                             <MudTooltip Arrow="true" RootClass="dt-help-popover">
                                 <ChildContent>
-                                    <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Class="ml-1">预警</MudChip>
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Class="ml-1"
+                                             Icon="@Icons.Material.Filled.Warning">预警</MudChip>
                                 </ChildContent>
                                 <TooltipContent>
                                     <HelpContent Topic="HelpTexts.LimitThreeTiers" />
@@ -67,11 +69,18 @@
                 </div>
             }
         </div>
-        @foreach (var curve in Station.LastCurves)
+        var hiddenCurves = Math.Max(0, Station.LastCurves.Count - MaxVisibleCurves);
+        @foreach (var curve in Station.LastCurves.Take(MaxVisibleCurves))
         {
             <MudText Typo="Typo.caption" Class="dt-muted mt-3 mb-1">@curve.Name</MudText>
             <StationSparkChart CurveName="@curve.Name" Values="curve.Values"
                                IsNg="@(Station.LastJudgement == Judgement.Ng)" />
+        }
+        @if (hiddenCurves > 0)
+        {
+            @* 曲线条数不设上限时，配了 5 条曲线的工站会把卡片顶成两倍高，
+               同一行的其它卡片就被拉出一块空白。 *@
+            <MudText Typo="Typo.caption" Class="dt-muted mt-1">还有 @hiddenCurves 条曲线，见本站明细</MudText>
         }
     }
 
@@ -87,6 +96,9 @@
 </MudPaper>
 
 @code {
+    /// <summary>卡片上最多画几条曲线，再多折叠成一行提示。</summary>
+    private const int MaxVisibleCurves = 2;
+
     [Parameter] public StationRuntimeStatus Station { get; set; } = default!;
 
     private string? _fingerprint;
@@ -128,6 +140,24 @@
             if (Station.LastJudgement == Judgement.Ng) return Color.Error;
             if (Station.LastJudgement == Judgement.Ok) return Color.Success;
             return Color.Default;
+        }
+    }
+
+    /// <summary>
+    /// 状态图标。颜色之外再给一重形状编码：色觉障碍用户分不出红绿边条时，
+    /// 图标与文字仍然能区分故障、NG、采集中与停用。
+    /// </summary>
+    private string? StateIcon
+    {
+        get
+        {
+            // 停用要在 NG 之前判：停用工位留着上一次判定，否则会挂上 NG 的图标。
+            if (Station.State == StationRuntimeState.Fault) return Icons.Material.Filled.Report;
+            if (Station.State == StationRuntimeState.Disabled) return Icons.Material.Filled.Block;
+            if (Station.State == StationRuntimeState.Busy) return Icons.Material.Filled.Sync;
+            if (Station.LastJudgement == Judgement.Ng) return Icons.Material.Filled.Cancel;
+            if (Station.LastJudgement == Judgement.Ok) return Icons.Material.Filled.CheckCircle;
+            return null;
         }
     }
 

@@ -76,6 +76,43 @@ public class StationCardTests
         Assert.True(cut.RenderCount > before);
     }
 
+    /// <summary>曲线条数不设上限时，配了五条曲线的工站会把卡片顶成两倍高，同行其它卡就被拉出空白。</summary>
+    [Fact]
+    public void Collapses_curves_beyond_two_into_a_hint()
+    {
+        using var ctx = NewContext();
+        var station = Station();
+        station.LastCurves =
+        [
+            new StationLiveCurve { Name = "压力曲线", Values = [1f, 2f, 3f] },
+            new StationLiveCurve { Name = "位移曲线", Values = [1f, 2f, 3f] },
+            new StationLiveCurve { Name = "温度曲线", Values = [1f, 2f, 3f] }
+        ];
+
+        var cut = ctx.RenderComponent<StationCard>(p => p.Add(x => x.Station, station));
+
+        Assert.Contains("压力曲线", cut.Markup);
+        Assert.Contains("位移曲线", cut.Markup);
+        Assert.DoesNotContain("温度曲线", cut.Markup);
+        Assert.Contains("还有 1 条曲线", cut.Markup);
+    }
+
+    /// <summary>状态不能只靠颜色：色觉障碍用户分不出红绿边条时，图标与文字仍要能分辨。</summary>
+    [Theory]
+    [InlineData(Judgement.Ok, "OK")]
+    [InlineData(Judgement.Ng, "NG")]
+    public void Encodes_the_state_with_an_icon_on_top_of_the_colour(Judgement judgement, string label)
+    {
+        using var ctx = NewContext();
+        var station = Station();
+        station.LastJudgement = judgement;
+
+        var cut = ctx.RenderComponent<StationCard>(p => p.Add(x => x.Station, station));
+
+        Assert.Contains(label, cut.Markup);
+        Assert.Contains("mud-icon-root", cut.Markup);
+    }
+
     /// <summary>模拟器跑出来的单件耗时只有几十毫秒，按秒格式化会塌成「0.0 s」。</summary>
     [Fact]
     public void Keeps_millisecond_cadence_readable()

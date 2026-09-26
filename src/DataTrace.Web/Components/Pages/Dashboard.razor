@@ -387,7 +387,7 @@ else
         _shiftBusy = true;
         try
         {
-            var day = ShanghaiToday();
+            var day = ShanghaiClock.Today;
             var report = await Reports.GetThroughputAsync(day, day.AddDays(1).AddTicks(-1), null);
             var rows = report.ByDay;
             var today = rows.FirstOrDefault(r => r.Day.Date == day) ?? rows.FirstOrDefault();
@@ -414,20 +414,6 @@ else
         finally
         {
             _shiftBusy = false;
-        }
-    }
-
-    private static DateTime ShanghaiToday()
-    {
-        try
-        {
-            var id = OperatingSystem.IsWindows() ? "China Standard Time" : "Asia/Shanghai";
-            var tz = TimeZoneInfo.FindSystemTimeZoneById(id);
-            return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tz).Date;
-        }
-        catch
-        {
-            return DateTime.Today;
         }
     }
 

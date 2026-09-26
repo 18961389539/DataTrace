@@ -14,11 +14,11 @@
 
     protected override void OnInitialized()
     {
-        _rendered = Format(Time, DateTime.Now);
+        _rendered = Format(Time, ShanghaiClock.Now);
         _timer = new Timer(_ => InvokeAsync(() =>
         {
             // 文案没变就不重画：到「分」这一档时每秒算一次但只有跨分钟才需要刷。
-            var next = Format(Time, DateTime.Now);
+            var next = Format(Time, ShanghaiClock.Now);
             if (next == _rendered) return;
             _rendered = next;
             StateHasChanged();
