@@ -1,0 +1,191 @@
+@using DataTrace.Application.Realtime
+@using DataTrace.Domain.Constants
+@using DataTrace.Domain.Enums
+
+@* 工站卡片。
+   看板每 5 秒有一次定时重画，用来推进相对时间；整页重画会把每张卡的点位、
+   tooltip、迷你曲线全部 diff 一遍。这里用指纹把重画限制在「数据真的变了」的时候，
+   相对时间交给卡片内部的 LiveRelative 自己走。 *@
+
+<MudPaper Class="@CardClass">
+    <MudStack Row="true" AlignItems="AlignItems.Start">
+        <div>
+            <MudText Typo="Typo.subtitle1">@Station.StationCode @Station.StationName</MudText>
+            <MudText Typo="Typo.caption" Class="dt-muted dt-flash" @key="@BeatKey">
+                @(string.IsNullOrWhiteSpace(Station.LastPalletCode) ? "等待托盘" : Station.LastPalletCode)
+                · @(Station.LastSerialNo ?? "-")
+                · <LiveRelative Time="Station.LastCompleteTime" />
+            </MudText>
+        </div>
+        <MudSpacer />
+        <MudChip T="string" Size="Size.Small" Color="@StateColor">@StateLabel</MudChip>
+    </MudStack>
+
+    <div class="dt-station-meta">
+        <span class="dt-station-meta-label">节拍</span>
+        <span class="dt-station-meta-value">@CadenceText</span>
+    </div>
+
+    @if (Station.LastTags.Count == 0 && Station.LastCurves.Count == 0)
+    {
+        <MudText Typo="Typo.body2" Class="dt-muted mt-4">本站还没有采集数据</MudText>
+    }
+    else
+    {
+        <div class="dash-tags">
+            @foreach (var tag in Station.LastTags)
+            {
+                @* 卡片里只放短芯片「超限/预警」，完整说明放进 Tooltip，
+                   避免长句把工站卡撑满；触屏长按也能看到 tooltip。 *@
+                <div class="@TagClass(tag)">
+                    <span class="dash-tag-label">
+                        @tag.Name
+                        @if (tag.OutOfLimit)
+                        {
+                            <MudTooltip Arrow="true" RootClass="dt-help-popover">
+                                <ChildContent>
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined" Class="ml-1">超限</MudChip>
+                                </ChildContent>
+                                <TooltipContent>
+                                    <HelpContent Topic="HelpTexts.LimitThreeTiers" />
+                                </TooltipContent>
+                            </MudTooltip>
+                        }
+                        else if (tag.Warning)
+                        {
+                            <MudTooltip Arrow="true" RootClass="dt-help-popover">
+                                <ChildContent>
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Class="ml-1">预警</MudChip>
+                                </ChildContent>
+                                <TooltipContent>
+                                    <HelpContent Topic="HelpTexts.LimitThreeTiers" />
+                                </TooltipContent>
+                            </MudTooltip>
+                        }
+                    </span>
+                    <span class="dash-tag-value dt-flash" @key="@tag.Display">@tag.Display @tag.Unit</span>
+                </div>
+            }
+        </div>
+        @foreach (var curve in Station.LastCurves)
+        {
+            <MudText Typo="Typo.caption" Class="dt-muted mt-3 mb-1">@curve.Name</MudText>
+            <StationSparkChart CurveName="@curve.Name" Values="curve.Values"
+                               IsNg="@(Station.LastJudgement == Judgement.Ng)" />
+        }
+    }
+
+    @if (!string.IsNullOrEmpty(Station.LastError))
+    {
+        <MudText Typo="Typo.caption" Color="Color.Error" Class="mt-2">@Station.LastError</MudText>
+    }
+    @if (Station.LastRecordId is > 0 && !string.IsNullOrEmpty(Station.LastMonthKey))
+    {
+        <MudButton Size="Size.Small" Variant="Variant.Text" Class="mt-1 pa-0" EndIcon="@Icons.Material.Filled.ChevronRight"
+                   Href="@($"/query/{Station.LastMonthKey}/{Station.LastRecordId}")">本站明细</MudButton>
+    }
+</MudPaper>
+
+@code {
+    [Parameter] public StationRuntimeStatus Station { get; set; } = default!;
+
+    private string? _fingerprint;
+    private bool _render;
+
+    protected override void OnParametersSet()
+    {
+        var fingerprint = BuildFingerprint();
+        _render = fingerprint != _fingerprint;
+        _fingerprint = fingerprint;
+    }
+
+    protected override bool ShouldRender() => _render;
+
+    private string BeatKey => $"{Station.LastPalletCode}|{Station.LastSerialNo}";
+
+    private string CadenceText => DurationFormat.Text(Station.LastDurationMs);
+
+    private string CardClass
+    {
+        get
+        {
+            if (Station.State == StationRuntimeState.Disabled) return "dash-station disabled";
+            if (Station.State == StationRuntimeState.Fault) return "dash-station fault";
+            if (Station.State == StationRuntimeState.Busy) return "dash-station busy";
+            if (Station.LastJudgement == Judgement.Ng) return "dash-station ng";
+            if (Station.LastJudgement == Judgement.Ok) return "dash-station ok";
+            return "dash-station";
+        }
+    }
+
+    private Color StateColor
+    {
+        get
+        {
+            if (Station.State == StationRuntimeState.Busy) return Color.Info;
+            if (Station.State == StationRuntimeState.Fault) return Color.Error;
+            if (Station.State == StationRuntimeState.Disabled) return Color.Dark;
+            if (Station.LastJudgement == Judgement.Ng) return Color.Error;
+            if (Station.LastJudgement == Judgement.Ok) return Color.Success;
+            return Color.Default;
+        }
+    }
+
+    private string StateLabel
+    {
+        get
+        {
+            if (Station.State == StationRuntimeState.Busy) return "采集中";
+            if (Station.State == StationRuntimeState.Fault) return "故障";
+            if (Station.State == StationRuntimeState.Disabled) return "停用";
+            if (Station.LastJudgement == Judgement.Ng) return "NG";
+            if (Station.LastJudgement == Judgement.Ok) return "OK";
+            if (Station.LastJudgement == Judgement.None) return "未判定";
+            return "空闲";
+        }
+    }
+
+    /// <summary>点位行样式：红区（超规格）优先于黄区（预警带）。</summary>
+    private static string TagClass(StationLiveTag tag)
+        => tag.OutOfLimit ? "dash-tag out" : tag.Warning ? "dash-tag warn" : "dash-tag";
+
+    private string BuildFingerprint()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append(Station.StationCode).Append('|')
+          .Append((int)Station.State).Append('|')
+          .Append((int)Station.LastJudgement).Append('|')
+          .Append(Station.LastPalletCode).Append('|')
+          .Append(Station.LastSerialNo).Append('|')
+          .Append(Station.LastError).Append('|')
+          .Append(Station.LastDurationMs).Append('|')
+          .Append(Station.LastRecordId).Append('|');
+
+        foreach (var tag in Station.LastTags)
+        {
+            sb.Append(tag.Name).Append(':').Append(tag.Display).Append(tag.Unit)
+              .Append(tag.OutOfLimit ? "!" : "").Append(tag.Warning ? "?" : "").Append('|');
+        }
+
+        // 曲线只比首尾/中位采样：与 StationSparkChart 内部指纹一致，
+        // 长度或采样变了就放行，交给子组件自己再判一次。
+        foreach (var curve in Station.LastCurves)
+        {
+            var len = curve.Values.Length;
+            if (len == 0)
+            {
+                sb.Append(curve.Name).Append(":0|");
+                continue;
+            }
+
+            sb.Append(curve.Name).Append(':').Append(len)
+              .Append(':').Append(curve.Values[0].ToString("R", Culture))
+              .Append(':').Append(curve.Values[len / 2].ToString("R", Culture))
+              .Append(':').Append(curve.Values[len - 1].ToString("R", Culture)).Append('|');
+        }
+
+        return sb.ToString();
+    }
+
+    private static System.Globalization.CultureInfo Culture => System.Globalization.CultureInfo.InvariantCulture;
+}

@@ -36,15 +36,6 @@
             </MudChip>
         }
 
-        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" aria-label="今日（Asia/Shanghai）采集件数">今日 @_shiftTotal</MudChip>
-        <InfoHint Topic="HelpTexts.TodayScope" />
-        <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">OK @_shiftOk</MudChip>
-        <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined">NG @_shiftNg</MudChip>
-        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">未判定 @_shiftNone</MudChip>
-        <InfoHint Topic="HelpTexts.JudgementThreeState" />
-        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined"
-                 aria-label="直通率 = OK/(OK+NG)，未判定不进分母">直通率 @_shiftYieldText</MudChip>
-        <InfoHint Topic="HelpTexts.YieldRate" />
     </ChildContent>
     <Actions>
         <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="mr-2"
@@ -61,6 +52,28 @@
         <InfoHint Topic="HelpTexts.StaleData" />
     </Actions>
 </PageHeader>
+
+@* KPI 独立成条：跟页头的状态芯片平铺在一起时它们权重相同，扫一眼分不出主次。
+   今日件数的口径（Asia/Shanghai）与三态判定的说明跟着各自的 ⓘ 走。 *@
+<div class="dt-kpi-bar">
+    <div class="dt-kpi">
+        <span class="dt-kpi-label">今日采集<InfoHint Topic="HelpTexts.TodayScope" /></span>
+        <span class="dt-kpi-value">@_shiftTotal</span>
+        <span class="dt-kpi-hint">OK @_shiftOk · 未判定 @_shiftNone</span>
+    </div>
+    <div class="dt-kpi">
+        <span class="dt-kpi-label">直通率<InfoHint Topic="HelpTexts.YieldRate" /></span>
+        <span class="dt-kpi-value">@_shiftYieldText</span>
+    </div>
+    <div class="dt-kpi">
+        <span class="dt-kpi-label">今日 NG<InfoHint Topic="HelpTexts.JudgementThreeState" /></span>
+        <span class="dt-kpi-value dt-kpi-value-alert">@_shiftNg</span>
+    </div>
+    <div class="dt-kpi">
+        <span class="dt-kpi-label">平均节拍</span>
+        <span class="dt-kpi-value">@AvgCadenceText</span>
+    </div>
+</div>
 
 @if (_shopFloor)
 {
@@ -131,79 +144,7 @@ else
         @foreach (var station in _orderedStations)
         {
             <MudItem xs="12" md="6" lg="4">
-                <MudPaper Class="@CardClass(station)">
-                    <MudStack Row="true" AlignItems="AlignItems.Start">
-                        <div>
-                            <MudText Typo="Typo.subtitle1">@station.StationCode @station.StationName</MudText>
-                            <MudText Typo="Typo.caption" Class="dt-muted dt-flash" @key="@BeatKey(station)">
-                                @(string.IsNullOrWhiteSpace(station.LastPalletCode) ? "等待托盘" : station.LastPalletCode)
-                                · @(station.LastSerialNo ?? "-")
-                                · @Relative(station.LastCompleteTime)
-                            </MudText>
-                        </div>
-                        <MudSpacer />
-                        <MudChip T="string" Size="Size.Small" Color="@StateColor(station)">@StateLabel(station)</MudChip>
-                    </MudStack>
-
-                    @if (station.LastTags.Count == 0 && station.LastCurves.Count == 0)
-                    {
-                        <MudText Typo="Typo.body2" Class="dt-muted mt-4">本站还没有采集数据</MudText>
-                    }
-                    else
-                    {
-                                                <div class="dash-tags">
-                            @foreach (var tag in station.LastTags)
-                            {
-                                @* 卡片里只放短芯片「超限/预警」，完整说明放进 Tooltip，
-                                   避免长句把工站卡撑满；触屏长按也能看到 tooltip。 *@
-                                <div class="@TagClass(tag)">
-                                    <span class="dash-tag-label">
-                                        @tag.Name
-                                        @if (tag.OutOfLimit)
-                                        {
-                                            <MudTooltip Arrow="true" RootClass="dt-help-popover">
-                                                <ChildContent>
-                                                    <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined" Class="ml-1">超限</MudChip>
-                                                </ChildContent>
-                                                <TooltipContent>
-                                                    <HelpContent Topic="HelpTexts.LimitThreeTiers" />
-                                                </TooltipContent>
-                                            </MudTooltip>
-                                        }
-                                        else if (tag.Warning)
-                                        {
-                                            <MudTooltip Arrow="true" RootClass="dt-help-popover">
-                                                <ChildContent>
-                                                    <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Class="ml-1">预警</MudChip>
-                                                </ChildContent>
-                                                <TooltipContent>
-                                                    <HelpContent Topic="HelpTexts.LimitThreeTiers" />
-                                                </TooltipContent>
-                                            </MudTooltip>
-                                        }
-                                    </span>
-                                    <span class="dash-tag-value dt-flash" @key="@tag.Display">@tag.Display @tag.Unit</span>
-                                </div>
-                            }
-                        </div>
-                        @foreach (var curve in station.LastCurves)
-                        {
-                            <MudText Typo="Typo.caption" Class="dt-muted mt-3 mb-1">@curve.Name</MudText>
-                            <StationSparkChart CurveName="@curve.Name" Values="curve.Values"
-                                               IsNg="@(station.LastJudgement == Judgement.Ng)" />
-                        }
-                    }
-
-                    @if (!string.IsNullOrEmpty(station.LastError))
-                    {
-                        <MudText Typo="Typo.caption" Color="Color.Error" Class="mt-2">@station.LastError</MudText>
-                    }
-                    @if (station.LastRecordId is > 0 && !string.IsNullOrEmpty(station.LastMonthKey))
-                    {
-                        <MudButton Size="Size.Small" Variant="Variant.Text" Class="mt-1 pa-0" EndIcon="@Icons.Material.Filled.ChevronRight"
-                                   Href="@($"/query/{station.LastMonthKey}/{station.LastRecordId}")">本站明细</MudButton>
-                    }
-                </MudPaper>
+                <StationCard Station="station" />
             </MudItem>
         }
     </MudGrid>
@@ -502,11 +443,10 @@ else
         _recentPreview = _recent.Take(12).ToList();
     }
 
-    /// <summary>托盘码与流水号一起作 key：换工件时 Blazor 重建元素，CSS 闪动动画才会重放。</summary>
-    private static string BeatKey(StationRuntimeStatus station)
-        => $"{station.LastPalletCode}|{station.LastSerialNo}";
-
     private DateTime? LastBeat => _stations.Select(s => s.LastCompleteTime).Max();
+
+    /// <summary>平均节拍：各工站最近一次采集耗时的均值；一台都没采过时给「—」。</summary>
+    private string AvgCadenceText => DurationFormat.Average(_stations.Select(s => s.LastDurationMs));
 
     /// <summary>
     /// 工站严重度：故障 → NG → 采集中 → 空闲 → 停用。看板上最该被看见的工位排在最前，
@@ -520,51 +460,6 @@ else
         if (station.State == StationRuntimeState.Fault) return 0;
         if (station.State == StationRuntimeState.Busy) return 2;
         return station.LastJudgement == Judgement.Ng ? 1 : 3;
-    }
-
-    private static string CardClass(StationRuntimeStatus station)
-    {
-        if (station.State == StationRuntimeState.Disabled) return "dash-station disabled";
-        if (station.State == StationRuntimeState.Fault) return "dash-station fault";
-        if (station.State == StationRuntimeState.Busy) return "dash-station busy";
-        if (station.LastJudgement == Judgement.Ng) return "dash-station ng";
-        if (station.LastJudgement == Judgement.Ok) return "dash-station ok";
-        return "dash-station";
-    }
-
-    /// <summary>点位行样式：红区（超规格）优先于黄区（预警带）。</summary>
-    private static string TagClass(StationLiveTag tag)
-        => tag.OutOfLimit ? "dash-tag out" : tag.Warning ? "dash-tag warn" : "dash-tag";
-
-    private static Color StateColor(StationRuntimeStatus station)
-    {
-        if (station.State == StationRuntimeState.Busy) return Color.Info;
-        if (station.State == StationRuntimeState.Fault) return Color.Error;
-        if (station.State == StationRuntimeState.Disabled) return Color.Dark;
-        if (station.LastJudgement == Judgement.Ng) return Color.Error;
-        if (station.LastJudgement == Judgement.Ok) return Color.Success;
-        return Color.Default;
-    }
-
-    private static string StateLabel(StationRuntimeStatus station)
-    {
-        if (station.State == StationRuntimeState.Busy) return "采集中";
-        if (station.State == StationRuntimeState.Fault) return "故障";
-        if (station.State == StationRuntimeState.Disabled) return "停用";
-        if (station.LastJudgement == Judgement.Ng) return "NG";
-        if (station.LastJudgement == Judgement.Ok) return "OK";
-        if (station.LastJudgement == Judgement.None) return "未判定";
-        return "空闲";
-    }
-
-    private static string Relative(DateTime? time)
-    {
-        if (time is null) return "尚无节拍";
-        var span = DateTime.Now - time.Value;
-        if (span.TotalSeconds < 5) return "刚刚";
-        if (span.TotalSeconds < 60) return $"{(int)span.TotalSeconds} 秒前";
-        if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes} 分前";
-        return time.Value.ToString("HH:mm:ss");
     }
 
     private bool CanManageRecipes => _canManageRecipes;

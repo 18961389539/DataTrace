@@ -1,0 +1,42 @@
+@* 相对时间（「12 秒前」）。
+   工站卡片为了不被 5 秒心跳反复重画，指纹里不含时间，所以这段文字自己带一个
+   1 秒计时器往前走。停机之后没有采集事件，靠它也照样推进，
+   不会出现「30 秒前」冻在最后一次采集上的情况。 *@
+@implements IDisposable
+
+@Text
+
+@code {
+    [Parameter] public DateTime? Time { get; set; }
+
+    private Timer? _timer;
+    private string _rendered = "";
+
+    protected override void OnInitialized()
+    {
+        _rendered = Format(Time, DateTime.Now);
+        _timer = new Timer(_ => InvokeAsync(() =>
+        {
+            // 文案没变就不重画：到「分」这一档时每秒算一次但只有跨分钟才需要刷。
+            var next = Format(Time, DateTime.Now);
+            if (next == _rendered) return;
+            _rendered = next;
+            StateHasChanged();
+        }), null, 1000, 1000);
+    }
+
+    private string Text => _rendered;
+
+    private static string Format(DateTime? time, DateTime now)
+    {
+        if (time is null) return "尚无节拍";
+        var span = now - time.Value;
+        if (span.TotalSeconds < 0) return "刚刚";
+        if (span.TotalSeconds < 5) return "刚刚";
+        if (span.TotalSeconds < 60) return $"{(int)span.TotalSeconds} 秒前";
+        if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes} 分前";
+        return time.Value.ToString("HH:mm:ss");
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}

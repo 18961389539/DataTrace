@@ -242,6 +242,71 @@ h5:focus,
 
 /* ---------- 实时看板 ---------- */
 
+/* KPI 指标条：从页头那排 chip 里拎出来单独一行。
+   混在状态芯片里时它们权重相同，扫一眼分不出主次。 */
+.dt-kpi-bar {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.dt-kpi {
+    background: var(--mud-palette-action-default-hover);
+    border-radius: var(--dt-radius);
+    padding: 10px 14px 12px;
+}
+
+.dt-kpi-label {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 0.8125rem;
+    color: var(--mud-palette-text-secondary);
+    margin-bottom: 2px;
+}
+
+.dt-kpi-value {
+    display: block;
+    font-size: 1.5rem;
+    font-weight: 500;
+    line-height: 1.25;
+    font-variant-numeric: tabular-nums;
+}
+
+.dt-kpi-value-alert {
+    color: var(--mud-palette-error);
+}
+
+.dt-kpi-hint {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--mud-palette-text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+/* 卡片上的节拍：现场进车间第一个看的数，单独一块并给足字重 */
+.dt-station-meta {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-top: 12px;
+    padding: 6px 10px;
+    border-radius: var(--dt-radius);
+    background: var(--mud-palette-action-default-hover);
+}
+
+.dt-station-meta-label {
+    font-size: 0.75rem;
+    color: var(--mud-palette-text-secondary);
+}
+
+.dt-station-meta-value {
+    font-size: 1rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
 /* 左边框标状态：车间一眼扫过哪台不对 */
 .dash-station {
     padding: 16px;
@@ -412,6 +477,11 @@ h5:focus,
 
     .dash-station {
         min-height: 0;
+    }
+
+    /* 四格挤在平板上会压成很窄的条，改两格两行 */
+    .dt-kpi-bar {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 
@@ -829,10 +899,31 @@ body.dt-shopfloor .mud-appbar .dt-logout-form,
 body.dt-shopfloor .dt-appbar-chip {
     /* 保留身份与退出，避免大屏锁死 */
 }
+/* 大屏离操作工一米远：字号跟着视口走，不再固定 1.05rem */
 body.dt-shopfloor .dash-station {
-    font-size: 1.05rem;
+    font-size: clamp(1rem, 1.35vw, 1.5rem);
     padding: 18px !important;
     min-height: 180px;
+}
+body.dt-shopfloor .dt-kpi-value {
+    font-size: clamp(1.5rem, 2.6vw, 2.75rem);
+}
+body.dt-shopfloor .dt-kpi-label {
+    font-size: clamp(0.8125rem, 1vw, 1.125rem);
+}
+body.dt-shopfloor .dt-station-meta-value {
+    font-size: clamp(1rem, 1.6vw, 1.75rem);
+}
+body.dt-shopfloor .dt-station-meta-label {
+    font-size: clamp(0.75rem, 0.9vw, 1rem);
+}
+/* 固定 3 列在 1080p 上会剩半屏空白，改按屏宽自动分列。
+   MudItem 的 xs/md/lg 会写死 grid-column: span N，必须一起解掉。 */
+body.dt-shopfloor .mud-grid {
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+body.dt-shopfloor .mud-grid-item {
+    grid-column: auto !important;
 }
 body.dt-shopfloor .mud-chip {
     font-size: 0.95rem;
