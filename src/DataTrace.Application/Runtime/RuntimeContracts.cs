@@ -45,6 +45,13 @@ public sealed class CollectQueryRequest
     public string? SerialNo { get; init; }
     public int? StationId { get; init; }
     public Judgement? Judgement { get; init; }
+
+    /// <summary>
+    /// 结果码过滤，与「判定」是两件事：判定说的是超没超限，结果码说的是这次采集成没成。
+    /// 排查「PLC 读取失败」这类问题时只有它能筛出来。
+    /// </summary>
+    public short? ResultCode { get; init; }
+
     /// <summary>
     /// 型号过滤：null = 全部；"" = 仅「未选型号」；其它 = 精确匹配 RecipeCode。
     /// </summary>

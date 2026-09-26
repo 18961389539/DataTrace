@@ -679,6 +679,11 @@ public sealed class RuntimeStore : IRuntimeStore
             query = query.Where(x => x.Judgement == judgement);
         }
 
+        if (request.ResultCode is { } resultCode)
+        {
+            query = query.Where(x => x.ResultCode == resultCode);
+        }
+
         return ApplyRecipeFilter(query, request.RecipeCode);
     }
 

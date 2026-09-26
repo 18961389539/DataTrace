@@ -11,6 +11,7 @@
 @inject DtToast Toast
 @inject IJSRuntime Js
 @inject NavigationManager Nav
+@implements IDisposable
 
 <PageHeader Title="数据查询" HelpRoute="query">
     <Actions>
@@ -27,15 +28,15 @@
 
         <MudGrid Class="dt-filters">
             <MudItem xs="12" sm="6" md="4" lg="3">
-                <MudTextField @bind-Value="_pallet" Label="托盘码" Placeholder="支持模糊匹配"
-                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.QrCode" />
+                <MudTextField T="string" Value="_pallet" ValueChanged="OnPalletChanged" Label="托盘码" Placeholder="支持模糊匹配"
+                              Immediate="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.QrCode" />
             </MudItem>
             <MudItem xs="12" sm="6" md="4" lg="3">
-                <MudTextField @bind-Value="_serialNo" Label="流水号"
-                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Tag" />
+                <MudTextField T="string" Value="_serialNo" ValueChanged="OnSerialChanged" Label="流水号"
+                              Immediate="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Tag" />
             </MudItem>
             <MudItem xs="12" sm="6" md="4" lg="3">
-                <MudSelect T="int?" @bind-Value="_stationId" Label="工站" Clearable="true">
+                <MudSelect T="int?" Value="_stationId" ValueChanged="OnStationChanged" Label="工站" Clearable="true">
                     @foreach (var s in _stations)
                     {
                         <MudSelectItem T="int?" Value="@s.Id">@s.Code @s.Name</MudSelectItem>
@@ -43,10 +44,21 @@
                 </MudSelect>
             </MudItem>
             <MudItem xs="12" sm="6" md="4" lg="3">
-                <MudSelect T="Judgement?" @bind-Value="_judgement" Label="判定" Clearable="true">
+                <MudSelect T="Judgement?" Value="_judgement" ValueChanged="OnJudgementChanged" Label="判定" Clearable="true">
                     <MudSelectItem T="Judgement?" Value="Judgement.Ok">OK（合格）</MudSelectItem>
                     <MudSelectItem T="Judgement?" Value="Judgement.Ng">NG（不合格）</MudSelectItem>
-                                    <MudSelectItem T="Judgement?" Value="Judgement.None">未判定</MudSelectItem>
+                    <MudSelectItem T="Judgement?" Value="Judgement.None">未判定</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+
+            @* 结果码与判定是两件事：判定说超没超限，结果码说这次采集成没成。
+               排查「PLC 读取失败」时只有这个下拉能筛出来。 *@
+            <MudItem xs="12" sm="6" md="4" lg="3">
+                <MudSelect T="short?" Value="_resultCode" ValueChanged="OnResultCodeChanged" Label="结果码" Clearable="true">
+                    @foreach (var code in ResultCodeOptions)
+                    {
+                        <MudSelectItem T="short?" Value="@((short?)code)">@ResultCodeLabel(code)</MudSelectItem>
+                    }
                 </MudSelect>
             </MudItem>
 
@@ -75,11 +87,11 @@
             {
                 <MudButton Variant="Variant.Outlined" OnClick="ExportCsv" Disabled="_exporting || _total == 0"
                            StartIcon="@Icons.Material.Filled.FileDownload">
-                    @(_exporting ? "导出中…" : $"导出 CSV（最多 {SystemDefaults.ExportRowLimit:N0} 条）")
+                    @(_exporting ? "导出中…" : "导出 CSV")
                 </MudButton>
                 <InfoHint Topic="HelpTexts.ExportLimit" Extra="@ExportHintExtra" />
             }
-            <MudText Typo="Typo.caption" Class="dt-muted align-self-center">在输入框内按回车即查询</MudText>
+            <MudText Typo="Typo.caption" Class="dt-muted align-self-center">改任一条件即自动重查，也可点「查询」立刻执行</MudText>
             <InfoHint Topic="HelpTexts.MatchMode" />
         </MudStack>
     </form>
@@ -99,6 +111,7 @@
         <MudTh>型号 <InfoHint Topic="HelpTexts.RecipeScope" /></MudTh>
         <MudTh>判定 <InfoHint Topic="HelpTexts.JudgementThreeState" /></MudTh>
         <MudTh Class="dt-nowrap">结果码</MudTh>
+        <MudTh Class="dt-right">耗时</MudTh>
         <MudTh Class="dt-right">操作</MudTh>
     </HeaderContent>
     <RowTemplate>
@@ -125,22 +138,46 @@
                 </TooltipContent>
             </MudTooltip>
         </MudTd>
+        <MudTd DataLabel="耗时" Class="dt-right dt-nowrap">@DurationFormat.Text(context.Record.DurationMs)</MudTd>
         <MudTd Class="dt-right">
             @* 复制放在操作列而不是托盘码单元格里：整行可点进明细时，
-               行中间的任何小控件都会抢走"点行"这一下，尤其在小屏上。 *@
-            <MudTooltip Text="复制托盘码">
-                <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small"
-                               aria-label="复制托盘码"
-                               OnClick="@(() => CopyPallet(context.Record.PalletCode))" />
-            </MudTooltip>
-            <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
-                       Href="@DetailUrl(context)">明细</MudButton>
+               行中间的任何小控件都会抢走"点行"这一下，尤其在小屏上。
+               外面这层 span 负责掐断冒泡 —— 行点击绑在 tr 上，
+               不拦的话点复制会同时跳进明细。 *@
+            <span @onclick:stopPropagation="true">
+                <MudTooltip Text="复制托盘码">
+                    <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small"
+                                   aria-label="复制托盘码"
+                                   OnClick="@(() => CopyPallet(context.Record.PalletCode))" />
+                </MudTooltip>
+                <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
+                           Href="@DetailUrl(context)">明细</MudButton>
+            </span>
         </MudTd>
     </RowTemplate>
     <NoRecordsContent>
-        <MudText Typo="Typo.body2" Class="dt-muted py-3">
-            @(_loading ? "正在查询…" : "没有符合条件的记录。可放宽时间范围、清空托盘码/流水号后重试。")
-        </MudText>
+        @if (_loading)
+        {
+            <MudText Typo="Typo.body2" Class="dt-muted py-3">正在查询…</MudText>
+        }
+        else
+        {
+            @* 默认区间是今天，最容易撞到空结果。只说一句「没有记录」等于把人晾在这，
+               所以直接给两个出口：放宽区间（保留其它条件）与清空条件。 *@
+            <div class="dt-empty-hint">
+                <MudText Typo="Typo.body2" Class="dt-muted">当前区间内没有符合条件的记录。</MudText>
+                <MudStack Row="true" Spacing="2" Class="mt-2" Wrap="Wrap.Wrap">
+                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.DateRange" OnClick="WidenRangeAsync">
+                        放宽到近 7 天
+                    </MudButton>
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined"
+                               StartIcon="@Icons.Material.Filled.RestartAlt" OnClick="Reset">
+                        清空条件
+                    </MudButton>
+                </MudStack>
+            </div>
+        }
     </NoRecordsContent>
 </MudTable>
 
@@ -163,12 +200,29 @@
 @code {
     private static readonly int[] PageSizes = [20, 50, 100];
 
+    /// <summary>文本输入触发自动查询的防抖时长（毫秒）：等打字停下再发请求。</summary>
+    private const int TextDebounceMs = 400;
+
+    /// <summary>
+    /// 结果码下拉的选项。不含 Trigger(1)：那是「触发待采集」的中间态，列表里不会停在这个码上。
+    /// </summary>
+    private static readonly short[] ResultCodeOptions =
+    [
+        ResultCodes.Success, ResultCodes.PlcReadFailed, ResultCodes.InvalidPalletCode,
+        ResultCodes.DataValidationFailed, ResultCodes.DatabaseWriteFailed, ResultCodes.InternalError,
+        ResultCodes.ProcessAbnormal, ResultCodes.FileSourceFailed, ResultCodes.ArchiveFailed
+    ];
+
+    private static string ResultCodeLabel(short code) => $"{code} · {ResultCodes.Describe(code)}";
+
     private DateTime? _from = DateTime.Today;
     private DateTime? _to = DateTime.Today;
     private string? _pallet;
     private string? _serialNo;
     private int? _stationId;
     private Judgement? _judgement;
+    /// <summary>结果码筛选；null = 不限。与「判定」是两个维度。</summary>
+    private short? _resultCode;
     /// <summary>型号筛选：null/缺省=全部型号；<c>""</c>=未选型号；其它为精确匹配。</summary>
     private string? _recipeFilter;
     private IReadOnlyList<Station> _stations = [];
@@ -181,6 +235,7 @@
     private bool _loadPending;
     private bool _exporting;
     private bool _canExport;
+    private CancellationTokenSource? _debounceCts;
 
     /// <summary>
     /// 导出 ⓘ 的动态补充行：把"这次会不会被截断"在点按钮前就说清，
@@ -229,6 +284,9 @@
     [SupplyParameterFromQuery(Name = "norecipe")]
     public int? NoRecipeQuery { get; set; }
 
+    [SupplyParameterFromQuery(Name = "result")]
+    public int? ResultCodeQuery { get; set; }
+
     protected override async Task OnInitializedAsync()
     {
         var auth = await Auth.GetAuthenticationStateAsync();
@@ -271,6 +329,11 @@
             _judgement = judgement;
         }
 
+        if (ResultCodeQuery is > 0 and <= short.MaxValue)
+        {
+            _resultCode = (short)ResultCodeQuery.Value;
+        }
+
         if (SizeQuery is { } size && PageSizes.Contains(size))
         {
             _pageSize = size;
@@ -305,11 +368,68 @@
         StationId = _stationId,
         RecipeCode = ToRecipeQueryArg(),
         Judgement = _judgement,
+        ResultCode = _resultCode,
         Skip = skip,
         Take = take
     };
 
     private async Task OnSubmit() => await Search();
+
+    // 筛选区统一语义：下拉即时重查，文本输入等打字停下再重查。
+    // 之前改日期和改型号会立刻查、改其余字段却要点按钮，同一个筛选区里三种做法。
+    private async Task OnPalletChanged(string? value)
+    {
+        _pallet = value;
+        await DebouncedSearchAsync();
+    }
+
+    private async Task OnSerialChanged(string? value)
+    {
+        _serialNo = value;
+        await DebouncedSearchAsync();
+    }
+
+    private async Task OnStationChanged(int? value)
+    {
+        _stationId = value;
+        await Search();
+    }
+
+    private async Task OnJudgementChanged(Judgement? value)
+    {
+        _judgement = value;
+        await Search();
+    }
+
+    private async Task OnResultCodeChanged(short? value)
+    {
+        _resultCode = value;
+        await Search();
+    }
+
+    private async Task DebouncedSearchAsync()
+    {
+        _debounceCts?.Cancel();
+        _debounceCts = new CancellationTokenSource();
+        var token = _debounceCts.Token;
+        try
+        {
+            await Task.Delay(TextDebounceMs, token);
+            await Search();
+        }
+        catch (OperationCanceledException)
+        {
+            // 又敲了一个字符，等下一次停顿
+        }
+    }
+
+    /// <summary>空结果时的出口：只放宽区间，托盘码等其它条件保留。</summary>
+    private async Task WidenRangeAsync()
+    {
+        _from = DateTime.Today.AddDays(-6);
+        _to = DateTime.Today;
+        await Search();
+    }
 
     private async Task Search()
     {
@@ -433,6 +553,11 @@
             parts.Add($"judge={judgement}");
         }
 
+        if (_resultCode is { } resultCode)
+        {
+            parts.Add($"result={resultCode}");
+        }
+
         if (_recipeFilter is { Length: > 0 } recipe)
         {
             parts.Add($"recipe={Uri.EscapeDataString(recipe.Trim())}");
@@ -463,6 +588,7 @@
         _serialNo = null;
         _stationId = null;
         _judgement = null;
+        _resultCode = null;
         _from = DateTime.Today;
         _to = DateTime.Today;
         _pageSize = 20;
@@ -482,6 +608,8 @@
 
         Nav.NavigateTo(DetailUrl(args.Item));
     }
+
+    public void Dispose() => _debounceCts?.Dispose();
 
     private async Task CopyPallet(string palletCode)
     {
