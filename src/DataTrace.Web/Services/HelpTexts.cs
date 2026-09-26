@@ -249,9 +249,14 @@ public static class HelpTexts
     // ---------- 审计日志 ----------
 
     public static readonly HelpTopic LogTimeRange = new(
-        "时间范围",
-        "「近 7 天」是从此刻往前推 168 小时，不是自然日。",
-        "它与数据查询页的「近 7 天」（按自然日）口径不同，两处查出来的条数可以不等。");
+        "时间区间",
+        "按自然日算，与数据查询页同一套口径：选 9-20 ~ 9-26 就是这七天的 00:00 到 23:59。",
+        "留空表示不限时间。要圈定某一天，起止都选那一天即可。");
+
+    public static readonly HelpTopic LogTimestamp = new(
+        "时间列",
+        "写入时取服务器本地时钟，未做时区转换。",
+        "跨时区排查时要先确认服务器时区；点表头可切换最新在前 / 最早在前。");
 
     public static readonly HelpTopic LogEntityKey = new(
         "键列",
@@ -367,7 +372,7 @@ public static class HelpTexts
             "query" => [RangeScope, MatchMode, ExportLimit, ResultCode, RecipeScope, JudgementThreeState],
             "reports" => [YieldRate, AverageYield, RecipeScope, IssueShare, LimitThreeTiers, TrendSampleLimit, Capability, SegmentAsterisk],
             "curve-baseline" => [BaselineSampleCounts, RecipeMismatch, DeviationThresholds, OnlineBaseline, CriterionDisabled, CurveFeatureAxis],
-            "logs" => [LogTimeRange, LogEntityKey, LogChange, LogKeyword],
+            "logs" => [LogTimeRange, LogTimestamp, LogEntityKey, LogChange, LogKeyword],
             "config/plc" => [Heartbeat, PlcEnabled, MergeGap, SimulatorBrand],
             "config/stations" => [TriggerValue, TagDataSource, BoolAddress, FirstLastStation],
             "config/recipes" => [RecipeCode, RecipeEnabled, RecipeCopy, LimitMergeRule, TargetValue, LimitEffect, CoverablePoints],

@@ -108,6 +108,18 @@ window.dtRecentOpen = {
     }
 };
 
+// 审计日志页「存储位置与保留策略」的展开状态；默认折叠，与最近采集面板同一套路。
+window.dtLogNotice = {
+    key: 'dt-log-notice',
+    get: function () {
+        try { return localStorage.getItem(this.key) === '1'; } catch (e) { return false; }
+    },
+    set: function (on) {
+        try { localStorage.setItem(this.key, on ? '1' : '0'); } catch (e) { }
+        return !!on;
+    }
+};
+
 window.dtShopFloor = {
     key: 'dt-shopfloor',
     get: function () {

@@ -36,6 +36,10 @@ public sealed class AuditLogger : IAuditLogger
         int take = 50,
         IReadOnlyList<string>? keywordMatchedActions = null,
         IReadOnlyList<string>? keywordMatchedEntityTypes = null,
+        DateTime? toInclusive = null,
+        string? user = null,
+        string? entityType = null,
+        bool newestFirst = true,
         CancellationToken cancellationToken = default)
     {
         if (skip < 0)
@@ -55,10 +59,28 @@ public sealed class AuditLogger : IAuditLogger
             q = q.Where(x => x.Time >= fromInclusive.Value);
         }
 
+        // 上界取「含」：调用方传的是当天最后一刻，写成 < 会把当天最后一毫秒的记录吞掉。
+        if (toInclusive is not null)
+        {
+            q = q.Where(x => x.Time <= toInclusive.Value);
+        }
+
         if (!string.IsNullOrWhiteSpace(action))
         {
             var actionFilter = action.Trim();
             q = q.Where(x => x.Action == actionFilter);
+        }
+
+        if (!string.IsNullOrWhiteSpace(user))
+        {
+            var userFilter = user.Trim();
+            q = q.Where(x => x.UserName == userFilter);
+        }
+
+        if (!string.IsNullOrWhiteSpace(entityType))
+        {
+            var entityFilter = entityType.Trim();
+            q = q.Where(x => x.EntityType == entityFilter);
         }
 
         if (!string.IsNullOrWhiteSpace(keyword))
@@ -83,8 +105,12 @@ public sealed class AuditLogger : IAuditLogger
         }
 
         var total = await q.CountAsync(cancellationToken).ConfigureAwait(false);
-        var items = await q
-            .OrderByDescending(x => x.Time)
+
+        var ordered = newestFirst
+            ? q.OrderByDescending(x => x.Time)
+            : q.OrderBy(x => x.Time);
+
+        var items = await ordered
             .Skip(skip)
             .Take(take)
             .ToListAsync(cancellationToken)
@@ -93,12 +119,24 @@ public sealed class AuditLogger : IAuditLogger
     }
 
     public async Task<IReadOnlyList<string>> ListActionsAsync(CancellationToken cancellationToken = default)
+        => await DistinctAsync(x => x.Action, cancellationToken).ConfigureAwait(false);
+
+    public async Task<IReadOnlyList<string>> ListUsersAsync(CancellationToken cancellationToken = default)
+        => await DistinctAsync(x => x.UserName, cancellationToken).ConfigureAwait(false);
+
+    public async Task<IReadOnlyList<string>> ListEntityTypesAsync(CancellationToken cancellationToken = default)
+        => await DistinctAsync(x => x.EntityType, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>某个字段的去重值。三个下拉共用一条查询，避免各写一遍 DISTINCT。</summary>
+    private async Task<IReadOnlyList<string>> DistinctAsync(
+        System.Linq.Expressions.Expression<Func<AuditLog, string>> selector,
+        CancellationToken cancellationToken)
     {
         return await _db.AuditLogs.AsNoTracking()
-            .Select(x => x.Action)
-            .Where(a => a != null && a != "")
+            .Select(selector)
+            .Where(v => v != null && v != "")
             .Distinct()
-            .OrderBy(a => a)
+            .OrderBy(v => v)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
     }

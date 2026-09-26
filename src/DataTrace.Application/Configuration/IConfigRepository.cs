@@ -128,8 +128,20 @@ public interface IAuditLogger
         int take = 50,
         IReadOnlyList<string>? keywordMatchedActions = null,
         IReadOnlyList<string>? keywordMatchedEntityTypes = null,
+        /// <summary>截止时刻（含）。审计要能圈定「某一天」「某个班次」，只有下界做不到。</summary>
+        DateTime? toInclusive = null,
+        string? user = null,
+        string? entityType = null,
+        /// <summary>true 为最新在前。审计溯源常常要从最早看起，所以方向要可切。</summary>
+        bool newestFirst = true,
         CancellationToken cancellationToken = default);
 
     /// <summary>库中已出现过的动作码（下拉用），按字母序。</summary>
     Task<IReadOnlyList<string>> ListActionsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>库中已出现过的用户名（下拉用），按字母序。</summary>
+    Task<IReadOnlyList<string>> ListUsersAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>库中已出现过的对象类型码（下拉用），按字母序。</summary>
+    Task<IReadOnlyList<string>> ListEntityTypesAsync(CancellationToken cancellationToken = default);
 }

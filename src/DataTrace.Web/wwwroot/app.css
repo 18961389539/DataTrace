@@ -142,6 +142,86 @@ h5:focus,
     padding: 12px 16px 4px;
 }
 
+/* ---------- 审计日志 ---------- */
+
+/* 当前筛选条件：改完只剩一个命中数时，条件就看不回来了 */
+.dt-filter-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.dt-log-notice {
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--dt-radius);
+    padding: 2px 8px 2px 4px;
+}
+
+/* 变更列：整段 JSON 铺在格子里会把列宽撑爆，这里截断 + 点开看全的。
+   摘要在 C# 侧已截到 90 字，CSS 再兜一层窄屏。 */
+.dt-change-cell {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 340px;
+    cursor: pointer;
+}
+
+.dt-change-summary {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dt-change-cell:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 2px;
+}
+
+.dt-change-detail {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 4px 4px 12px;
+}
+
+.dt-change-pane {
+    flex: 1 1 220px;
+    min-width: 0;
+}
+
+.dt-change-pane-label {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--mud-palette-text-secondary);
+    margin-bottom: 4px;
+}
+
+.dt-change-pane-body {
+    padding: 8px 10px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--dt-radius);
+    background: var(--mud-palette-surface);
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 0.8125rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 180px;
+    overflow: auto;
+}
+
+.dt-change-pane-body.old {
+    border-color: var(--mud-palette-error);
+    color: var(--mud-palette-error);
+    text-decoration: line-through;
+}
+
+.dt-change-pane-body.new {
+    border-color: var(--mud-palette-success);
+}
+
 /* ---------- 时间区间筛选（DateRangeFilter） ---------- */
 
 /* 按内容排布而不是按 12 栏切死：MudDatePicker 至少需要 180px 才放得下
