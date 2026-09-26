@@ -252,7 +252,7 @@ public class FileSpoolStoreTests
                 Products = [new ProductRecord { PositionIndex = 1, Occupied = true, Judgement = Judgement.Ok }],
                 TagValues =
                 [
-                    new TagValue { TagId = 1, TagCode = "ST030_P1", TagName = "压力", PositionIndex = 1, DataType = PlcDataType.Float, NumericValue = 12.5 }
+                    new TagValue { TagId = 1, TagName = "压力", PositionIndex = 1, DataType = PlcDataType.Float, NumericValue = 12.5 }
                 ]
             },
             Curves = withCurve

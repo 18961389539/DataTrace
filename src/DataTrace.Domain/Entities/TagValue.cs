@@ -9,7 +9,6 @@ public class TagValue
     public CollectRecord? CollectRecord { get; set; }
 
     public int TagId { get; set; }
-    public string TagCode { get; set; } = "";
     public string TagName { get; set; } = "";
     public int PositionIndex { get; set; }
     public PlcDataType DataType { get; set; }

@@ -15,7 +15,7 @@
 @inject AuthenticationStateProvider Auth
 
 <PageHeader Title="PLC 仿真"
-            Description="模拟 PLC 内存与产线节拍：自动生成托盘码、点位、位移压力曲线，按工站顺序触发并等待上位机回写 2–8。"
+            Description="模拟 PLC 内存与产线节拍：自动生成托盘码、点位、位移压力曲线，按工站顺序触发并等待上位机回写结果码。"
             HelpRoute="simulate">
     <ChildContent>
         @if (Dirty)

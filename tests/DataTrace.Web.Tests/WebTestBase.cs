@@ -31,6 +31,8 @@ public abstract class WebTestBase : IDisposable
 
     protected DialogSpy Dialogs { get; }
 
+    protected FakeJsonFileDialog FileDialog { get; }
+
     /// <summary>popover 宿主只渲染一次：重复渲染会让同一批浮层挂到两个 provider 上。</summary>
     private bool _popoverHostRendered;
 
@@ -52,6 +54,7 @@ public abstract class WebTestBase : IDisposable
         Simulator = new FakeLineSimulator();
         Toast = new ToastSpy();
         Dialogs = new DialogSpy();
+        FileDialog = new FakeJsonFileDialog();
         Branding = new CustomerBrandingStore(
             // 全限定：本文件同时引了 DataTrace.Web.Options 命名空间，裸写 Options 会解析成命名空间。
             Microsoft.Extensions.Options.Options.Create(new CustomerOptions()),
@@ -70,6 +73,7 @@ public abstract class WebTestBase : IDisposable
         Context.Services.AddSingleton(Simulators);
         Context.Services.AddSingleton<ISnackbar>(Toast.Mock.Object);
         Context.Services.AddSingleton<IDialogService>(Dialogs.Mock.Object);
+        Context.Services.AddSingleton<IJsonFileDialog>(FileDialog);
         Context.Services.AddSingleton(Branding);
         Context.Services.AddSingleton(Audit.Object);
         Context.Services.AddSingleton(Backup.Object);

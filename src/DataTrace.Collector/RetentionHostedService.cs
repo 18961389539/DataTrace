@@ -13,17 +13,20 @@ public sealed class RetentionHostedService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly RuntimeDbFactory _factory;
     private readonly ICurveFileStore _curves;
+    private readonly ICollectArchiveStore _archives;
     private readonly ILogger<RetentionHostedService> _logger;
 
     public RetentionHostedService(
         IServiceScopeFactory scopeFactory,
         RuntimeDbFactory factory,
         ICurveFileStore curves,
+        ICollectArchiveStore archives,
         ILogger<RetentionHostedService> logger)
     {
         _scopeFactory = scopeFactory;
         _factory = factory;
         _curves = curves;
+        _archives = archives;
         _logger = logger;
     }
 
@@ -49,6 +52,9 @@ public sealed class RetentionHostedService : BackgroundService
                         if (month.Length == 6)
                         {
                             await _curves.DeleteMonthAsync(month[..4], month[4..], stoppingToken).ConfigureAwait(false);
+                            // 归档与曲线同样是"记录之外的大对象"：记录被清理后它们再无引用方，
+                            // 不一起删就会在数据盘上无声堆积。
+                            await _archives.DeleteMonthAsync(month[..4], month[4..], stoppingToken).ConfigureAwait(false);
                         }
 
                         _logger.LogInformation("已按保留策略删除月份库 {Month}", month);

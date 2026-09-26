@@ -128,7 +128,7 @@
 else
 {
     <MudGrid>
-        @foreach (var station in _stations)
+        @foreach (var station in _orderedStations)
         {
             <MudItem xs="12" md="6" lg="4">
                 <MudPaper Class="@CardClass(station)">
@@ -297,6 +297,8 @@ else
 
     private IReadOnlyList<PlcRuntimeStatus> _plcs = [];
     private IReadOnlyList<StationRuntimeStatus> _stations = [];
+    /// <summary>渲染用的工站顺序：异常在前，同级按工艺顺序（见 <see cref="SeverityRank"/>）。</summary>
+    private IReadOnlyList<StationRuntimeStatus> _orderedStations = [];
     private IReadOnlyList<CollectFeedItem> _recent = [];
     private IReadOnlyList<CollectFeedItem> _recentPreview = [];
     private bool _collectEnabled = true;
@@ -492,6 +494,9 @@ else
     {
         _plcs = Status.Plcs;
         _stations = Status.Stations;
+        // 排序在这里做一次，而不是写在 foreach 里：定时跳每 5 秒重画一次，
+        // 内联排序就会跟着每 5 秒重排一遍。
+        _orderedStations = _stations.OrderBy(SeverityRank).ThenBy(s => s.Sequence).ToList();
         _recent = Status.Recent;
         // 看板只展示最近十余条，完整历史去「数据查询」，避免表格占满整屏。
         _recentPreview = _recent.Take(12).ToList();
@@ -502,6 +507,20 @@ else
         => $"{station.LastPalletCode}|{station.LastSerialNo}";
 
     private DateTime? LastBeat => _stations.Select(s => s.LastCompleteTime).Max();
+
+    /// <summary>
+    /// 工站严重度：故障 → NG → 采集中 → 空闲 → 停用。看板上最该被看见的工位排在最前，
+    /// 否则一台 NG 可能落在最后一屏，大屏上等于没有报警。
+    /// </summary>
+    private static int SeverityRank(StationRuntimeStatus station)
+    {
+        // 停用先判：停用工位的 LastJudgement 还留着最后一次判定，
+        // 晚了它就会顶着上一次的 NG 挤到最前面，反而误导。
+        if (station.State == StationRuntimeState.Disabled) return 4;
+        if (station.State == StationRuntimeState.Fault) return 0;
+        if (station.State == StationRuntimeState.Busy) return 2;
+        return station.LastJudgement == Judgement.Ng ? 1 : 3;
+    }
 
     private static string CardClass(StationRuntimeStatus station)
     {

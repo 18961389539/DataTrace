@@ -51,8 +51,7 @@
                 </HeaderContent>
                 <RowTemplate>
                     <MudTd Class="dt-nowrap">
-                        @context.StationCode · @context.Tag.Code
-                        <MudText Typo="Typo.caption" Class="dt-muted">@context.Tag.Name</MudText>
+                        @context.StationCode · @context.Tag.Name
                         @if (!context.Tag.Enabled)
                         {
                             <MudText Typo="Typo.caption" Class="dt-muted">（已停用）</MudText>

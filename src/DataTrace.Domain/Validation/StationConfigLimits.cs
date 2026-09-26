@@ -26,7 +26,7 @@ public static class StationConfigLimits
 
     /// <summary>触发与回写共用一个寄存器：这个区间是采集完成后要写回去的响应码。</summary>
     public static bool IsWriteBackCode(short value)
-        => value is >= ResultCodes.Success and <= ResultCodes.ProcessAbnormal;
+        => value is >= ResultCodes.Success and <= ResultCodes.ArchiveFailed;
 
     /// <summary>
     /// 触发值校验：触发与回写共用同一个寄存器。
@@ -40,7 +40,7 @@ public static class StationConfigLimits
     {
         0 => "触发值不能为 0：上电或复位后寄存器本来就是 0，会让工站在开机瞬间误触发一次",
         _ when IsWriteBackCode(value)
-            => $"触发值不能取 {value}：2–8 是采集完成后回写的响应码，两者相同会让触发位永远清不掉、工站被反复触发",
+            => $"触发值不能取 {value}：2–{ResultCodes.ArchiveFailed} 是采集完成后回写的响应码，两者相同会让触发位永远清不掉、工站被反复触发",
         _ => null
     };
 

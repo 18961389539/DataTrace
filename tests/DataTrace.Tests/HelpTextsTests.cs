@@ -139,7 +139,7 @@ public class HelpTextsTests
         Assert.Equal("型号口径", HelpTexts.RecipeScope.Title);
 
         var count = Enumerate().Count();
-        Assert.True(count is >= 40 and <= 60, $"文案条目数 {count} 超出预期区间（40~60）");
+        Assert.True(count is >= 40 and <= 65, $"文案条目数 {count} 超出预期区间（40~65）");
     }
 
     [Theory]

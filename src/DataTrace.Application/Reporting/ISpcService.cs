@@ -46,7 +46,6 @@ public sealed class ProcessCapabilitySegment
 public sealed class ProcessCapabilityReport
 {
     public int TagId { get; init; }
-    public string TagCode { get; init; } = "";
     public string TagName { get; init; } = "";
     public string? Unit { get; init; }
 

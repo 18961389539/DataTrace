@@ -1,6 +1,6 @@
 namespace DataTrace.Infrastructure.Backup;
 
-/// <summary>安装数据根路径（config.db / runtime / curves / spool）。</summary>
+/// <summary>安装数据根路径（config.db / runtime / curves / archive / spool）。</summary>
 public sealed class DataRootPaths
 {
     public DataRootPaths(string root)
@@ -9,6 +9,7 @@ public sealed class DataRootPaths
         ConfigDbPath = Path.Combine(Root, "config.db");
         RuntimeDirectory = Path.Combine(Root, "runtime");
         CurvesDirectory = Path.Combine(Root, "curves");
+        ArchiveDirectory = Path.Combine(Root, "archive");
         SpoolDirectory = Path.Combine(Root, "spool");
     }
 
@@ -16,5 +17,6 @@ public sealed class DataRootPaths
     public string ConfigDbPath { get; }
     public string RuntimeDirectory { get; }
     public string CurvesDirectory { get; }
+    public string ArchiveDirectory { get; }
     public string SpoolDirectory { get; }
 }

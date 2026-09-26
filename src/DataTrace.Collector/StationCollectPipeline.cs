@@ -26,6 +26,7 @@ public sealed class StationCollectPipeline
     private readonly IRuntimeStatusHub _status;
     private readonly ICollectEventBus _events;
     private readonly ICurveBaselineCache _baselines;
+    private readonly ICollectArchiveStore _archives;
     private readonly ILogger<StationCollectPipeline> _logger;
 
     public StationCollectPipeline(
@@ -33,12 +34,14 @@ public sealed class StationCollectPipeline
         IRuntimeStatusHub status,
         ICollectEventBus events,
         ICurveBaselineCache baselines,
+        ICollectArchiveStore archives,
         ILogger<StationCollectPipeline> logger)
     {
         _scopeFactory = scopeFactory;
         _status = status;
         _events = events;
         _baselines = baselines;
+        _archives = archives;
         _logger = logger;
     }
 
@@ -89,7 +92,10 @@ public sealed class StationCollectPipeline
 
             SetStatus(
                 station,
+                // 通讯失败与"数据/归档取不到"都要人去处理，标成故障；托盘码非法、判废这些
+                // 属于正常的业务结果，工站本身没问题。
                 resultCode is ResultCodes.PlcReadFailed or ResultCodes.InternalError
+                    or ResultCodes.FileSourceFailed or ResultCodes.ArchiveFailed
                     ? StationRuntimeState.Fault
                     : StationRuntimeState.Idle,
                 saved?.PalletCode,
@@ -146,14 +152,19 @@ public sealed class StationCollectPipeline
             requests.Add(new AddressReadRequest { Key = $"occ_{pos.Index}", Address = occ, WordCount = 1 });
         }
 
-        foreach (var tag in station.Tags.Where(t => t.Enabled))
+        // 文件源的点位值不在 PLC 里：一个读取请求都不为它们安排，
+        // 改由下面读一次 JSON 文件供这些点位共享（见 ReadFileSourceAsync）。
+        // PLC 源的点位照旧按地址读 —— 同一个工站可以两种来源混用。
+        var plcTags = station.Tags.Where(t => t.Enabled && t.Source == TagDataSource.Plc);
+
+        foreach (var tag in plcTags)
         {
             if (!queue.Driver.TryParseAddress(tag.Address, out var addr))
             {
                 throw new PlcDriverException($"点位地址非法: {tag.Address}");
             }
 
-            RejectBitAddress(addr, $"点位 {tag.Code} 的地址 {tag.Address}");
+            RejectBitAddress(addr, $"点位 {tag.Name} 的地址 {tag.Address}");
 
             requests.Add(new AddressReadRequest
             {
@@ -202,18 +213,21 @@ public sealed class StationCollectPipeline
 
         if (!PalletCodeValidator.IsValid(palletCode, out var palletError))
         {
-            return Live(station, new CollectRecord
+            return Live(station, Unrecorded(station, config, palletCode, triggerTime, ResultCodes.InvalidPalletCode, palletError));
+        }
+
+        // 有任一启用中的文件源点位就要读文件：一次采集只读一次、一次解析，这些点位共享。
+        // 归档引用挂在记录上（与曲线文件同属"记录之外的大对象"）；
+        // 读不到或归档失败按约定算整次采集失败：回写明确失败码、不落库 ——
+        // 哪怕同一工站的其它点位本来能从 PLC 读到，这一件的点位集也是不完整的。
+        FileSourceRead? source = null;
+        if (station.Tags.Any(t => t.Enabled && t.Source == TagDataSource.JsonFile))
+        {
+            source = await ReadFileSourceAsync(station, triggerTime, palletCode, cancellationToken).ConfigureAwait(false);
+            if (source.Error is not null)
             {
-                PalletCode = palletCode,
-                StationId = station.Id,
-                StationCode = station.Code,
-                TriggerTime = triggerTime,
-                CompleteTime = DateTime.Now,
-                ResultCode = ResultCodes.InvalidPalletCode,
-                Judgement = Judgement.Ng,
-                ErrorMessage = palletError,
-                RecipeCode = RecipeCode(config)
-            });
+                return Live(station, Unrecorded(station, config, palletCode, triggerTime, source.ErrorCode, source.Error));
+            }
         }
 
         var occupied = new Dictionary<int, bool>();
@@ -250,10 +264,22 @@ public sealed class StationCollectPipeline
 
             foreach (var tag in posTags)
             {
-                var words = plan.GetWords($"tag_{tag.Id}", buffers);
+                // 只有 PLC 源点位才去读计划里取值；文件源点位在上面那份解析结果里。
+                var fromFile = tag.Source == TagDataSource.JsonFile;
+                var words = fromFile ? [] : plan.GetWords($"tag_{tag.Id}", buffers);
                 double? numeric = null;
                 string? text = null;
-                if (tag.DataType == PlcDataType.String)
+                if (fromFile)
+                {
+                    // 取不到的字段与 PLC 上取空的点位同义：必填点位照样算超规格（由下面的
+                    // LimitEvaluator 用 null + IsRequired 得出），非必填点位记空值。
+                    // 绝不做"这一次取不到就沿用上一件的值"这类回落 —— 设备已经覆写了文件，
+                    // 旧值属于上一件产品，混进来会让判定与追溯一起失真。
+                    var read = source!.Values.GetValueOrDefault(tag.Id);
+                    text = read?.Text;
+                    numeric = read?.Numeric;
+                }
+                else if (tag.DataType == PlcDataType.String)
                 {
                     text = ValueCodec.DecodeAscii(words, tag.Length, connection.StringHighByteFirst);
                     if (tag.IsRequired && string.IsNullOrWhiteSpace(text))
@@ -293,7 +319,6 @@ public sealed class StationCollectPipeline
                 tagValues.Add(new TagValue
                 {
                     TagId = tag.Id,
-                    TagCode = tag.Code,
                     TagName = tag.Name,
                     PositionIndex = pos,
                     DataType = tag.DataType,
@@ -526,6 +551,9 @@ public sealed class StationCollectPipeline
             Judgement = recordJudgement,
             ErrorMessage = processError,
             RecipeCode = RecipeCode(config),
+            ArchivePath = source?.ArchivePath ?? "",
+            ArchiveFileSize = source?.ArchiveSize ?? 0,
+            ArchiveCrc32 = source?.ArchiveCrc ?? 0,
             Products = products,
             TagValues = tagValues
         };
@@ -571,6 +599,176 @@ public sealed class StationCollectPipeline
 
         return Live(station, record, curveWrites, monthKey);
     }
+
+    /// <summary>
+    /// 文件源点位的那一次读取：读文件 → 归档 → 按字段名解析出这些点位的值。
+    /// </summary>
+    /// <remarks>
+    /// 设备"写完文件才置触发位、等到回写码才写下一件"，所以这里不做任何"等文件"或
+    /// 时间戳比对（同一秒内覆写时 mtime 可能不变），每次触发无条件重读。
+    /// 读取失败与归档失败都是整次采集失败：各自的失败码要能让现场一眼分出
+    /// "设备没写好文件"和"本机存不下归档"。
+    /// </remarks>
+    private async Task<FileSourceRead> ReadFileSourceAsync(
+        Station station,
+        DateTime triggerTime,
+        string palletCode,
+        CancellationToken cancellationToken)
+    {
+        byte[] bytes;
+        try
+        {
+            bytes = await File.ReadAllBytesAsync(station.DataFilePath, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "工站 {Station} 读取数据文件失败：{Path}", station.Code, station.DataFilePath);
+            return FileSourceRead.Failure(ResultCodes.FileSourceFailed, $"数据文件读取失败：{ex.Message}");
+        }
+
+        string archivePath;
+        long archiveSize;
+        uint archiveCrc;
+        try
+        {
+            var written = await _archives
+                .WriteAsync(triggerTime, palletCode, station.Id, bytes, cancellationToken)
+                .ConfigureAwait(false);
+            archivePath = written.RelativePath;
+            archiveSize = written.FileSize;
+            archiveCrc = written.Crc32;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "工站 {Station} 原始数据归档失败", station.Code);
+            return FileSourceRead.Failure(ResultCodes.ArchiveFailed, $"原始数据归档失败：{ex.Message}");
+        }
+
+        try
+        {
+            // 先归档再解析：内容不是合法 JSON/CSV 时，设备到底写了什么恰恰是最需要的证据，
+            // 因此把归档路径一并写进失败原因，现场不用翻目录就能找到那份文件。
+            if (station.DataFileFormat == DataFileFormat.Csv)
+            {
+                return ReadCsvSource(station, bytes, archivePath, archiveSize, archiveCrc);
+            }
+
+            using var document = JsonDocument.Parse(bytes);
+            var values = new Dictionary<int, SourceTagValue>();
+            foreach (var tag in station.Tags.Where(t => t.Enabled && t.Source == TagDataSource.JsonFile))
+            {
+                if (tag.DataType == PlcDataType.String)
+                {
+                    if (JsonFieldReader.TryReadText(document.RootElement, tag.Address, out var text))
+                    {
+                        values[tag.Id] = new SourceTagValue(Numeric: null, Text: text);
+                    }
+                }
+                else if (JsonFieldReader.TryReadNumeric(document.RootElement, tag.Address, out var numeric))
+                {
+                    values[tag.Id] = new SourceTagValue(Numeric: numeric, Text: null);
+                }
+
+                if (!values.ContainsKey(tag.Id))
+                {
+                    _logger.LogWarning(
+                        "工站 {Station} 的点位 {Tag} 在数据文件里取不到字段 {Field}",
+                        station.Code, tag.Name, tag.Address);
+                }
+            }
+
+            return new FileSourceRead(values, archivePath, archiveSize, archiveCrc);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogError(ex, "工站 {Station} 的数据文件不是合法 JSON：{Path}", station.Code, station.DataFilePath);
+            return FileSourceRead.Failure(
+                ResultCodes.FileSourceFailed, $"数据文件不是合法 JSON：{ex.Message}（已归档：{archivePath}）");
+        }
+    }
+
+    private FileSourceRead ReadCsvSource(
+        Station station,
+        byte[] bytes,
+        string archivePath,
+        long archiveSize,
+        uint archiveCrc)
+    {
+        if (!CsvFieldReader.TryParse(bytes, out var row, out var error))
+        {
+            _logger.LogError("工站 {Station} 的数据文件不是合法 CSV：{Path} {Error}", station.Code, station.DataFilePath, error);
+            return FileSourceRead.Failure(
+                ResultCodes.FileSourceFailed, $"数据文件不是合法 CSV：{error}（已归档：{archivePath}）");
+        }
+
+        var values = new Dictionary<int, SourceTagValue>();
+        foreach (var tag in station.Tags.Where(t => t.Enabled && t.Source == TagDataSource.JsonFile))
+        {
+            if (tag.DataType == PlcDataType.String)
+            {
+                if (CsvFieldReader.TryReadText(row, tag.Address, out var text))
+                {
+                    values[tag.Id] = new SourceTagValue(Numeric: null, Text: text);
+                }
+            }
+            else if (CsvFieldReader.TryReadNumeric(row, tag.Address, out var numeric))
+            {
+                values[tag.Id] = new SourceTagValue(Numeric: numeric, Text: null);
+            }
+
+            if (!values.ContainsKey(tag.Id))
+            {
+                _logger.LogWarning(
+                    "工站 {Station} 的点位 {Tag} 在数据文件里取不到列 {Field}",
+                    station.Code, tag.Name, tag.Address);
+            }
+        }
+
+        return new FileSourceRead(values, archivePath, archiveSize, archiveCrc);
+    }
+
+    /// <summary>
+    /// 不入库的失败记录：只用于实时状态与事件流。
+    /// </summary>
+    /// <remarks>
+    /// 没读到值就不落库：一条没有点位值、也没有归档的记录只会污染查询与报表，
+    /// 而现场真正需要的是工站状态上那条明确的失败原因与写回码。
+    /// </remarks>
+    private static CollectRecord Unrecorded(
+        Station station,
+        AppConfigurationSnapshot config,
+        string palletCode,
+        DateTime triggerTime,
+        short resultCode,
+        string error)
+        => new()
+        {
+            PalletCode = palletCode,
+            StationId = station.Id,
+            StationCode = station.Code,
+            TriggerTime = triggerTime,
+            CompleteTime = DateTime.Now,
+            ResultCode = resultCode,
+            Judgement = Judgement.Ng,
+            ErrorMessage = error,
+            RecipeCode = RecipeCode(config)
+        };
+
+    /// <summary>一次文件读取的产物：归档引用 + 各文件源点位取到的值（取不到的点位不在字典里）。</summary>
+    /// <remarks><see cref="ErrorCode"/> 只在失败时非 0，此时其余字段无意义。</remarks>
+    private sealed record FileSourceRead(
+        IReadOnlyDictionary<int, SourceTagValue> Values,
+        string ArchivePath,
+        long ArchiveSize,
+        uint ArchiveCrc,
+        short ErrorCode = 0,
+        string? Error = null)
+    {
+        public static FileSourceRead Failure(short errorCode, string error)
+            => new(new Dictionary<int, SourceTagValue>(), "", 0, 0, errorCode, error);
+    }
+
+    private sealed record SourceTagValue(double? Numeric, string? Text);
 
     private async Task WriteResultAsync(
         Station station,
@@ -684,7 +882,7 @@ public sealed class StationCollectPipeline
         var units = station.Tags.ToDictionary(t => t.Id, t => t.Unit);
         return values.Select(v => new StationLiveTag
         {
-            Name = string.IsNullOrWhiteSpace(v.TagName) ? v.TagCode : v.TagName,
+            Name = v.TagName,
             Display = v.TextValue ?? v.NumericValue?.ToString("0.###") ?? "-",
             Unit = units.GetValueOrDefault(v.TagId),
             OutOfLimit = v.IsOutOfLimit,

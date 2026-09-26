@@ -218,7 +218,7 @@ public class CollectPipelineTests
 
         var pressure = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, record.Id);
         Assert.NotNull(pressure);
-        var tag = Assert.Single(pressure!.TagValues.Where(t => t.TagCode == "ST010_P1"));
+        var tag = Assert.Single(pressure!.TagValues.Where(t => t.TagName == "压力"));
         Assert.True(tag.IsOutOfLimit);
         Assert.Equal(999d, tag.NumericValue);
     }
@@ -424,7 +424,7 @@ public class CollectPipelineTests
         Assert.True(harness.Stations[^1].IsLastStation);
         Assert.All(harness.Stations, s => Assert.True(s.Enabled));
         Assert.All(harness.Stations, s => Assert.Equal(1, s.PositionCount));
-        Assert.All(harness.Stations, s => Assert.Equal(new[] { 0, 1 }, s.Tags.Select(t => t.PositionIndex).OrderBy(i => i).ToArray()));
+        Assert.All(harness.Stations, s => Assert.All(s.Tags, t => Assert.Equal(1, t.PositionIndex)));
         Assert.All(harness.Stations, s => Assert.Single(s.Curves));
     }
 
@@ -454,7 +454,7 @@ public class CollectPipelineTests
     {
         await using var harness = await CollectHarness.CreateAsync();
         var station = harness.Station(0);
-        var tag = station.Tags.Single(t => t.Code == "ST010_P1");
+        var tag = station.Tags.Single(t => t.Name == "压力");
         tag.Scale = 2;
         tag.Offset = -1;
         Load(harness, station, "P0013");
@@ -465,12 +465,12 @@ public class CollectPipelineTests
 
         var item = Assert.Single((await harness.QueryAsync("P0013")).Items);
         var record = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
-        var pressure = Assert.Single(record!.TagValues.Where(t => t.TagCode == "ST010_P1"));
+        var pressure = Assert.Single(record!.TagValues.Where(t => t.TagName == "压力"));
         Assert.Equal(19d, pressure.NumericValue!.Value, precision: 4);
         Assert.False(pressure.IsOutOfLimit);
 
         // 未配置缩放的点位直接透传原始值。
-        var temperature = record.TagValues.Single(t => t.TagCode == "ST010_TEMP");
+        var temperature = record.TagValues.Single(t => t.TagName == "工站温度");
         Assert.Equal(ReadFloat(harness, "D1110"), temperature.NumericValue!.Value, precision: 4);
     }
 
@@ -653,7 +653,7 @@ public class CollectPipelineTests
         await using var harness = await CollectHarness.CreateAsync();
         var station = harness.Station(0);
         // 规格限 5~20，黄线 18：19 在规格内、但已进入预警带。
-        station.Tags.Single(t => t.Code == "ST010_P1").WarningUpperLimit = 18;
+        station.Tags.Single(t => t.Name == "压力").WarningUpperLimit = 18;
         Load(harness, station, "P0040");
         harness.Simulator.SetFloat("D1100", 19f, harness.Plc.FloatWordOrder);
 
@@ -664,7 +664,7 @@ public class CollectPipelineTests
         Assert.Equal(Judgement.Ok, item.Record.Judgement);
 
         var full = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
-        var pressure = Assert.Single(full!.TagValues.Where(t => t.TagCode == "ST010_P1"));
+        var pressure = Assert.Single(full!.TagValues.Where(t => t.TagName == "压力"));
         Assert.True(pressure.IsWarning);
         Assert.False(pressure.IsOutOfLimit);
         Assert.Equal(19d, pressure.NumericValue!.Value, precision: 3);
@@ -680,7 +680,7 @@ public class CollectPipelineTests
     {
         await using var harness = await CollectHarness.CreateAsync();
         var station = harness.Station(0);
-        station.Tags.Single(t => t.Code == "ST010_P1").WarningUpperLimit = 18;
+        station.Tags.Single(t => t.Name == "压力").WarningUpperLimit = 18;
         Load(harness, station, "P0042");
         // 21 同时越过了规格上限与预警上限：必须按超规格处理，不能只报预警。
         harness.Simulator.SetFloat("D1100", 21f, harness.Plc.FloatWordOrder);
@@ -689,7 +689,7 @@ public class CollectPipelineTests
 
         var item = Assert.Single((await harness.QueryAsync("P0042")).Items);
         var full = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
-        var pressure = Assert.Single(full!.TagValues.Where(t => t.TagCode == "ST010_P1"));
+        var pressure = Assert.Single(full!.TagValues.Where(t => t.TagName == "压力"));
         Assert.True(pressure.IsOutOfLimit);
         Assert.False(pressure.IsWarning);
     }
@@ -703,12 +703,11 @@ public class CollectPipelineTests
         // 等于任何必填字符串点位永远判废。
         station.Tags.Add(new TagDefinition
         {
-            Code = "ST010_MODEL",
             Name = "产品型号",
             Address = "D1120",
             DataType = PlcDataType.String,
             Length = 8,
-            PositionIndex = 0,
+            PositionIndex = 1,
             IsRequired = true
         });
         Load(harness, station, "P0041");
@@ -717,7 +716,7 @@ public class CollectPipelineTests
 
         var item = Assert.Single((await harness.QueryAsync("P0041")).Items);
         var full = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
-        var model = Assert.Single(full!.TagValues.Where(t => t.TagCode == "ST010_MODEL"));
+        var model = Assert.Single(full!.TagValues.Where(t => t.TagName == "产品型号"));
         Assert.Equal("OK", model.TextValue);
         Assert.False(model.IsOutOfLimit);
         Assert.False(model.IsWarning);
@@ -730,12 +729,11 @@ public class CollectPipelineTests
         var station = harness.Station(0);
         station.Tags.Add(new TagDefinition
         {
-            Code = "ST010_MODEL",
             Name = "产品型号",
             Address = "D1120",
             DataType = PlcDataType.String,
             Length = 8,
-            PositionIndex = 0,
+            PositionIndex = 1,
             IsRequired = true
         });
         Load(harness, station, "P0043");
@@ -802,7 +800,7 @@ public class CollectPipelineTests
 
         var item = Assert.Single((await harness.QueryAsync("P0053")).Items);
         var full = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
-        var temperature = Assert.Single(full!.TagValues.Where(t => t.TagCode == "ST010_TEMP"));
+        var temperature = Assert.Single(full!.TagValues.Where(t => t.TagName == "工站温度"));
         Assert.True(temperature.IsWarning);
         Assert.False(temperature.IsOutOfLimit);
     }
@@ -812,7 +810,7 @@ public class CollectPipelineTests
     {
         await using var harness = await CollectHarness.CreateAsync();
         var station = harness.Snapshot.Stations.OrderBy(s => s.Sequence).First();
-        var tagDefaultUpper = station.Tags.Single(t => t.Code == "ST010_P1").UpperLimit;
+        var tagDefaultUpper = station.Tags.Single(t => t.Name == "压力").UpperLimit;
 
         // A100 把压力规格上限收紧到 16，点位自身默认是 20。
         var recipe = harness.Snapshot.Recipes.Single(r => r.Code == "A100");
@@ -826,7 +824,7 @@ public class CollectPipelineTests
 
         var item = Assert.Single((await harness.QueryAsync("P0054")).Items);
         var full = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
-        var pressure = Assert.Single(full!.TagValues.Where(t => t.TagCode == "ST010_P1"));
+        var pressure = Assert.Single(full!.TagValues.Where(t => t.TagName == "压力"));
 
         Assert.NotNull(tagDefaultUpper);
         Assert.Equal(16d, pressure.UpperLimit!.Value, precision: 3);
@@ -840,7 +838,7 @@ public class CollectPipelineTests
     {
         await using var harness = await CollectHarness.CreateAsync();
         var station = harness.Snapshot.Stations.OrderBy(s => s.Sequence).First();
-        station.Tags.Single(t => t.Code == "ST010_P1").WarningUpperLimit = 18;
+        station.Tags.Single(t => t.Name == "压力").WarningUpperLimit = 18;
 
         Load(harness, station, "P0055");
         harness.Simulator.SetFloat("D1100", 19f, harness.Plc.FloatWordOrder);
@@ -850,16 +848,16 @@ public class CollectPipelineTests
         var key = (item.MonthKey, item.Record.Id);
 
         var before = await harness.RuntimeStore.GetRecordAsync(key.Item1, key.Item2);
-        var recorded = Assert.Single(before!.TagValues.Where(t => t.TagCode == "ST010_P1"));
+        var recorded = Assert.Single(before!.TagValues.Where(t => t.TagName == "压力"));
         Assert.Equal(18d, recorded.WarningUpperLimit!.Value, precision: 3);
 
         // 工程师事后把限值改了：已经落库的那条记录不能被重新解释，
         // 否则追溯时看到的"规格限"其实是今天的配置，等于篡改历史。
-        station.Tags.Single(t => t.Code == "ST010_P1").WarningUpperLimit = 90;
-        station.Tags.Single(t => t.Code == "ST010_P1").UpperLimit = 999;
+        station.Tags.Single(t => t.Name == "压力").WarningUpperLimit = 90;
+        station.Tags.Single(t => t.Name == "压力").UpperLimit = 999;
 
         var after = await harness.RuntimeStore.GetRecordAsync(key.Item1, key.Item2);
-        var unchanged = Assert.Single(after!.TagValues.Where(t => t.TagCode == "ST010_P1"));
+        var unchanged = Assert.Single(after!.TagValues.Where(t => t.TagName == "压力"));
         Assert.Equal(18d, unchanged.WarningUpperLimit!.Value, precision: 3);
         Assert.Equal(20d, unchanged.UpperLimit!.Value, precision: 3);
     }

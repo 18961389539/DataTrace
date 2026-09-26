@@ -74,7 +74,7 @@ public static class HelpTexts
 
     public static readonly HelpTopic ResultCode = new(
         "结果码",
-        "采集握手码：1 = 触发待采集，2 = 采集成功，3~8 是各类异常（读失败、写库失败等）。",
+        $"采集握手码：1 = 触发待采集，2 = 采集成功，3~{ResultCodes.ArchiveFailed} 是各类异常（读失败、写库失败等）。",
         "它与限值判定相互独立：见到 3/6/7 要查通讯与数据库，不是工艺问题。");
 
     public static readonly HelpTopic RecipeScope = new(
@@ -167,18 +167,18 @@ public static class HelpTexts
 
     public static readonly HelpTopic TriggerValue = new(
         "触发值",
-        "触发与回写共用同一寄存器：1 = 触发，2–8 是采集端写回的结果码。",
-        "填 0 会在复位或上电时误触发；填 2–8 则回写后仍等于触发值，每个扫描周期都会重复采一次。");
+        $"触发与回写共用同一寄存器：1 = 触发，2–{ResultCodes.ArchiveFailed} 是采集端写回的结果码。",
+        "填 0 会在复位或上电时误触发；填回写码则回写后仍等于触发值，每个扫描周期都会重复采一次。");
+
+    public static readonly HelpTopic TagDataSource = new(
+        "点位数据来源",
+        "PLC 按地址读寄存器。数据文件：JSON 用 a.b.c，CSV 用表头列名。",
+        "文件源每次触发都重读文件：读不到或归档失败就回写失败码且不落库；曲线仍按 PLC 地址读。");
 
     public static readonly HelpTopic BoolAddress = new(
         "布尔点位",
         "Bool 点位要填字地址（如 D100、MW10），判定规则是该字非 0 即为真。",
         "填位地址（M100、DB1.DBX0.0）不报错，但读取计划只收字地址、会被静默丢掉，表现为值恒为 0。");
-
-    public static readonly HelpTopic PositionScope = new(
-        "点位归属",
-        "工站级（位置 0）每轮都读；产品位（位置 1）属于托盘上的工件，读到无料时该位点位不读。",
-        "工站级点位一旦超规格限，整条工站记录判 NG；产品位只影响该工件那一位。");
 
     public static readonly HelpTopic FirstLastStation = new(
         "首末站",
@@ -255,7 +255,7 @@ public static class HelpTexts
 
     public static readonly HelpTopic LogEntityKey = new(
         "键列",
-        "「键」指向这条日志针对谁，由写入方决定：工站写编码，点位写「工站码/点位码」。",
+        "「键」指向这条日志针对谁，由写入方决定：工站写编码，点位写「工站码/点位名称」。",
         "同一个人改不同对象时靠这一列区分；读不懂时配合「对象」列一起看。");
 
     public static readonly HelpTopic LogChange = new(
@@ -292,7 +292,7 @@ public static class HelpTexts
 
     public static readonly HelpTopic SimLastWriteBack = new(
         "最近回写",
-        "显示采集端写回触发寄存器的响应码：2 是采集成功，3–8 分别是读失败、托盘码非法、校验失败等。",
+        $"显示采集端写回触发寄存器的响应码：2 是采集成功，3–{ResultCodes.ArchiveFailed} 分别是读失败、托盘码非法、校验失败等。",
         "它不是 PLC 写的值；仿真等不到这个回写（寄存器一直等于触发值）就判超时。");
 
     // ---------- 记录明细 ----------
@@ -369,7 +369,7 @@ public static class HelpTexts
             "curve-baseline" => [BaselineSampleCounts, RecipeMismatch, DeviationThresholds, OnlineBaseline, CriterionDisabled, CurveFeatureAxis],
             "logs" => [LogTimeRange, LogEntityKey, LogChange, LogKeyword],
             "config/plc" => [Heartbeat, PlcEnabled, MergeGap, SimulatorBrand],
-            "config/stations" => [TriggerValue, BoolAddress, PositionScope, FirstLastStation],
+            "config/stations" => [TriggerValue, TagDataSource, BoolAddress, FirstLastStation],
             "config/recipes" => [RecipeCode, RecipeEnabled, RecipeCopy, LimitMergeRule, TargetValue, LimitEffect, CoverablePoints],
             "config/settings" => [SaveToDispatch, ScanInterval, WriteRetry, ConfigSource, Retention, MesOutbox],
             "simulate" => [SimAutoRun, SimPalletInterval, SimNgPercent, SimRunLine, SimLastWriteBack],

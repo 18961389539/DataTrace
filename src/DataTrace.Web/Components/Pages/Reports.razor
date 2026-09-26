@@ -204,7 +204,7 @@
                            Disabled="_loading" Style="min-width:240px">
                     @foreach (var tag in _tags)
                     {
-                        <MudSelectItem T="int" Value="@tag.Id">@tag.Code @tag.Name</MudSelectItem>
+                        <MudSelectItem T="int" Value="@tag.Id">@TagOptionLabel(tag)</MudSelectItem>
                     }
                 </MudSelect>
             </MudStack>
@@ -250,7 +250,7 @@
                            Disabled="_loading" Style="min-width:220px" Class="ml-2">
                     @foreach (var tag in _tags)
                     {
-                        <MudSelectItem T="int" Value="@tag.Id">@tag.Code @tag.Name</MudSelectItem>
+                        <MudSelectItem T="int" Value="@tag.Id">@TagOptionLabel(tag)</MudSelectItem>
                     }
                 </MudSelect>
                 @if (_spc is not null)
@@ -259,7 +259,7 @@
                         @VerdictLabel(_spc.Verdict)
                     </MudChip>
                     <MudText Typo="Typo.caption" Class="dt-muted">
-                        @_spc.TagCode @_spc.TagName · 与「参数趋势」页签同一点位
+                        @_spc.TagName · 与「参数趋势」页签同一点位
                     </MudText>
                 }
                 <MudSpacer />
@@ -563,13 +563,31 @@ private IssueTopReport _defects = new();
 
     private async Task OnSubmit() => await Load();
 
+    /// <summary>
+    /// 同一工站内名称唯一。跨工站一起列时加上工站名，否则三个「工站温度」分不出来。
+    /// </summary>
+    private string TagOptionLabel(TagDefinition tag)
+    {
+        if (_tags.Select(t => t.StationId).Distinct().Count() <= 1)
+        {
+            return tag.Name;
+        }
+
+        var station = _stations.FirstOrDefault(s => s.Id == tag.StationId);
+        var stationLabel = station is null
+            ? ""
+            : string.IsNullOrWhiteSpace(station.Name) ? station.Code : station.Name;
+        return string.IsNullOrWhiteSpace(stationLabel) ? tag.Name : $"{stationLabel} · {tag.Name}";
+    }
+
     private void RefreshTags()
     {
         _tags = _stations
             .Where(s => _stationId is null || s.Id == _stationId)
             .SelectMany(s => s.Tags)
             .Where(t => t.DataType != PlcDataType.String)
-            .OrderBy(t => t.Code)
+            .OrderBy(t => _stations.First(s => s.Id == t.StationId).Sequence)
+            .ThenBy(t => t.Name)
             .ToList();
         if (_tags.All(t => t.Id != _tagId))
         {
@@ -1087,7 +1105,7 @@ private async Task OnStationChanged(int? stationId)
         // 键放"导的是哪个区间"，条件与条数放变更列：与查询页、明细页的写法一致。
         var key = $"{DateRangeFilter.StartOf(_from):yyyy-MM-dd}~{DateRangeFilter.StartOf(_to):yyyy-MM-dd}";
         var summary =
-            $"station={_stationId?.ToString() ?? "全部"};tag={tag?.Code ?? _tagId.ToString()};" +
+            $"station={_stationId?.ToString() ?? "全部"};tag={tag?.Name ?? _tagId.ToString()};" +
             $"recipe={recipe};points={count}";
         await Audit.WriteAsync(user, "Export", "Report", key, null, summary);
     }

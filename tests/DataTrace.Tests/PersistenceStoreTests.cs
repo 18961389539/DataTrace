@@ -313,7 +313,7 @@ public class ConfigRepositoryTests
                     PositionCount = 1,
                     Tags =
                     [
-                        new TagDefinition { Code = "ST010_P1", Name = "压力", Address = "D1100", DataType = PlcDataType.Float, PositionIndex = 1 }
+                        new TagDefinition { Name = "压力", Address = "D1100", DataType = PlcDataType.Float, PositionIndex = 1 }
                     ],
                     Curves =
                     [
@@ -695,13 +695,12 @@ public class ConfigRepositoryTests
         var duplicateTag = new TagDefinition
         {
             StationId = station.Id,
-            Code = "st010_p1",
-            Name = "重名点位",
+            Name = "压力",
             Address = "D1900",
             DataType = PlcDataType.Float
         };
         var tagError = await Assert.ThrowsAsync<InvalidOperationException>(() => repo.SaveTagAsync(duplicateTag));
-        Assert.Contains("点位编码", tagError.Message);
+        Assert.Contains("点位名称", tagError.Message);
 
         var duplicateCurve = new CurveDefinition
         {
@@ -754,7 +753,7 @@ public class ConfigRepositoryTests
     }
 
     [Fact]
-    public async Task Save_tag_clamps_position_index_to_zero_or_one()
+    public async Task Save_tag_forces_product_position()
     {
         var (workspace, db, plc) = await SeedAsync();
         using var ws = workspace;
@@ -762,13 +761,13 @@ public class ConfigRepositoryTests
         var repo = Repo(db);
         var stationId = (await repo.GetStationsAsync()).First(s => s.Code == "ST010").Id;
 
-        var high = new TagDefinition { StationId = stationId, Code = "T_HIGH", Name = "越界高位", Address = "D1800", DataType = PlcDataType.Float, PositionIndex = 5 };
+        var high = new TagDefinition { StationId = stationId, Name = "越界高位", Address = "D1800", DataType = PlcDataType.Float, PositionIndex = 5 };
         await repo.SaveTagAsync(high);
         Assert.Equal(1, high.PositionIndex);
 
-        var low = new TagDefinition { StationId = stationId, Code = "T_LOW", Name = "越界低位", Address = "D1810", DataType = PlcDataType.Float, PositionIndex = -4 };
+        var low = new TagDefinition { StationId = stationId, Name = "越界低位", Address = "D1810", DataType = PlcDataType.Float, PositionIndex = -4 };
         await repo.SaveTagAsync(low);
-        Assert.Equal(0, low.PositionIndex);
+        Assert.Equal(1, low.PositionIndex);
 
         await repo.DeleteTagAsync(high.Id);
         Assert.Null(db.Tags.FirstOrDefault(t => t.Id == high.Id));
@@ -894,14 +893,13 @@ public class ConfigRepositoryTests
         await repo.SaveTagAsync(new TagDefinition
         {
             StationId = station.Id,
-            Code = "ST010_TEMP",
             Name = "工站温度",
             Address = "D1200",
             DataType = PlcDataType.Float,
             PositionIndex = 0
         });
         var secondTagId = (await repo.GetStationsAsync())
-            .First(s => s.Code == "ST010").Tags.Single(t => t.Code == "ST010_TEMP").Id;
+            .First(s => s.Code == "ST010").Tags.Single(t => t.Name == "工站温度").Id;
 
         await repo.SaveRecipeAsync(new Recipe { Code = "B200", Name = "型号 B200" });
         Assert.True(await db.Recipes.AnyAsync(x => x.Code == "B200"));
@@ -1141,7 +1139,6 @@ public class ConfigRepositoryTests
         var bad = new TagDefinition
         {
             StationId = station.Id,
-            Code = "ST010_P9",
             Name = "压力2",
             Address = "D1190",
             DataType = PlcDataType.Float,
@@ -1151,17 +1148,17 @@ public class ConfigRepositoryTests
         };
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => repo.SaveTagAsync(bad));
-        Assert.Contains("ST010_P9", error.Message);
+        Assert.Contains("压力2", error.Message);
         Assert.Contains("预警下限不能低于规格下限", error.Message);
 
         var after = await repo.GetSnapshotAsync();
         Assert.Equal(before.Stations.Sum(s => s.Tags.Count), after.Stations.Sum(s => s.Tags.Count));
-        Assert.DoesNotContain(after.Stations.SelectMany(s => s.Tags), t => t.Code == "ST010_P9");
+        Assert.DoesNotContain(after.Stations.SelectMany(s => s.Tags), t => t.Name == "压力2");
 
         // 自洽的一套必须能存 —— 否则就是校验本身写错了。
         bad.WarningLowerLimit = 6;
         await repo.SaveTagAsync(bad);
-        Assert.Contains((await repo.GetSnapshotAsync()).Stations.SelectMany(s => s.Tags), t => t.Code == "ST010_P9");
+        Assert.Contains((await repo.GetSnapshotAsync()).Stations.SelectMany(s => s.Tags), t => t.Name == "压力2");
     }
 
     [Fact]

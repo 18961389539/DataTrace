@@ -1,6 +1,7 @@
 @page "/query/{MonthKey}/{RecordId:long}"
 @attribute [Authorize]
 @using System.Globalization
+@using System.Text
 @using DataTrace.Application.Configuration
 @using DataTrace.Application.Runtime
 @using DataTrace.Domain.Constants
@@ -9,6 +10,7 @@
 @using Microsoft.AspNetCore.Components.Authorization
 @inject IRuntimeStore Store
 @inject ICurveFileStore Curves
+@inject ICollectArchiveStore Archives
 @inject IAuditLogger Audit
 @inject AuthenticationStateProvider Auth
 @inject DtToast Toast
@@ -92,6 +94,43 @@ else
         }
     </MudPaper>
 
+    @if (!string.IsNullOrWhiteSpace(_record.ArchivePath))
+    {
+        <MudPaper Class="pa-3 mt-3">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Class="flex-wrap">
+                <MudText Typo="Typo.subtitle1">原始数据文件</MudText>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">JSON</MudChip>
+                <MudText Typo="Typo.caption" Class="dt-muted">
+                    @_record.ArchivePath · @FileSizeText(_record.ArchiveFileSize)
+                </MudText>
+                <MudSpacer />
+                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ToggleArchive" Disabled="_archiveLoading"
+                           StartIcon="@(_archiveLoading ? Icons.Material.Filled.Sync : Icons.Material.Filled.Visibility)">
+                    @(_archiveText is null ? "查看原始内容" : "收起内容")
+                </MudButton>
+                @if (_canExport)
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="DownloadArchive" Disabled="_archiveLoading"
+                               StartIcon="@Icons.Material.Filled.FileDownload">下载 JSON</MudButton>
+                }
+            </MudStack>
+            @* 原始文件由设备每件覆写，这里是采集当时读到的那一份 —— 判定吃的就是它的内容。 *@
+            <MudText Typo="Typo.caption" Class="dt-muted">
+                设备每件覆写同一个 JSON 文件，此处是按采集时间与托盘码归的档；点位值就是从这个文件里读的。
+            </MudText>
+            @if (_archiveError is not null)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Warning" Class="mt-1">@_archiveError</MudText>
+            }
+            @if (_archiveText is not null)
+            {
+                <MudPaper Class="dt-archive-preview pa-2 mt-2" Elevation="0">
+                    <pre>@_archiveText</pre>
+                </MudPaper>
+            }
+        </MudPaper>
+    }
+
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mt-4 mb-1">
         <MudText Typo="Typo.h6">点位</MudText>
         @if (_outOfLimitCount > 0)
@@ -113,7 +152,6 @@ else
     <MudTable Items="_tagRows" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
         <HeaderContent>
             <MudTh>点位</MudTh>
-            <MudTh>编码</MudTh>
             <MudTh>数值</MudTh>
             <MudTh>规格限</MudTh>
             <MudTh>预警限</MudTh>
@@ -121,7 +159,6 @@ else
         </HeaderContent>
         <RowTemplate>
             <MudTd DataLabel="点位">@context.TagName</MudTd>
-            <MudTd DataLabel="编码">@context.TagCode</MudTd>
             <MudTd DataLabel="数值" Class="dt-nowrap">
                 @if (context.IsOutOfLimit)
                 {
@@ -248,6 +285,10 @@ else
     private List<TagValue> _tagRows = [];
     private int _outOfLimitCount;
     private int _warningCount;
+    /// <summary>归档原文：默认收着，点了才读 —— 明细页大多数查看并不需要这份原始 JSON。</summary>
+    private string? _archiveText;
+    private string? _archiveError;
+    private bool _archiveLoading;
 
     protected override async Task OnInitializedAsync()
     {
@@ -260,6 +301,8 @@ else
         _loaded = false;
         _curvePayloads.Clear();
         _curveErrors.Clear();
+        _archiveText = null;
+        _archiveError = null;
         _record = await Store.GetRecordAsync(MonthKey, RecordId);
         if (_record is null)
         {
@@ -274,7 +317,7 @@ else
         _tagRows = _record.TagValues
             .OrderByDescending(v => v.IsOutOfLimit)
             .ThenByDescending(v => v.IsWarning)
-            .ThenBy(v => v.TagCode, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(v => v.TagName, StringComparer.OrdinalIgnoreCase)
             .ToList();
         _outOfLimitCount = _tagRows.Count(v => v.IsOutOfLimit);
         _warningCount = _tagRows.Count(v => v.IsWarning);
@@ -392,6 +435,109 @@ else
 
     private bool _exporting;
 
+    private async Task ToggleArchive()
+    {
+        if (_record is null || _archiveLoading)
+        {
+            return;
+        }
+
+        if (_archiveText is not null)
+        {
+            _archiveText = null;
+            return;
+        }
+
+        _archiveLoading = true;
+        _archiveError = null;
+        var bytes = await ReadArchiveAsync();
+        _archiveLoading = false;
+        if (bytes is null)
+        {
+            return;
+        }
+
+        // 按 UTF-8 解码后原样显示：设备写下的字节才是证据，页面不做任何格式化改写。
+        _archiveText = Encoding.UTF8.GetString(bytes);
+    }
+
+    private async Task DownloadArchive()
+    {
+        if (_record is null || _archiveLoading)
+        {
+            return;
+        }
+
+        if (!_canExport)
+        {
+            Toast.Add("当前角色无权导出原始数据（需要管理员或工程师）", Severity.Warning);
+            return;
+        }
+
+        _archiveLoading = true;
+        _archiveError = null;
+        var bytes = await ReadArchiveAsync();
+        _archiveLoading = false;
+        if (bytes is null)
+        {
+            return;
+        }
+
+        var name = $"datatrace_{_record.SerialNo}_source_{DateTime.Now:yyyyMMdd_HHmmss}.json";
+        try
+        {
+            await Js.InvokeVoidAsync("dtDownload", name, Convert.ToBase64String(bytes));
+        }
+        catch (Exception ex)
+        {
+            // JS 互操失败（连接断了、浏览器拦下下载）抛出去会断掉整条 circuit。
+            Toast.Add($"下载失败：{ex.Message}", Severity.Error);
+            return;
+        }
+
+        // 文件已经下载完了：审计写库失败不能报成"下载失败"，与导出 CSV 同一套口径。
+        try
+        {
+            var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            await Audit.WriteAsync(user, "Export", "CollectArchive", $"{MonthKey}/{_record.Id}", null, _record.ArchivePath);
+            Toast.Add("已下载原始数据文件", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"已下载原始数据文件，但审计记录写入失败：{ex.Message}", Severity.Warning);
+        }
+    }
+
+    /// <summary>读归档字节；读不出来时把原因写进 <see cref="_archiveError"/> 并返回 null。</summary>
+    /// <remarks>
+    /// Crc32 是随归档一起落库的，为 0 表示历史行没有校验值，只能不校验。
+    /// 损坏与缺失分开说：都报"缺失"的话，现场会去查备份而不是查磁盘或权限。
+    /// </remarks>
+    private async Task<byte[]?> ReadArchiveAsync()
+    {
+        if (_record is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await Archives.ReadAsync(
+                _record.ArchivePath,
+                _record.ArchiveCrc32 == 0 ? null : _record.ArchiveCrc32);
+        }
+        catch (InvalidDataException)
+        {
+            _archiveError = "归档文件损坏（内容与入库校验值不一致）";
+            return null;
+        }
+        catch
+        {
+            _archiveError = "归档文件缺失或无法读取";
+            return null;
+        }
+    }
+
     private async Task Export()
     {
         if (_record is null || _exporting)
@@ -415,20 +561,32 @@ else
                 ResultCodes.Describe(_record.ResultCode),
                 string.IsNullOrWhiteSpace(_record.RecipeCode) ? "(默认限值)" : _record.RecipeCode
             },
-            Array.Empty<string>(),
-            new[] { "点位编码", "点位名称", "数值", "判定", "规格下限", "规格上限", "预警下限", "预警上限" }
+            Array.Empty<string>()
         };
-        @* 导出顺序跟屏显一致（超差→预警→其余按编码）：对照着看时两份东西行序不同最容易错。 *@
+
+        // 归档路径随导出一起带出去：只导表格的人在别处看不到"原始文件在哪"，
+        // 事后要复核设备写了什么就得有这一行。
+        if (!string.IsNullOrWhiteSpace(_record.ArchivePath))
+        {
+            rows.Add(new[] { "原始数据文件", _record.ArchivePath, FileSizeText(_record.ArchiveFileSize), "", "", "", "", "" });
+            rows.Add(new string[8]);
+        }
+
+        rows.Add(new[] { "点位名称", "数值", "判定", "规格下限", "规格上限", "预警下限", "预警上限", "" });
+
+        @* 导出顺序跟屏显一致（超差→预警→其余按名称）：对照着看时两份东西行序不同最容易错。 *@
         foreach (var value in _tagRows)
         {
             // 超规格与预警分开写：导出给质量看时，"判废"和"黄区提示"不能混为一谈。
             // 限值留空表示"这条记录没记下来"（早于本版本），不要写 0 让下游当成真实限值。
+            // 末列留空：整份 CSV 固定 8 列，少一列时 Excel 会把后面的曲线段拼错位。
             rows.Add(new[]
             {
-                value.TagCode, value.TagName, Display(value),
+                value.TagName, Display(value),
                 value.IsOutOfLimit ? "超限" : value.IsWarning ? "预警" : "",
                 CsvNum(value.LowerLimit), CsvNum(value.UpperLimit),
-                CsvNum(value.WarningLowerLimit), CsvNum(value.WarningUpperLimit)
+                CsvNum(value.WarningLowerLimit), CsvNum(value.WarningUpperLimit),
+                ""
             });
         }
 

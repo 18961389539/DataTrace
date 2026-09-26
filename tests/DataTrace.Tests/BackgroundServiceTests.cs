@@ -58,6 +58,7 @@ public class RetentionServiceTests
         ctx.ScopeFactory,
         ctx.Provider.GetRequiredService<RuntimeDbFactory>(),
         ctx.Provider.GetRequiredService<ICurveFileStore>(),
+        ctx.Provider.GetRequiredService<ICollectArchiveStore>(),
         ctx.Logger<RetentionHostedService>());
 
     [Fact]

@@ -376,8 +376,7 @@ public sealed class RuntimeStore : IRuntimeStore
                 .Where(x => x.record.TriggerTime >= from && x.record.TriggerTime <= to)
                 .Select(x => new TagIssuePoint
                 {
-                    TagName = x.tag.TagName,
-                    TagCode = x.tag.TagCode
+                    TagName = x.tag.TagName
                 })
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);

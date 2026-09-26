@@ -57,6 +57,18 @@ public sealed class DatabaseSeeder
         await SqliteSchema.AddColumnIfMissingAsync(_db, "Recipes", "PreviousCodes",
             "ALTER TABLE Recipes ADD COLUMN PreviousCodes TEXT NULL", cancellationToken).ConfigureAwait(false);
 
+        // 点位取值来源（0 = PLC 寄存器）与文件源点位读的那一个文件路径。
+        // 老配置库没有这两列，采集侧读配置会直接报 no such column。
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "Source",
+            "ALTER TABLE Tags ADD COLUMN Source INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "Stations", "DataFilePath",
+            "ALTER TABLE Stations ADD COLUMN DataFilePath TEXT NOT NULL DEFAULT ''", cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "Stations", "DataFileFormat",
+            "ALTER TABLE Stations ADD COLUMN DataFileFormat INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
+        SqliteSchema.DropColumnIfPresent(_db, "Stations", "ScriptPath");
+
+        await RemoveTagCodesAsync(cancellationToken).ConfigureAwait(false);
+
         await CleanupOrphanRecipeLimitsAsync(cancellationToken).ConfigureAwait(false);
 
         foreach (var role in AppRoles.All)
@@ -127,12 +139,12 @@ public sealed class DatabaseSeeder
 
         foreach (var tag in tags)
         {
-            if (tag.Code.EndsWith("_P1", StringComparison.Ordinal))
+            if (tag.Name == "压力")
             {
                 // 只覆盖规格上限，其余字段留空 → 沿用点位默认值。
                 recipe.Limits.Add(new RecipeLimit { TagId = tag.Id, UpperLimit = 16 });
             }
-            else if (tag.Code.EndsWith("_TEMP", StringComparison.Ordinal))
+            else if (tag.Name == "工站温度")
             {
                 // 温度只收紧黄线，红线仍是 80℃、不判废。
                 recipe.Limits.Add(new RecipeLimit { TagId = tag.Id, WarningUpperLimit = 45 });
@@ -246,6 +258,12 @@ public sealed class DatabaseSeeder
                 changed = true;
             }
 
+            foreach (var tag in station.Tags.Where(t => t.PositionIndex < 1))
+            {
+                tag.PositionIndex = 1;
+                changed = true;
+            }
+
             foreach (var curve in station.Curves.Where(c => c.PositionIndex > 1).ToList())
             {
                 _db.Curves.Remove(curve);
@@ -307,12 +325,12 @@ public sealed class DatabaseSeeder
                 // 所以跑一会儿就会偶发进入预警带，让「预警不判废 + 预警 Top N」开箱可见。
                 new TagDefinition
                 {
-                    Code = $"{code}_TEMP", Name = "工站温度", Address = temp, DataType = PlcDataType.Float, Unit = "℃",
-                    LowerLimit = 0, UpperLimit = 80, WarningUpperLimit = 60, TargetValue = 40, PositionIndex = 0
+                    Name = "工站温度", Address = temp, DataType = PlcDataType.Float, Unit = "℃",
+                    LowerLimit = 0, UpperLimit = 80, WarningUpperLimit = 60, TargetValue = 40, PositionIndex = 1
                 },
                 new TagDefinition
                 {
-                    Code = $"{code}_P1", Name = "压力", Address = press, DataType = PlcDataType.Float, Unit = "kN",
+                    Name = "压力", Address = press, DataType = PlcDataType.Float, Unit = "kN",
                     LowerLimit = 5, UpperLimit = 20, WarningLowerLimit = 6, WarningUpperLimit = 16, TargetValue = 12.5,
                     PositionIndex = 1
                 }
@@ -338,6 +356,69 @@ public sealed class DatabaseSeeder
                 new CurveSeries { Name = "位移", Role = SeriesRole.X, StartAddress = xStart, DataType = PlcDataType.Float, StrideWords = 2, Unit = "mm" }
             ]
         };
+
+    /// <summary>
+    /// 点位不再有编码。老库把空名称补成原来的编码，重名的加上后缀，然后删掉 Code 列。
+    /// 新库由模型直接建出 (工站, 名称) 唯一索引，这里看到没有 Code 列就跳过。
+    /// </summary>
+    private async Task RemoveTagCodesAsync(CancellationToken cancellationToken)
+    {
+        if (!SqliteSchema.ColumnExists(_db, "Tags", "Code"))
+        {
+            return;
+        }
+
+        var rows = new List<(int Id, int StationId, string Name, string Code)>();
+        var connection = _db.Database.GetDbConnection();
+        await using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = """SELECT "Id", "StationId", "Name", "Code" FROM "Tags" ORDER BY "Id" """;
+            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                rows.Add((
+                    reader.GetInt32(0),
+                    reader.GetInt32(1),
+                    reader.IsDBNull(2) ? "" : reader.GetString(2),
+                    reader.IsDBNull(3) ? "" : reader.GetString(3)));
+            }
+        }
+
+        var seen = new HashSet<(int StationId, string Name)>();
+        foreach (var row in rows)
+        {
+            var name = string.IsNullOrWhiteSpace(row.Name)
+                ? (string.IsNullOrWhiteSpace(row.Code) ? $"点位{row.Id}" : row.Code.Trim())
+                : row.Name.Trim();
+            if (!seen.Add((row.StationId, name.ToLowerInvariant())))
+            {
+                var suffix = string.IsNullOrWhiteSpace(row.Code) ? row.Id.ToString() : row.Code.Trim();
+                var n = 2;
+                var candidate = $"{name} ({suffix})";
+                while (!seen.Add((row.StationId, candidate.ToLowerInvariant())))
+                {
+                    candidate = $"{name} ({suffix}-{n++})";
+                }
+
+                name = candidate;
+            }
+
+            if (string.Equals(name, row.Name, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            await _db.Database.ExecuteSqlInterpolatedAsync(
+                $"""UPDATE "Tags" SET "Name" = {name} WHERE "Id" = {row.Id}""",
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        SqliteSchema.DropColumnIfPresent(_db, "Tags", "Code");
+        await _db.Database.ExecuteSqlRawAsync(
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_Tags_StationId_Name" ON "Tags" ("StationId", "Name")""",
+            cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// 一次性清理悬空/不可用的型号限值覆盖：Tag 已删，或 Tag 已改为 Bool/String。
     /// 幂等；日志打印清理行数，便于现场核对历史脏数据。

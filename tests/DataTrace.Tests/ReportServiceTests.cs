@@ -26,11 +26,10 @@ public class ReportServiceTests
             TagValues = tags
         };
 
-    private static TagValue Tag(int tagId, string name, double? value, bool outOfLimit, string code = "")
+    private static TagValue Tag(int tagId, string name, double? value, bool outOfLimit)
         => new()
         {
             TagId = tagId,
-            TagCode = string.IsNullOrEmpty(code) ? $"T{tagId}" : code,
             TagName = name,
             DataType = PlcDataType.Float,
             NumericValue = value,
@@ -181,17 +180,6 @@ public class ReportServiceTests
 
         // 没有任何记录的工站回空，而不是回全部。
         Assert.Equal(0, (await service.GetDefectTopAsync(Day1, Day2.AddDays(1), stationId: 99)).Total);
-    }
-
-    [Fact]
-    public async Task Defect_top_falls_back_to_tag_code_when_name_missing()
-    {
-        var store = new FakeRuntimeStore();
-        store.Records.Add(("202609", Record(Day1, Judgement.Ng, 10, Tag(7, "", 99, true, code: "ST010_TEMP"))));
-        var service = new ReportService(store);
-
-        var item = Assert.Single((await service.GetDefectTopAsync(Day1, Day2, null)).Items);
-        Assert.Equal("ST010_TEMP", item.Name);
     }
 
     [Fact]

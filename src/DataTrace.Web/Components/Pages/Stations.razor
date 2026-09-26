@@ -12,6 +12,7 @@
 @inject AuthenticationStateProvider Auth
 @inject DtToast Toast
 @inject IDialogService DialogService
+@inject IJsonFileDialog FileDialog
 
 <PageHeader Title="工站配置" Description="先选工站，再按页签改握手、点位和曲线。改动保存后立即下发给采集器。" HelpRoute="config/stations" />
 
@@ -116,319 +117,274 @@
                 }
                 <MudTabs Elevation="0" Rounded="true" PanelClass="pt-4" AlwaysShowScrollButtons="true" @bind-ActivePanelIndex="_tab">
                     <MudTabPanel Text="握手">
+                        @* 平铺九宫格看不出"哪几个是一件事"：这里按 握手 / 托盘码 / 取值来源 / 线体角色
+                           分成四段，每段一句说明，用户不用猜某个字段属于哪部分。 *@
+                        <MudText Typo="Typo.subtitle2">握手（触发与回写）</MudText>
+                        <MudText Typo="Typo.caption" Class="dt-muted mb-2">
+                            工站靠同一个寄存器收发：PLC 把它写成触发值表示有料要采，采集端读完把结果码写回同一个寄存器。
+                        </MudText>
                         <MudGrid>
-                            <MudItem xs="12" md="4">
+                            <MudItem xs="12" md="6">
                                 <MudTextField @bind-Value="_current.TriggerAddress" @bind-Value:after="ValidateStation"
                                               Label="触发 / 回写地址" Immediate="true"
                                               HelperText="@AddressHelper"
                                               Error="@(_triggerError is not null)" ErrorText="@_triggerError" />
                             </MudItem>
-                            <MudItem xs="12" md="4">
+                            <MudItem xs="12" md="6">
                                 <MudNumericField @bind-Value="_current.TriggerValue" @bind-Value:after="ValidateStation"
-                                                 Label="触发值" Immediate="true" HelperText="约定为 1；2–8 是回写码，不能用作触发值"
+                                                 Label="触发值" Immediate="true" HelperText="约定为 1；2 起是回写码，不能用作触发值"
                                                  Error="@(_triggerValueError is not null)" ErrorText="@_triggerValueError" />
                                 <InfoHint Topic="HelpTexts.TriggerValue" />
                             </MudItem>
-                            <MudItem xs="12" md="4">
+                        </MudGrid>
+
+                        <MudDivider Class="my-3" />
+
+                        <MudText Typo="Typo.subtitle2">托盘码与产品位</MudText>
+                        @* 这条边界必须写明：点位值改从文件读之后，用户容易以为整站都不读 PLC 了。 *@
+                        <MudText Typo="Typo.caption" Class="dt-muted mb-2">
+                            这两项始终从 PLC 读：托盘码用来认托盘，有料地址用来判断产品位上有没有件 ——
+                            点位值从哪读（见「点位」页签）不影响它们。
+                        </MudText>
+                        <MudGrid>
+                            @* 四列各 3/12：中文字段名在更窄的列里会被浮标标签省略号截掉
+                               （实测 md=2 时「托盘码长度」需要 81px 而只有 74px）。 *@
+                            <MudItem xs="12" md="3">
                                 <MudTextField @bind-Value="_current.PalletCodeAddress" @bind-Value:after="ValidateStation"
                                               Label="托盘码地址" Immediate="true"
                                               Error="@(_palletError is not null)" ErrorText="@_palletError" />
                             </MudItem>
-                            <MudItem xs="6" md="2">
+                            <MudItem xs="6" md="3">
                                 <MudNumericField @bind-Value="_current.PalletCodeLength" @bind-Value:after="ValidateStation"
                                                  Label="托盘码长度" Immediate="true" Min="1" Max="@StationConfigLimits.MaxPalletCodeLength"
                                                  HelperText="字符数"
                                                  Error="@(_palletLengthError is not null)" ErrorText="@_palletLengthError" />
                             </MudItem>
-                            <MudItem xs="6" md="2">
+                            <MudItem xs="6" md="3">
                                 <MudSelect T="PlcDataType" @bind-Value="_current.PalletCodeDataType" Label="托盘码类型"
                                            HelperText="字符串最常见；数值型会把寄存器值转成托盘码">
                                     <MudSelectItem T="PlcDataType" Value="PlcDataType.String">字符串</MudSelectItem>
                                     <MudSelectItem T="PlcDataType" Value="PlcDataType.Int32">Int32</MudSelectItem>
                                 </MudSelect>
                             </MudItem>
-                            <MudItem xs="12" md="4">
+                            <MudItem xs="12" md="3">
+                                @* 「可留空」交给 HelperText：放进标签会让它在窄列里被截断。 *@
                                 <MudTextField @bind-Value="_occupiedAddress" @bind-Value:after="ValidateStation"
-                                              Label="有料地址（可留空）" Immediate="true"
-                                              HelperText="留空 = 产品位恒为有料；填了则读到 0 时按空位跳过该产品"
+                                              Label="有料地址" Immediate="true"
+                                              HelperText="留空 = 恒为有料"
                                               Error="@(_occupiedError is not null)" ErrorText="@_occupiedError" />
                             </MudItem>
-                            <MudItem xs="12" md="12" Class="d-flex flex-wrap align-center gap-4">
-                                <MudSwitch @bind-Value="_current.IsFirstStation" @bind-Value:after="ValidateStation"
-                                           Label="首站" Color="Color.Primary" />
-                                <MudSwitch @bind-Value="_current.IsLastStation" @bind-Value:after="ValidateStation"
-                                           Label="末站" Color="Color.Primary" />
-                                <InfoHint Topic="HelpTexts.FirstLastStation" />
-                                <MudSwitch @bind-Value="_current.Enabled" @bind-Value:after="ValidateStation"
-                                           Label="启用" Color="Color.Primary" />
-                                @if (_firstError is not null)
+                        </MudGrid>
+                        <MudText Typo="Typo.caption" Class="dt-muted">
+                            有料地址读到 0 时，该工位本轮按空位记录（不判定、不告警）。
+                        </MudText>
+
+                        <MudDivider Class="my-3" />
+
+                        <MudText Typo="Typo.subtitle2">线体角色</MudText>
+                        <MudText Typo="Typo.caption" Class="dt-muted mb-2">
+                            首站开托盘会话、末站关会话并上报 MES；停用的工站不参与采集。
+                        </MudText>
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="4" Class="flex-wrap">
+                            <MudSwitch @bind-Value="_current.IsFirstStation" @bind-Value:after="ValidateStation"
+                                       Label="首站" Color="Color.Primary" />
+                            <MudSwitch @bind-Value="_current.IsLastStation" @bind-Value:after="ValidateStation"
+                                       Label="末站" Color="Color.Primary" />
+                            <InfoHint Topic="HelpTexts.FirstLastStation" />
+                            <MudSwitch @bind-Value="_current.Enabled" @bind-Value:after="ValidateStation"
+                                       Label="启用" Color="Color.Primary" />
+                            @if (_firstError is not null)
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Error">@_firstError</MudText>
+                            }
+                            @if (_lastError is not null)
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Error">@_lastError</MudText>
+                            }
+                        </MudStack>
+                    </MudTabPanel>
+                    <MudTabPanel Text="@($"点位（{_current.Tags.Count} 个）")">
+                        @* 数据文件是"哪些点位从文件读"这件事的公共前提，所以跟点位放在同一页：
+                           逐点位选来源在编辑对话框里，路径一个工站只有一个（一台设备写一个文件）。 *@
+                        <MudGrid Class="mb-1">
+                            <MudItem xs="12" md="7">
+                                <div class="dt-path-field">
+                                    <MudTextField @bind-Value="_current.DataFilePath" @bind-Value:after="ValidateStation"
+                                                  Label="数据文件路径" Immediate="true"
+                                                  HelperText="可手填，也可点右侧「选择」；点位都来自 PLC 时可留空"
+                                                  Error="@(_dataPathError is not null)" ErrorText="@_dataPathError" />
+                                    <button type="button" class="dt-path-pick" aria-label="选择数据文件"
+                                            disabled="@_busy" @onclick="PickDataFile">
+                                        <MudIcon Icon="@Icons.Material.Filled.FolderOpen" Size="Size.Small" />
+                                        <span>选择</span>
+                                    </button>
+                                </div>
+                                @if (_dataPathWarning is not null)
                                 {
-                                    <MudText Typo="Typo.caption" Color="Color.Error">@_firstError</MudText>
-                                }
-                                @if (_lastError is not null)
-                                {
-                                    <MudText Typo="Typo.caption" Color="Color.Error">@_lastError</MudText>
+                                    <MudText Typo="Typo.caption" Color="Color.Warning">@_dataPathWarning</MudText>
                                 }
                             </MudItem>
+                            <MudItem xs="12" md="5">
+                                <MudSelect T="DataFileFormat" @bind-Value="_current.DataFileFormat" @bind-Value:after="ValidateStation"
+                                           Label="文件格式" HelperText="@FormatHelper" Disabled="_busy">
+                                    <MudSelectItem T="DataFileFormat" Value="DataFileFormat.Json">JSON</MudSelectItem>
+                                    <MudSelectItem T="DataFileFormat" Value="DataFileFormat.Csv">CSV</MudSelectItem>
+                                </MudSelect>
+                                <InfoHint Topic="HelpTexts.TagDataSource" />
+                            </MudItem>
                         </MudGrid>
-                    </MudTabPanel>
-                    <MudTabPanel Text="@($"点位 {_current.Tags.Count}")">
-                        <MudTable Items="_current.Tags.OrderBy(t => t.Code).ToList()" Dense="true" Breakpoint="Breakpoint.Sm">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3">
+                            <MudText Typo="Typo.caption" Class="dt-muted">
+                                @FileSourceSummary
+                            </MudText>
+                            <MudSpacer />
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                                       OnClick="AddTag" Disabled="_busy">新增点位</MudButton>
+                        </MudStack>
+                        <MudTable Items="_current.Tags.OrderBy(t => t.Name).ToList()" Dense="true" Hover="true" Breakpoint="Breakpoint.Xs">
                             <HeaderContent>
-                                <MudTh>编码</MudTh>
-                                <MudTh>名称</MudTh>
-                                <MudTh>地址</MudTh>
-                                <MudTh>类型</MudTh>
-                                <MudTh>单位</MudTh>
-                                <MudTh>必填</MudTh>
-                                <MudTh>位置</MudTh>
-                                <MudTh>启用</MudTh>
-                                <MudTh>规格限</MudTh>
-                                <MudTh>预警限</MudTh>
-                                <MudTh>目标</MudTh>
-                                <MudTh></MudTh>
+                                @* 给列宽比例：不约束时中文表头会被挤成逐字竖排（曲线页签上实测过）。
+                                   只留 5 列：类型并进「来源与地址」的小字里，否则窄容器（侧栏展开时约 560px）
+                                   下操作列会被挤到表格外、需要横向滚动。 *@
+                                <MudTh Class="dt-nowrap" Style="width:24%">名称</MudTh>
+                                <MudTh Class="dt-nowrap" Style="width:26%">来源与地址</MudTh>
+                                <MudTh Class="dt-nowrap" Style="width:22%">限值</MudTh>
+                                <MudTh Class="dt-nowrap px-1" Style="width:12%">启用</MudTh>
+                                <MudTh Class="dt-nowrap px-1"></MudTh>
                             </HeaderContent>
                             <RowTemplate>
-                                <MudTd DataLabel="编码" Class="dt-nowrap">
-                                    @context.Code
-                                    @if (context.DataType == PlcDataType.String && context.Length <= 0)
+                                <MudTd DataLabel="名称">
+                                    <MudText Typo="Typo.body2">@context.Name</MudText>
+                                    @if (context.IsRequired)
                                     {
-                                        <MudTooltip Text="字符串长度未设置，采集会读成空并可能判 NG">
-                                            <MudIcon Icon="@Icons.Material.Filled.WarningAmber" Color="Color.Warning" Size="Size.Small" Class="ml-1" />
-                                        </MudTooltip>
+                                        <MudText Typo="Typo.caption" Class="dt-muted">必填</MudText>
+                                    }
+                                    @if (context.Source == TagDataSource.Plc
+                                         && context.DataType == PlcDataType.String && context.Length <= 0)
+                                    {
+                                        <MudText Typo="Typo.caption" Color="Color.Warning">字符串长度未设置，采集会读成空</MudText>
                                     }
                                 </MudTd>
-                                <MudTd DataLabel="名称" Class="dt-nowrap">@context.Name</MudTd>
-                                <MudTd DataLabel="地址" Class="dt-nowrap">@context.Address</MudTd>
-                                <MudTd DataLabel="类型">
-                                    @DisplayLabels.DataType(context.DataType)
-                                    @if (context.DataType == PlcDataType.String)
+                                <MudTd DataLabel="来源与地址">
+                                    <MudText Typo="Typo.caption" Class="dt-muted">
+                                        @SourceLabel(context.Source) · @DataTypeLabel(context.Source, context.DataType)
+                                        @if (context.Source == TagDataSource.Plc && context.DataType == PlcDataType.String)
+                                        {
+                                            <text> · 长 @context.Length</text>
+                                        }
+                                    </MudText>
+                                    <MudText Typo="Typo.body2">@context.Address</MudText>
+                                </MudTd>
+                                <MudTd DataLabel="限值">
+                                    <MudText Typo="Typo.body2">@LimitSummary(context)</MudText>
+                                    @if (WarningSummary(context) is { } warning)
                                     {
-                                        <MudText Typo="Typo.caption" Class="dt-muted">长 @context.Length</MudText>
+                                        <MudText Typo="Typo.caption" Class="dt-muted">@warning</MudText>
                                     }
                                 </MudTd>
-                                <MudTd DataLabel="单位" Class="dt-nowrap">@(context.DataType == PlcDataType.Bool ? "—" : (context.Unit ?? ""))</MudTd>
-                                <MudTd DataLabel="必填">@(context.IsRequired ? "是" : "否")</MudTd>
-                                <MudTd DataLabel="位置">@PositionLabel(context.PositionIndex)</MudTd>
-                                <MudTd DataLabel="启用">
-                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
-                                             Color="@(context.Enabled ? Color.Success : Color.Default)">
-                                        @(context.Enabled ? "启用" : "停用")
-                                    </MudChip>
+                                <MudTd DataLabel="启用" Class="px-1">
+                                    @* 最常改的一个字段，列表里直接拨：为它开一次对话框不值得。 *@
+                                    <MudSwitch T="bool" Value="context.Enabled" ValueChanged="@(value => ToggleTagEnabled(context, value))"
+                                               Color="Color.Primary" Disabled="_busy"
+                                               aria-label="@($"{(context.Enabled ? "停用" : "启用")}点位 {context.Name}")" />
                                 </MudTd>
-                                <MudTd DataLabel="规格限" Class="dt-nowrap">@(!UsesNumericLimits(context.DataType) ? "—" : DisplayLabels.LimitRange(context.LowerLimit, context.UpperLimit))</MudTd>
-                                <MudTd DataLabel="预警限" Class="dt-nowrap">@(!UsesNumericLimits(context.DataType) ? "—" : DisplayLabels.LimitRange(context.WarningLowerLimit, context.WarningUpperLimit))</MudTd>
-                                <MudTd DataLabel="目标">@(!UsesNumericLimits(context.DataType) ? "—" : (context.TargetValue?.ToString() ?? ""))</MudTd>
-                                <MudTd Class="dt-nowrap">
+                                <MudTd Class="dt-nowrap px-1">
+                                    @* 可访问名带上名称：每行都有「编辑 / 删除」，读屏与测试都难以分辨点的是哪一行。 *@
                                     <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Text" Disabled="_busy"
-                                               OnClick="@(() => BeginEditTag(context))">编辑</MudButton>
-                                    <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Text" Disabled="_busy"
+                                               aria-label="@($"编辑点位 {context.Name}")"
+                                               OnClick="@(() => EditTag(context))">编辑</MudButton><MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Text" Disabled="_busy"
+                                               aria-label="@($"删除点位 {context.Name}")"
                                                OnClick="@(() => DeleteTag(context))">删除</MudButton>
                                 </MudTd>
                             </RowTemplate>
                             <NoRecordsContent>
-                                <MudText Typo="Typo.body2" Class="dt-muted py-3">还没有点位，用下方表单添加（如压力、保压时间）。</MudText>
+                                <MudText Typo="Typo.body2" Class="dt-muted py-3">还没有点位，点右上「新增点位」添加（如压力、保压时间）。</MudText>
                             </NoRecordsContent>
                         </MudTable>
-                        @if (_current.Tags.Any(t => t.DataType == PlcDataType.String && t.Length <= 0))
+                        @if (FileSourceCount > 0 && _current.DataFileFormat == DataFileFormat.Csv)
+                        {
+                            <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mt-3">
+                                有 @FileSourceCount 个点位取自 CSV：地址写表头列名。文件须为 UTF-8，第一行表头，下面只能有一行数据。
+                                数字与数字串都收，<b>带单位的文本取不到值</b>。曲线仍按 PLC 地址读取。
+                            </MudAlert>
+                        }
+                        else if (FileSourceCount > 0)
+                        {
+                            <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mt-3">
+                                有 @FileSourceCount 个点位取自 JSON 文件：「地址」按文件里的字段名写（支持 <b>data.force</b> 这样的嵌套），
+                                数字与数字串都收，<b>带单位的文本取不到值</b>；长度、倍率、偏移对这些点位不生效。曲线仍按 PLC 地址读取。
+                            </MudAlert>
+                        }
+                        @if (_current.Tags.Any(t => t.Source == TagDataSource.Plc
+                                                    && t.DataType == PlcDataType.String && t.Length <= 0))
                         {
                             <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mt-3">
                                 有字符串点位的「长度」为 0：采集解码为空串，若勾选必填会直接判 NG。请点「编辑」补上长度（建议 16 或 32）。
                             </MudAlert>
                         }
-                        <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mt-3">
-                            <b>规格限</b>是红线，超出即判废并让 PLC 收到 NG；
-                            <b>预警限</b>是黄线，落在黄区只在看板提示、计入「预警 Top N」，<b>不影响判定与响应码</b>。
-                            黄线必须落在红线内侧，目标值仅用于统计。Bool / String 不设规格限。
-                        </MudAlert>
-                        <MudText Typo="Typo.subtitle2" Class="mt-3 mb-1">@(_tag.Id == 0 ? "新增点位" : $"编辑点位 {_tag.Code}")</MudText>
-                        <MudGrid>
-                            <MudItem xs="12" md="2">
-                                <MudTextField @bind-Value="_tag.Code" @bind-Value:after="ValidateTag" Label="编码"
-                                              Immediate="true" Error="@(_tagCodeError is not null)" ErrorText="@_tagCodeError" />
-                            </MudItem>
-                            <MudItem xs="12" md="2"><MudTextField @bind-Value="_tag.Name" Label="名称" /></MudItem>
-                            <MudItem xs="12" md="2">
-                                <MudTextField @bind-Value="_tag.Address" @bind-Value:after="ValidateTag" Label="地址"
-                                              Immediate="true" Error="@(_tagAddressError is not null)" ErrorText="@_tagAddressError" />
-                                <InfoHint Topic="HelpTexts.BoolAddress" />
-                            </MudItem>
-                            <MudItem xs="12" md="2">
-                                <MudSelect T="PlcDataType" @bind-Value="_tag.DataType" @bind-Value:after="OnTagDataTypeChanged" Label="类型">
-                                    @foreach (var t in Enum.GetValues<PlcDataType>())
-                                    {
-                                        <MudSelectItem Value="t">@DisplayLabels.DataType(t)</MudSelectItem>
-                                    }
-                                </MudSelect>
-                            </MudItem>
-                            @if (TagIsString)
-                            {
-                                <MudItem xs="6" md="1">
-                                    <MudNumericField @bind-Value="_tag.Length" @bind-Value:after="ValidateTag" Label="长度" Min="1" Max="256"
-                                                     HelperText="字节数" Error="@(_tagLengthError is not null)" ErrorText="@_tagLengthError" />
-                                </MudItem>
-                            }
-                            @if (TagShowsUnit)
-                            {
-                                <MudItem xs="6" md="1"><MudTextField @bind-Value="_tag.Unit" Label="单位" /></MudItem>
-                            }
-                            @if (TagUsesNumericLimits)
-                            {
-                                <MudItem xs="6" md="1"><MudNumericField @bind-Value="_tag.Scale" Label="倍率" HelperText="默认 1" /></MudItem>
-                                <MudItem xs="6" md="1"><MudNumericField @bind-Value="_tag.Offset" Label="偏移" HelperText="默认 0" /></MudItem>
-                            }
-                            <MudItem xs="6" md="2" Class="d-flex align-center">
-                                <MudSwitch @bind-Value="_tag.IsRequired" Label="必填" Color="Color.Primary" />
-                            </MudItem>
-                            <MudItem xs="6" md="2" Class="d-flex align-center">
-                                <MudSwitch @bind-Value="_tag.Enabled" Label="启用" Color="Color.Primary" />
-                            </MudItem>
-                            <MudItem xs="12" md="2">
-                                <MudSelect T="int" @bind-Value="_tag.PositionIndex" Label="位置"
-                                           HelperText="工站级：空位也读；产品位：随产品判定">
-                                    <MudSelectItem T="int" Value="0">工站级</MudSelectItem>
-                                    <MudSelectItem T="int" Value="1">产品位</MudSelectItem>
-                                </MudSelect>
-                                <InfoHint Topic="HelpTexts.PositionScope" />
-                            </MudItem>
-                            @if (TagUsesNumericLimits)
-                            {
-                                <MudItem xs="6" md="1"><MudNumericField @bind-Value="_tag.LowerLimit" @bind-Value:after="ValidateTag" Label="规格下限" HelperText="留空不判定" /></MudItem>
-                                <MudItem xs="6" md="1"><MudNumericField @bind-Value="_tag.UpperLimit" @bind-Value:after="ValidateTag" Label="规格上限" HelperText="留空不判定" /></MudItem>
-                                <MudItem xs="6" md="1"><MudNumericField @bind-Value="_tag.WarningLowerLimit" @bind-Value:after="ValidateTag" Label="预警下限" HelperText="不判废" /></MudItem>
-                                <MudItem xs="6" md="1"><MudNumericField @bind-Value="_tag.WarningUpperLimit" @bind-Value:after="ValidateTag" Label="预警上限" HelperText="不判废" /></MudItem>
-                                <MudItem xs="6" md="1"><MudNumericField @bind-Value="_tag.TargetValue" @bind-Value:after="ValidateTag" Label="目标值" HelperText="仅统计" /></MudItem>
-                            }
-                            <MudItem xs="12" md="3" Class="d-flex align-center gap-2">
-                                <MudButton Class="mt-4" Variant="Variant.Outlined" Color="Color.Primary" OnClick="SaveTag" Disabled="_busy"
-                                           StartIcon="@(_busy ? Icons.Material.Filled.Sync : (_tag.Id == 0 ? Icons.Material.Filled.Add : Icons.Material.Filled.Save))">
-                                    @(_busy ? "提交中…" : (_tag.Id == 0 ? "添加" : "保存"))
-                                </MudButton>
-                                @if (_tag.Id != 0)
-                                {
-                                    <MudButton Class="mt-4" Variant="Variant.Text" OnClick="CancelEditTag" Disabled="_busy">取消编辑</MudButton>
-                                }
-                            </MudItem>
-                            @if (_tagLimitError is not null || _tagLengthError is not null)
-                            {
-                                <MudItem xs="12">
-                                    <MudText Typo="Typo.body2" Color="Color.Error">@(_tagLengthError ?? _tagLimitError)</MudText>
-                                </MudItem>
-                            }
-                        </MudGrid>
                     </MudTabPanel>
-                    <MudTabPanel Text="@($"曲线 {_current.Curves.Count}")">
-                        <MudTable Items="_current.Curves.OrderBy(c => c.Code).ToList()" Dense="true" Breakpoint="Breakpoint.Sm">
+                    <MudTabPanel Text="@($"曲线（{_current.Curves.Count} 条）")">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3">
+                            <MudText Typo="Typo.caption" Class="dt-muted">
+                                列表只显示摘要；序列与地址在编辑对话框里改，波形判据单独配。
+                            </MudText>
+                            <MudSpacer />
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                                       OnClick="AddCurve" Disabled="_busy">新增曲线</MudButton>
+                        </MudStack>
+                        <MudTable Items="_current.Curves.OrderBy(c => c.Code).ToList()" Dense="true" Hover="true" Breakpoint="Breakpoint.Xs">
                             <HeaderContent>
-                                <MudTh>编码</MudTh>
-                                <MudTh>名称</MudTh>
-                                <MudTh>点数</MudTh>
-                                <MudTh>Y 起始</MudTh>
-                                <MudTh>X 起始</MudTh>
-                                <MudTh>判据</MudTh>
-                                <MudTh>启用</MudTh>
+                                @* 列宽给比例：「序列 / 起始地址」内容最长，不约束的话它会把
+                                   「波形判据」挤到几十像素，中文表头只能逐字竖排。 *@
+                                <MudTh Class="dt-nowrap" Style="width:28%">编码 / 名称</MudTh>
+                                <MudTh Class="dt-nowrap" Style="width:30%">序列 / 起始地址</MudTh>
+                                <MudTh Class="dt-nowrap" Style="width:16%">波形判据</MudTh>
+                                <MudTh Class="dt-nowrap" Style="width:12%">启用</MudTh>
                                 <MudTh></MudTh>
                             </HeaderContent>
                             <RowTemplate>
-                                <MudTd DataLabel="编码">@context.Code</MudTd>
-                                <MudTd DataLabel="名称">@context.Name</MudTd>
-                                <MudTd DataLabel="点数">@context.PointCount</MudTd>
-                                <MudTd DataLabel="Y 起始">@YStart(context)</MudTd>
-                                <MudTd DataLabel="X 起始">@XStart(context)</MudTd>
-                                <MudTd DataLabel="判据" Class="dt-nowrap">
-                                    @if (context.Criteria.Count == 0)
-                                    {
-                                        <MudText Typo="Typo.caption" Class="dt-muted">未配置</MudText>
-                                    }
-                                    else
-                                    {
-                                        <MudText Typo="Typo.caption">@context.Criteria.Count 条</MudText>
-                                    }
+                                <MudTd DataLabel="编码 / 名称">
+                                    <MudText Typo="Typo.body2">@context.Code</MudText>
+                                    <MudText Typo="Typo.caption" Class="dt-muted">
+                                        @context.Name · @context.PointCount 点
+                                        @if (context.PositionIndex > 0)
+                                        {
+                                            <text> · @PositionLabel(context.PositionIndex)</text>
+                                        }
+                                    </MudText>
+                                </MudTd>
+                                <MudTd DataLabel="序列 / 起始地址">
+                                    @* 两条序列各一行：并排成两列时，窄窗口下地址会被折成两行、反而更难对。 *@
+                                    <MudText Typo="Typo.caption" Class="dt-nowrap">@SeriesSummary(context, SeriesRole.Y)</MudText>
+                                    <MudText Typo="Typo.caption" Class="dt-nowrap dt-muted">@SeriesSummary(context, SeriesRole.X)</MudText>
+                                </MudTd>
+                                <MudTd DataLabel="波形判据">
+                                    <MudText Typo="Typo.caption">@CriteriaSummary(context)</MudText>
                                 </MudTd>
                                 <MudTd DataLabel="启用">
-                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
-                                             Color="@(context.Enabled ? Color.Success : Color.Default)">
-                                        @(context.Enabled ? "启用" : "停用")
-                                    </MudChip>
+                                    <MudSwitch T="bool" Value="context.Enabled" ValueChanged="@(value => ToggleCurveEnabled(context, value))"
+                                               Color="Color.Primary" Disabled="_busy"
+                                               aria-label="@($"{(context.Enabled ? "停用" : "启用")}曲线 {context.Code}")" />
                                 </MudTd>
                                 <MudTd Class="dt-nowrap">
                                     <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary" Disabled="_busy"
-                                               OnClick="@(() => BeginEditCurve(context))">编辑</MudButton>
+                                               aria-label="@($"编辑曲线 {context.Code}")"
+                                               OnClick="@(() => EditCurve(context))">编辑</MudButton>
                                     <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary" Disabled="_busy"
+                                               aria-label="@($"配置曲线 {context.Code} 的波形判据")"
                                                OnClick="@(() => EditCriteria(context))">波形判据</MudButton>
                                     <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Text" Disabled="_busy"
+                                               aria-label="@($"删除曲线 {context.Code}")"
                                                OnClick="@(() => DeleteCurve(context))">删除</MudButton>
                                 </MudTd>
                             </RowTemplate>
                             <NoRecordsContent>
-                                <MudText Typo="Typo.body2" Class="dt-muted py-3">还没有曲线，用下方表单添加（如位移-压力曲线）。</MudText>
+                                <MudText Typo="Typo.body2" Class="dt-muted py-3">还没有曲线，点右上「新增曲线」添加（如位移-压力曲线）。</MudText>
                             </NoRecordsContent>
                         </MudTable>
                         <MudText Typo="Typo.caption" Class="dt-muted mt-2">
                             「波形判据」对整段波形设阈值（峰值、面积、上升/保压段斜率…），能拦住「点位值在限内但波形异常」的漏检。
                         </MudText>
-                        <MudText Typo="Typo.subtitle2" Class="mt-3 mb-1">@(_curve.Id == 0 ? "新增曲线" : $"编辑曲线 {_curve.Code}")</MudText>
-                        <MudGrid Class="mt-3">
-                            <MudItem xs="12" md="2">
-                                <MudTextField @bind-Value="_curve.Code" @bind-Value:after="ValidateCurve" Label="曲线编码"
-                                              Immediate="true" Error="@(_curveCodeError is not null)" ErrorText="@_curveCodeError" />
-                            </MudItem>
-                            <MudItem xs="12" md="2"><MudTextField @bind-Value="_curve.Name" Label="名称" /></MudItem>
-                            <MudItem xs="12" md="1">
-                                <MudNumericField @bind-Value="_curve.PointCount" @bind-Value:after="ValidateCurve" Label="点数"
-                                                 Min="@StationConfigLimits.MinCurvePoints" Max="@StationConfigLimits.MaxCurvePoints"
-                                                 Error="@(_curveCountError is not null)" ErrorText="@_curveCountError" />
-                            </MudItem>
-                            <MudItem xs="12" md="1" Class="d-flex align-center">
-                                <MudSwitch @bind-Value="_curve.Enabled" Label="启用" Color="Color.Primary" />
-                            </MudItem>
-                            <MudItem xs="12" md="2">
-                                <MudTextField @bind-Value="_yName" Label="Y 名称" />
-                            </MudItem>
-                            <MudItem xs="6" md="1">
-                                <MudTextField @bind-Value="_yUnit" Label="Y 单位" />
-                            </MudItem>
-                            <MudItem xs="6" md="2">
-                                <MudSelect T="PlcDataType" @bind-Value="_yDataType" @bind-Value:after="OnCurveYTypeChanged" Label="Y 类型">
-                                    @foreach (var t in CurveNumericTypes)
-                                    {
-                                        <MudSelectItem T="PlcDataType" Value="t">@DisplayLabels.DataType(t)</MudSelectItem>
-                                    }
-                                </MudSelect>
-                            </MudItem>
-                            <MudItem xs="12" md="2">
-                                <MudTextField @bind-Value="_yAddress" @bind-Value:after="ValidateCurve" Label="Y 起始地址"
-                                              Immediate="true" Error="@(_yAddressError is not null)" ErrorText="@_yAddressError" />
-                            </MudItem>
-                            <MudItem xs="12" md="2">
-                                <MudTextField @bind-Value="_xName" Label="X 名称" />
-                            </MudItem>
-                            <MudItem xs="6" md="1">
-                                <MudTextField @bind-Value="_xUnit" Label="X 单位" />
-                            </MudItem>
-                            <MudItem xs="6" md="2">
-                                <MudSelect T="PlcDataType" @bind-Value="_xDataType" @bind-Value:after="OnCurveXTypeChanged" Label="X 类型">
-                                    @foreach (var t in CurveNumericTypes)
-                                    {
-                                        <MudSelectItem T="PlcDataType" Value="t">@DisplayLabels.DataType(t)</MudSelectItem>
-                                    }
-                                </MudSelect>
-                            </MudItem>
-                            <MudItem xs="12" md="2">
-                                <MudTextField @bind-Value="_xAddress" @bind-Value:after="ValidateCurve" Label="X 起始地址"
-                                              Immediate="true" Error="@(_xAddressError is not null)" ErrorText="@_xAddressError" />
-                            </MudItem>
-                            <MudItem xs="12" md="3" Class="d-flex align-center">
-                                <MudButton Class="mt-4" Variant="Variant.Outlined" Color="Color.Primary" OnClick="SaveCurve" Disabled="_busy"
-                                           StartIcon="@(_busy ? Icons.Material.Filled.Sync : (_curve.Id == 0 ? Icons.Material.Filled.Add : Icons.Material.Filled.Save))">
-                                    @(_busy ? "提交中…" : (_curve.Id == 0 ? "添加曲线" : "保存修改"))
-                                </MudButton>
-                                @if (_curve.Id != 0)
-                                {
-                                    <MudButton Class="mt-4 ml-2" Variant="Variant.Text" OnClick="CancelEditCurve" Disabled="_busy">取消编辑</MudButton>
-                                }
-                            </MudItem>
-                        </MudGrid>
                     </MudTabPanel>
                 </MudTabs>
             </MudPaper>
@@ -437,36 +393,33 @@
 </MudGrid>
 
 @code {
-    private const int DefaultStringLength = 16;
-    private bool TagUsesNumericLimits => UsesNumericLimits(_tag.DataType);
-    private bool TagIsString => _tag.DataType == PlcDataType.String;
-    private bool TagShowsUnit => _tag.DataType is not PlcDataType.Bool;
+    /// <summary>本工站里取自 JSON 文件的启用点位数量。为 0 表示整站都从 PLC 读。</summary>
+    private int FileSourceCount => _current?.Tags.Count(t => t.Enabled && t.Source == TagDataSource.JsonFile) ?? 0;
+
+    /// <summary>点位列表上方那句汇总：点出有几个点位走文件，用户不用逐行看「来源」列。</summary>
+    private string FileSourceSummary => FileSourceCount == 0
+        ? $"共 {_current?.Tags.Count ?? 0} 个点位，全部从 PLC 寄存器读。"
+        : $"共 {_current?.Tags.Count ?? 0} 个点位，其中 {FileSourceCount} 个取自 {FileKind} 文件。";
+
+    private string FileKind => _current?.DataFileFormat == DataFileFormat.Csv ? "CSV" : "JSON";
+
+    private string FormatHelper => _current?.DataFileFormat == DataFileFormat.Csv
+        ? "表头列名，只认一行数据"
+        : "字段路径 a.b.c";
+
+    private string SourceLabel(TagDataSource source)
+        => source == TagDataSource.JsonFile ? $"{FileKind} 文件" : "PLC 寄存器";
+
+    /// <summary>工站里是否有点位取自 JSON 文件（只看启用中的点位：停用的不参与采集）。</summary>
+    private static bool HasFileSourceTag(Station station)
+        => station.Tags.Any(t => t.Enabled && t.Source == TagDataSource.JsonFile);
+
     private static bool UsesNumericLimits(PlcDataType dataType) => dataType is not (PlcDataType.Bool or PlcDataType.String);
     private IReadOnlyList<Station> _stations = [];
     private IReadOnlyList<PlcConnection> _plcs = [];
     private Station? _current;
     private int _tab;
-    private TagDefinition _tag = NewTag();
-    private CurveDefinition _curve = NewCurve();
-    private string _yAddress = "";
-    private string _xAddress = "";
-    private string _yName = "压力";
-    private string _xName = "位移";
-    private string? _yUnit = "kN";
-    private string? _xUnit = "mm";
-    private PlcDataType _yDataType = PlcDataType.Float;
-    private PlcDataType _xDataType = PlcDataType.Float;
-    private int _yStrideWords = 2;
-    private int _xStrideWords = 2;
     private string _occupiedAddress = "";
-
-    /// <summary>曲线表单当前这套默认地址是按哪个品牌生成的，用来判断"用户还没改过"。</summary>
-    private PlcBrand? _curveDefaultsBrand;
-
-    private static readonly PlcDataType[] CurveNumericTypes =
-    [
-        PlcDataType.Int16, PlcDataType.Int32, PlcDataType.Float, PlcDataType.Double
-    ];
 
     protected override async Task OnInitializedAsync()
     {
@@ -489,16 +442,10 @@
     private string? _palletError;
     private string? _palletLengthError;
     private string? _occupiedError;
+    private string? _dataPathError;
+    private string? _dataPathWarning;
     private string? _firstError;
     private string? _lastError;
-    private string? _tagCodeError;
-    private string? _tagAddressError;
-    private string? _tagLengthError;
-    private string? _tagLimitError;
-    private string? _curveCodeError;
-    private string? _curveCountError;
-    private string? _yAddressError;
-    private string? _xAddressError;
 
     /// <summary>整条线的拓扑问题（缺首站/末站、顺序冲突），保存后重算，只提示不拦截保存。</summary>
     private IReadOnlyList<string> _lineWarnings = [];
@@ -506,6 +453,34 @@
     private PlcConnection? CurrentPlc => _plcs.FirstOrDefault(p => p.Id == _current?.PlcConnectionId);
 
     private static string PositionLabel(int positionIndex) => positionIndex == 0 ? "工站级" : "产品位";
+
+    /// <summary>类型列的显示：文件源没有字宽这回事，只显示「数值 / 文本」。</summary>
+    private static string DataTypeLabel(TagDataSource source, PlcDataType dataType)
+        => source == TagDataSource.JsonFile
+            ? (dataType == PlcDataType.String ? "文本" : "数值")
+            : DisplayLabels.DataType(dataType);
+
+    /// <summary>限值摘要：只放规格带（带上单位），细节留给编辑对话框。</summary>
+    private static string LimitSummary(TagDefinition tag)
+        => !UsesNumericLimits(tag.DataType) ? "—"
+            : tag.LowerLimit is null && tag.UpperLimit is null ? "不判定"
+            : $"{CompactRange(tag.LowerLimit, tag.UpperLimit)} {tag.Unit}".Trim();
+
+    /// <summary>预警带摘要；没配预警限时不显示这一行，避免每行都挂一句"未配置"。</summary>
+    private static string? WarningSummary(TagDefinition tag)
+        => UsesNumericLimits(tag.DataType) && (tag.WarningLowerLimit is not null || tag.WarningUpperLimit is not null)
+            ? $"预警 {CompactRange(tag.WarningLowerLimit, tag.WarningUpperLimit)}"
+            : null;
+
+    /// <summary>
+    /// 单侧限值的紧凑写法：只配了一侧时写成 <c>≤ 18</c>，而不是并排表里那种 <c>— ~ 18</c>。
+    /// 列表里每行都挂一个破折号只会让人以为"这侧配了 0"。
+    /// </summary>
+    private static string CompactRange(double? lower, double? upper)
+        => lower is null && upper is null ? "—"
+            : lower is null ? $"≤ {DisplayLabels.LimitNum(upper)}"
+            : upper is null ? $"≥ {DisplayLabels.LimitNum(lower)}"
+            : $"{DisplayLabels.LimitNum(lower)} ~ {DisplayLabels.LimitNum(upper)}";
 
     /// <summary>
     /// 配置库读写全走这里：SQLite 写失败（占用、磁盘满）如果直接抛给 Blazor，整条 circuit 会断掉，
@@ -557,6 +532,36 @@
         }
     }
 
+    /// <summary>
+    /// 用系统文件框点选 JSON。选中只填进输入框，仍要点工站的「保存」才写入配置。
+    /// </summary>
+    private async Task PickDataFile()
+    {
+        if (_current is null || _busy)
+        {
+            return;
+        }
+
+        string? path;
+        try
+        {
+            path = await FileDialog.PickAsync(_current.DataFilePath, _current.DataFileFormat);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Toast.Add(ex.Message, Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        _current.DataFilePath = path.Trim();
+        ValidateStation();
+    }
+
     /// <summary>字段级校验：错误直接标在输入框上，不等提交时才弹提示。</summary>
     private void ValidateStation()
     {
@@ -577,6 +582,20 @@
             : AddressError(_occupiedAddress, "有料地址不能为空");
         _triggerValueError = StationConfigLimits.TriggerValueError(_current.TriggerValue);
         _palletLengthError = StationConfigLimits.PalletCodeLengthError(_current.PalletCodeLength);
+        _dataPathError = null;
+        _dataPathWarning = null;
+        // 路径只有"真有文件源点位"时才必须填：整站都从 PLC 读的工站不该被一条用不上的配置拦住。
+        var path = _current.DataFilePath?.Trim() ?? "";
+        if (HasFileSourceTag(_current))
+        {
+            _dataPathError = path.Length == 0 ? "有点位取自 JSON 文件，数据文件路径不能为空" : null;
+            // 文件由设备写、每件覆写：路径上现在没有文件只提示不拦截，
+            // 设备可能还没跑第一件，也可能通过另一条路径共享过来（映射盘/UNC）。
+            _dataPathWarning = _dataPathError is null && !File.Exists(path)
+                ? "这个路径上现在没有文件：采集时以设备写出的那一份为准，请确认设备与上位机看到的是同一个路径。"
+                : null;
+        }
+
         _sequenceError = SequenceError(_current);
         _firstError = DuplicateFlagError(_current, x => x.IsFirstStation, "首站");
         _lastError = DuplicateFlagError(_current, x => x.IsLastStation, "末站");
@@ -702,78 +721,273 @@
             return _codeError is null && _nameError is null && _plcError is null
                    && _sequenceError is null && _triggerError is null && _triggerValueError is null
                    && _palletError is null && _palletLengthError is null && _occupiedError is null
+                   && _dataPathError is null
                    && _firstError is null && _lastError is null;
         }
     }
 
-    private void OnTagDataTypeChanged()
+    /// <summary>新增点位：表单在对话框里，页面只负责下发默认值与落库。</summary>
+    private Task AddTag() => ShowTagDialog(
+        new TagDefinition
+        {
+            StationId = _current?.Id ?? 0,
+            DataType = PlcDataType.Float,
+            Scale = 1,
+            Offset = 0,
+            IsRequired = true,
+            PositionIndex = 1
+        },
+        isNew: true);
+
+    /// <summary>编辑点位：传克隆体进对话框，取消时不会在跟踪上下文里留下脏实体。</summary>
+    private Task EditTag(TagDefinition tag) => ShowTagDialog(CloneTag(tag), isNew: false);
+
+    /// <summary>
+    /// 点位编辑对话框：新增与编辑共用，页面不再常驻一大片表单。
+    /// </summary>
+    /// <remarks>
+    /// 校验与归一都在对话框里做（它才看得见用户在改什么），这里只负责把结果落库与写审计；
+    /// 参数带上所属 PLC 品牌与工站的数据文件路径：对话框据此校验地址，
+    /// 并在用户选了 JSON 来源而工站还没配路径时直接拦下（比落库时报错更早一步）。
+    /// </remarks>
+    private async Task ShowTagDialog(TagDefinition tag, bool isNew)
     {
-        if (!TagUsesNumericLimits)
+        if (_current is null || _busy)
         {
-            _tag.LowerLimit = null;
-            _tag.UpperLimit = null;
-            _tag.WarningLowerLimit = null;
-            _tag.WarningUpperLimit = null;
-            _tag.TargetValue = null;
-            _tagLimitError = null;
+            return;
         }
 
-        if (TagIsString && _tag.Length <= 0)
+        var station = _current;
+        var parameters = new DialogParameters
         {
-            _tag.Length = DefaultStringLength;
+            ["Tag"] = tag,
+            ["IsNew"] = isNew,
+            ["Brand"] = CurrentPlc?.Brand,
+            ["DataFilePath"] = station.DataFilePath ?? "",
+            ["FileFormat"] = station.DataFileFormat,
+            ["Siblings"] = station.Tags.ToList()
+        };
+        var dialog = await DialogService.ShowAsync<TagEditDialog>(
+            isNew ? "新增点位" : $"编辑点位 · {tag.Name}",
+            parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
+        var result = await dialog.Result;
+        if (result is null || result.Canceled || result.Data is not TagDefinition edited)
+        {
+            return;
         }
 
-        if (_tag.DataType == PlcDataType.Bool)
+        await Run(isNew ? "添加点位" : "保存点位", async () =>
         {
-            _tag.Unit = null;
-        }
-
-        ValidateTag();
+            edited.StationId = station.Id;
+            var oldTag = isNew ? null : station.Tags.FirstOrDefault(t => t.Id == edited.Id);
+            var oldSnap = oldTag is null ? null
+                : $"{oldTag.Address}; {oldTag.DataType}; limits={DisplayLabels.LimitRange(oldTag.LowerLimit, oldTag.UpperLimit)}";
+            await Config.SaveTagAsync(edited);
+            await AuditAsync(isNew ? "Create" : "Save", "TagDefinition", $"{station.Code}/{edited.Name}", oldSnap,
+                $"source={edited.Source}; {edited.Address}; {edited.DataType}; limits={DisplayLabels.LimitRange(edited.LowerLimit, edited.UpperLimit)}");
+            var tab = _tab;
+            await Select(station);
+            _tab = tab;
+            Toast.Add(isNew ? $"点位 {edited.Name} 已添加" : $"点位 {edited.Name} 已保存", Severity.Success);
+        });
     }
 
-    private void ValidateTag()
+    /// <summary>
+    /// 列表里直接改启用状态：这是最常改的一个字段，为它开对话框不值得。
+    /// </summary>
+    /// <remarks>
+    /// 无论成败都重读一次工站：失败时开关必须退回库里的真实状态，
+    /// 不能停在一个"看着像改了、其实没保存"的样子上。
+    /// </remarks>
+    private Task ToggleTagEnabled(TagDefinition tag, bool enabled) => Run("保存点位", async () =>
     {
-        _tagCodeError = string.IsNullOrWhiteSpace(_tag.Code) ? "点位编码不能为空"
-            : _current?.Tags.Any(t => t.Id != _tag.Id
-                && string.Equals(t.Code?.Trim(), _tag.Code.Trim(), StringComparison.OrdinalIgnoreCase)) == true
-                ? $"点位编码 {_tag.Code.Trim()} 已存在"
-                : null;
-        _tagAddressError = AddressError(_tag.Address, "PLC 地址不能为空");
-        _tagLengthError = TagIsString && _tag.Length <= 0 ? "字符串长度必须大于 0" : null;
-        _tagLimitError = !TagUsesNumericLimits
-            ? null
-            : TagLimits.From(_tag).ConsistencyError();
-    }
-
-    private bool TagValid
-    {
-        get
+        if (_current is null || tag.Enabled == enabled)
         {
-            ValidateTag();
-            return _tagCodeError is null && _tagAddressError is null
-                   && _tagLengthError is null && _tagLimitError is null;
+            return;
         }
-    }
 
-    private void ValidateCurve()
-    {
-        _curveCodeError = string.IsNullOrWhiteSpace(_curve.Code) ? "曲线编码不能为空"
-            : _current?.Curves.Any(c => c.Id != _curve.Id
-                && string.Equals(c.Code?.Trim(), _curve.Code.Trim(), StringComparison.OrdinalIgnoreCase)) == true
-                ? $"曲线编码 {_curve.Code.Trim()} 已存在"
-                : null;
-        _curveCountError = StationConfigLimits.PointCountError(_curve.PointCount);
-        _yAddressError = AddressError(_yAddress, "Y 起始地址不能为空");
-        _xAddressError = AddressError(_xAddress, "X 起始地址不能为空");
-    }
-
-    private bool CurveValid
-    {
-        get
+        var clone = CloneTag(tag);
+        clone.Enabled = enabled;
+        try
         {
-            ValidateCurve();
-            return _curveCodeError is null && _curveCountError is null && _yAddressError is null && _xAddressError is null;
+            await Config.SaveTagAsync(clone);
+            await AuditAsync("Save", "TagDefinition", $"{_current.Code}/{tag.Name}",
+                $"enabled={tag.Enabled}", $"enabled={enabled}; {clone.Address}; {clone.DataType}");
+            Toast.Add($"{tag.Name} 已{(enabled ? "启用" : "停用")}", Severity.Success);
         }
+        finally
+        {
+            var station = _current;
+            var tab = _tab;
+            await Select(station);
+            _tab = tab;
+        }
+    });
+
+    /// <summary>
+    /// 点位的克隆体，供对话框编辑与列表里直接改启用状态使用。
+    /// </summary>
+    /// <remarks>
+    /// 漏抄任何一个字段都会静默改配置（例如漏了 Source，编辑一次就把来源重置回 PLC），
+    /// 所以这里逐字段列全，新增字段时必须同步补上。
+    /// </remarks>
+    private static TagDefinition CloneTag(TagDefinition tag) => new()
+    {
+        Id = tag.Id,
+        StationId = tag.StationId,
+        Name = tag.Name,
+        Address = tag.Address,
+        DataType = tag.DataType,
+        Source = tag.Source,
+        Length = tag.Length,
+        Scale = tag.Scale,
+        Offset = tag.Offset,
+        Unit = tag.Unit,
+        LowerLimit = tag.LowerLimit,
+        UpperLimit = tag.UpperLimit,
+        WarningLowerLimit = tag.WarningLowerLimit,
+        WarningUpperLimit = tag.WarningUpperLimit,
+        TargetValue = tag.TargetValue,
+        IsRequired = tag.IsRequired,
+        PositionIndex = tag.PositionIndex,
+        Enabled = tag.Enabled
+    };
+
+    /// <summary>
+    /// 曲线编辑对话框：新增与编辑共用，页面不再常驻一大片表单。
+    /// </summary>
+    /// <remarks>
+    /// 新建时按当前 PLC 品牌预填一套合法地址（对话框负责），已有曲线一律载入库里的现值。
+    /// </remarks>
+    private async Task ShowCurveDialog(CurveDefinition curve, bool isNew)
+    {
+        if (_current is null || _busy)
+        {
+            return;
+        }
+
+        var station = _current;
+        var parameters = new DialogParameters
+        {
+            ["Curve"] = curve,
+            ["IsNew"] = isNew,
+            ["Brand"] = CurrentPlc?.Brand,
+            ["Siblings"] = station.Curves.ToList()
+        };
+        var dialog = await DialogService.ShowAsync<CurveEditDialog>(
+            isNew ? "新增曲线" : $"编辑曲线 · {curve.Code}",
+            parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Large, FullWidth = true, CloseOnEscapeKey = true });
+        var result = await dialog.Result;
+        if (result is null || result.Canceled || result.Data is not CurveDefinition edited)
+        {
+            return;
+        }
+
+        await Run(isNew ? "添加曲线" : "保存曲线", async () =>
+        {
+            edited.StationId = station.Id;
+            await Config.SaveCurveAsync(edited);
+            var code = edited.Code;
+            var summary = $"points={edited.PointCount}; " +
+                          $"y={SeriesAddress(edited, SeriesRole.Y)}; x={SeriesAddress(edited, SeriesRole.X)}; " +
+                          $"enabled={edited.Enabled}";
+            await AuditAsync(isNew ? "Create" : "Save", "CurveDefinition", $"{station.Code}/{code}",
+                isNew ? null : summary, summary);
+            var tab = _tab;
+            await Select(station);
+            _tab = tab;
+            Toast.Add(isNew ? $"曲线 {code} 已添加" : $"曲线 {code} 已保存并下发采集器", Severity.Success);
+        });
+    }
+
+    /// <summary>
+    /// 列表里直接改启用状态（与点位页签同一套做法）。
+    /// </summary>
+    /// <remarks>
+    /// 无论成败都重读一次工站：失败时开关必须退回库里的真实状态，
+    /// 不能停在一个"看着像改了、其实没保存"的样子上。
+    /// 传的是克隆体，且必须带上两条序列 —— 仓储按角色整体替换 Series。
+    /// </remarks>
+    private Task ToggleCurveEnabled(CurveDefinition curve, bool enabled) => Run("保存曲线", async () =>
+    {
+        if (_current is null || curve.Enabled == enabled)
+        {
+            return;
+        }
+
+        var clone = CloneCurve(curve);
+        clone.Enabled = enabled;
+        try
+        {
+            await Config.SaveCurveAsync(clone);
+            await AuditAsync("Save", "CurveDefinition", $"{_current.Code}/{curve.Code}",
+                $"enabled={curve.Enabled}", $"enabled={enabled}; {clone.Code}");
+            Toast.Add($"曲线 {curve.Code} 已{(enabled ? "启用" : "停用")}", Severity.Success);
+        }
+        finally
+        {
+            var station = _current;
+            var tab = _tab;
+            await Select(station);
+            _tab = tab;
+        }
+    });
+
+    private static CurveDefinition CloneCurve(CurveDefinition curve) => new()
+    {
+        Id = curve.Id,
+        StationId = curve.StationId,
+        Code = curve.Code,
+        Name = curve.Name,
+        PointCount = curve.PointCount,
+        PositionIndex = curve.PositionIndex,
+        Enabled = curve.Enabled,
+        // Series 必须一起带上：仓储按角色整体替换，缺了它这次保存会把地址连同序列一起清掉。
+        Series = curve.Series.Select(s => new CurveSeries
+        {
+            Id = s.Id,
+            CurveDefinitionId = s.CurveDefinitionId,
+            Name = s.Name,
+            Role = s.Role,
+            StartAddress = s.StartAddress,
+            DataType = s.DataType,
+            StrideWords = s.StrideWords,
+            Scale = s.Scale,
+            Offset = s.Offset,
+            Unit = s.Unit
+        }).ToList()
+    };
+
+    private static string SeriesAddress(CurveDefinition curve, SeriesRole role)
+        => curve.Series.FirstOrDefault(s => s.Role == role)?.StartAddress ?? "-";
+
+    /// <summary>序列摘要：「Y 压力 kN · D3000」；缺了某个角色也说清楚，别让空字符串看着像"没配地址"。</summary>
+    private static string SeriesSummary(CurveDefinition curve, SeriesRole role)
+    {
+        var series = curve.Series.FirstOrDefault(s => s.Role == role);
+        return series is null
+            ? $"{role}：未配置"
+            : $"{role} {series.Name} {series.Unit} · {series.StartAddress}".Replace("  ", " ");
+    }
+
+    /// <summary>
+    /// 判据摘要：条数 + 其中启用了几条。
+    /// </summary>
+    /// <remarks>
+    /// 只写条数会骗人：全部停用的判据一条都不参与判定，与"没配判据"在采集端是同一个行为。
+    /// </remarks>
+    private static string CriteriaSummary(CurveDefinition curve)
+    {
+        var total = curve.Criteria.Count;
+        if (total == 0)
+        {
+            return "未配置";
+        }
+
+        var enabled = curve.Criteria.Count(c => c.Enabled);
+        return enabled == total ? $"{total} 条" : $"{total} 条 · 启用 {enabled}";
     }
 
     private Task ReloadList() => Guard("加载工站配置", async () =>
@@ -812,10 +1026,7 @@
             // 历史配置里可能已经存着采集读不到的地址（例如按别的品牌写的、或是位地址）。
             // 进页面就算一遍，别让用户非要去动一下那个输入框才看到红字。
             _occupiedAddress = _current?.Positions.FirstOrDefault()?.OccupiedAddress ?? "";
-            ApplyCurveDefaultsIfUntouched();
             ValidateStation();
-            ValidateCurve();
-            ValidateTag();
         });
     }
 
@@ -824,51 +1035,9 @@
     {
         _codeError = _nameError = _plcError = _sequenceError = null;
         _triggerError = _triggerValueError = _palletError = _palletLengthError = _occupiedError = null;
+        _dataPathError = _dataPathWarning = null;
         _firstError = _lastError = null;
-        _tagCodeError = _tagAddressError = _tagLengthError = _tagLimitError = null;
-        _curveCodeError = _curveCountError = _yAddressError = _xAddressError = null;
     }
-
-    /// <summary>
-    /// 曲线表单的起止地址默认值按所属 PLC 的品牌给。
-    /// </summary>
-    /// <remarks>
-    /// 只在这套默认值还没被改过时替换：D2000 在三菱上是对的，填到西门子上就是一条非法地址，
-    /// 但用户自己写进去的地址绝不能被悄悄改掉。
-    /// </remarks>
-    private void ApplyCurveDefaultsIfUntouched()
-    {
-        var brand = CurrentPlc?.Brand;
-        if (brand is null || brand == _curveDefaultsBrand)
-        {
-            return;
-        }
-
-        var untouched = string.IsNullOrWhiteSpace(_yAddress)
-                        || _curveDefaultsBrand is { } previous
-                        && _yAddress == DefaultAddress(previous, 2000)
-                        && _xAddress == DefaultAddress(previous, 2400);
-        if (!untouched)
-        {
-            _curveDefaultsBrand = brand;
-            return;
-        }
-
-        _yAddress = DefaultAddress(brand.Value, 2000);
-        _xAddress = DefaultAddress(brand.Value, 2400);
-        _curveDefaultsBrand = brand;
-    }
-
-    /// <summary>曲线起止地址的品牌化默认值：三菱/模拟器用 D 区，西门子用 M 区（字节偏移），Modbus 用保持寄存器。</summary>
-    private static string DefaultAddress(PlcBrand brand, int wordOffset)
-        => brand switch
-        {
-            PlcBrand.SiemensS7 => $"MW{wordOffset}",
-            // Modbus 保持寄存器编号从 40001 起，避开 40001 这段握手区。
-            PlcBrand.ModbusTcp => (40001 + wordOffset).ToString(),
-            PlcBrand.OmronFins => $"D{wordOffset}",
-            _ => $"D{wordOffset}"
-        };
 
     private Task AddDevice() => Run("新增工站", async () =>
     {
@@ -888,17 +1057,17 @@
         }
 
         // 默认地址跟品牌走：演示线的握手区是 D1000 起、每站 200（D1000/D1200/D1400…），
-        // 这样既与内置演示数据一致，也不会撞上曲线表单常用的 D2000。
-        var baseAddr = 1000 + Math.Max(0, seq / 10 - 1) * 200;
+        // 这样既与内置演示数据一致，也不会撞上曲线默认用的 D2000。
+        var baseAddr = PlcAddressDefaults.HandshakeBase + Math.Max(0, seq / 10 - 1) * 200;
         var station = new Station
         {
             PlcConnectionId = plc.Id,
             Code = $"ST{seq:000}",
             Name = $"工站{seq}",
             Sequence = seq,
-            TriggerAddress = DefaultAddress(plc.Brand, baseAddr),
+            TriggerAddress = PlcAddressDefaults.Word(plc.Brand, baseAddr),
             TriggerValue = 1,
-            PalletCodeAddress = DefaultAddress(plc.Brand, baseAddr + 10),
+            PalletCodeAddress = PlcAddressDefaults.Word(plc.Brand, baseAddr + 10),
             PalletCodeLength = 16,
             PositionCount = 1,
             Enabled = true
@@ -952,12 +1121,18 @@
             {
                 _tab = 0;
             }
+            else if (_dataPathError is not null)
+            {
+                _tab = 1;
+            }
 
             return;
         }
 
         _current.Code = _current.Code.Trim();
         _current.Name = _current.Name.Trim();
+        // 路径原样交给采集侧用：这里只去掉手滑留下的首尾空格（UNC 与映射盘都可能有尾随空格）。
+        _current.DataFilePath = (_current.DataFilePath ?? "").Trim();
         // 历史库里可能没有产品位行：这里补一条，否则用户刚填的有料地址会被静默丢掉。
         var position = _current.Positions.FirstOrDefault(p => p.Index == 1) ?? _current.Positions.FirstOrDefault();
         if (position is null)
@@ -974,6 +1149,7 @@
         await Config.SaveStationAsync(_current);
         await AuditAsync("Save", "Station", _current.Code, oldSnap,
             $"{_current.Name}; plc={_current.PlcConnectionId}; trigger={_current.TriggerAddress}; " +
+            $"dataFile={_current.DataFilePath}; format={_current.DataFileFormat}; " +
             $"occupied={position?.OccupiedAddress ?? "-"}; enabled={_current.Enabled}");
         Toast.Add($"{_current.Code} 已保存并下发采集器", Severity.Success);
         var id = _current.Id;
@@ -983,151 +1159,12 @@
         _tab = tab;
     });
 
-    /// <summary>把已有曲线载入表单编辑。和点位一样用克隆体，取消时不会在跟踪上下文里留下脏实体。</summary>
-    private void BeginEditCurve(CurveDefinition curve)
-    {
-        if (_busy)
-        {
-            return;
-        }
-
-        _curve = new CurveDefinition
-        {
-            Id = curve.Id,
-            StationId = curve.StationId,
-            Code = curve.Code,
-            Name = curve.Name,
-            PointCount = curve.PointCount,
-            PositionIndex = curve.PositionIndex,
-            Enabled = curve.Enabled
-        };
-
-        var y = curve.Series.FirstOrDefault(s => s.Role == SeriesRole.Y);
-        var x = curve.Series.FirstOrDefault(s => s.Role == SeriesRole.X);
-        _yName = y?.Name ?? "压力";
-        _yUnit = y?.Unit;
-        _yDataType = y?.DataType ?? PlcDataType.Float;
-        _yStrideWords = y?.StrideWords ?? ValueCodec.WordCountOf(_yDataType);
-        _yAddress = y?.StartAddress ?? DefaultAddress(CurrentPlcBrand, 2000);
-        _xName = x?.Name ?? "位移";
-        _xUnit = x?.Unit;
-        _xDataType = x?.DataType ?? PlcDataType.Float;
-        _xStrideWords = x?.StrideWords ?? ValueCodec.WordCountOf(_xDataType);
-        _xAddress = x?.StartAddress ?? DefaultAddress(CurrentPlcBrand, 2400);
-        // 编辑期间不要被"品牌默认值"改写。
-        _curveDefaultsBrand = CurrentPlc?.Brand;
-        ValidateCurve();
-    }
-
-    private void CancelEditCurve() => ResetCurveForm();
-
-    /// <summary>把曲线表单恢复成"新增"状态，起止地址按当前品牌给默认值。</summary>
-    private void ResetCurveForm()
-    {
-        _curve = NewCurve();
-        _yName = "压力";
-        _xName = "位移";
-        _yUnit = "kN";
-        _xUnit = "mm";
-        _yDataType = PlcDataType.Float;
-        _xDataType = PlcDataType.Float;
-        _yStrideWords = ValueCodec.WordCountOf(_yDataType);
-        _xStrideWords = ValueCodec.WordCountOf(_xDataType);
-        _yAddress = DefaultAddress(CurrentPlcBrand, 2000);
-        _xAddress = DefaultAddress(CurrentPlcBrand, 2400);
-        _curveDefaultsBrand = CurrentPlc?.Brand;
-        _curveCodeError = _curveCountError = _yAddressError = _xAddressError = null;
-    }
-
-    private PlcBrand CurrentPlcBrand => CurrentPlc?.Brand ?? PlcBrand.MitsubishiMc3E;
-
-    private void BeginEditTag(TagDefinition tag)
-    {
-        if (_busy)
-        {
-            return;
-        }
-
-        _tag = new TagDefinition
-        {
-            Id = tag.Id,
-            StationId = tag.StationId,
-            Code = tag.Code,
-            Name = tag.Name,
-            Address = tag.Address,
-            DataType = tag.DataType,
-            Length = tag.Length,
-            Scale = tag.Scale,
-            Offset = tag.Offset,
-            Unit = tag.Unit,
-            LowerLimit = tag.LowerLimit,
-            UpperLimit = tag.UpperLimit,
-            WarningLowerLimit = tag.WarningLowerLimit,
-            WarningUpperLimit = tag.WarningUpperLimit,
-            TargetValue = tag.TargetValue,
-            IsRequired = tag.IsRequired,
-            PositionIndex = tag.PositionIndex,
-            Enabled = tag.Enabled
-        };
-        OnTagDataTypeChanged();
-        ValidateTag();
-    }
-
-    private void CancelEditTag()
-    {
-        _tag = NewTag();
-        _tagCodeError = _tagAddressError = _tagLengthError = _tagLimitError = null;
-    }
-
-    private Task SaveTag() => Run(_tag.Id == 0 ? "添加点位" : "保存点位", async () =>
-    {
-        if (_current is null || !TagValid) return;
-
-        if (TagIsString && _tag.Length <= 0)
-        {
-            _tag.Length = DefaultStringLength;
-        }
-
-        if (!TagUsesNumericLimits)
-        {
-            _tag.LowerLimit = null;
-            _tag.UpperLimit = null;
-            _tag.WarningLowerLimit = null;
-            _tag.WarningUpperLimit = null;
-            _tag.TargetValue = null;
-        }
-
-        if (_tag.DataType == PlcDataType.Bool)
-        {
-            _tag.Unit = null;
-        }
-
-        _tag.Code = _tag.Code.Trim();
-        _tag.Address = _tag.Address.Trim();
-        _tag.Name = (_tag.Name ?? "").Trim();
-        _tag.Unit = string.IsNullOrWhiteSpace(_tag.Unit) ? null : _tag.Unit.Trim();
-        _tag.StationId = _current.Id;
-        var editing = _tag.Id != 0;
-        var code = _tag.Code;
-        var oldTag = editing ? _current.Tags.FirstOrDefault(t => t.Id == _tag.Id) : null;
-        var oldSnap = oldTag is null ? null
-            : $"{oldTag.Address}; {oldTag.DataType}; limits={DisplayLabels.LimitRange(oldTag.LowerLimit, oldTag.UpperLimit)}";
-        await Config.SaveTagAsync(_tag);
-        await AuditAsync(editing ? "Save" : "Create", "TagDefinition", $"{_current.Code}/{code}", oldSnap,
-            $"{_tag.Address}; {_tag.DataType}; limits={DisplayLabels.LimitRange(_tag.LowerLimit, _tag.UpperLimit)}");
-        _tag = NewTag();
-        var tab = _tab;
-        await Select(_current);
-        _tab = tab;
-        Toast.Add(editing ? $"点位 {code} 已保存" : $"点位 {code} 已添加", Severity.Success);
-    });
-
     private Task DeleteTag(TagDefinition tag) => Run("删除点位", async () =>
     {
         if (_current is null) return;
         var confirmed = await DialogService.ShowMessageBox(
             "删除点位",
-            $"确定删除点位「{tag.Code} {tag.Name}」？删除后采集时不再读取该地址。",
+            $"确定删除点位「{tag.Name}」？删除后采集时不再读取该地址。",
             yesText: "删除", cancelText: "取消");
         if (confirmed != true)
         {
@@ -1135,71 +1172,20 @@
         }
 
         await Config.DeleteTagAsync(tag.Id);
-        await AuditAsync("Delete", "TagDefinition", $"{_current.Code}/{tag.Code}", tag.Address, null);
+        await AuditAsync("Delete", "TagDefinition", $"{_current.Code}/{tag.Name}", tag.Address, null);
         var tab = _tab;
         await Select(_current);
         _tab = tab;
-        Toast.Add($"点位 {tag.Code} 已删除", Severity.Success);
+        Toast.Add($"点位 {tag.Name} 已删除", Severity.Success);
     });
 
-    private void OnCurveYTypeChanged()
-    {
-        _yStrideWords = ValueCodec.WordCountOf(_yDataType);
-    }
+    /// <summary>新增曲线：地址与序列在对话框里填，页面只负责下发品牌与落库。</summary>
+    private Task AddCurve() => ShowCurveDialog(
+        new CurveDefinition { StationId = _current?.Id ?? 0, PointCount = 50, PositionIndex = 1, Enabled = true },
+        isNew: true);
 
-    private void OnCurveXTypeChanged()
-    {
-        _xStrideWords = ValueCodec.WordCountOf(_xDataType);
-    }
-
-    /// <summary>
-    /// 新增或保存曲线定义。编辑走同一条路：仓储按主键更新，Series 按角色整体替换。
-    /// </summary>
-    private Task SaveCurve() => Run(_curve.Id == 0 ? "添加曲线" : "保存曲线", async () =>
-    {
-        if (_current is null) return;
-        if (!CurveValid)
-        {
-            // 起止地址是预填的（按三菱写的），换成西门子/Modbus 时它一开始就非法；
-            // 这里以前是静默 return，用户只会看到"点了按钮没反应"。
-            Toast.Add(_curveCodeError ?? _curveCountError ?? _yAddressError ?? _xAddressError ?? "曲线配置不完整", Severity.Warning);
-            return;
-        }
-
-        var editing = _curve.Id != 0;
-        _curve.Code = _curve.Code.Trim();
-        _curve.StationId = _current.Id;
-        _curve.Series =
-        [
-            new CurveSeries
-            {
-                Name = string.IsNullOrWhiteSpace(_yName) ? "压力" : _yName.Trim(),
-                Role = SeriesRole.Y,
-                StartAddress = _yAddress.Trim(),
-                DataType = _yDataType,
-                StrideWords = Math.Max(1, _yStrideWords),
-                Unit = string.IsNullOrWhiteSpace(_yUnit) ? null : _yUnit.Trim()
-            },
-            new CurveSeries
-            {
-                Name = string.IsNullOrWhiteSpace(_xName) ? "位移" : _xName.Trim(),
-                Role = SeriesRole.X,
-                StartAddress = _xAddress.Trim(),
-                DataType = _xDataType,
-                StrideWords = Math.Max(1, _xStrideWords),
-                Unit = string.IsNullOrWhiteSpace(_xUnit) ? null : _xUnit.Trim()
-            }
-        ];
-        await Config.SaveCurveAsync(_curve);
-        var code = _curve.Code;
-        var summary = $"points={_curve.PointCount}; y={_yAddress}; x={_xAddress}; enabled={_curve.Enabled}";
-        await AuditAsync(editing ? "Save" : "Create", "CurveDefinition", $"{_current.Code}/{code}", editing ? summary : null, summary);
-        ResetCurveForm();
-        var tab = _tab;
-        await Select(_current);
-        _tab = tab;
-        Toast.Add(editing ? $"曲线 {code} 已保存并下发采集器" : $"曲线 {code} 已添加", Severity.Success);
-    });
+    /// <summary>编辑曲线：传克隆体（含序列）进对话框，取消时不会在跟踪上下文里留下脏实体。</summary>
+    private Task EditCurve(CurveDefinition curve) => ShowCurveDialog(CloneCurve(curve), isNew: false);
 
     /// <summary>
     /// 波形判据编辑。对话框返回的是克隆集合，这里整体交给仓储做按主键增量同步。
@@ -1256,11 +1242,6 @@
 
         await Config.DeleteCurveAsync(curve.Id);
         await AuditAsync("Delete", "CurveDefinition", $"{_current.Code}/{curve.Code}", curve.Name, null);
-        if (_curve.Id == curve.Id)
-        {
-            _curve = NewCurve();
-        }
-
         var tab = _tab;
         await Select(_current);
         _tab = tab;
@@ -1286,16 +1267,5 @@
             Toast.Add($"操作已完成，但审计记录失败：{ex.Message}", Severity.Warning);
         }
     }
-
-    private static TagDefinition NewTag() => new()
-    {
-        DataType = PlcDataType.Float,
-        Scale = 1,
-        Offset = 0,
-        IsRequired = true,
-        PositionIndex = 1
-    };
-
-    private static CurveDefinition NewCurve() => new() { PointCount = 50, PositionIndex = 1 };
 }
 

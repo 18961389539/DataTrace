@@ -156,7 +156,6 @@ public class RuntimeStoreTests
                 new TagValue
                 {
                     TagId = stationId * 10 + 1,
-                    TagCode = $"{stationCode}_P1",
                     TagName = "压力",
                     PositionIndex = 1,
                     DataType = PlcDataType.Float,
@@ -548,11 +547,10 @@ public class RuntimeStoreTests
         Assert.Empty(await env.Store.CountJudgementsAsync(Day1, Day1.AddHours(3), 99));
         Assert.Equal(3, (await env.Store.CountJudgementsAsync(Day1, Day1.AddDays(30), null)).Sum(x => x.Count));
 
-        // 不良投影：只回带超限点位的名称与代码。
+        // 不良投影：只回带超限点位的名称。
         var defects = await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddHours(3), null);
         var defect = Assert.Single(defects);
         Assert.Equal("压力", defect.TagName);
-        Assert.Equal("ST010_P1", defect.TagCode);
         Assert.Empty(await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddHours(1), null));
 
         // 工站过滤同样下推到 SQL：选错工站就会去错工站找原因。
@@ -861,7 +859,6 @@ public class RuntimeStoreTests
         var warnings = await env.Store.QueryWarningTagsAsync(Day1, Day1.AddDays(1), null);
         var warning = Assert.Single(warnings);
         Assert.Equal("压力", warning.TagName);
-        Assert.Equal("ST010_P1", warning.TagCode);
 
         // 两类标记互不串台。
         Assert.Single(await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddDays(1), null));

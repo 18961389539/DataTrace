@@ -35,14 +35,19 @@ public static class SimulatorScenario
         TagDefinition? ngTag = null;
         if (options.InjectNg)
         {
+            // 只在 PLC 源点里挑：文件源点位的值写在文件里，仿真写寄存器改不动它，
+            // 选中它等于这一轮"说要注 NG、其实什么都没发生"。
             ngTag = station.Tags
-                .Where(t => t.Enabled && t.DataType != PlcDataType.String && (t.LowerLimit is not null || t.UpperLimit is not null))
+                .Where(t => t.Enabled && t.Source == TagDataSource.Plc
+                            && t.DataType != PlcDataType.String
+                            && (t.LowerLimit is not null || t.UpperLimit is not null))
                 .OrderBy(_ => random.Next())
                 .FirstOrDefault();
         }
 
-        foreach (var tag in station.Tags.Where(t => t.Enabled))
+        foreach (var tag in station.Tags.Where(t => t.Enabled && t.Source == TagDataSource.Plc))
         {
+            // 文件源点位的「地址」是 JSON 字段名，按地址写只会抛非法地址。
             if (tag.DataType == PlcDataType.String)
             {
                 plc.SetAscii(tag.Address, tag == ngTag ? "NG" : "OK", Math.Max(2, tag.Length), connection.StringHighByteFirst);

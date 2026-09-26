@@ -280,33 +280,7 @@ h5:focus,
     font-size: 0.95rem;
 }
 
-    .dash-tag.out,
-    .dash-tag.out .dash-tag-label {
-    display: inline-flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 2px;
-    min-width: 0;
-}
-
-.dash-tag-value {
-        color: var(--mud-palette-error);
-    }
-
-/* 预警带（黄区）：只提示不判废，所以用警告色而不是错误色 */
-.dash-tag.warn,
-.dash-tag.warn .dash-tag-label {
-    display: inline-flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 2px;
-    min-width: 0;
-}
-
-.dash-tag-value {
-    color: var(--mud-palette-warning);
-}
-
+/* 名称列可能挂「超限/预警」芯片，要能换行且不许把卡片撑开 */
 .dash-tag-label {
     display: inline-flex;
     align-items: center;
@@ -319,6 +293,17 @@ h5:focus,
     font-variant-numeric: tabular-nums;
     font-weight: 600;
     white-space: nowrap;
+}
+
+/* 预警带（黄区）：只提示不判废，所以用警告色而不是错误色。
+   两条都必须带父选择器：写成裸的 .dash-tag-value 会落到所有点位行上，
+   正常/预警/超限三态就退化成同一个颜色。 */
+.dash-tag.warn .dash-tag-value {
+    color: var(--mud-palette-warning);
+}
+
+.dash-tag.out .dash-tag-value {
+    color: var(--mud-palette-error);
 }
 
 /* 看板点位状态说明：平板没有 hover，这句话必须直接读得到 */
@@ -922,6 +907,54 @@ body.dt-shopfloor .dt-recent-panels .mud-expand-panel-content {
 .dt-help-impact {
     color: var(--mud-palette-text-secondary);
     margin-top: 2px;
+}
+
+/* 路径框右侧的「选择」嵌在描边里，避免单独一个按钮和说明文字抢垂直位置。 */
+.dt-path-field {
+    position: relative;
+}
+
+.dt-path-field .mud-input > input.mud-input-root {
+    padding-right: 96px;
+}
+
+.dt-path-pick {
+    position: absolute;
+    top: 16px;
+    right: 8px;
+    z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 32px;
+    padding: 0 10px 0 8px;
+    border: 0;
+    border-radius: 8px;
+    background: var(--mud-palette-primary);
+    color: var(--mud-palette-primary-text);
+    font: inherit;
+    font-size: .8125rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.dt-path-pick:hover {
+    background: var(--mud-palette-primary-darken);
+}
+
+.dt-path-pick:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 2px;
+}
+
+.dt-path-pick:disabled {
+    opacity: .45;
+    cursor: default;
+}
+
+.dt-path-pick .mud-icon-root {
+    font-size: 1.1rem;
+    color: inherit;
 }
 
 /* 只给读屏用的文本：视觉上不占位，但可被 aria-describedby 引用。

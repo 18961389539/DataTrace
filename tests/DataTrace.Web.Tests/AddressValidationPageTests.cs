@@ -52,38 +52,16 @@ public class AddressValidationPageTests : WebTestBase
         Enabled = true
     };
 
-    /// <summary>一条已存在的曲线：用来验证「编辑」是把现值载入表单、不是按默认值重建。</summary>
-    private static CurveDefinition ExistingCurve() => new()
-    {
-        Id = 11,
-        StationId = 10,
-        Code = "ST010_PD",
-        Name = "位移压力曲线",
-        PointCount = 50,
-        PositionIndex = 1,
-        Enabled = true,
-        Series =
-        [
-            new CurveSeries { Id = 21, Name = "压力", Role = SeriesRole.Y, StartAddress = "D3000", DataType = PlcDataType.Float, StrideWords = 2, Unit = "kN" },
-            new CurveSeries { Id = 22, Name = "位移", Role = SeriesRole.X, StartAddress = "D3200", DataType = PlcDataType.Float, StrideWords = 2, Unit = "mm" }
-        ]
-    };
-
     private IRenderedComponent<Stations> RenderStations()
     {
         Context.RenderComponent<MudBlazor.MudPopoverProvider>();
         return Context.RenderComponent<Stations>();
     }
 
-    private void SeedStationPage(PlcConnection? plc = null, CurveDefinition? curve = null, params Station[] extraStations)
+    private void SeedStationPage(PlcConnection? plc = null, params Station[] extraStations)
     {
         var connection = plc ?? Mitsubishi();
         var station = Station(connection.Id);
-        if (curve is not null)
-        {
-            station.Curves = [curve];
-        }
-
         Config.Snapshot = new AppConfigurationSnapshot
         {
             PlcConnections = [connection],
@@ -166,60 +144,56 @@ public class AddressValidationPageTests : WebTestBase
     }
 
     [Fact]
-    public void Curve_form_defaults_follow_the_plc_brand()
+    public void Handshake_tab_groups_its_fields_into_labeled_sections()
     {
-        SeedStationPage(Siemens());
+        SeedStationPage();
         var cut = RenderStations();
 
-        // 曲线表单在「曲线」页签里：MudTabs 默认只渲染当前页签的内容。
-        cut.FindAll(".mud-tab").First(t => t.TextContent.Contains("曲线")).Click();
+        // 握手页签默认就是当前页签，不需要切。
+        // 三段分组：平铺九宫格看不出"哪几个字段是一件事"。
+        Assert.Contains("握手（触发与回写）", cut.Markup);
+        Assert.Contains("托盘码与产品位", cut.Markup);
+        Assert.Contains("线体角色", cut.Markup);
 
-        // 默认起止地址按西门子的写法给，不再一进页面就是非法地址。
-        Assert.Equal("MW2000", InputForLabel(cut, "Y 起始地址").GetAttribute("value"));
-        Assert.Equal("MW2400", InputForLabel(cut, "X 起始地址").GetAttribute("value"));
-
-        TypeInto(cut, "曲线编码", "ST010_PD2");
-        ClickButton(cut, "添加曲线");
-
-        Assert.Contains(nameof(IConfigRepository.SaveCurveAsync), Config.Calls);
+        // 关键边界要写在页面上：托盘码与有料信号始终走 PLC，与点位来源无关。
+        Assert.Contains("这两项始终从 PLC 读", cut.Markup);
+        // 点位取值来源属于点位，不该再出现在这一页。
+        Assert.DoesNotContain("点位取值来源", cut.Markup);
     }
 
     [Fact]
-    public void Curve_form_rejects_wrong_brand_address_with_a_toast()
+    public void Point_tab_says_what_a_file_source_point_does_not_affect()
     {
-        SeedStationPage(Siemens());
+        // 有文件源点位时，这一页的说明必须点明"曲线仍按 PLC 地址读"，
+        // 否则用户会以为整站都不读 PLC 了（托盘码与有料地址其实也还走 PLC）。
+        var station = Station(Mitsubishi().Id);
+        station.DataFilePath = "D:/data/result.json";
+        var tag = new TagDefinition
+        {
+            Id = 31,
+            StationId = station.Id,
+            Name = "压力",
+            Address = "force",
+            DataType = PlcDataType.Float,
+            Source = TagDataSource.JsonFile,
+            IsRequired = true,
+            Enabled = true,
+            PositionIndex = 1
+        };
+        station.Tags = [tag];
+        Config.Snapshot = new AppConfigurationSnapshot
+        {
+            PlcConnections = [Mitsubishi()],
+            Stations = [station]
+        };
         var cut = RenderStations();
-        cut.FindAll(".mud-tab").First(t => t.TextContent.Contains("曲线")).Click();
+        cut.FindAll(".mud-tab").First(t => t.TextContent.Contains("点位")).Click();
 
-        TypeInto(cut, "曲线编码", "ST010_PD3");
-        TypeInto(cut, "Y 起始地址", "D2000");
-
-        ClickButton(cut, "添加曲线");
-
-        Assert.DoesNotContain(nameof(IConfigRepository.SaveCurveAsync), Config.Calls);
-        Assert.Equal("地址写法不对，西门子请写 DB1.DBW0、DB1.DBD4、MW10 这类地址", Toast.LastMessage);
-    }
-
-    [Fact]
-    public void Curve_existing_definition_can_be_edited_in_place()
-    {
-        SeedStationPage(curve: ExistingCurve());
-        var cut = RenderStations();
-        cut.FindAll(".mud-tab").First(t => t.TextContent.Contains("曲线")).Click();
-
-        ClickButton(cut, "编辑");
-        // 表单载入了这条曲线的现值，而不是新增用的默认值。
-        Assert.Equal("D3000", InputForLabel(cut, "Y 起始地址").GetAttribute("value"));
-
-        TypeInto(cut, "Y 起始地址", "D3100");
-        ClickButton(cut, "保存修改");
-
-        Assert.Contains(nameof(IConfigRepository.SaveCurveAsync), Config.Calls);
-        var saved = Assert.Single(Config.SavedCurves);
-        Assert.Equal(11, saved.Id);
-        Assert.Equal("D3100", saved.Series.Single(s => s.Role == SeriesRole.Y).StartAddress);
-        // X 序列原样带过去，不会被当成新增重置。
-        Assert.Equal("D3200", saved.Series.Single(s => s.Role == SeriesRole.X).StartAddress);
+        Assert.Contains("曲线仍按 PLC 地址读取", cut.Markup);
+        Assert.Contains("1 个取自 JSON 文件", cut.Markup);
+        // 来源是按点位标的：同一张表里能看出哪些走文件、哪些走 PLC。
+        Assert.Contains("JSON 文件", cut.Markup);
+        Assert.Contains("force", cut.Markup);
     }
 
     [Fact]
@@ -260,16 +234,16 @@ public class AddressValidationPageTests : WebTestBase
         var cut = RenderStations();
 
         // 有料地址：界面可配（留空即恒为有料），保存时随工站一起下发。
-        TypeInto(cut, "有料地址（可留空）", "D1099");
+        TypeInto(cut, "有料地址", "D1099");
         ClickButton(cut, "保存");
 
         var station = Assert.Single(Config.SavedStations);
         Assert.Equal("D1099", station.Positions.Single().OccupiedAddress);
 
-        // 点位列表要能看出"停用/位置"，否则历史里 Enabled=false 的点位会莫名其妙不采集。
+        // 这条种子工站没有点位：列表要给"还没有点位"的出口，而不是留一片空白。
         cut.FindAll(".mud-tab").First(t => t.TextContent.Contains("点位")).Click();
-        Assert.Contains("位置", cut.Markup);
-        Assert.Contains("工站级", cut.Markup);
+        Assert.Contains("还没有点位", cut.Markup);
+        Assert.Contains("新增点位", cut.Markup);
     }
 
     [Fact]

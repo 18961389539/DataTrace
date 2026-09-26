@@ -107,7 +107,6 @@ public sealed class SpcService : ISpcService
         return new ProcessCapabilityReport
         {
             TagId = tag.Id,
-            TagCode = tag.Code,
             TagName = tag.Name,
             Unit = tag.Unit,
             TargetValue = configLimits.Target,

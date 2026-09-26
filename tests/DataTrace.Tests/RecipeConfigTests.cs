@@ -41,7 +41,7 @@ public class RecipeLimitScopeTests
         => new() { Id = 1, Code = "ST010", Name = "一号站", Tags = tags.ToList() };
 
     private static TagDefinition Tag(int id, string code, PlcDataType type, bool enabled = true)
-        => new() { Id = id, StationId = 1, Code = code, Name = code, DataType = type, Enabled = enabled };
+        => new() { Id = id, StationId = 1, Name = code, DataType = type, Enabled = enabled };
 
     [Fact]
     public void Disabled_tags_still_count_as_overridable()
@@ -118,7 +118,7 @@ public class RecipeRepositoryTests
 
         var snapshot = await repo.GetSnapshotAsync();
         var station = snapshot.Stations
-            .First(s => s.Tags.Any(t => t.Code.EndsWith("_TEMP", StringComparison.Ordinal)));
+            .First(s => s.Tags.Any(t => t.Name == "工站温度"));
         var tagIds = station.Tags.Select(t => t.Id).ToHashSet();
         var before = snapshot.Recipes.Single(r => r.Code == "A100");
         Assert.Contains(before.Limits, l => tagIds.Contains(l.TagId));

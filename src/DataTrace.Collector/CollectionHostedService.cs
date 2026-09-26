@@ -300,8 +300,9 @@ public sealed class CollectionHostedService : BackgroundService
                     // 历史脏配置的兜底：触发值等于回写码时，写完响应码寄存器仍等于触发值，
                     // 会一个扫描周期采一次同一托盘。宁可跳过并说清楚，也不能让它无限循环。
                     WarnSkipped($"t_value_{station.Id}",
-                        $"工站 {station.Code} 的触发值 {station.TriggerValue} 落在回写码区间（2–8），" +
-                        "触发位永远不会被清掉，该工站已被跳过；请把触发值改回 1（或 2–8 以外的值）");
+                        $"工站 {station.Code} 的触发值 {station.TriggerValue} 落在回写码区间" +
+                        $"（2–{ResultCodes.ArchiveFailed}），触发位永远不会被清掉，该工站已被跳过；" +
+                        $"请把触发值改回 1（或 2–{ResultCodes.ArchiveFailed} 以外的值）");
                     continue;
                 }
 

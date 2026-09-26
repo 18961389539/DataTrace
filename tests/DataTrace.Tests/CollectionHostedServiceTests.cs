@@ -1,6 +1,7 @@
 ﻿using DataTrace.Application.Configuration;
 using DataTrace.Application.Evaluation;
 using DataTrace.Application.Realtime;
+using DataTrace.Application.Runtime;
 using DataTrace.Collector;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
@@ -49,6 +50,7 @@ public class CollectionHostedServiceTests
                 ctx.Provider.GetRequiredService<IRuntimeStatusHub>(),
                 ctx.Provider.GetRequiredService<ICollectEventBus>(),
                 ctx.Provider.GetRequiredService<ICurveBaselineCache>(),
+                ctx.Provider.GetRequiredService<ICollectArchiveStore>(),
                 ctx.Logger<StationCollectPipeline>()),
             ctx.Provider.GetRequiredService<IRuntimeStatusHub>(),
             ctx.Logger<CollectionHostedService>());

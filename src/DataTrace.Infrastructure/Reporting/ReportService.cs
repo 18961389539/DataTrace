@@ -88,7 +88,7 @@ public sealed class ReportService : IReportService
         => new()
         {
             Items = points
-                .GroupBy(t => string.IsNullOrWhiteSpace(t.TagName) ? t.TagCode : t.TagName)
+                .GroupBy(t => t.TagName)
                 .Select(g => new IssueTopItem { Name = g.Key, Count = g.Count() })
                 .OrderByDescending(x => x.Count)
                 .ThenBy(x => x.Name, StringComparer.Ordinal)

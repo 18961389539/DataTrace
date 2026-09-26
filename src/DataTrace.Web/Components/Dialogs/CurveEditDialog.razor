@@ -1,0 +1,257 @@
+@using DataTrace.Domain.Validation
+@using DataTrace.Plc.Addresses
+@using DataTrace.Plc.Codec
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(IsNew ? "新增曲线" : $"编辑曲线 · {Curve.Code}")</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.caption" Class="dt-muted mb-3">
+            曲线按起始地址连续采样，Y 是主序列（出手的那条），X 通常是与它成对的位置量。
+        </MudText>
+        <MudGrid>
+            <MudItem xs="12" sm="5">
+                <MudTextField @bind-Value="Curve.Code" @bind-Value:after="Validate" Label="曲线编码"
+                              Immediate="true" Error="@(_codeError is not null)" ErrorText="@_codeError" />
+            </MudItem>
+            <MudItem xs="12" sm="7">
+                <MudTextField @bind-Value="Curve.Name" Label="名称" Placeholder="如：位移压力曲线" />
+            </MudItem>
+            <MudItem xs="6" sm="3">
+                <MudNumericField @bind-Value="Curve.PointCount" @bind-Value:after="Validate" Label="点数"
+                                 Min="@StationConfigLimits.MinCurvePoints" Max="@StationConfigLimits.MaxCurvePoints"
+                                 HelperText="一次采集的采样点数"
+                                 Error="@(_countError is not null)" ErrorText="@_countError" />
+            </MudItem>
+            <MudItem xs="6" sm="3" Class="d-flex align-center">
+                <MudSwitch @bind-Value="Curve.Enabled" Label="启用" Color="Color.Primary" />
+            </MudItem>
+        </MudGrid>
+
+        <MudText Typo="Typo.subtitle2" Class="mt-2 mb-1">序列</MudText>
+        <MudGrid>
+            <MudItem xs="12" md="6">
+                <MudPaper Outlined="true" Class="pa-3">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">Y 主序列</MudChip>
+                        <MudText Typo="Typo.caption" Class="dt-muted">判定与画图都优先看它</MudText>
+                    </MudStack>
+                    <MudGrid>
+                        <MudItem xs="6">
+                            <MudTextField @bind-Value="_yName" Label="Y 名称" />
+                        </MudItem>
+                        <MudItem xs="6">
+                            <MudTextField @bind-Value="_yUnit" Label="Y 单位" />
+                        </MudItem>
+                        <MudItem xs="6" md="5">
+                            <MudSelect T="PlcDataType" @bind-Value="_yDataType" @bind-Value:after="OnYTypeChanged" Label="Y 类型">
+                                @foreach (var t in CurveNumericTypes)
+                                {
+                                    <MudSelectItem T="PlcDataType" Value="t">@DisplayLabels.DataType(t)</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="6" md="7">
+                            <MudTextField @bind-Value="_yAddress" @bind-Value:after="Validate" Label="Y 起始地址"
+                                          Immediate="true" HelperText="@AddressHelper"
+                                          Error="@(_yAddressError is not null)" ErrorText="@_yAddressError" />
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudPaper Outlined="true" Class="pa-3">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">X 序列</MudChip>
+                        <MudText Typo="Typo.caption" Class="dt-muted">与 Y 成对；不画 X 时可以留空名称</MudText>
+                    </MudStack>
+                    <MudGrid>
+                        <MudItem xs="6">
+                            <MudTextField @bind-Value="_xName" Label="X 名称" />
+                        </MudItem>
+                        <MudItem xs="6">
+                            <MudTextField @bind-Value="_xUnit" Label="X 单位" />
+                        </MudItem>
+                        <MudItem xs="6" md="5">
+                            <MudSelect T="PlcDataType" @bind-Value="_xDataType" @bind-Value:after="OnXTypeChanged" Label="X 类型">
+                                @foreach (var t in CurveNumericTypes)
+                                {
+                                    <MudSelectItem T="PlcDataType" Value="t">@DisplayLabels.DataType(t)</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="6" md="7">
+                            <MudTextField @bind-Value="_xAddress" @bind-Value:after="Validate" Label="X 起始地址"
+                                          Immediate="true"
+                                          Error="@(_xAddressError is not null)" ErrorText="@_xAddressError" />
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+
+        <MudText Typo="Typo.caption" Class="dt-muted mt-2">
+            波形判据（峰值、面积、上升/保压段斜率…）在列表的「波形判据」里单独配，能拦住「点位值在限内但波形异常」的漏检。
+        </MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudText Typo="Typo.caption" Class="dt-muted align-self-center mr-auto">保存后立即下发采集器</MudText>
+        <MudButton OnClick="Cancel">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit">保存并下发</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private static readonly PlcDataType[] CurveNumericTypes =
+    [
+        PlcDataType.Int16, PlcDataType.Int32, PlcDataType.Float, PlcDataType.Double
+    ];
+
+    [CascadingParameter] private MudDialogInstance? MudDialog { get; set; }
+
+    /// <summary>待编辑的曲线。页面传进来的是克隆体：取消时不能在跟踪上下文里留下脏实体。</summary>
+    [Parameter] public CurveDefinition Curve { get; set; } = new();
+
+    [Parameter] public bool IsNew { get; set; }
+
+    /// <summary>所属 PLC 的品牌：决定地址校验规则与新建时的预填地址。</summary>
+    [Parameter] public PlcBrand? Brand { get; set; }
+
+    /// <summary>同工站的其它曲线，用于编码查重。</summary>
+    [Parameter] public IReadOnlyList<CurveDefinition> Siblings { get; set; } = [];
+
+    private string _yName = "压力";
+    private string _xName = "位移";
+    private string? _yUnit = "kN";
+    private string? _xUnit = "mm";
+    private PlcDataType _yDataType = PlcDataType.Float;
+    private PlcDataType _xDataType = PlcDataType.Float;
+    private string _yAddress = "";
+    private string _xAddress = "";
+    private int _yStrideWords = 2;
+    private int _xStrideWords = 2;
+
+    private string? _codeError;
+    private string? _countError;
+    private string? _yAddressError;
+    private string? _xAddressError;
+
+    protected override void OnInitialized()
+    {
+        var y = Series(SeriesRole.Y);
+        var x = Series(SeriesRole.X);
+        // 新建的曲线按当前品牌预填一套合法地址；已有曲线一律用库里的现值，绝不改写用户填过的地址。
+        _yAddress = y?.StartAddress ?? (Brand is { } brandY ? PlcAddressDefaults.Word(brandY, PlcAddressDefaults.CurveYOffset) : "");
+        _xAddress = x?.StartAddress ?? (Brand is { } brandX ? PlcAddressDefaults.Word(brandX, PlcAddressDefaults.CurveXOffset) : "");
+        _yName = string.IsNullOrWhiteSpace(y?.Name) ? "压力" : y!.Name;
+        _xName = string.IsNullOrWhiteSpace(x?.Name) ? "位移" : x!.Name;
+        _yUnit = y?.Unit ?? "kN";
+        _xUnit = x?.Unit ?? "mm";
+        _yDataType = y?.DataType ?? PlcDataType.Float;
+        _xDataType = x?.DataType ?? PlcDataType.Float;
+        _yStrideWords = y?.StrideWords > 0 ? y.StrideWords : ValueCodec.WordCountOf(_yDataType);
+        _xStrideWords = x?.StrideWords > 0 ? x.StrideWords : ValueCodec.WordCountOf(_xDataType);
+
+        // 已存下的曲线进对话框就校验一遍：历史配置里可能留着按别的品牌写的地址。
+        // 新建的不预校验：一进来满屏红字太吵，报错要等用户动过字段或点保存。
+        if (!IsNew)
+        {
+            Validate();
+        }
+    }
+
+    private CurveSeries? Series(SeriesRole role) => Curve.Series.FirstOrDefault(s => s.Role == role);
+
+    private void OnYTypeChanged() => _yStrideWords = ValueCodec.WordCountOf(_yDataType);
+
+    private void OnXTypeChanged() => _xStrideWords = ValueCodec.WordCountOf(_xDataType);
+
+    /// <summary>地址写法提示：跟着所属 PLC 的品牌走，免得照着别的品牌写。</summary>
+    private string AddressHelper
+        => Brand switch
+        {
+            PlcBrand.SiemensS7 => "西门子示例：DB1.DBW0、DB1.DBD4、MW10（不支持位地址）",
+            PlcBrand.ModbusTcp => "Modbus 示例：40001 保持寄存器、30001 输入寄存器（不支持线圈/离散量）",
+            PlcBrand.OmronFins => "欧姆龙示例：D100、CIO100、W0、H10（不支持位地址）",
+            _ => "三菱示例：D100、W1A、ZR100（不支持 M/X/Y 等位地址）"
+        };
+
+    private void Validate()
+    {
+        _codeError = string.IsNullOrWhiteSpace(Curve.Code) ? "曲线编码不能为空"
+            : Siblings.Any(c => c.Id != Curve.Id
+                && string.Equals(c.Code?.Trim(), Curve.Code.Trim(), StringComparison.OrdinalIgnoreCase))
+                ? $"曲线编码 {Curve.Code.Trim()} 已存在"
+                : null;
+        _countError = StationConfigLimits.PointCountError(Curve.PointCount);
+        _yAddressError = AddressError(_yAddress, "Y 起始地址不能为空");
+        _xAddressError = AddressError(_xAddress, "X 起始地址不能为空");
+    }
+
+    /// <summary>
+    /// 地址校验：按品牌检查写法，并拒绝位地址。
+    /// </summary>
+    /// <remarks>
+    /// 位地址进不了读计划（只收字地址），采集时会静默读回 0 —— 现场只会看到"这条曲线全是 0"。
+    /// 还没选 PLC 时不来这里叠加地址错：页面已经在 PLC 那一栏报了。
+    /// </remarks>
+    private string? AddressError(string? text, string emptyMessage)
+    {
+        if (Brand is not { } brand)
+        {
+            return null;
+        }
+
+        return string.IsNullOrWhiteSpace(text)
+            ? emptyMessage
+            : PlcAddressValidator.TryValidate(brand, text, out _, out var error) ? null : error;
+    }
+
+    private void Cancel() => MudDialog?.Cancel();
+
+    private void Submit()
+    {
+        Validate();
+        if (_codeError is not null || _countError is not null || _yAddressError is not null || _xAddressError is not null)
+        {
+            return;
+        }
+
+        Curve.Code = Curve.Code.Trim();
+        Curve.Name = (Curve.Name ?? "").Trim();
+        Curve.StationId = Curve.StationId;
+        // Series 整体替换（仓储也按角色整体同步）：保留原有的 Scale/Offset，
+        // 它们没有界面入口，但采集解码会用到，重建时丢掉等于把配置悄悄改回默认。
+        var previousY = Series(SeriesRole.Y);
+        var previousX = Series(SeriesRole.X);
+        Curve.Series =
+        [
+            new CurveSeries
+            {
+                Id = previousY?.Id ?? 0,
+                Name = string.IsNullOrWhiteSpace(_yName) ? "压力" : _yName.Trim(),
+                Role = SeriesRole.Y,
+                StartAddress = _yAddress.Trim(),
+                DataType = _yDataType,
+                StrideWords = Math.Max(1, _yStrideWords),
+                Scale = previousY?.Scale ?? 1,
+                Offset = previousY?.Offset ?? 0,
+                Unit = string.IsNullOrWhiteSpace(_yUnit) ? null : _yUnit.Trim()
+            },
+            new CurveSeries
+            {
+                Id = previousX?.Id ?? 0,
+                Name = string.IsNullOrWhiteSpace(_xName) ? "位移" : _xName.Trim(),
+                Role = SeriesRole.X,
+                StartAddress = _xAddress.Trim(),
+                DataType = _xDataType,
+                StrideWords = Math.Max(1, _xStrideWords),
+                Scale = previousX?.Scale ?? 1,
+                Offset = previousX?.Offset ?? 0,
+                Unit = string.IsNullOrWhiteSpace(_xUnit) ? null : _xUnit.Trim()
+            }
+        ];
+        MudDialog?.Close(DialogResult.Ok(Curve));
+    }
+}

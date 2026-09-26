@@ -80,11 +80,10 @@ public sealed class JudgementCount
     public int Count { get; init; }
 }
 
-/// <summary>不良 / 预警统计的窄投影：只带点位名称与代码。</summary>
+/// <summary>不良 / 预警统计的窄投影：只带点位名称。</summary>
 public sealed class TagIssuePoint
 {
     public string TagName { get; init; } = "";
-    public string TagCode { get; init; } = "";
 }
 
 /// <summary>
@@ -240,6 +239,43 @@ public interface ICurveFileStore
     Task<CurvePayload> ReadAsync(string relativePath, uint? expectedCrc = null, CancellationToken cancellationToken = default);
 
     /// <summary>删掉某个已写入的曲线文件（相对路径由 <see cref="WriteAsync"/> 给出）。文件不在时静默返回。</summary>
+    Task DeleteFileAsync(string relativePath, CancellationToken cancellationToken = default);
+
+    Task DeleteMonthAsync(string yyyy, string mm, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// 文件源工站读到的原始 JSON 的归档。与曲线文件同一套思路：
+/// 内容单独落盘、记录里只存 相对路径 + 大小 + CRC32，读取时按 CRC 区分损坏与缺失。
+/// </summary>
+/// <remarks>
+/// 归档的是设备写下的<b>原始字节</b>，不重新序列化：判废争议时它是唯一能证明
+/// "设备当时到底写了什么"的东西，任何二次加工都会削弱这个作用。
+/// </remarks>
+public interface ICollectArchiveStore
+{
+    /// <summary>
+    /// 归档一份原始 JSON，返回实际落盘的相对路径与校验信息。
+    /// </summary>
+    /// <remarks>
+    /// <b>不会覆盖已有文件</b>：目标路径被占用时自动让开一格（追加 <c>-2</c>、<c>-3</c>…）。
+    /// 调用方必须使用返回值里的路径，不要自己按命名规则去拼。
+    /// </remarks>
+    Task<(string RelativePath, long FileSize, uint Crc32)> WriteAsync(
+        DateTime triggerTime,
+        string palletCode,
+        int stationId,
+        byte[] content,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 读回归档。<paramref name="expectedCrc"/> 非空时校验内容，
+    /// 不一致抛 <see cref="InvalidDataException"/>（界面据此区分"损坏"与"缺失"）；
+    /// 传 null 表示不校验（历史行没有校验值）。
+    /// </summary>
+    Task<byte[]> ReadAsync(string relativePath, uint? expectedCrc = null, CancellationToken cancellationToken = default);
+
+    /// <summary>删掉某个已归档的文件（相对路径由 <see cref="WriteAsync"/> 给出）。文件不在时静默返回。</summary>
     Task DeleteFileAsync(string relativePath, CancellationToken cancellationToken = default);
 
     Task DeleteMonthAsync(string yyyy, string mm, CancellationToken cancellationToken = default);

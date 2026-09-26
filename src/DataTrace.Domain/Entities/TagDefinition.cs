@@ -8,7 +8,7 @@ public class TagDefinition
     public int StationId { get; set; }
     public Station? Station { get; set; }
 
-    public string Code { get; set; } = "";
+    /// <summary>同一工站内唯一的名称。采集、限值与趋势按数字主键关联，名称只负责给人看。</summary>
     public string Name { get; set; } = "";
     public string Address { get; set; } = "";
     public PlcDataType DataType { get; set; }
@@ -38,7 +38,18 @@ public class TagDefinition
 
     public bool IsRequired { get; set; } = true;
 
-    /// <summary>0 = 工站级公共点位；1 = 托盘上的唯一产品。</summary>
+    /// <summary>固定为 1：点位属于托盘上的这一件。保存时由仓储写成 1。</summary>
     public int PositionIndex { get; set; }
     public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// 该点位的取值来源：PLC 寄存器，或本工站那一个 JSON 文件里的字段。
+    /// </summary>
+    /// <remarks>
+    /// 按点位而不是按工站选：一个工站同时有"PLC 报的保压时间"和"智能传感器导出的力值"是常态。
+    /// 文件路径仍然是工站级的（一台设备每件覆写一个文件），所以文件源点位都读
+    /// <see cref="Station.DataFilePath"/> 指向的那一份；选 JSON 时
+    /// <see cref="Address"/> 按文件里的字段名解释。
+    /// </remarks>
+    public TagDataSource Source { get; set; } = TagDataSource.Plc;
 }

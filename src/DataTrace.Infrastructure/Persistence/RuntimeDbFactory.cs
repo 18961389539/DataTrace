@@ -209,6 +209,35 @@ public sealed class RuntimeDbFactory
             "TagValues",
             "WarningUpperLimit",
             """ALTER TABLE "TagValues" ADD COLUMN "WarningUpperLimit" REAL NULL""");
+
+        // 文件源工站的原始 JSON 归档引用。老月库里的记录本来就没有归档，
+        // 补空路径 + 0 即可，界面按"没有归档"显示 —— 不能凭现有信息猜一个路径出来。
+        SqliteSchema.AddColumnIfMissing(
+            ctx,
+            "CollectRecords",
+            "ArchivePath",
+            """ALTER TABLE "CollectRecords" ADD COLUMN "ArchivePath" TEXT NOT NULL DEFAULT ''""");
+
+        SqliteSchema.AddColumnIfMissing(
+            ctx,
+            "CollectRecords",
+            "ArchiveFileSize",
+            """ALTER TABLE "CollectRecords" ADD COLUMN "ArchiveFileSize" INTEGER NOT NULL DEFAULT 0""");
+
+        SqliteSchema.AddColumnIfMissing(
+            ctx,
+            "CollectRecords",
+            "ArchiveCrc32",
+            """ALTER TABLE "CollectRecords" ADD COLUMN "ArchiveCrc32" INTEGER NOT NULL DEFAULT 0""");
+
+        // 点位编码已从模型去掉。老月库先把空名称补成当时的编码，再删列，
+        // 否则后续插入不会给这列赋值，而它又是 NOT NULL。
+        if (SqliteSchema.ColumnExists(ctx, "TagValues", "TagCode"))
+        {
+            ctx.Database.ExecuteSqlRaw(
+                """UPDATE "TagValues" SET "TagName" = "TagCode" WHERE "TagName" IS NULL OR trim("TagName") = ''""");
+            SqliteSchema.DropColumnIfPresent(ctx, "TagValues", "TagCode");
+        }
     }
 
     public IReadOnlyList<string> ListMonthKeys()

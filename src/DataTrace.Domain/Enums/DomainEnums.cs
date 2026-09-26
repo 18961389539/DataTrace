@@ -36,6 +36,31 @@ public enum SeriesRole
     Y = 1
 }
 
+/// <summary>
+/// 点位的取值来源：PLC 寄存器，或工站那一个数据文件。
+/// </summary>
+/// <remarks>
+/// 触发、托盘码与曲线不受它影响 —— 换的只是"这个点位的值从哪读"。
+/// 枚举值直接落库（Tags.Source），改动即破坏兼容。
+/// 文件是 JSON 还是 CSV 不在这里，见 <see cref="DataFileFormat"/>。
+/// </remarks>
+public enum TagDataSource
+{
+    Plc = 0,
+
+    /// <summary>点位值取自工站数据文件；路径与格式见工站。</summary>
+    JsonFile = 1
+}
+
+/// <summary>
+/// 工站数据文件的格式。0 是 JSON，老配置库补列后仍按 JSON 读。
+/// </summary>
+public enum DataFileFormat
+{
+    Json = 0,
+    Csv = 1
+}
+
 public enum SessionStatus
 {
     Open = 0,

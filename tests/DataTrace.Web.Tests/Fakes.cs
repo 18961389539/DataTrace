@@ -1,7 +1,9 @@
 using DataTrace.Application.Configuration;
 using DataTrace.Collector;
 using DataTrace.Domain.Entities;
+using DataTrace.Domain.Enums;
 using DataTrace.Web.Components.Dialogs;
+using DataTrace.Web.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
@@ -291,8 +293,76 @@ public sealed class DialogSpy
                 reference.SetupGet(r => r.Result).Returns(() => Task.FromResult(DialogResult));
                 return Task.FromResult(reference.Object);
             });
+
+        // 点位编辑对话框：页面把它当"表单入口"，用例要断言下发过哪些参数、拿到结果后写了什么。
+        Mock.Setup(d => d.ShowAsync<TagEditDialog>(
+                It.IsAny<string>(),
+                It.IsAny<DialogParameters>(),
+                It.IsAny<DialogOptions>()))
+            .Returns((string title, DialogParameters parameters, DialogOptions _) =>
+            {
+                lock (Shown)
+                {
+                    Shown.Add((title, parameters));
+                }
+
+                var reference = new Mock<IDialogReference>();
+                reference.SetupGet(r => r.Result).Returns(() => Task.FromResult(DialogResult));
+                return Task.FromResult(reference.Object);
+            });
+
+        // 曲线编辑对话框：同上。
+        Mock.Setup(d => d.ShowAsync<CurveEditDialog>(
+                It.IsAny<string>(),
+                It.IsAny<DialogParameters>(),
+                It.IsAny<DialogOptions>()))
+            .Returns((string title, DialogParameters parameters, DialogOptions _) =>
+            {
+                lock (Shown)
+                {
+                    Shown.Add((title, parameters));
+                }
+
+                var reference = new Mock<IDialogReference>();
+                reference.SetupGet(r => r.Result).Returns(() => Task.FromResult(DialogResult));
+                return Task.FromResult(reference.Object);
+            });
+
+        // 波形判据对话框：不桩的话 ShowAsync 返回 null，页面解引用 Result 时会 NRE。
+        Mock.Setup(d => d.ShowAsync<CurveCriterionDialog>(
+                It.IsAny<string>(),
+                It.IsAny<DialogParameters>(),
+                It.IsAny<DialogOptions>()))
+            .Returns((string title, DialogParameters parameters, DialogOptions _) =>
+            {
+                lock (Shown)
+                {
+                    Shown.Add((title, parameters));
+                }
+
+                var reference = new Mock<IDialogReference>();
+                reference.SetupGet(r => r.Result).Returns(() => Task.FromResult(DialogResult));
+                return Task.FromResult(reference.Object);
+            });
     }
 
     private void Record(string? title, string message, string? yesText = null, string? cancelText = null, string? secondaryText = null, DialogOptions? options = null)
         => MessageBoxes.Add((title ?? "", message));
+}
+
+/// <summary>系统文件框替身：不弹真正的对话框，按用例给定的路径回填。</summary>
+public sealed class FakeJsonFileDialog : IJsonFileDialog
+{
+    public string? Result { get; set; }
+
+    public string? LastRequest { get; set; }
+
+    public DataFileFormat LastFormat { get; set; }
+
+    public Task<string?> PickAsync(string? currentPath, DataFileFormat format)
+    {
+        LastRequest = currentPath;
+        LastFormat = format;
+        return Task.FromResult(Result);
+    }
 }

@@ -45,7 +45,6 @@ public class ReportsPageTests : WebTestBase
                         {
                             Id = 1,
                             StationId = 10,
-                            Code = "ST010_P1",
                             Name = "压力",
                             DataType = PlcDataType.Float
                         }

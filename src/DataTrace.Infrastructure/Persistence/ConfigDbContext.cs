@@ -52,7 +52,7 @@ public sealed class ConfigDbContext : IdentityDbContext<ApplicationUser>
 
         builder.Entity<TagDefinition>(e =>
         {
-            e.HasIndex(x => new { x.StationId, x.Code }).IsUnique();
+            e.HasIndex(x => new { x.StationId, x.Name }).IsUnique();
         });
 
         builder.Entity<CurveDefinition>(e =>

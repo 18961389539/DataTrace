@@ -14,7 +14,6 @@ public class RecipeLimitResolverTests
     private static TagDefinition Tag() => new()
     {
         Id = 42,
-        Code = "ST010_P1",
         Name = "压力",
         LowerLimit = 5,
         UpperLimit = 20,

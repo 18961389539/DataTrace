@@ -63,7 +63,7 @@
 
 ## 6. 运维注意
 
-- 升级只覆盖程序文件，**默认保留 `data\`**（含 `config.db`、runtime、curves、logs）
+- 升级只覆盖程序文件，**默认保留 `data\`**（含 `config.db`、runtime、curves、archive、logs）
 - 不要对生产客户使用 `-ForceData`，除非已备份并明确要重建库
 - 详细命令见 `README.md`
 - **不要改业务默认值**（如开发演示的 `SimulatorAutoRun`）；客户现场靠 Production 配置默认关模拟自动跑
@@ -72,7 +72,7 @@
 
 | 项 | 说明 |
 |---|---|
-| 数据备份 | 拷贝整个 `data\`（至少 `config.db`、`runtime\`、`curves\`）；升级脚本也会自动备份到 `backups\upgrade-*` |
+| 数据备份 | 拷贝整个 `data\`（至少 `config.db`、`runtime\`、`curves\`、`archive\`）；升级脚本也会自动备份到 `backups\upgrade-*` |
 | 升级命令 | `.\upgrade.ps1 -InstallDir D:\Apps\DataTrace\<客户>`（先 `publish.ps1`；勿 `-ForceData`） |
 | 版本可见 | 系统设置「应用版本」+ `version.json` / `customer.json` 的 AppVersion |
 | 库结构 | 随应用启动补列（EnsureCreated + AddColumnIfMissing）；可用 `migrate.ps1` 仅重启触发 |

@@ -20,7 +20,7 @@ public class SpcServiceTests
     {
         await using var harness = await CollectHarness.CreateAsync();
         var station = harness.Station(0);
-        var tag = station.Tags.Single(t => t.Code == "ST010_P1");
+        var tag = station.Tags.Single(t => t.Name == "压力");
 
         for (var i = 0; i < 6; i++)
         {
@@ -35,8 +35,7 @@ public class SpcServiceTests
             tag.Id, DateTime.Today.AddDays(-1), DateTime.Today.AddDays(1));
 
         Assert.NotNull(report);
-        Assert.Equal(tag.Code, report!.TagCode);
-        Assert.Equal(tag.Name, report.TagName);
+        Assert.Equal(tag.Name, report!.TagName);
 
         // 限值没动过就只有一段，界面与分段之前完全一样。
         var segment = Assert.Single(report.Segments);
@@ -88,7 +87,7 @@ public class SpcServiceTests
     public async Task Range_without_samples_reports_insufficient_data()
     {
         await using var harness = await CollectHarness.CreateAsync();
-        var tag = harness.Station(0).Tags.Single(t => t.Code == "ST010_P1");
+        var tag = harness.Station(0).Tags.Single(t => t.Name == "压力");
         var spc = harness.Scope.ServiceProvider.GetRequiredService<ISpcService>();
 
         var report = await spc.GetProcessCapabilityAsync(
@@ -114,7 +113,7 @@ public class SpcServiceTests
     {
         await using var harness = await CollectHarness.CreateAsync();
         var station = harness.Station(0);
-        var tag = station.Tags.Single(t => t.Code == "ST010_P1");
+        var tag = station.Tags.Single(t => t.Name == "压力");
         var spc = harness.Scope.ServiceProvider.GetRequiredService<ISpcService>();
         var from = DateTime.Today.AddDays(-1);
         var to = DateTime.Today.AddDays(1);
@@ -175,7 +174,7 @@ public class SpcServiceTests
     {
         await using var harness = await CollectHarness.CreateAsync();
         var station = harness.Station(0);
-        var tag = station.Tags.Single(t => t.Code == "ST010_P1");
+        var tag = station.Tags.Single(t => t.Name == "压力");
         for (var i = 0; i < 6; i++)
         {
             LoadPressure(harness, station, $"PL{i:00}", 12f + i * 0.5f);
@@ -204,7 +203,7 @@ public class SpcServiceTests
     {
         await using var harness = await CollectHarness.CreateAsync();
         var station = harness.Station(0);
-        var tag = station.Tags.Single(t => t.Code == "ST010_P1");
+        var tag = station.Tags.Single(t => t.Name == "压力");
         for (var i = 0; i < 6; i++)
         {
             LoadPressure(harness, station, $"PR{i:00}", 12f + i * 0.5f);

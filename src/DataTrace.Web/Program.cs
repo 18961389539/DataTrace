@@ -81,6 +81,7 @@ builder.Services.AddMudServices(config =>
     config.SnackbarConfiguration.MaxDisplayedSnackbars = 3;
 });
 builder.Services.AddScoped<DataTrace.Web.Services.DtToast>();
+builder.Services.AddSingleton<IJsonFileDialog, WindowsJsonFileDialog>();
 builder.Services.AddSingleton<PasswordPolicy>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddCascadingAuthenticationState();

@@ -25,18 +25,18 @@ public class SimulatorScenarioTests
     {
         var tags = new List<TagDefinition>
         {
-            new() { Id = 1, Code = "P", Name = "压力", Address = "D1100", DataType = PlcDataType.Float, LowerLimit = 5, UpperLimit = 20, PositionIndex = 1, Enabled = true },
-            new() { Id = 2, Code = "T", Name = "温度", Address = "D1110", DataType = PlcDataType.Float, LowerLimit = 0, UpperLimit = 80, PositionIndex = 0, Enabled = true }
+            new() { Id = 1, Name = "压力", Address = "D1100", DataType = PlcDataType.Float, LowerLimit = 5, UpperLimit = 20, PositionIndex = 1, Enabled = true },
+            new() { Id = 2, Name = "温度", Address = "D1110", DataType = PlcDataType.Float, LowerLimit = 0, UpperLimit = 80, PositionIndex = 1, Enabled = true }
         };
 
         if (includeStringTag)
         {
-            tags.Add(new TagDefinition { Id = 3, Code = "S", Name = "结果", Address = "D1120", DataType = PlcDataType.String, Length = 4, PositionIndex = 1, Enabled = true });
+            tags.Add(new TagDefinition { Id = 3, Name = "结果", Address = "D1120", DataType = PlcDataType.String, Length = 4, PositionIndex = 1, Enabled = true });
         }
 
         if (includeDisabled)
         {
-            tags.Add(new TagDefinition { Id = 4, Code = "X", Name = "停用点位", Address = "D3100", DataType = PlcDataType.Float, LowerLimit = 5, UpperLimit = 20, PositionIndex = 1, Enabled = false });
+            tags.Add(new TagDefinition { Id = 4, Name = "停用点位", Address = "D3100", DataType = PlcDataType.Float, LowerLimit = 5, UpperLimit = 20, PositionIndex = 1, Enabled = false });
         }
 
         var station = new Station
@@ -148,7 +148,7 @@ public class SimulatorScenarioTests
         foreach (var tag in station.Tags.Where(t => t.Enabled && t.DataType != PlcDataType.String))
         {
             var value = ReadFloat(driver, tag.Address, FloatWordOrder.CDAB);
-            Assert.False(LimitEvaluator.IsOutOfLimit(tag, value), $"{tag.Code} 仿真值 {value} 越界");
+            Assert.False(LimitEvaluator.IsOutOfLimit(tag, value), $"{tag.Name} 仿真值 {value} 越界");
         }
     }
 
@@ -173,9 +173,9 @@ public class SimulatorScenarioTests
         station.Tags.Clear();
         // 采集端按 WordCountOf(DataType) 读（Int32=2 字、Double=4 字），
         // 仿真必须按同一宽度写，否则读回的值是"写入值 + 残留字"拼出来的。
-        station.Tags.Add(new TagDefinition { Id = 11, Code = "CNT", Name = "计数", Address = "D4000", DataType = PlcDataType.Int32, LowerLimit = 1000, UpperLimit = 100_000, PositionIndex = 1, Enabled = true });
-        station.Tags.Add(new TagDefinition { Id = 12, Code = "P", Name = "压力", Address = "D4100", DataType = PlcDataType.Double, LowerLimit = 5, UpperLimit = 20, PositionIndex = 1, Enabled = true });
-        station.Tags.Add(new TagDefinition { Id = 13, Code = "N", Name = "负区间", Address = "D4200", DataType = PlcDataType.Int16, LowerLimit = -40, UpperLimit = -10, PositionIndex = 1, Enabled = true });
+        station.Tags.Add(new TagDefinition { Id = 11, Name = "计数", Address = "D4000", DataType = PlcDataType.Int32, LowerLimit = 1000, UpperLimit = 100_000, PositionIndex = 1, Enabled = true });
+        station.Tags.Add(new TagDefinition { Id = 12, Name = "压力", Address = "D4100", DataType = PlcDataType.Double, LowerLimit = 5, UpperLimit = 20, PositionIndex = 1, Enabled = true });
+        station.Tags.Add(new TagDefinition { Id = 13, Name = "负区间", Address = "D4200", DataType = PlcDataType.Int16, LowerLimit = -40, UpperLimit = -10, PositionIndex = 1, Enabled = true });
 
         Load(driver, station, "P0009");
 
@@ -185,7 +185,7 @@ public class SimulatorScenarioTests
             var value = ValueCodec.DecodeNumeric(words, tag.DataType, FloatWordOrder.CDAB, 1, 0);
             Assert.False(
                 LimitEvaluator.IsOutOfLimit(tag, value),
-                $"{tag.Code} 读回 {value}，不在仿真区间内（写入宽度与读取宽度不一致）");
+                $"{tag.Name} 读回 {value}，不在仿真区间内（写入宽度与读取宽度不一致）");
         }
     }
 
@@ -227,13 +227,13 @@ public class SimulatorScenarioTests
         await using var driver = await DriverAsync();
         var station = Station(includeStringTag: false);
         // 只保留一个数值点位，NG 注入目标即确定，断言不再依赖随机挑选。
-        station.Tags.Remove(station.Tags.Single(t => t.Code == "T"));
+        station.Tags.Remove(station.Tags.Single(t => t.Name == "温度"));
         var ngTag = station.Tags.Single(t => t.DataType != PlcDataType.String);
 
         Load(driver, station, "P0002", injectNg: true);
 
         var value = ReadFloat(driver, ngTag.Address, FloatWordOrder.CDAB);
-        Assert.True(LimitEvaluator.IsOutOfLimit(ngTag, value), $"{ngTag.Code} 未按预期越界：{value}");
+        Assert.True(LimitEvaluator.IsOutOfLimit(ngTag, value), $"{ngTag.Name} 未按预期越界：{value}");
     }
 
     [Fact]

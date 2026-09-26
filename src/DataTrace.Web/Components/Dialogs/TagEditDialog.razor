@@ -1,0 +1,304 @@
+﻿@using DataTrace.Domain.Evaluation
+@using DataTrace.Domain.Validation
+@using DataTrace.Plc.Addresses
+@using DataTrace.Plc.Codec
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(IsNew ? "新增点位" : $"编辑点位 · {Tag.Name}")</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.caption" Class="dt-muted mb-3">
+            @(IsCsv
+                ? "取值为 CSV 表头里的列名；数字与数字串都收，文本只做必填校验。"
+                : IsFileSource
+                    ? "取值为 JSON 文件里的字段名（支持 data.force 这样的嵌套）；数字与数字串都收，文本只做必填校验。"
+                    : "取值按 PLC 地址读寄存器；位地址读不到值，请用字地址。")
+        </MudText>
+        <MudGrid>
+            <MudItem xs="12">
+                <MudTextField @bind-Value="Tag.Name" @bind-Value:after="Validate" Label="名称"
+                              Immediate="true" Error="@(_nameError is not null)" ErrorText="@_nameError" />
+            </MudItem>
+        </MudGrid>
+        <MudGrid>
+            <MudItem xs="12" md="6">
+                <MudText Typo="Typo.subtitle2" Class="mb-1">取值</MudText>
+                <MudGrid>
+                    <MudItem xs="12" sm="6">
+                        @* 来源按点位选：一个工站同时有"PLC 报的保压时间"和"传感器导出的力值"是常态。 *@
+                        <MudSelect T="TagDataSource" @bind-Value="Tag.Source" @bind-Value:after="OnSourceChanged"
+                                   Label="取值来源" HelperText="PLC 寄存器，或本工站的数据文件">
+                            <MudSelectItem T="TagDataSource" Value="TagDataSource.Plc">PLC 寄存器</MudSelectItem>
+                            <MudSelectItem T="TagDataSource" Value="TagDataSource.JsonFile">数据文件</MudSelectItem>
+                        </MudSelect>
+                        <InfoHint Topic="HelpTexts.TagDataSource" />
+                    </MudItem>
+                    <MudItem xs="12" sm="6">
+                        <MudTextField @bind-Value="Tag.Address" @bind-Value:after="Validate"
+                                      Label="@(IsCsv ? "CSV 列" : IsFileSource ? "JSON 字段" : "地址")" Immediate="true"
+                                      HelperText="@(IsCsv ? "表头里的列名" : IsFileSource ? "文件里的字段名，支持 a.b.c 嵌套" : null)"
+                                      Error="@(_addressError is not null)" ErrorText="@_addressError" />
+                        @if (!IsFileSource)
+                        {
+                            <InfoHint Topic="HelpTexts.BoolAddress" />
+                        }
+                    </MudItem>
+                    @if (IsFileSource && !StationHasFilePath)
+                    {
+                        @* 路径在「点位」页签顶部：这里直接说清楚去哪儿补，别等落库才报错。 *@
+                        <MudItem xs="12">
+                            <MudText Typo="Typo.caption" Color="Color.Warning">
+                                本工站还没配「数据文件路径」：请先到「点位」页签顶部填写或选择，否则这个点位采集时读不到值。
+                            </MudText>
+                        </MudItem>
+                    }
+                    <MudItem xs="12" sm="6">
+                        @if (IsFileSource)
+                        {
+                            <MudSelect T="bool" @bind-Value="TagIsText" @bind-Value:after="OnDataTypeChanged" Label="类型"
+                                       HelperText="数值参与限值判定，文本只做必填校验">
+                                <MudSelectItem T="bool" Value="false">数值</MudSelectItem>
+                                <MudSelectItem T="bool" Value="true">文本</MudSelectItem>
+                            </MudSelect>
+                        }
+                        else
+                        {
+                            <MudSelect T="PlcDataType" @bind-Value="Tag.DataType" @bind-Value:after="OnDataTypeChanged" Label="类型">
+                                @foreach (var t in Enum.GetValues<PlcDataType>())
+                                {
+                                    <MudSelectItem Value="t">@DisplayLabels.DataType(t)</MudSelectItem>
+                                }
+                            </MudSelect>
+                        }
+                    </MudItem>
+                    @if (TagIsString && !IsFileSource)
+                    {
+                        <MudItem xs="12" sm="6">
+                            <MudNumericField @bind-Value="Tag.Length" @bind-Value:after="Validate" Label="长度" Min="1" Max="256"
+                                             HelperText="字节数" Error="@(_lengthError is not null)" ErrorText="@_lengthError" />
+                        </MudItem>
+                    }
+                    @if (TagShowsUnit)
+                    {
+                        <MudItem xs="12" sm="6">
+                            <MudTextField @bind-Value="Tag.Unit" Label="单位" />
+                        </MudItem>
+                    }
+                    @if (TagUsesNumericLimits && !IsFileSource)
+                    {
+                        <MudItem xs="12" sm="3">
+                            <MudNumericField @bind-Value="Tag.Scale" Label="倍率" HelperText="默认 1" />
+                        </MudItem>
+                        <MudItem xs="12" sm="3">
+                            <MudNumericField @bind-Value="Tag.Offset" Label="偏移" HelperText="默认 0" />
+                        </MudItem>
+                    }
+                    <MudItem xs="6" sm="3" Class="d-flex align-center">
+                        <MudSwitch @bind-Value="Tag.IsRequired" Label="必填" Color="Color.Primary" />
+                    </MudItem>
+                    <MudItem xs="6" sm="3" Class="d-flex align-center">
+                        <MudSwitch @bind-Value="Tag.Enabled" Label="启用" Color="Color.Primary" />
+                    </MudItem>
+                </MudGrid>
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudText Typo="Typo.subtitle2" Class="mb-1">限值</MudText>
+                @if (!TagUsesNumericLimits)
+                {
+                    <MudText Typo="Typo.caption" Class="dt-muted">
+                        @(TagIsString ? "文本点位不设限值：必填校验看有没有取到非空文本。" : "布尔点位不设限值：判定只看非 0 即真。")
+                    </MudText>
+                }
+                else
+                {
+                    <MudGrid>
+                        <MudItem xs="6">
+                            <MudNumericField @bind-Value="Tag.LowerLimit" @bind-Value:after="Validate" Label="规格下限" HelperText="留空不判定" />
+                        </MudItem>
+                        <MudItem xs="6">
+                            <MudNumericField @bind-Value="Tag.UpperLimit" @bind-Value:after="Validate" Label="规格上限" HelperText="留空不判定" />
+                        </MudItem>
+                        <MudItem xs="6">
+                            <MudNumericField @bind-Value="Tag.WarningLowerLimit" @bind-Value:after="Validate" Label="预警下限" HelperText="不判废" />
+                        </MudItem>
+                        <MudItem xs="6">
+                            <MudNumericField @bind-Value="Tag.WarningUpperLimit" @bind-Value:after="Validate" Label="预警上限" HelperText="不判废" />
+                        </MudItem>
+                        <MudItem xs="6">
+                            <MudNumericField @bind-Value="Tag.TargetValue" @bind-Value:after="Validate" Label="目标值" HelperText="仅统计" />
+                        </MudItem>
+                    </MudGrid>
+                    <MudText Typo="Typo.caption" Class="dt-muted">
+                        <b>规格限</b>是红线，超出即判废并让 PLC 收到 NG；<b>预警限</b>是黄线，落在黄区只在看板提示，不影响判定与响应码。
+                    </MudText>
+                }
+                @if (_limitError is not null)
+                {
+                    <MudText Typo="Typo.body2" Color="Color.Error">@_limitError</MudText>
+                }
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudText Typo="Typo.caption" Class="dt-muted align-self-center mr-auto">保存后立即下发采集器</MudText>
+        <MudButton OnClick="Cancel">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit">保存并下发</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance? MudDialog { get; set; }
+
+    /// <summary>待编辑的点位。页面传进来的是克隆体：取消时不能在跟踪上下文里留下脏实体。</summary>
+    [Parameter] public TagDefinition Tag { get; set; } = new();
+
+    [Parameter] public bool IsNew { get; set; }
+
+    /// <summary>该点位是否取自本工站的 JSON 文件。由 <see cref="Tag"/> 自己的来源决定，不是工站级的。</summary>
+    private bool IsFileSource => Tag.Source == TagDataSource.JsonFile;
+
+    private bool IsCsv => IsFileSource && FileFormat == DataFileFormat.Csv;
+
+    /// <summary>所属 PLC 的品牌；为 null 表示还没选 PLC，此时页面已另有报错，这里不再叠加地址错。</summary>
+    [Parameter] public PlcBrand? Brand { get; set; }
+
+    /// <summary>工站已配置的数据文件路径（空串表示没配）：选了 JSON 来源但没有它就得先补路径。</summary>
+    [Parameter] public string DataFilePath { get; set; } = "";
+
+    /// <summary>工站数据文件的格式。决定文件源点位的地址是 JSON 字段还是 CSV 列名。</summary>
+    [Parameter] public DataFileFormat FileFormat { get; set; } = DataFileFormat.Json;
+
+    private bool StationHasFilePath => !string.IsNullOrWhiteSpace(DataFilePath);
+
+    /// <summary>同工站的其它点位，用于编码查重。</summary>
+    [Parameter] public IReadOnlyList<TagDefinition> Siblings { get; set; } = [];
+
+    private bool TagIsString => Tag.DataType == PlcDataType.String;
+    private bool TagShowsUnit => Tag.DataType is not PlcDataType.Bool;
+    private bool TagUsesNumericLimits => Tag.DataType is not (PlcDataType.Bool or PlcDataType.String);
+
+    /// <summary>
+    /// 文件源点位的「数值 / 文本」二选一。
+    /// </summary>
+    /// <remarks>
+    /// 不复用整整一列 PLC 数据类型：文件里没有字宽与字序这回事，
+    /// 让用户在一个只影响"怎么解码 PLC 两个字"的下拉里挑 Float 还是 Int32 是纯粹的误导。
+    /// 这里只分数值/文本；在两者之间切换时数值落到 Double，文本落到 String。
+    /// </remarks>
+    private bool TagIsText
+    {
+        get => Tag.DataType == PlcDataType.String;
+        set => Tag.DataType = value ? PlcDataType.String : PlcDataType.Double;
+    }
+
+    private string? _nameError;
+    private string? _addressError;
+    private string? _lengthError;
+    private string? _limitError;
+
+    protected override void OnInitialized()
+    {
+        // 已经存下的点位进对话框就校验一遍：历史配置里可能留着采集读不到的地址，
+        // 别让用户非要去动一下那个输入框才看到红字。新增的点位一进来就满屏红字太吵，不预校验。
+        if (!IsNew)
+        {
+            Validate();
+        }
+    }
+
+    private void OnDataTypeChanged()
+    {
+        if (!TagUsesNumericLimits)
+        {
+            Tag.LowerLimit = null;
+            Tag.UpperLimit = null;
+            Tag.WarningLowerLimit = null;
+            Tag.WarningUpperLimit = null;
+            Tag.TargetValue = null;
+            _limitError = null;
+        }
+
+        if (TagIsString && Tag.Length <= 0)
+        {
+            Tag.Length = 16;
+        }
+
+        if (Tag.DataType == PlcDataType.Bool)
+        {
+            Tag.Unit = null;
+        }
+
+        Validate();
+    }
+
+    /// <summary>
+    /// 切换取值来源。
+    /// </summary>
+    /// <remarks>
+    /// 文件里没有"非 0 即真"这回事（JSON 有真正的布尔），所以切到文件源时把 Bool 落到数值，
+    /// 免得界面上显示「数值」而库里还留着一个 Bool。反过来切回 PLC 不动类型：
+    /// 用户刚选的地址配什么类型，他自己最清楚。
+    /// </remarks>
+    private void OnSourceChanged()
+    {
+        if (IsFileSource && Tag.DataType == PlcDataType.Bool)
+        {
+            Tag.DataType = PlcDataType.Double;
+        }
+
+        Validate();
+    }
+
+    private void Validate()
+    {
+        _nameError = string.IsNullOrWhiteSpace(Tag.Name) ? "点位名称不能为空"
+            : Siblings.Any(t => t.Id != Tag.Id
+                && string.Equals(t.Name?.Trim(), Tag.Name.Trim(), StringComparison.OrdinalIgnoreCase))
+                ? $"点位名称 {Tag.Name.Trim()} 已存在"
+                : null;
+
+        // 文件源点位的「地址」是 JSON 字段路径，不能也不该按 PLC 地址规则校验：
+        // TryParseAddress 会把 force.peak 这类字段名当场判成非法。
+        if (IsFileSource)
+        {
+            _addressError = IsCsv ? CsvColumnRules.Error(Tag.Address) : JsonFieldRules.Error(Tag.Address);
+        }
+        else if (Brand is { } brand)
+        {
+            _addressError = string.IsNullOrWhiteSpace(Tag.Address) ? "PLC 地址不能为空"
+                : PlcAddressValidator.TryValidate(brand, Tag.Address, out _, out var error) ? null : error;
+        }
+        else
+        {
+            _addressError = null;
+        }
+
+        _lengthError = TagIsString && !IsFileSource && Tag.Length <= 0 ? "字符串长度必须大于 0" : null;
+        _limitError = TagUsesNumericLimits ? TagLimits.From(Tag).ConsistencyError() : null;
+
+        // 选了 JSON 来源但工站还没配文件：**拦下**而不是只提示 ——
+        // 这种配置采集时每个周期都失败（结果码 9），落库前说清楚比事后排查便宜。
+        if (IsFileSource && !StationHasFilePath)
+        {
+            _addressError ??= "本工站还没配「数据文件路径」，请先到「点位」页签顶部填写或选择";
+        }
+    }
+
+    private void Cancel() => MudDialog?.Cancel();
+
+    private void Submit()
+    {
+        Validate();
+        if (_nameError is not null || _addressError is not null || _lengthError is not null || _limitError is not null)
+        {
+            return;
+        }
+
+        Tag.Address = Tag.Address.Trim();
+        Tag.Name = Tag.Name.Trim();
+        Tag.PositionIndex = 1;
+        Tag.Unit = string.IsNullOrWhiteSpace(Tag.Unit) ? null : Tag.Unit.Trim();
+        MudDialog?.Close(DialogResult.Ok(Tag));
+    }
+}

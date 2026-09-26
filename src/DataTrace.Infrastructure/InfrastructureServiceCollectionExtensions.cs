@@ -67,6 +67,7 @@ public static class InfrastructureServiceCollectionExtensions
         var configPath = Path.Combine(dataRoot, "config.db");
         var runtimePath = Path.Combine(dataRoot, "runtime");
         var curvePath = Path.Combine(dataRoot, "curves");
+        var archivePath = Path.Combine(dataRoot, "archive");
         var spoolPath = Path.Combine(dataRoot, "spool");
 
         // optionsLifetime 必须是 Singleton：下面的工厂也是单例，它注入的就是这份 options，
@@ -84,6 +85,7 @@ public static class InfrastructureServiceCollectionExtensions
 
         services.AddSingleton(new RuntimeDbFactory(runtimePath));
         services.AddSingleton<ICurveFileStore>(_ => new CurveFileStore(curvePath));
+        services.AddSingleton<ICollectArchiveStore>(_ => new CollectArchiveFileStore(archivePath));
         services.AddSingleton<ISpoolStore>(_ => new FileSpoolStore(spoolPath));
         // 基线缓存必须是单例：后台服务写、采集流水线读，两边看到的必须是同一份。
         services.AddSingleton<ICurveBaselineCache, CurveBaselineCache>();

@@ -222,6 +222,7 @@ public sealed class ConfigRepository : IConfigRepository
     {
         station.Code = station.Code.Trim();
         station.Name = station.Name.Trim();
+        station.DataFilePath = (station.DataFilePath ?? "").Trim();
         SyncPositions(station);
         await EnsureStationInvariantsAsync(station, cancellationToken).ConfigureAwait(false);
 
@@ -278,6 +279,23 @@ public sealed class ConfigRepository : IConfigRepository
         if (StationConfigLimits.PalletCodeLengthError(station.PalletCodeLength) is { } lengthError)
         {
             throw new InvalidOperationException($"工站 {station.Code} 的{lengthError}");
+        }
+
+        // 文件源点位必须有一个可读的文件：采集侧遇到"有文件源点位但路径为空"每次都失败，
+        // 与其让现场对着结果码 9 排查，不如在保存工站这一步就说清楚。
+        // 只校验"有文件源点位时非空"，不校验存在性：文件由设备写，配置时它完全可以还没出现。
+        if (station.DataFilePath.Length == 0)
+        {
+            var fileSourceTag = await _db.Tags.AsNoTracking()
+                .Where(x => x.StationId == station.Id && x.Source == TagDataSource.JsonFile)
+                .Select(x => x.Name)
+                .FirstOrDefaultAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (fileSourceTag is not null)
+            {
+                throw new InvalidOperationException(
+                    $"工站 {station.Code} 的点位 {fileSourceTag} 取自数据文件，但「数据文件路径」为空");
+            }
         }
 
         if (await _db.Stations.AnyAsync(
@@ -352,35 +370,51 @@ public sealed class ConfigRepository : IConfigRepository
 
     public async Task SaveTagAsync(TagDefinition tag, CancellationToken cancellationToken = default)
     {
-        tag.Code = tag.Code.Trim();
-        if (tag.Code.Length == 0)
+        tag.Name = (tag.Name ?? "").Trim();
+        if (tag.Name.Length == 0)
         {
-            throw new InvalidOperationException("点位编码不能为空");
+            throw new InvalidOperationException("点位名称不能为空");
         }
 
-        if (tag.PositionIndex < 0)
-        {
-            tag.PositionIndex = 0;
-        }
-        else if (tag.PositionIndex > 1)
-        {
-            tag.PositionIndex = 1;
-        }
+        // 点位一律属于这一件产品。工站级（0）已取消：空位不读，超限记在这一件上。
+        tag.PositionIndex = 1;
 
-        // 库里 (StationId, Code) 上有唯一索引，重名会抛出 SQLite 的原始错误；
+        // 库里 (StationId, Name) 上有唯一索引，重名会抛出 SQLite 的原始错误；
         // 先查出来，用户看到的才是"哪个点位重名"（与型号/PLC 同一套做法）。
         if (await _db.Tags.AnyAsync(
-                x => x.StationId == tag.StationId && x.Id != tag.Id && x.Code.ToLower() == tag.Code.ToLower(),
+                x => x.StationId == tag.StationId && x.Id != tag.Id && x.Name.ToLower() == tag.Name.ToLower(),
                 cancellationToken).ConfigureAwait(false))
         {
-            throw new InvalidOperationException($"点位编码「{tag.Code}」在该工站下已存在");
+            throw new InvalidOperationException($"点位名称「{tag.Name}」在该工站下已存在");
         }
 
         // 对话框里也校验这一条，但那只是 UI：从 MES 或其它入口直接写库照样能留下自相矛盾的限值，
         // 而采集端只会默默把黄线收敛进红线，明细页上显示的预警限就跟实际判据不是一回事了。
         if (TagLimits.From(tag).ConsistencyError() is { } error)
         {
-            throw new InvalidOperationException($"点位 {tag.Code} 的限值互相矛盾：{error}");
+            throw new InvalidOperationException($"点位 {tag.Name} 的限值互相矛盾：{error}");
+        }
+
+        // 文件源点位没有可读的路径：这类配置在采集侧表现为"每次触发都失败（结果码 9）"，
+        // 与其让现场对着结果码排查，不如在保存点位这一步就说清楚。
+        // 只校验非空，不校验存在性：文件由设备写，配置时它完全可以还没出现。
+        if (tag.Source == TagDataSource.JsonFile)
+        {
+            var station = await _db.Stations.AsNoTracking()
+                .Where(x => x.Id == tag.StationId)
+                .Select(x => new { x.Code, x.DataFilePath })
+                .FirstOrDefaultAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (station is null)
+            {
+                throw new InvalidOperationException($"点位 {tag.Name} 所属的工站不存在，无法保存");
+            }
+
+            if (string.IsNullOrWhiteSpace(station.DataFilePath))
+            {
+                throw new InvalidOperationException(
+                    $"点位 {tag.Name} 取自数据文件，但工站 {station.Code} 还没配「数据文件路径」，请先到「点位」页签顶部填写或选择");
+            }
         }
 
         if (tag.Id == 0)
@@ -724,7 +758,7 @@ public sealed class ConfigRepository : IConfigRepository
 
             if (TagLimits.From(tag).Override(TagLimits.From(limit)).ConsistencyError() is { } error)
             {
-                throw new InvalidOperationException($"型号 {code} 的点位 {tag.Code} 限值互相矛盾：{error}");
+                throw new InvalidOperationException($"型号 {code} 的点位 {tag.Name} 限值互相矛盾：{error}");
             }
         }
     }

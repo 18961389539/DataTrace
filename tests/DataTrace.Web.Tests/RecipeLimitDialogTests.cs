@@ -19,7 +19,6 @@ public class RecipeLimitDialogTests : WebTestBase
         {
             Id = id,
             StationId = 1,
-            Code = code,
             Name = $"{code} 名称",
             DataType = PlcDataType.Float,
             LowerLimit = 5,

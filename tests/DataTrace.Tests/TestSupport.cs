@@ -273,7 +273,7 @@ internal class FakeRuntimeStore : IRuntimeStore
                 .Where(x => stationId is null || x.Record.StationId == stationId)
                 .Where(x => recipeCode is null || x.Record.RecipeCode == recipeCode)
                 .SelectMany(x => x.Record.TagValues.Where(t => t.IsOutOfLimit))
-                .Select(t => new TagIssuePoint { TagName = t.TagName, TagCode = t.TagCode })
+                .Select(t => new TagIssuePoint { TagName = t.TagName })
                 .ToList());
 
     public Task<IReadOnlyList<TagIssuePoint>> QueryWarningTagsAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default)
@@ -283,7 +283,7 @@ internal class FakeRuntimeStore : IRuntimeStore
                 .Where(x => stationId is null || x.Record.StationId == stationId)
                 .Where(x => recipeCode is null || x.Record.RecipeCode == recipeCode)
                 .SelectMany(x => x.Record.TagValues.Where(t => t.IsWarning))
-                .Select(t => new TagIssuePoint { TagName = t.TagName, TagCode = t.TagCode })
+                .Select(t => new TagIssuePoint { TagName = t.TagName })
                 .ToList());
 
     public Task<IReadOnlyList<TagTrendPoint>> QueryTagTrendAsync(DateTime from, DateTime to, int tagId, string? recipeCode = null, int take = 0, CancellationToken cancellationToken = default)

@@ -62,6 +62,7 @@ set Kestrel__Endpoints__Http__Url=http://0.0.0.0:5100
 `data/config.db` 配置与用户  
 `data/runtime/data_yyyyMM.db` 月库  
 `data/curves/` 曲线文件  
+`data/archive/` 文件源工站读到的原始 JSON 归档  
 `data/spool/` 写库失败补传  
 `data/logs/` 日志  
 
