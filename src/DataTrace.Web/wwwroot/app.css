@@ -582,8 +582,10 @@ h5:focus,
 }
 
 /* 表格里的图标按钮视觉只有 28px：工控平板戴手套、手指带油污时很难点中。
-   只放大命中区、不动视觉尺寸，避免挤乱表格行高（WCAG 2.5.5 目标尺寸）。 */
-.mud-table .mud-icon-button {
+   只放大命中区、不动视觉尺寸，避免挤乱表格行高（WCAG 2.5.5 目标尺寸）。
+   必须排除 MudSwitch 的滑块基座 —— 它本身是 absolute 定位的 icon-button，
+   选中态靠 translateX(20px) 平移，被撑到 36px 后圆点会整个滑出 44px 的轨道。 */
+.mud-table .mud-icon-button:not(.mud-switch-base) {
     min-width: 36px;
     min-height: 36px;
 }
