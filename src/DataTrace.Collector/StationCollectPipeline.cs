@@ -63,7 +63,7 @@ public sealed class StationCollectPipeline
 
         try
         {
-            outcome = await CollectAndSaveAsync(station, connection, config, queue, triggerTime, cancellationToken)
+            outcome = await CollectAndSaveAsync(station, connection, config, queue, triggerTime, sw, cancellationToken)
                 .ConfigureAwait(false);
             saved = outcome.Record;
             resultCode = saved.ResultCode;
@@ -85,10 +85,9 @@ public sealed class StationCollectPipeline
         {
             await WriteResultAsync(station, connection, queue, resultCode, config.Settings, cancellationToken)
                 .ConfigureAwait(false);
-            if (saved is not null)
-            {
-                saved.DurationMs = (int)sw.ElapsedMilliseconds;
-            }
+            // DurationMs 不在这里赋值：之前在 finally 里改内存对象、库早已写完，等于从没落库。
+            // 现在它在 CollectAndSaveAsync 的记录构造时就取好了，这里直接把同一个值报给看板 ——
+            // 看板节拍与明细/查询列表显示的是同一个数。
 
             SetStatus(
                 station,
@@ -121,6 +120,7 @@ public sealed class StationCollectPipeline
         AppConfigurationSnapshot config,
         PlcRequestQueue queue,
         DateTime triggerTime,
+        Stopwatch sw,
         CancellationToken cancellationToken)
     {
         if (!queue.Driver.TryParseAddress(station.PalletCodeAddress, out var palletAddress))
@@ -547,6 +547,10 @@ public sealed class StationCollectPipeline
             StationCode = station.Code,
             TriggerTime = triggerTime,
             CompleteTime = DateTime.Now,
+            // 耗时必须在 SaveAsync 之前写进实体：之前放在外层 finally 里改内存对象，
+            // 而库在这一步就写完了、之后不再 SaveChanges —— 明细页与查询列表因此永远是 0。
+            // 口径取「采集 + 评估」的耗时，不含本次写库；内存状态（看板节拍）读的是同一个值。
+            DurationMs = (int)sw.ElapsedMilliseconds,
             ResultCode = result,
             Judgement = recordJudgement,
             ErrorMessage = processError,
