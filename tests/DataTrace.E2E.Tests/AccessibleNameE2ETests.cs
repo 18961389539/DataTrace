@@ -90,11 +90,31 @@ public class AccessibleNameE2ETests : E2ETestBase
     {
         // 密码框右侧那只眼睛图标是 MudTextField 的 adornment 按钮，没有可见文字。
         // 它只能通过 AdornmentAriaLabel 命名 —— 漏掉时读屏只会念"按钮"。
+        // 密码框只存在于「新增用户」「重置密码」两个对话框里，用户列表页本身没有密码输入框，
+        // 所以必须先打开对话框再找，否则这条用例会因为找不到元素而失去意义。
         await Page.GotoAsync($"{App.BaseUrl}/users");
         await WaitForAsync(".mud-layout");
+        await WaitForCircuitReadyAsync();
 
-        var toggles = Page.Locator(".mud-input-adornment-icon-button");
-        Assert.True(await toggles.CountAsync() > 0, "页面上找不到密码显隐按钮，用例失去意义");
+        // 与 UiRegression 同一个坑：circuit 接手之前点上去什么都不会发生，所以点完复核对话框。
+        for (var attempt = 0; ; attempt++)
+        {
+            Assert.True(attempt < 10, "点了 10 次仍未打开新增用户对话框");
+            await Page.GetByRole(AriaRole.Button, new() { Name = "新增用户" }).ClickAsync();
+            try
+            {
+                await Page.WaitForSelectorAsync(
+                    ".mud-dialog", new() { Timeout = 2000, State = WaitForSelectorState.Visible });
+                break;
+            }
+            catch (TimeoutException)
+            {
+                await Task.Delay(400);
+            }
+        }
+
+        var toggles = Page.Locator(".mud-dialog .mud-input-adornment-icon-button");
+        Assert.True(await toggles.CountAsync() > 0, "对话框里找不到密码显隐按钮，用例失去意义");
 
         Assert.True(
             await Page.GetByRole(AriaRole.Button, new() { Name = "显示密码" }).CountAsync() > 0,

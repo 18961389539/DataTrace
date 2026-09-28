@@ -1,4 +1,4 @@
-@page "/query/{MonthKey}/{RecordId:long}"
+﻿@page "/query/{MonthKey}/{RecordId:long}"
 @attribute [Authorize]
 @using System.Globalization
 @using System.Text
@@ -177,8 +177,8 @@ else
                     <MudText Typo="Typo.caption" Class="dt-text-error ml-1">@overage</MudText>
                 }
             </MudTd>
-            <MudTd DataLabel="规格限" Class="dt-nowrap">@DisplayLabels.LimitRange(context.LowerLimit, context.UpperLimit)</MudTd>
-            <MudTd DataLabel="预警限" Class="dt-nowrap">@DisplayLabels.LimitRange(context.WarningLowerLimit, context.WarningUpperLimit)</MudTd>
+            <MudTd DataLabel="规格限" Class="dt-num dt-nowrap">@DisplayLabels.LimitRange(context.LowerLimit, context.UpperLimit)</MudTd>
+            <MudTd DataLabel="预警限" Class="dt-num dt-nowrap">@DisplayLabels.LimitRange(context.WarningLowerLimit, context.WarningUpperLimit)</MudTd>
             <MudTd DataLabel="判定">
                 @if (context.IsOutOfLimit)
                 {

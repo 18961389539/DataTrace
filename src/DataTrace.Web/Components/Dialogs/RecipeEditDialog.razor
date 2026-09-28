@@ -5,7 +5,8 @@
         <MudText Typo="Typo.h6">@Title</MudText>
     </TitleContent>
     <DialogContent>
-        <MudTextField @bind-Value="_name" Label="型号名称" Class="mb-2" />
+        <MudTextField @bind-Value="_name" Label="型号名称" Class="mb-2"
+                      HelperText="必填。名称为空时「确定」会一直灰着" />
         <MudTextField @bind-Value="_remark" Label="备注" Lines="2" />
         @if (!string.IsNullOrEmpty(ExtraHint))
         {
@@ -13,6 +14,7 @@
         }
     </DialogContent>
     <DialogActions>
+        <MudText Typo="Typo.caption" Class="dt-muted mr-auto">@SubmitHint</MudText>
         <MudButton OnClick="Cancel">取消</MudButton>
         <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit" Disabled="@(!CanSubmit)">确定</MudButton>
     </DialogActions>
@@ -39,6 +41,9 @@
     }
 
     private bool CanSubmit => !string.IsNullOrWhiteSpace(_name);
+
+    /// <summary>名字为空时按钮会禁用，页脚左侧同步说一句为什么 —— 静默变灰最让人困惑。</summary>
+    private string SubmitHint => CanSubmit ? "" : "请先填写型号名称";
 
     private void Cancel() => MudDialog?.Cancel();
 

@@ -13,9 +13,22 @@
 
 @if (_loadError is not null)
 {
-    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-3">@_loadError</MudAlert>
+    @* 读取失败时整页换错误态：原来只换掉"待处理"那半屏，"最近结束"照常渲染，
+       于是同屏出现「报警加载失败」和「还没有已经接手并解除的报警」，把故障读成了空数据。 *@
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-3">
+        <div class="d-flex align-center flex-wrap gap-2">
+            <span>@_loadError</span>
+            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Refresh"
+                       Disabled="_refreshing" OnClick="@(() => Reload(pushBoard: false))">
+                重试
+            </MudButton>
+        </div>
+    </MudAlert>
 }
-else if (_attention.Count == 0)
+else
+{
+@if (_attention.Count == 0)
 {
     <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true" Class="mb-3">
         没有待接手的报警。
@@ -46,22 +59,30 @@ else
             <MudTd DataLabel="操作">
                 @if (context.NeedsOwner && _canTake)
                 {
+                    @* 进度落在本行：原来只有全局禁用 + Toast，点完看着像所有行一起灰了，
+                       却不知道是哪一条在处理。 *@
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
-                               Disabled="_working" OnClick="@(() => Take(context))">接手</MudButton>
+                               Disabled="_working"
+                               StartIcon="@(_workingId == context.Id ? Icons.Material.Filled.Sync : null)"
+                               OnClick="@(() => Take(context))">
+                        @(_workingId == context.Id ? "接手中…" : "接手")
+                    </MudButton>
                 }
             </MudTd>
         </RowTemplate>
     </MudTable>
 }
 
-<MudText Typo="Typo.subtitle1" Class="mb-2">最近结束</MudText>
+@* 两类表的权重刻意不同：待处理是待办，最近结束是归档。
+   同一套 Dense/Hover 表头和同样的字重会让扫一眼分不出哪张要动手。 *@
+<MudText Typo="Typo.subtitle1" Class="mb-2 dt-archived-title">最近结束</MudText>
 @if (_recent.Count == 0)
 {
     <MudText Typo="Typo.body2" Class="dt-muted">还没有已经接手并解除的报警。</MudText>
 }
 else
 {
-    <MudTable Items="_recent" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+    <MudTable Items="_recent" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="dt-archived-table">
         <HeaderContent>
             <MudTh>发生时间</MudTh>
             <MudTh>解除时间</MudTh>
@@ -78,13 +99,17 @@ else
         </RowTemplate>
     </MudTable>
 }
+}
 
 @code {
     private IReadOnlyList<AlarmIncidentDraft> _attention = [];
     private IReadOnlyList<AlarmIncidentDraft> _recent = [];
     private string? _loadError;
     private bool _canTake;
+    /// <summary>有任意一条在接手时为 true：其余行的按钮一起禁用，防止并发写同一条。</summary>
     private bool _working;
+    /// <summary>正在接手的那一条：进度显示在它自己的按钮上，而不是整表一起灰。</summary>
+    private long? _workingId;
     private bool _refreshing;
 
     protected override async Task OnInitializedAsync()
@@ -107,6 +132,7 @@ else
         }
 
         _working = true;
+        _workingId = item.Id;
         try
         {
             var actor = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
@@ -138,6 +164,7 @@ else
         finally
         {
             _working = false;
+            _workingId = null;
         }
     }
 
@@ -161,8 +188,8 @@ else
         }
         catch (Exception ex)
         {
-            _attention = [];
-            _recent = [];
+            // 不清空上一次读到的数据：清空之后"最近结束"那半屏会渲染成「还没有已经接手并解除的报警」，
+            // 与错误提示同屏自相矛盾，把一次读取故障说成了"确实没有报警"。错误面板已经盖住整页。
             _loadError = $"报警加载失败：{ex.Message}";
         }
         finally

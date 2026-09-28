@@ -22,6 +22,11 @@ public static class DataTraceTheme
             Error = DtColors.Danger,
             Dark = DtColors.AppBar,
 
+            // 顶栏走主题而不是组件上的 Color="Dark"：那样会把 AppbarBackground 变成死配置，
+            // 暗色下顶栏（#0d151c）和紧挨着的抽屉（#18232d）成为两种深色。
+            AppbarBackground = DtColors.AppBar,
+            AppbarText = "#ffffff",
+
             LinesDefault = DtColors.Grid,
             LinesInputs = DtColors.Grid,
             TextPrimary = "#1f2933",

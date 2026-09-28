@@ -1,4 +1,4 @@
-@page "/config/settings"
+﻿@page "/config/settings"
 @attribute [Authorize(Roles = "Administrator,Engineer")]
 @using DataTrace.Application.Backup
 @using DataTrace.Application.Configuration
@@ -132,7 +132,7 @@ else
                             <div class="dt-metric-label">运行环境 <span class="dt-src-badge rt">运行时</span></div>
                             <div class="dt-metric-value">@_envName</div>
                         </div>
-                        <div class="dt-metric" style="min-width:220px;max-width:360px;flex:1">
+                        <div class="dt-metric dt-metric-inline">
                             <div class="dt-metric-label">
                                 数据目录 <span class="dt-src-badge rt">运行时</span>
                                 <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small" Class="pa-0 ml-1"
@@ -143,7 +143,7 @@ else
                         </div>
                         <div class="dt-metric">
                             <div class="dt-metric-label">监听地址 <span class="dt-src-badge ro">客户配置·只读</span></div>
-                            <div class="dt-metric-value" style="font-size:.9rem">@(_bindUrl ?? "—")</div>
+                            <div class="dt-metric-value dt-metric-sm">@(_bindUrl ?? "—")</div>
                         </div>
                     </MudStack>
 
@@ -282,7 +282,7 @@ else
                     </MudStack>
                     @if (_productionSimWarning)
                     {
-                        <MudText Typo="Typo.caption" Class="mt-2" Style="color:var(--mud-palette-warning)">
+                        <MudText Typo="Typo.caption" Class="mt-2 dt-text-warning">
                             当前开着「启动后自动跑仿真」：采集记录来自内置模拟器，不代表真实产线。可在「PLC 仿真」页切换。
                         </MudText>
                     }
@@ -358,7 +358,7 @@ else
 
                     @if (_backupStatusError is { } backupError)
                     {
-                        <MudText Typo="Typo.caption" Class="mt-3" Style="color:var(--mud-palette-error)">
+                        <MudText Typo="Typo.caption" Class="mt-3 dt-text-error">
                             备份状态读取失败：@backupError
                         </MudText>
                     }
@@ -370,13 +370,13 @@ else
                     {
                         @if (!_backupStatus.Enabled)
                         {
-                            <MudText Typo="Typo.caption" Class="mb-2" Style="color:var(--mud-palette-error)">
+                            <MudText Typo="Typo.caption" Class="mb-2 dt-text-error">
                                 自动备份已关闭（Backup:Enabled=false）。请在配置中重新打开，并把备份目录放到独立磁盘/NAS。完整说明见本区上方文案。
                             </MudText>
                         }
                         else if (_backupStatus.IsStaleOrFailed(TimeSpan.FromHours(SystemDefaults.BackupStaleHours)))
                         {
-                            <MudText Typo="Typo.caption" Class="mb-2" Style="color:var(--mud-palette-error)">
+                            <MudText Typo="Typo.caption" Class="mb-2 dt-text-error">
                                 @if (_backupStatus.LastSucceeded == false)
                                 {
                                     <text>最近一次备份失败：@(_backupStatus.LastError ?? "未知错误")。请检查磁盘空间与日志后点「立即备份」。</text>
@@ -391,21 +391,21 @@ else
                         <MudStack Row="true" Spacing="3" Class="flex-wrap my-3">
                             <div class="dt-metric">
                                 <div class="dt-metric-label">上次成功 <span class="dt-src-badge rt">运行时</span></div>
-                                <div class="dt-metric-value" style="font-size:.9rem">
+                                <div class="dt-metric-value dt-metric-sm">
                                     @(_backupStatus.LastSuccessAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "尚无")
                                 </div>
                             </div>
                             <div class="dt-metric">
                                 <div class="dt-metric-label">上次大小 <span class="dt-src-badge rt">运行时</span></div>
-                                <div class="dt-metric-value" style="font-size:.9rem">@FormatBytes(_backupStatus.LastBackupBytes)</div>
+                                <div class="dt-metric-value dt-metric-sm">@FormatBytes(_backupStatus.LastBackupBytes)</div>
                             </div>
                             <div class="dt-metric">
                                 <div class="dt-metric-label">下次计划 <span class="dt-src-badge rt">运行时</span></div>
-                                <div class="dt-metric-value" style="font-size:.9rem">
+                                <div class="dt-metric-value dt-metric-sm">
                                     @(_backupStatus.NextScheduledAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "—")
                                 </div>
                             </div>
-                            <div class="dt-metric" style="min-width:220px;max-width:360px;flex:1">
+                            <div class="dt-metric dt-metric-inline">
                                 <div class="dt-metric-label">
                                     备份目录 <span class="dt-src-badge ro">客户配置·只读</span>
                                     <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small" Class="pa-0 ml-1"
@@ -480,24 +480,24 @@ else
                             </div>
                             <div class="dt-metric">
                                 <div class="dt-metric-label">最久未推送</div>
-                                <div class="dt-metric-value" style="font-size:.9rem">
+                                <div class="dt-metric-value dt-metric-sm">
                                     @(_mesStatus.OldestPendingAt?.ToString("MM-dd HH:mm") ?? "—")
                                 </div>
                             </div>
                             <div class="dt-metric">
                                 <div class="dt-metric-label">最近成功</div>
-                                <div class="dt-metric-value" style="font-size:.9rem">
+                                <div class="dt-metric-value dt-metric-sm">
                                     @(_mesStatus.LastSuccessAt?.ToString("MM-dd HH:mm") ?? "尚无")
                                 </div>
                             </div>
-                            <div class="dt-metric" style="min-width:220px;max-width:420px;flex:1">
+                            <div class="dt-metric dt-metric-inline" style="max-width:420px">
                                 <div class="dt-metric-label">最近一次尝试</div>
-                                <div class="dt-metric-value" style="font-size:.9rem">@LastAttemptText</div>
+                                <div class="dt-metric-value dt-metric-sm">@LastAttemptText</div>
                             </div>
                         </MudStack>
                         @if (MesBacklogWarning is { } backlogWarning)
                         {
-                            <MudText Typo="Typo.caption" Class="mt-1" Style="color:var(--mud-palette-error)">@backlogWarning</MudText>
+                            <MudText Typo="Typo.caption" Class="mt-1 dt-text-error">@backlogWarning</MudText>
                         }
                         else
                         {

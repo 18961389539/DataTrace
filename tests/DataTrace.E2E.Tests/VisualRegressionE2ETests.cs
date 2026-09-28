@@ -163,7 +163,9 @@ public class VisualRegressionE2ETests : E2ETestBase
         {
             var data = new TheoryData<string, string, string>
             {
-                { "filter-card", "/query", ".dt-filter-card" },
+                // 日期写死在 URL 里：筛选卡的默认区间是「今天」，用裸 /query 截图，
+                // 第二天跑必然对不上，而那不是样式退化 —— 是基线自己会变。
+                { "filter-card", "/query?from=2026-01-01&to=2026-01-31", ".dt-filter-card" },
                 { "denied-panel", "/denied?ReturnUrl=%2Fusers", ".dt-main .mud-paper" },
                 { "app-shell", "/", ".mud-drawer" },
                 { "settings-form", "/config/settings", ".dt-main" }
@@ -171,6 +173,17 @@ public class VisualRegressionE2ETests : E2ETestBase
             return data;
         }
     }
+
+    /// <summary>
+    /// 按目标名遮掉的动态区域。截图里只要有一处随环境变化的内容，这条基线就会天天红，
+    /// 而那种红不带任何信息量 —— 只会训练人「红了就重录」。
+    /// </summary>
+    private static readonly Dictionary<string, string[]> GoldenMasks = new()
+    {
+        // 系统设置页：顶部四张健康卡的状态（备份成功时间、授权上限用量）与两处目录路径
+        // 都依赖运行环境，E2E 用的还是每次新建的临时 DataRoot。
+        ["settings-form"] = [".dt-settings-health", ".dt-path-trunc"]
+    };
 
     [Theory]
     [MemberData(nameof(GoldenTargets))]
@@ -180,13 +193,18 @@ public class VisualRegressionE2ETests : E2ETestBase
         await Page.SetViewportSizeAsync(DesktopWidth, DesktopHeight);
         await Page.GotoAsync($"{App.BaseUrl}{path}");
 
+        var masks = GoldenMasks.TryGetValue(target, out var selectors)
+            ? selectors.Select(selector => Page.Locator(selector)).ToArray()
+            : [];
+
         var png = selector.Length == 0
             ? await Page.ScreenshotAsync(new PageScreenshotOptions
             {
                 FullPage = true,
-                Animations = ScreenshotAnimations.Disabled
+                Animations = ScreenshotAnimations.Disabled,
+                Mask = masks
             })
-            : await ScreenshotRegionAsync(selector);
+            : await ScreenshotRegionAsync(selector, masks);
 
         VisualGolden.Verify(target, png);
     }
@@ -197,7 +215,7 @@ public class VisualRegressionE2ETests : E2ETestBase
     /// （报 "Element is not attached to the DOM"，与登录表被抹空是同一个根因）。
     /// 先等包围盒连续两次一致再截，既躲开那次替换，也不会裁到一半的位置。
     /// </summary>
-    private async Task<byte[]> ScreenshotRegionAsync(string selector)
+    private async Task<byte[]> ScreenshotRegionAsync(string selector, ILocator[] masks)
     {
         var locator = Page.Locator(selector);
         await Page.EvaluateAsync("() => window.scrollTo(0, 0)");
@@ -225,7 +243,8 @@ public class VisualRegressionE2ETests : E2ETestBase
                         Width = current.Width,
                         Height = current.Height
                     },
-                    Animations = ScreenshotAnimations.Disabled
+                    Animations = ScreenshotAnimations.Disabled,
+                    Mask = masks
                 });
             }
 

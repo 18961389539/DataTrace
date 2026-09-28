@@ -229,8 +229,10 @@
     {
         get
         {
+            // 停用态用 Color.Default 而不是 Color.Dark：暗色主题下卡片底色本身就很深，
+            // Dark 底 + 深字的胶囊几乎和卡片融成一块，看不出这里有个状态。
             if (Station.State == StationRuntimeState.Disabled)
-                return new("disabled", "停用", Color.Dark, Icons.Material.Filled.Block);
+                return new("disabled", "停用", Color.Default, Icons.Material.Filled.Block);
             if (Station.State == StationRuntimeState.Fault)
                 return new("fault", "故障", Color.Error, Icons.Material.Filled.Report);
             if (Station.State == StationRuntimeState.Busy)

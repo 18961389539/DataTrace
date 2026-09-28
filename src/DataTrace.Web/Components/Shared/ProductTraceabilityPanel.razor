@@ -29,13 +29,31 @@
 
 @if (_error is not null)
 {
-    <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">@_error</MudAlert>
+    @* 失败给两个出口：重试（月库被占用的场景多半下一次就过）与返回查询列表。
+       原来只剩一个搜索框，页面看起来像被清空了。 *@
+    <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">
+        <div class="d-flex align-center flex-wrap gap-2">
+            <span>@_error</span>
+            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                       Disabled="_loading" OnClick="RetryAsync">重试</MudButton>
+            <MudButton Size="Size.Small" Variant="Variant.Text" Href="/query">返回查询</MudButton>
+        </div>
+    </MudAlert>
 }
-else if (_loading)
+else if (_loading && _traces.Count == 0)
 {
     <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="150px" />
 }
-else if (_searched && _traces.Count == 0)
+else
+{
+    @* 重新查询时保留上一份履历、顶部压一条进度条：整个面板高度差一个量级，
+       先抽掉再撑回来会把页面跳动一下，操作工也失去了对照。 *@
+    @if (_loading)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-2" />
+    }
+}
+@if (_searched && _error is null && _traces.Count == 0)
 {
     <MudAlert Severity="Severity.Info" Dense="true">
         没有找到完全匹配的流水号。请核对编号，或确认对应月库记录仍在保留期内。
@@ -95,12 +113,6 @@ else if (_traces.Count > 0 && SelectedTrace is { } trace)
             当前没有可用的工站路线配置，无法判断缺站；实际采集记录仍可在下方逐条查看。
         </MudAlert>
     }
-    else
-    {
-        <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">
-            缺站判断按当前启用工站及顺序对照；若历史期间工艺路线有调整，缺站提示仅供参考。
-        </MudAlert>
-    }
 
     <MudPaper Class="pa-3 mb-3 dt-trace-history">
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2 flex-wrap">
@@ -116,6 +128,10 @@ else if (_traces.Count > 0 && SelectedTrace is { } trace)
                 <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Error">检测到跳站/流程异常</MudChip>
             }
         </MudStack>
+        @* 原来是常驻在结果顶部的 Info alert，一次查询就占三行；口径说明降级成履历里的一行小字。 *@
+        <MudText Typo="Typo.caption" Class="dt-muted mb-1">
+            缺站按当前启用工站对照；历史期间工艺路线有调整时提示仅供参考。
+        </MudText>
         <div class="dt-trace-timeline">
             @foreach (var step in RouteSteps(trace))
             {
@@ -259,6 +275,9 @@ else
 
     private Task SubmitSearchAsync() => SearchAsync();
 
+    /// <summary>错误面板里的重试：沿用同一个流水号再查一次，不重复写入地址栏。</summary>
+    private Task RetryAsync() => SearchAsync(syncUrl: false);
+
     private async Task SearchAsync(bool syncUrl = true)
     {
         var serialNo = _serialNo?.Trim() ?? "";
@@ -272,7 +291,9 @@ else
 
         _serialNo = serialNo;
         _appliedInitialSerial = serialNo;
-        ClearResult();
+        // 不先清空旧结果：履历高度差一个量级，先抽掉再撑回来会让整个页面跳一下，
+        // 操作工也失去了对照。旧内容保留，顶部压一条进度条，查完无缝替换。
+        _error = null;
         _loading = true;
         _searched = true;
         try
@@ -282,7 +303,7 @@ else
         }
         catch (Exception ex)
         {
-            _traces = [];
+            // 失败不清掉上一份履历：错误说明与重试按钮已经在页面上，旧结果留着还能对照。
             _selectedTraceKey = null;
             _error = $"追溯查询失败：{ex.Message}";
         }

@@ -1,5 +1,6 @@
 @inherits LayoutComponentBase
 @using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Http
 @using DataTrace.Web.Services
 @inject CustomerBrandingStore Branding
 @inject IJSRuntime Js
@@ -12,7 +13,9 @@
 <PageTitle>@_siteName</PageTitle>
 
 <MudLayout>
-    <MudAppBar Elevation="1" Color="Color.Dark">
+    @* 不写 Color="Dark"：那会把主题里的 AppbarBackground/AppbarText 变成死配置，
+       暗色下顶栏 #0d151c 与抽屉 #18232d 是两种深色，浅色下也绕开了主题。 *@
+    <MudAppBar Elevation="1">
         <MudTooltip Text="展开/收起菜单">
             <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
                            Class="dt-appbar-menu"
@@ -67,11 +70,19 @@
     private string _siteName = "DataTrace";
     private string? _logoUrl;
 
+    /// <summary>只在预渲染阶段有值；交互渲染时拿不到，那也没关系——那时主题已经定了。</summary>
+    [CascadingParameter] private HttpContext? HttpContext { get; set; }
+
     protected override void OnInitialized()
     {
         var snap = Branding.GetSnapshot();
         _siteName = snap.EffectiveSiteName;
         _logoUrl = snap.ResolvedLogoUrl;
+
+        // 主题偏好存在 Cookie 里，服务端首帧就能定调色板。
+        // 原来只读 localStorage、要等 OnAfterRender 才翻成暗色，暗色用户每次进页面都先闪一帧白底。
+        _isDarkMode = string.Equals(
+            HttpContext?.Request.Cookies[ThemeCookieName], "dark", StringComparison.OrdinalIgnoreCase);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -93,6 +104,9 @@
     }
 
     private void Toggle() => _open = !_open;
+
+    /// <summary>与 wwwroot/js/theme.js 的 storageKey / cookie 名保持一致。</summary>
+    private const string ThemeCookieName = "dt-theme-mode";
 
     private async Task ToggleThemeAsync()
     {

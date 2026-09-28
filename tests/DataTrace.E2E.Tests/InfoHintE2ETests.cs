@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Xunit;
 
 namespace DataTrace.E2E.Tests;
@@ -31,11 +32,12 @@ public sealed class InfoHintE2ETests : E2ETestBase
 
         // 页面上每枚 ⓘ 都带一个 .mud-tooltip 节点（内容懒渲染，未显示时是空的），
         // 所以要找"哪一个装了三段文案"，而不是取第一个。
-        // 三段里最有代表性的两句：口径（怎么算）与影响（会不会阻断生产）。
+        // 两句取样跟着 HelpTexts.YieldRate 走：口径（怎么算）与影响（判废会不会漏记）。
+        // 别写死整句 —— 文案一改这条就红，而文案改动本身是正常的产品演进。
         await Page.WaitForFunctionAsync("""
             () => [...document.querySelectorAll('.mud-tooltip')].some(t => {
                 const text = t.innerText || '';
-                return text.includes('不进分子也不进分母') && text.includes('不阻断生产');
+                return text.includes('未判定不进分母') && text.includes('不再把那些 OK 记进合格率');
             })
             """);
 
@@ -143,21 +145,32 @@ public sealed class InfoHintE2ETests : E2ETestBase
         // 挑正文最长的一枚：导出上限那条还带动态命中条数，Extra + 三段一起撑到最宽。
         var hint = Page.Locator("button[aria-label='说明：导出上限']");
         Assert.Equal(1, await hint.CountAsync());
-        await hint.HoverAsync();
 
-        await Page.WaitForFunctionAsync("""
-            () => [...document.querySelectorAll('.mud-tooltip')].some(t => (t.innerText || '').trim().length > 10)
-            """);
+        // 只认带 .mud-popover-open 的那一个：页面上每枚 ⓘ 都留着一个空壳 .mud-tooltip，
+        // 按"有文字"去找，会在等待和取包围盒之间被下一次渲染清掉（find 返回 undefined）。
+        // 打开状态可能随页面重渲染掉下去，所以整段带重试。
+        string? raw = null;
+        for (var attempt = 0; attempt < 5 && raw is null; attempt++)
+        {
+            await hint.HoverAsync();
+            await Page.WaitForFunctionAsync("""
+                () => [...document.querySelectorAll('.mud-tooltip.mud-popover-open')]
+                        .some(t => (t.innerText || '').trim().length > 10)
+                """);
 
-        var box = await Page.EvaluateAsync<double[]>("""
-            () => {
-                const tip = [...document.querySelectorAll('.mud-tooltip')]
-                    .find(t => (t.innerText || '').trim().length > 10);
-                const r = tip.getBoundingClientRect();
-                return [r.left, r.top, r.right, r.bottom, window.innerWidth, window.innerHeight];
-            }
-            """);
+            raw = await Page.EvaluateAsync<string?>( """
+                () => {
+                    const tip = [...document.querySelectorAll('.mud-tooltip.mud-popover-open')]
+                        .find(t => (t.innerText || '').trim().length > 10);
+                    if (!tip) return null;
+                    const r = tip.getBoundingClientRect();
+                    return JSON.stringify([r.left, r.top, r.right, r.bottom, window.innerWidth, window.innerHeight]);
+                }
+                """);
+        }
 
+        Assert.True(raw is not null, "浮层一直没稳定下来，量不到包围盒");
+        var box = JsonSerializer.Deserialize<double[]>(raw!);
         Assert.NotNull(box);
         var (left, top, right, bottom, width, height) = (box[0], box[1], box[2], box[3], box[4], box[5]);
         Assert.True(left >= -1, $"浮层左边被裁：left={left:0}");
@@ -180,7 +193,7 @@ public sealed class InfoHintE2ETests : E2ETestBase
 
         await Page.WaitForFunctionAsync("""
             () => [...document.querySelectorAll('.mud-tooltip')]
-                    .some(t => (t.innerText || '').includes('不进分子也不进分母'))
+                    .some(t => (t.innerText || '').includes('未判定不进分母'))
             """);
     }
 }

@@ -15,8 +15,12 @@ public class UiRegressionE2ETests : E2ETestBase
     {
     }
 
-    private Task ClickAsync(string name)
-        => Page.GetByRole(AriaRole.Button, new() { Name = name }).ClickAsync();
+    /// <param name="exact">
+    /// 按名字全等匹配。默认子串匹配：查询页现在同时有模式切换按钮「记录查询」和表单提交按钮「查询」，
+    /// 按 "查询" 找会一次命中两个，Playwright 直接抛 strict mode violation —— 四条用例同一个根因。
+    /// </param>
+    private Task ClickAsync(string name, bool exact = false)
+        => Page.GetByRole(AriaRole.Button, new() { Name = name, Exact = exact }).ClickAsync();
 
     /// <summary>
     /// 点开一个对话框，必要时重试。
@@ -50,7 +54,7 @@ public class UiRegressionE2ETests : E2ETestBase
         var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
         while (DateTime.UtcNow < deadline)
         {
-            await ClickAsync("查询");
+            await ClickAsync("查询", exact: true);
             try
             {
                 await WaitBodyContainsAsync("明细", 3000);

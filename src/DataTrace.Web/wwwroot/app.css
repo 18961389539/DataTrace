@@ -1,4 +1,4 @@
-/* 字体、配色、圆角都来自 DataTraceTheme（Mud 主题）注入的 CSS 变量。
+﻿/* 字体、配色、圆角都来自 DataTraceTheme（Mud 主题）注入的 CSS 变量。
    本文件只放主题表达不了的局部样式；新增颜色请引 palette 变量，不要再写十六进制。 */
 
 :root {
@@ -21,6 +21,7 @@
        写死十六进制就换不了主题档，暗色下仍是浅色档的主色。 */
     --dt-primary-rgb: 27, 110, 194;
     --dt-danger-rgb: 198, 40, 40;
+    --dt-warning-rgb: 179, 106, 0;
 
     /* 数据表内滚区高度。表头吸附必须给容器一个高度才有滚动容器，
        高度写在这一处而不是各页的标签上，改页头或筛选卡时只调这里。
@@ -540,6 +541,19 @@ h5:focus,
     padding: 10px 12px;
 }
 
+/* 设置页里并排放的窄卡（MES 地址、备份目录这类长文本）：原来每处各写一份
+   min-width/max-width/flex 的内联样式，改一处漏五处。 */
+.dt-metric-inline {
+    min-width: 220px;
+    max-width: 360px;
+    flex: 1;
+}
+
+/* 长路径/长 URL 的值不需要 1.25rem 的大字，只求放得下、读得清。 */
+.dt-metric-sm {
+    font-size: 0.9rem;
+}
+
 .dt-metric-label {
     font-size: 0.75rem;
     color: var(--mud-palette-text-secondary);
@@ -665,7 +679,7 @@ h5:focus,
     display: block;
     flex: 0 0 auto;
     font-size: 1.375rem;
-    font-weight: 500;
+    font-weight: 600;
     line-height: 1.1;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -677,10 +691,12 @@ h5:focus,
 
 /* 提示行与主指标同一行：写成整块换行会把「本班完成 120」和它的辅助统计拆成两行，
    四格里两格两行、两格一行，读起来是错层。
-   代价是长句（直通率、当前间隔会拿到整句说明）不再换行，改成单行截断，
-   宁可截断也不能捅出圆角底块。 */
+   basis 必须是 0 而不是 auto：flex-wrap:wrap 判断"这一行还放得下吗"用的是**收缩前**的
+   内容宽度，basis:auto 时长句一上来就被判成放不下，直接换到第二行，后面再能收缩也没用。
+   写 0 之后它只吃剩下来的宽度，放不下就截断。
+   收缩到剩不下再截断，宁可截断也不能换行或捅出圆角底块。 */
 .dt-kpi-hint {
-    flex: 0 0 auto;
+    flex: 1 1 0;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -736,6 +752,9 @@ h5:focus,
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    /* 站名是这张卡的主语：字号与节拍值相同（16px），字重必须压过它，
+       否则卡片里最醒目的是数字而不是"这是哪台设备"。 */
+    font-weight: 600;
 }
 
 .dt-station-status {
@@ -782,7 +801,7 @@ h5:focus,
 
 .dt-station-meta-value {
     font-size: 1rem;
-    font-weight: 600;
+    font-weight: 500;
     font-variant-numeric: tabular-nums;
 }
 
@@ -806,8 +825,19 @@ h5:focus,
         border-left-color: var(--mud-palette-info);
     }
 
+    /* 整卡压到 55% 不透明会把站名、点位值、节拍一起拉灰：浅色下 #1f2933 落在白底上只剩约 2.9:1，
+       暗色下更低，两条都低于正文 4.5:1。改成只淡化边框与底色、外加一个「已停用」标记，
+       数值保持全对比 —— 停用不等于不必读。 */
     .dash-station.disabled {
-        opacity: 0.55;
+        border-left-color: var(--mud-palette-lines-default);
+        border-left-style: dashed;
+        background: var(--mud-palette-action-disabled-background);
+    }
+
+    .dash-station.disabled .dt-station-title {
+        text-decoration: line-through;
+        text-decoration-thickness: 1px;
+        text-decoration-color: var(--mud-palette-lines-default);
     }
 
 .dash-tags {
@@ -866,7 +896,7 @@ h5:focus,
 
 .dash-tag-value {
     font-variant-numeric: tabular-nums;
-    font-weight: 600;
+    font-weight: 500;
     white-space: nowrap;
 }
 
@@ -1124,6 +1154,18 @@ h5:focus,
     margin: 12px 0 0;
 }
 
+/* 首次部署的安全提醒：原来和上面那句普通说明同形同色，整页最该被看见的一句最不显眼。
+   警告色 + 左侧粗边 + 浅底，与正文说明区分开；底色用通道值配 rgba，暗色下自动换档。 */
+.login-security {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border: 1px solid rgba(var(--dt-warning-rgb), .55);
+    border-left: 3px solid var(--mud-palette-warning);
+    border-radius: var(--dt-radius);
+    background: rgba(var(--dt-warning-rgb), .1);
+    color: var(--mud-palette-warning);
+}
+
 /* ---------- 窄屏：卡片与主内容留白收紧 ---------- */
 
 @media (max-width: 960px) {
@@ -1155,6 +1197,58 @@ h5:focus,
     cursor: pointer;
 }
 
+/* 报警页：待处理是待办，最近结束是归档。归档整体降一档——
+   两张表用同一套 Dense/Hover 和同样的字重时，扫一眼分不出哪张是要动手的。 */
+.dt-archived-title {
+    color: var(--mud-palette-text-secondary);
+}
+
+.dt-archived-table .mud-table-head th {
+    color: var(--mud-palette-text-secondary);
+    font-weight: 400;
+}
+
+.dt-archived-table .mud-table-body td {
+    color: var(--mud-palette-text-secondary);
+}
+
+/* 长内容对话框（型号限值矩阵、曲线判据卡片）：限高 + 内滚。
+   此前只有「本页说明」自己处理过高度，其余对话框内容一多就把整框撑出屏幕，
+   底部的「取消/确定」跟着消失，只能按 Esc 走。 */
+.mud-dialog .dt-dialog-scroll {
+    max-height: min(62vh, 640px);
+    overflow-y: auto;
+}
+
+/* 页头右端的统计与操作：刷新期间统计文字还是上一轮的值，压淡并让位给进度圈。 */
+.dt-page-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.dt-page-actions[aria-busy="true"] {
+    opacity: 0.55;
+}
+
+/* 可点击 chip（看板的「模拟数据」「当前型号」）：MudBlazor 只给 cursor:pointer，
+   而 .mud-chip 自带 outline:0 把焦点环去掉了 —— 键盘用户看不出焦点落在哪一枚，
+   摸上去也没有任何"这枚能点"的反馈。命中区同时从 24px 抬到 32px（工控平板戴手套）。 */
+.mud-chip.mud-clickable {
+    cursor: pointer;
+    min-height: 32px;
+}
+
+.mud-chip.mud-clickable:hover {
+    background-color: var(--mud-palette-action-default-hover);
+}
+
+.mud-chip.mud-clickable:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 2px;
+}
+
 /* 操作列：小屏上四个按钮挤在一行会互相压扁，允许换行但保持右对齐 */
 .dt-actions {
     display: inline-flex;
@@ -1174,9 +1268,17 @@ h5:focus,
    只放大命中区、不动视觉尺寸，避免挤乱表格行高（WCAG 2.5.5 目标尺寸）。
    必须排除 MudSwitch 的滑块基座 —— 它本身是 absolute 定位的 icon-button，
    选中态靠 translateX(20px) 平移，被撑到 36px 后圆点会整个滑出 44px 的轨道。 */
-.mud-table .mud-icon-button:not(.mud-switch-base) {
+.mud-table .mud-icon-button:not(.mud-switch-base),
+.station-pane .mud-icon-button:not(.mud-switch-base) {
     min-width: 36px;
     min-height: 36px;
+}
+
+/* 标注用的 ⓘ 不承担表格行内那种"必中"的操作，抬到 32px 即可：
+   再大就会把表头/标签行撑高，得不偿失。 */
+.dt-info-hint.mud-icon-button {
+    min-width: 32px;
+    min-height: 32px;
 }
 
 /* 看板数值刷新：元素用 @key 重建，动画随之重放，操作工一眼能看出哪一格刚变化 */
@@ -1389,7 +1491,7 @@ h5:focus,
     white-space: nowrap;
     border: 1px solid var(--mud-palette-lines-default);
     color: var(--mud-palette-text-secondary);
-    background: #f7f9fb;
+    background: var(--dt-chart-bg);
     vertical-align: middle;
 }
 
@@ -1446,13 +1548,13 @@ h5:focus,
 }
 
 .dt-settings-readonly {
-    background: #f7f9fb;
+    background: var(--dt-chart-bg);
     border-radius: var(--dt-radius);
 }
 
 .dt-danger-zone {
-    border: 1px dashed #f0b8b8;
-    background: #fffaf9;
+    border: 1px dashed rgba(var(--dt-danger-rgb), .45);
+    background: rgba(var(--dt-danger-rgb), .04);
     border-radius: var(--dt-radius);
     padding: 14px 16px;
     margin-top: 8px;
@@ -1802,8 +1904,8 @@ body.dt-shopfloor .dt-recent-panels .mud-expand-panel-content {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    height: 32px;
-    padding: 0 10px 0 8px;
+    height: 36px;
+    padding: 0 12px 0 8px;
     border: 0;
     border-radius: 8px;
     background: var(--mud-palette-primary);
@@ -1861,6 +1963,7 @@ html.dt-theme-dark {
 
     --dt-primary-rgb: 138, 180, 248;
     --dt-danger-rgb: 239, 154, 154;
+    --dt-warning-rgb: 255, 183, 77;
 }
 
 html.dt-theme-dark .dt-row-error td {

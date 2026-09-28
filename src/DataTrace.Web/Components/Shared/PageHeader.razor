@@ -8,7 +8,14 @@
     <MudText Typo="Typo.h5" Class="dt-page-title">@Title</MudText>
     @ChildContent
     <MudSpacer />
-    @Actions
+    @if (Busy)
+    {
+        <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Primary"
+                             aria-label="正在刷新" />
+    }
+    @* 刷新期间右端的统计（"共 N 条"）还是上一轮的数字：整块压淡并标 aria-busy，
+       免得用户把过期数字当成刚查出来的结果。 *@
+    <span class="dt-page-actions" aria-busy="@(Busy ? "true" : "false")">@Actions</span>
     @if (!string.IsNullOrWhiteSpace(HelpRoute))
     {
         <PageHelp Route="@HelpRoute" />
@@ -30,6 +37,9 @@
 
     /// <summary>靠右的统计文字或操作按钮。</summary>
     [Parameter] public RenderFragment? Actions { get; set; }
+
+    /// <summary>正在取数。为 true 时页头右端显示进度圈，并把统计文字整块压淡。</summary>
+    [Parameter] public bool Busy { get; set; }
 
     /// <summary>本页「本页说明」入口对应的路由（相对路径，见 HelpTexts.ForPage）；留空则不显示。</summary>
     [Parameter] public string? HelpRoute { get; set; }

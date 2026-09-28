@@ -1,4 +1,4 @@
-@page "/logs"
+﻿@page "/logs"
 @attribute [Authorize(Roles = "Administrator,Engineer")]
 @using DataTrace.Application.Configuration
 @using DataTrace.Domain.Entities
@@ -10,10 +10,10 @@
 @inject IJSRuntime Js
 @inject DtToast Toast
 
-<PageHeader Title="审计日志" HelpRoute="logs">
+<PageHeader Title="审计日志" HelpRoute="logs" Busy="_loading">
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">
-            命中 @_total 条（配置库 AuditLogs；每页 @PageSize 条）
+            命中 @_total 条（配置库 AuditLogs；每页 @_pageSize 条）
         </MudText>
     </Actions>
 </PageHeader>
@@ -110,51 +110,20 @@
     </MudStack>
 </MudPaper>
 
-@* 筛完只剩一个命中数，当前条件就看不回来了 —— 这里把条件摊开，逐个可删。 *@
+@* 筛完只剩一个命中数，当前条件就看不回来了 —— 这里把条件摊开，逐个可删。
+   与查询页/报表页同一套数据驱动写法；aria-label 带上具体条件，
+   读屏用户听到的 8 个删除按钮才不是同一句话。 *@
 @if (HasFilters)
 {
     <div class="dt-filter-chips mb-3">
-        @if (!string.IsNullOrWhiteSpace(_keyword))
+        @foreach (var filter in ActiveFilterList)
         {
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
-                     >关键字 @_keyword<MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close" aria-label="移除该筛选条件" OnClick="@(() => ClearOneAsync(() => _keyword = null))" /></MudChip>
-        }
-        @if (!string.IsNullOrWhiteSpace(_action))
-        {
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
-                     >动作 @DisplayLabels.AuditAction(_action)<MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close" aria-label="移除该筛选条件" OnClick="@(() => ClearOneAsync(() => _action = ""))" /></MudChip>
-        }
-        @if (!string.IsNullOrWhiteSpace(_user))
-        {
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
-                     >用户 @_user<MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close" aria-label="移除该筛选条件" OnClick="@(() => ClearOneAsync(() => _user = ""))" /></MudChip>
-        }
-        @if (!string.IsNullOrWhiteSpace(_entityType))
-        {
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
-                     >对象 @DisplayLabels.EntityType(_entityType)<MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close" aria-label="移除该筛选条件" OnClick="@(() => ClearOneAsync(() => _entityType = ""))" /></MudChip>
-        }
-        @if (!string.IsNullOrWhiteSpace(_outcome))
-        {
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
-                     >结果 @OutcomeLabel(_outcome)<MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close" aria-label="移除该筛选条件" OnClick="@(() => ClearOneAsync(() => _outcome = ""))" /></MudChip>
-        }
-        @if (!string.IsNullOrWhiteSpace(_source))
-        {
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
-                     >来源 @_source<MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close" aria-label="移除该筛选条件" OnClick="@(() => ClearOneAsync(() => _source = null))" /></MudChip>
-        }
-        @if (!string.IsNullOrWhiteSpace(_correlationId))
-        {
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
-                     >关联 ID @_correlationId<MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close" aria-label="移除该筛选条件" OnClick="@(() => ClearOneAsync(() => _correlationId = null))" /></MudChip>
-        }
-        @if (_from is not null || _to is not null)
-        {
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
-                     >
-                @DateRangeFilter.Format(_from, _to)
-            <MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close" aria-label="移除该筛选条件" OnClick="@(() => ClearOneAsync(() => { _from = null; _to = null; }))" /></MudChip>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
+                @filter.Label
+                <MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close"
+                               aria-label="@($"移除筛选条件：{filter.Label}")"
+                               OnClick="@(() => ClearOneAsync(filter.Clear))" />
+            </MudChip>
         }
         <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ClearAllAsync">清空全部</MudButton>
     </div>
@@ -225,7 +194,10 @@
 
 @* 键 = 这条记录指向谁（用户 / 型号编码 / 月库-记录号 / 导出区间）；变更 = 改了什么。
    非变更类动作（登录、退出、导出）把说明写在变更列，不当成"旧值 → 新值"渲染。 *@
-<MudTable Items="_pageItems" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm" Loading="_loading">
+@* 50 行密表必须给容器一个高度，表头才吸得住：滚到下面时「结果 / 来源」「变更」这两列
+   是最需要对照表头看的，而 JS 渲染的表格没有 FixedHeader 就整页滚。 *@
+<MudTable Items="_pageItems" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm" Loading="_loading"
+          FixedHeader="true" Height="var(--dt-grid-height)">
     <HeaderContent>
         <MudTh>
             <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0" OnClick="ToggleSortAsync"
@@ -355,15 +327,26 @@
     </NoRecordsContent>
 </MudTable>
 
-<MudStack Row="true" AlignItems="AlignItems.Center" Class="mt-3" Spacing="3">
-    <MudPagination Count="_pages" Selected="_page" SelectedChanged="OnPage" BoundaryCount="1" MiddleCount="3" />
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mt-3 flex-wrap" Spacing="3">
+    @* 加载期间禁用：不加守卫时连点页码会重复发请求，而且点了没有任何反馈。 *@
+    <MudPagination Count="_pages" Selected="_page" SelectedChanged="OnPage" BoundaryCount="1" MiddleCount="3"
+                   Disabled="_loading" />
+    <MudSelect T="int" Value="_pageSize" ValueChanged="OnPageSizeChanged" Dense="true"
+               Disabled="_loading" Class="dt-pagesize" Label="每页条数">
+        @foreach (var size in PageSizes)
+        {
+            <MudSelectItem T="int" Value="size">@size 条/页</MudSelectItem>
+        }
+    </MudSelect>
+    @* 总数在页头已经写过一次（"命中 N 条"），这里只留页码，别把同一句话摆两次。 *@
     <MudText Typo="Typo.caption" Class="dt-muted">
-        第 @_page / @_pages 页，命中 @_total 条
+        第 @_page / @_pages 页
     </MudText>
 </MudStack>
 
 @code {
-    private const int PageSize = 50;
+    private static readonly int[] PageSizes = [20, 50, 100];
+    private int _pageSize = 50;
     private const int ExportBatchSize = 2000;
     private const int TimelineCap = 5000;
     private sealed record AuditExportRequest(
@@ -430,6 +413,34 @@
         || !string.IsNullOrWhiteSpace(_correlationId)
         || _from is not null
         || _to is not null;
+
+    /// <summary>与查询/报表页同一套 chip 数据：只列真正生效的条件，渲染端不再逐条手抄。</summary>
+    private sealed record ActiveFilter(string Label, Action Clear);
+
+    private IReadOnlyList<ActiveFilter> ActiveFilterList
+    {
+        get
+        {
+            var list = new List<ActiveFilter>();
+            if (!string.IsNullOrWhiteSpace(_keyword)) list.Add(new($"关键字 {_keyword}", () => _keyword = null));
+            if (!string.IsNullOrWhiteSpace(_action)) list.Add(new($"动作 {DisplayLabels.AuditAction(_action)}", () => _action = ""));
+            if (!string.IsNullOrWhiteSpace(_user)) list.Add(new($"用户 {_user}", () => _user = ""));
+            if (!string.IsNullOrWhiteSpace(_entityType)) list.Add(new($"对象 {DisplayLabels.EntityType(_entityType)}", () => _entityType = ""));
+            if (!string.IsNullOrWhiteSpace(_outcome)) list.Add(new($"结果 {OutcomeLabel(_outcome)}", () => _outcome = ""));
+            if (!string.IsNullOrWhiteSpace(_source)) list.Add(new($"来源 {_source}", () => _source = null));
+            if (!string.IsNullOrWhiteSpace(_correlationId)) list.Add(new($"关联 ID {_correlationId}", () => _correlationId = null));
+            if (_from is not null || _to is not null)
+            {
+                list.Add(new(DateRangeFilter.Format(_from, _to), () =>
+                {
+                    _from = null;
+                    _to = null;
+                }));
+            }
+
+            return list;
+        }
+    }
 
     private int AdvancedFilterCount =>
         (!string.IsNullOrWhiteSpace(_user) ? 1 : 0)
@@ -675,8 +686,8 @@
                 keyword: keyword,
                 action: string.IsNullOrWhiteSpace(_action) ? null : _action,
                 fromInclusive: from,
-                skip: (_page - 1) * PageSize,
-                take: PageSize,
+                skip: (_page - 1) * _pageSize,
+                take: _pageSize,
                 keywordMatchedActions: matchedActions,
                 keywordMatchedEntityTypes: matchedEntities,
                 toInclusive: to,
@@ -690,7 +701,7 @@
             _pageItems = items.ToList();
             _total = total;
             _loadFailed = false;
-            _pages = Math.Max(1, (int)Math.Ceiling(_total / (double)PageSize));
+            _pages = Math.Max(1, (int)Math.Ceiling(_total / (double)_pageSize));
             if (_page > _pages)
             {
                 _page = _pages;
@@ -783,6 +794,14 @@
     private async Task OnPage(int page)
     {
         _page = page;
+        await Reload();
+    }
+
+    private async Task OnPageSizeChanged(int size)
+    {
+        _pageSize = size;
+        // 每页条数变了，原来的页码多半已经没有意义（第 5 页可能根本不存在），回到第一页。
+        _page = 1;
         await Reload();
     }
 

@@ -1,4 +1,4 @@
-@page "/query"
+﻿@page "/query"
 @attribute [Authorize]
 @using DataTrace.Application.Configuration
 @using DataTrace.Application.Runtime
@@ -13,7 +13,7 @@
 @inject NavigationManager Nav
 @implements IDisposable
 
-<PageHeader Title="数据查询" HelpRoute="query">
+<PageHeader Title="数据查询" HelpRoute="query" Busy="_loading">
     <Actions>
         @if (_traceMode)
         {
@@ -191,7 +191,7 @@ else
                 </TooltipContent>
             </MudTooltip>
         </MudTd>
-        <MudTd DataLabel="耗时" Class="dt-right dt-nowrap">@DurationFormat.Text(context.Record.DurationMs)</MudTd>
+        <MudTd DataLabel="耗时" Class="dt-num dt-nowrap">@DurationFormat.Text(context.Record.DurationMs)</MudTd>
         <MudTd DataLabel="操作" Class="dt-right">
             @* 复制放在操作列而不是托盘码单元格里：整行可点进明细时，
                行中间的任何小控件都会抢走"点行"这一下，尤其在小屏上。

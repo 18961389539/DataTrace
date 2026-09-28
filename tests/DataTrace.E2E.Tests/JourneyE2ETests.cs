@@ -16,8 +16,8 @@ public class JourneyE2ETests : E2ETestBase
     {
     }
 
-    private Task ClickButtonAsync(string name)
-        => Page.GetByRole(AriaRole.Button, new() { Name = name }).ClickAsync();
+    private Task ClickButtonAsync(string name, bool exact = false)
+        => Page.GetByRole(AriaRole.Button, new() { Name = name, Exact = exact }).ClickAsync();
 
     /// <summary>
     /// 等第一条采集记录可查。页面只在加载和点「查询」时取数，而首条记录要等模拟器跑完一轮，
@@ -30,7 +30,7 @@ public class JourneyE2ETests : E2ETestBase
 
         while (DateTime.UtcNow < deadline)
         {
-            await ClickButtonAsync("查询");
+            await ClickButtonAsync("查询", exact: true);
             try
             {
                 await WaitBodyContainsAsync("明细", 3000);

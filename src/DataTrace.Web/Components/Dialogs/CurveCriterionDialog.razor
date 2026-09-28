@@ -1,10 +1,11 @@
-@using DataTrace.Domain.Evaluation
+﻿@using DataTrace.Domain.Evaluation
 @inject IDialogService Dialogs
 <MudDialog>
     <TitleContent>
         <MudText Typo="Typo.h6">波形判据 · @Curve.Code @Curve.Name</MudText>
     </TitleContent>
     <DialogContent>
+    <div class="dt-dialog-scroll">
         <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-3">
             留空的项不参与判定。一条判据只作用于一个序列；序列选「主序列」时自动跟随该曲线的主序列（优先 Y 角色）。
             不配置任何判据时，这条曲线只做点位限值判定。
@@ -107,6 +108,7 @@
         }
 
         <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Add" OnClick="AddItem">新增判据</MudButton>
+    </div>
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="Cancel">取消</MudButton>
