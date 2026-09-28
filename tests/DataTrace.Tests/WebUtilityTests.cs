@@ -383,6 +383,7 @@ public class DisplayLabelsTests
     [InlineData("config/stations", "工站配置")]
     [InlineData("users", "用户")]
     [InlineData("logs", "审计日志")]
+    [InlineData("alarms", "报警")]
     [InlineData("simulate", "PLC 仿真")]
     public void PageTitle_maps_known_routes(string path, string expected)
         => Assert.Equal(expected, DisplayLabels.PageTitle(path));

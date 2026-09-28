@@ -23,9 +23,9 @@ public sealed class CurveBaselineFactory
     public const int MaxSamplesPerSeries = 500;
 
     private readonly IConfigRepository _config;
-    private readonly IRuntimeStore _store;
+    private readonly IRuntimeAnalytics _store;
 
-    public CurveBaselineFactory(IConfigRepository config, IRuntimeStore store)
+    public CurveBaselineFactory(IConfigRepository config, IRuntimeAnalytics store)
     {
         _config = config;
         _store = store;

@@ -1,16 +1,11 @@
 @page "/users"
 @attribute [Authorize(Roles = "Administrator")]
-@using DataTrace.Infrastructure.Identity
-@using Microsoft.AspNetCore.Identity
-@using DataTrace.Web.Services
+@using DataTrace.Application.Identity
 @using DataTrace.Domain.Validation
-@using Microsoft.EntityFrameworkCore
-@using DataTrace.Application.Configuration
-@inject UserManager<ApplicationUser> UserManager
+@inject IUserAdministration UsersAdmin
 @inject IDialogService DialogService
 @inject AuthenticationStateProvider Auth
 @inject DtToast Toast
-@inject IAuditLogger Audit
 
 <PageHeader Title="用户" HelpRoute="users">
     <Actions>
@@ -237,17 +232,10 @@
         _loadError = null;
         try
         {
-            var list = await UserManager.Users.ToListAsync();
-            _users = [];
-            foreach (var user in list)
-            {
-                var roles = await UserManager.GetRolesAsync(user);
-                _users.Add(new UserRow(user, user.UserName ?? "", user.DisplayName, [.. roles]));
-            }
-
-            // 不排序时顺序取决于数据库返回：账号多了以后刷新一下位置就变，
-            // 看着像"账号被删掉又加回来"，照着名单核对权限时会怀疑自己记错了。
-            _users = _users.OrderBy(u => u.UserName, StringComparer.OrdinalIgnoreCase).ToList();
+            var list = await UsersAdmin.ListAsync();
+            _users = list
+                .Select(account => new UserRow(account, account.UserName, account.DisplayName, account.Roles.ToList()))
+                .ToList();
         }
         catch (Exception ex)
         {
@@ -304,49 +292,20 @@
         _working = true;
         try
         {
-            if (await UserManager.FindByNameAsync(request.UserName) is not null)
+            var actor = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            var created = await UsersAdmin.CreateAsync(
+                request.UserName, request.DisplayName, request.Password, request.Role, actor);
+            var message = created.Status == UserAdminStatus.Success
+                ? $"{created.Message}（{DisplayLabels.RoleText(request.Role)}）"
+                : created.Message;
+            Show(created, message);
+            if (created.Status != UserAdminStatus.Error)
             {
-                Toast.Add("该用户名已存在", Severity.Error);
-                return;
+                await Reload();
             }
-
-            var user = new ApplicationUser
-            {
-                UserName = request.UserName,
-                DisplayName = request.DisplayName,
-                Email = $"{request.UserName}@datatrace.local"
-            };
-            var result = await UserManager.CreateAsync(user, request.Password);
-            if (!result.Succeeded)
-            {
-                await AuditSafe("Create", request.UserName, null,
-                    "create failed; " + PasswordPolicy.FormatIdentityErrors(result),
-                    "Failure");
-                Toast.Add(PasswordPolicy.FormatIdentityErrors(result), Severity.Error);
-                return;
-            }
-
-            var roleResult = await UserManager.AddToRoleAsync(user, request.Role);
-            if (!roleResult.Succeeded)
-            {
-                await AuditSafe("Create", request.UserName, null,
-                    $"partial; account created; role={request.Role} failed; {PasswordPolicy.FormatIdentityErrors(roleResult)}",
-                    "Failure");
-                Toast.Add("用户已创建，但角色分配失败：" + string.Join("；", roleResult.Errors.Select(e => e.Description)),
-                    Severity.Warning);
-            }
-            else
-            {
-                await AuditSafe("Create", request.UserName, null,
-                    $"display={request.DisplayName}; role={request.Role}");
-                Toast.Add($"已创建 {request.UserName}（{DisplayLabels.RoleText(request.Role)}）", Severity.Success);
-            }
-
-            await Reload();
         }
         catch (Exception ex)
         {
-            await AuditSafe("Create", request.UserName, null, $"create failed; {ex.Message}", "Failure");
             Toast.Add($"创建用户失败：{ex.Message}", Severity.Error);
         }
         finally
@@ -356,8 +315,7 @@
     }
 
     /// <summary>账号是否处于登录锁定状态。</summary>
-    private static bool IsLocked(ApplicationUser user)
-        => user.LockoutEnd is { } end && end > DateTimeOffset.UtcNow;
+    private static bool IsLocked(UserAccount user) => user.IsLocked;
 
     /// <summary>锁定账号数：连续登录失败的结果，有人正在登不上来时这是要在页头看见的数。</summary>
     private int LockedCount => _users.Count(row => IsLocked(row.User));
@@ -380,7 +338,7 @@
             ? "不能删除当前登录账号"
             : $"删除 {row.UserName}：该账号将无法再登录，且操作不可恢复";
 
-    private static string LockTooltip(ApplicationUser user)
+    private static string LockTooltip(UserAccount user)
     {
         var until = user.LockoutEnd is { } end
             ? TimeZoneInfo.ConvertTime(end, TimeZoneInfo.Local).ToString("HH:mm:ss")
@@ -399,21 +357,11 @@
             return;
         }
 
-        var user = await UserManager.FindByNameAsync(row.UserName);
-        if (user is null)
-        {
-            Toast.Add("用户不存在，可能已被删除", Severity.Error);
-            return;
-        }
-
-        // GetRolesAsync 的静态类型是 IList<string>，它不实现 IReadOnlyCollection<string>，
-        // 而下面两处守卫都要按集合看角色，先落到 List<string> 上。
-        var currentRoles = (await UserManager.GetRolesAsync(user)).ToList();
         var parameters = new DialogParameters<UserEditDialog>
         {
             { x => x.UserName, row.UserName },
-            { x => x.DisplayName, user.DisplayName },
-            { x => x.CurrentRoles, currentRoles }
+            { x => x.DisplayName, row.DisplayName },
+            { x => x.CurrentRoles, row.RoleList }
         };
         var dialog = await DialogService.ShowAsync<UserEditDialog>("编辑用户", parameters,
             new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true, CloseOnEscapeKey = true });
@@ -429,10 +377,8 @@
             return;
         }
 
-        // 管理员数量按库里的实况取，而不是页面上那一行：两个管理员互相撤权时，
-        // 各自看到的都是"还有另一个"，结果谁都不是管理员了。
-        if (UserRoleRules.RemovesLastAdministrator(
-                currentRoles, request.Roles, (await UserManager.GetUsersInRoleAsync(AppRoles.Administrator)).Count))
+        var adminCount = _users.Count(item => item.RoleList.Contains(AppRoles.Administrator));
+        if (UserRoleRules.RemovesLastAdministrator(row.RoleList, request.Roles, adminCount))
         {
             Toast.Add("系统至少需要保留一个管理员账号，不能撤掉最后一个管理员", Severity.Error);
             return;
@@ -453,58 +399,12 @@
         _working = true;
         try
         {
-            var failures = new List<string>();
-            var toRemove = currentRoles.Except(request.Roles).ToList();
-            var toAdd = request.Roles.Except(currentRoles).ToList();
-            if (toRemove.Count > 0)
-            {
-                var removed = await UserManager.RemoveFromRolesAsync(user, toRemove);
-                if (!removed.Succeeded)
-                {
-                    failures.Add("撤销角色失败：" + PasswordPolicy.FormatIdentityErrors(removed));
-                }
-            }
-
-            if (toAdd.Count > 0)
-            {
-                var added = await UserManager.AddToRolesAsync(user, toAdd);
-                if (!added.Succeeded)
-                {
-                    failures.Add("分配角色失败：" + PasswordPolicy.FormatIdentityErrors(added));
-                }
-            }
-
-            if (user.DisplayName != request.DisplayName)
-            {
-                user.DisplayName = request.DisplayName;
-                var updated = await UserManager.UpdateAsync(user);
-                if (!updated.Succeeded)
-                {
-                    failures.Add("更新显示名失败：" + PasswordPolicy.FormatIdentityErrors(updated));
-                }
-            }
-
-            var actualUser = await UserManager.FindByIdAsync(user.Id);
-            var actualRoles = actualUser is null
-                ? currentRoles
-                : (await UserManager.GetRolesAsync(actualUser)).ToList();
-            var actualDisplay = actualUser?.DisplayName ?? row.DisplayName;
-            var details = failures.Count == 0
-                ? $"display={actualDisplay}; roles={string.Join(',', actualRoles)}"
-                : $"partial; actual display={actualDisplay}; actual roles={string.Join(',', actualRoles)}; errors={string.Join(" | ", failures)}";
-            await AuditSafe("Update", row.UserName,
-                $"display={row.DisplayName}; roles={string.Join(',', currentRoles)}",
-                details,
-                failures.Count == 0 ? "Success" : "Failure");
-
-            Toast.Add(
-                failures.Count == 0 ? $"已更新 {row.UserName}" : "部分修改未生效：" + string.Join("；", failures),
-                failures.Count == 0 ? Severity.Success : Severity.Error);
+            var actor = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            Show(await UsersAdmin.UpdateAsync(row.UserName, request.DisplayName, request.Roles, actor));
             await Reload();
         }
         catch (Exception ex)
         {
-            await AuditSafe("Update", row.UserName, null, $"update failed; {ex.Message}", "Failure");
             Toast.Add($"更新用户失败：{ex.Message}", Severity.Error);
         }
         finally
@@ -513,7 +413,7 @@
         }
     }
 
-    /// <summary>解除登录锁定：锁定是"连续失败 5 次"的自动结果，等人等满 5 分钟太钝，给管理员一个手动的。</summary>
+    /// <summary>解除登录锁定：锁定是连续失败的自动结果，管理员可以立刻解开。</summary>
     private async Task UnlockUser(UserRow row)
     {
         if (_working)
@@ -521,40 +421,19 @@
             return;
         }
 
-        var user = await UserManager.FindByNameAsync(row.UserName);
-        if (user is null)
-        {
-            Toast.Add("用户不存在，可能已被删除", Severity.Error);
-            return;
-        }
-
         _working = true;
         try
         {
-            var failedBefore = user.AccessFailedCount;
-            var cleared = await UserManager.SetLockoutEndDateAsync(user, null);
-            var counted = await UserManager.ResetAccessFailedCountAsync(user);
-            var ok = cleared.Succeeded && counted.Succeeded;
-            Toast.Add(
-                ok
-                    ? $"已解除 {row.UserName} 的登录锁定"
-                    : "解除锁定失败：" + PasswordPolicy.FormatIdentityErrors(cleared.Succeeded ? counted : cleared),
-                ok ? Severity.Success : Severity.Error);
-            if (ok)
+            var actor = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            var unlocked = await UsersAdmin.UnlockAsync(row.UserName, actor);
+            Show(unlocked);
+            if (unlocked.Status == UserAdminStatus.Success)
             {
-                await AuditSafe("Unlock", row.UserName, $"failed={failedBefore}", "lockout cleared");
                 await Reload();
-            }
-            else
-            {
-                await AuditSafe("Unlock", row.UserName, $"failed={failedBefore}",
-                    PasswordPolicy.FormatIdentityErrors(cleared.Succeeded ? counted : cleared),
-                    "Failure");
             }
         }
         catch (Exception ex)
         {
-            await AuditSafe("Unlock", row.UserName, null, $"unlock failed; {ex.Message}", "Failure");
             Toast.Add($"解除锁定失败：{ex.Message}", Severity.Error);
         }
         finally
@@ -570,13 +449,6 @@
             return;
         }
 
-        var user = await UserManager.FindByNameAsync(row.UserName);
-        if (user is null)
-        {
-            Toast.Add("用户不存在，可能已被删除", Severity.Error);
-            return;
-        }
-
         var parameters = new DialogParameters { ["UserName"] = row.UserName };
         var dialog = await DialogService.ShowAsync<UserPasswordDialog>("重置密码", parameters,
             new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true, CloseOnEscapeKey = true });
@@ -589,26 +461,11 @@
         _working = true;
         try
         {
-            var token = await UserManager.GeneratePasswordResetTokenAsync(user);
-            var reset = await UserManager.ResetPasswordAsync(user, token, password);
-            Toast.Add(
-                reset.Succeeded ? $"已重置 {row.UserName} 的密码" : "重置失败：" + PasswordPolicy.FormatIdentityErrors(reset),
-                reset.Succeeded ? Severity.Success : Severity.Error);
-            if (reset.Succeeded)
-            {
-                // 只记“已重置密码”，绝不写入明文口令。
-                await AuditSafe("ResetPassword", row.UserName, null, "password reset");
-            }
-            else
-            {
-                await AuditSafe("ResetPassword", row.UserName, null,
-                    PasswordPolicy.FormatIdentityErrors(reset),
-                    "Failure");
-            }
+            var actor = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            Show(await UsersAdmin.ResetPasswordAsync(row.UserName, password, actor));
         }
         catch (Exception ex)
         {
-            await AuditSafe("ResetPassword", row.UserName, null, $"password reset failed; {ex.Message}", "Failure");
             Toast.Add($"重置密码失败：{ex.Message}", Severity.Error);
         }
         finally
@@ -630,14 +487,11 @@
             return;
         }
 
-        if (row.RoleList.Contains(AppRoles.Administrator))
+        var adminCount = _users.Count(item => item.RoleList.Contains(AppRoles.Administrator));
+        if (row.RoleList.Contains(AppRoles.Administrator) && adminCount <= 1)
         {
-            var admins = await UserManager.GetUsersInRoleAsync(AppRoles.Administrator);
-            if (admins.Count <= 1)
-            {
-                Toast.Add("系统至少需要保留一个管理员账号", Severity.Error);
-                return;
-            }
+            Toast.Add("系统至少需要保留一个管理员账号", Severity.Error);
+            return;
         }
 
         var confirmed = await DialogService.ShowMessageBox(
@@ -652,29 +506,16 @@
         _working = true;
         try
         {
-            var user = await UserManager.FindByNameAsync(row.UserName);
-            if (user is null)
+            var actor = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            var deleted = await UsersAdmin.DeleteAsync(row.UserName, actor);
+            Show(deleted);
+            if (deleted.Status == UserAdminStatus.Success)
             {
-                Toast.Add("用户不存在，可能已被删除", Severity.Error);
-                return;
+                await Reload();
             }
-
-            var result = await UserManager.DeleteAsync(user);
-            if (!result.Succeeded)
-            {
-                await AuditSafe("Delete", row.UserName, $"roles={string.Join(',', row.RoleList)}",
-                    PasswordPolicy.FormatIdentityErrors(result), "Failure");
-                Toast.Add(PasswordPolicy.FormatIdentityErrors(result), Severity.Error);
-                return;
-            }
-
-            await AuditSafe("Delete", row.UserName, $"roles={string.Join(',', row.RoleList)}", null);
-            Toast.Add($"已删除 {row.UserName}", Severity.Success);
-            await Reload();
         }
         catch (Exception ex)
         {
-            await AuditSafe("Delete", row.UserName, null, $"delete failed; {ex.Message}", "Failure");
             Toast.Add($"删除用户失败：{ex.Message}", Severity.Error);
         }
         finally
@@ -683,23 +524,23 @@
         }
     }
 
-    private async Task AuditSafe(
-        string action,
-        string key,
-        string? oldValue,
-        string? newValue,
-        string outcome = "Success")
+    private void Show(UserAdminResult result, string? message = null)
     {
-        try
+        var text = message ?? result.Message;
+        if (!string.IsNullOrEmpty(text))
         {
-            var actor = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
-            await Audit.WriteAsync(actor, action, "User", key, oldValue, newValue, outcome: outcome);
+            var severity = result.Status switch
+            {
+                UserAdminStatus.Success => Severity.Success,
+                UserAdminStatus.Warning => Severity.Warning,
+                _ => Severity.Error
+            };
+            Toast.Add(text, severity);
         }
-        catch (Exception ex)
+
+        if (result.AuditError is { } auditError)
         {
-            // 建号、删号、改角色、重置口令都是安全动作：审计写不进去必须说出来。
-            // 静默吞掉的话，界面上一切正常，事后却查不到"谁把账号删了"。
-            Toast.Add($"操作已完成，但审计记录失败：{ex.Message}", Severity.Warning);
+            Toast.Add($"操作已完成，但审计记录失败：{auditError}", Severity.Warning);
         }
     }
 
@@ -711,5 +552,5 @@
         _ => Color.Default
     };
 
-    private sealed record UserRow(ApplicationUser User, string UserName, string DisplayName, List<string> RoleList);
+    private sealed record UserRow(UserAccount User, string UserName, string DisplayName, List<string> RoleList);
 }

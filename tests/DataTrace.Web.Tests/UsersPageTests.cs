@@ -1,3 +1,4 @@
+using DataTrace.Application.Identity;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Validation;
 using DataTrace.Infrastructure;
@@ -36,6 +37,7 @@ public class UsersPageTests : WebTestBase, IDisposable
             o => o.UseSqlite($"Data Source={Path.Combine(_dbDir, DbFileName)};Pooling=False"));
         // 与产品同一份账号策略；策略改严之后，这里的用例会跟着一起变红。
         Context.Services.AddDataTraceIdentity();
+        Context.Services.AddScoped<IUserAdministration, UserAdministration>();
         Context.Services.AddSingleton<PasswordPolicy>();
         // 角色编辑要真的把对话框里的复选框点出来，所以用真 DialogService 而不是替身。
         // 必须在渲染任何组件之前注册：TestServiceProvider 一旦被取用就不许再加注册。
@@ -318,7 +320,7 @@ public class UsersPageTests : WebTestBase, IDisposable
         using var scope = Context.Services.CreateScope();
         var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
         var user = users.FindByNameAsync(name).GetAwaiter().GetResult()!;
-        users.SetLockoutEndDateAsync(user, DateTimeOffset.UtcNow.Add(duration)).GetAwaiter().GetResult();
+        users.SetLockoutEndDateAsync(user, DateTimeOffset.Now.Add(duration)).GetAwaiter().GetResult();
     }
 
     private ApplicationUser? User(string name)

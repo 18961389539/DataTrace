@@ -1,17 +1,11 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  Restore SQLite databases from an automatic backup set (or -Latest).
+  Validate and restore a complete DataRoot backup set.
 .DESCRIPTION
-  Stops the app for this InstallDir only, copies current DBs aside to
-  data\pre-restore-<stamp>\, restores *.db from the backup set, then starts and verifies.
-  Does NOT touch other installs. Prefer restoring from a set produced by the in-app online backup.
-.PARAMETER InstallDir
-  Installation directory (contains data\, customer.json).
-.PARAMETER BackupSet
-  Path to a backup set folder (e.g. data\backups\2026-09-24_0230).
-.PARAMETER Latest
-  Use the newest timestamped folder under data\backups (excluding pre-restore-* / upgrade-*).
+  The selected set is fully checked before the app is stopped. A separate full-data
+  snapshot of the live DataRoot is then created and verified for rollback. Data is
+  staged on the target volume before switching; failures attempt to restore the snapshot.
 #>
 param(
     [Parameter(Mandatory)][string]$InstallDir,
@@ -20,104 +14,196 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot\_common.ps1"
+. (Join-Path $PSScriptRoot '_common.ps1')
+. (Join-Path $PSScriptRoot '_backup.ps1')
 
-$InstallDir = (Resolve-Path -LiteralPath $InstallDir).Path
-if (-not (Test-Path -LiteralPath (Join-Path $InstallDir "DataTrace.Web.exe"))) { Write-DtFail "Not an install dir: $InstallDir"; throw "Not an install dir: $InstallDir"; throw "bad install" }
-$meta = Read-CustomerMeta -InstallDir $InstallDir
-$dataRoot = if ($meta.DataRoot) { [string]$meta.DataRoot } else { 'data' }
-$dataDir = if ([IO.Path]::IsPathRooted($dataRoot)) { $dataRoot } else { Join-Path $InstallDir $dataRoot }
-$backupRoot = Join-Path $dataDir 'backups'
-
-if ($Latest) {
-    if (-not (Test-Path -LiteralPath $backupRoot)) {
-        Write-DtFail "No backups folder: $backupRoot"; throw "No backups folder: $backupRoot"
+function New-ValidatedStage([string]$SourceSet, $Manifest, [string]$DataRoot, [string]$InstallPath) {
+    $stage = Join-Path $DataRoot ('.restore-staging-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $stage -Force | Out-Null
+    try {
+        Copy-Item -LiteralPath (Join-Path $SourceSet 'manifest.json') -Destination (Join-Path $stage 'manifest.json')
+        foreach ($root in $script:FullBackupRoots | Where-Object { $_ -ne 'config.db' }) {
+            New-Item -ItemType Directory -Path (Join-Path $stage $root) -Force | Out-Null
+        }
+        foreach ($entry in @($Manifest.files)) {
+            $relative = ([string]$entry.file).Replace('/', [IO.Path]::DirectorySeparatorChar)
+            $source = Join-Path $SourceSet $relative
+            $destination = Join-Path $stage $relative
+            New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+            Copy-Item -LiteralPath $source -Destination $destination
+        }
+        $null = Test-FullBackupPayload -PayloadRoot $stage -Manifest $Manifest -InstallDir $InstallPath
+        return $stage
+    } catch {
+        if (Test-Path -LiteralPath $stage) {
+            Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        throw
     }
-    $BackupSet = Get-ChildItem -LiteralPath $backupRoot -Directory |
-        Where-Object { $_.Name -notlike 'pre-restore-*' -and $_.Name -notlike 'upgrade-*' } |
-        Sort-Object Name -Descending |
-        Select-Object -First 1 -ExpandProperty FullName
-    if (-not $BackupSet) {
-        Write-DtFail "No backup sets under $backupRoot"; throw "No backup sets under $backupRoot"
+}
+
+function Set-LiveDataFromStage([string]$Stage, [string]$DataRoot) {
+    $configDb = Join-Path $DataRoot 'config.db'
+    foreach ($path in @($configDb, "$configDb-wal", "$configDb-shm")) {
+        if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
     }
-}
-
-if (-not $BackupSet) {
-    Write-DtFail "Specify -BackupSet or -Latest"; throw "Specify -BackupSet or -Latest"
-}
-if (-not (Test-Path -LiteralPath $BackupSet)) {
-    Write-DtFail "BackupSet missing: $BackupSet"; throw "BackupSet missing: $BackupSet"
-}
-
-$manifest = Join-Path $BackupSet 'manifest.json'
-Write-DtInfo "InstallDir : $InstallDir"
-Write-DtInfo "BackupSet  : $BackupSet"
-if (Test-Path -LiteralPath $manifest) {
-    Write-DtInfo "manifest.json present"
-} else {
-    Write-DtWarn "manifest.json missing (will still copy *.db)"
-}
-
-Write-DtInfo "Stopping app..."
-& "$PSScriptRoot\stop.ps1" -InstallDir $InstallDir
-
-$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$pre = Join-Path $dataDir ("pre-restore-" + $stamp)
-New-Item -ItemType Directory -Path $pre -Force | Out-Null
-
-# Save current live DBs
-$configDb = Join-Path $dataDir 'config.db'
-if (Test-Path -LiteralPath $configDb) {
-    Copy-Item -LiteralPath $configDb -Destination (Join-Path $pre 'config.db') -Force
-    foreach ($sfx in @('-wal', '-shm')) {
-        $side = $configDb + $sfx
-        if (Test-Path -LiteralPath $side) {
-            Copy-Item -LiteralPath $side -Destination (Join-Path $pre ("config.db" + $sfx)) -Force
+    foreach ($root in @('runtime', 'curves', 'archive', 'audit-archive', 'spool')) {
+        $target = Join-Path $DataRoot $root
+        if (Test-Path -LiteralPath $target) {
+            Remove-Item -LiteralPath $target -Recurse -Force
         }
     }
-}
-$runtimeDir = Join-Path $dataDir 'runtime'
-$preRuntime = Join-Path $pre 'runtime'
-if (Test-Path -LiteralPath $runtimeDir) {
-    New-Item -ItemType Directory -Path $preRuntime -Force | Out-Null
-    Copy-Item -Path (Join-Path $runtimeDir '*') -Destination $preRuntime -Recurse -Force -ErrorAction SilentlyContinue
-}
-Write-DtOk "Current DBs saved to $pre"
 
-# Restore config.db
-$srcConfig = Join-Path $BackupSet 'config.db'
-if (Test-Path -LiteralPath $srcConfig) {
-    Copy-Item -LiteralPath $srcConfig -Destination $configDb -Force
-    foreach ($sfx in @('-wal', '-shm')) {
-        $side = $configDb + $sfx
-        if (Test-Path -LiteralPath $side) { Remove-Item -LiteralPath $side -Force }
-    }
-    Write-DtOk "Restored config.db"
-} else {
-    Write-DtWarn "Backup set has no config.db"
-}
-
-# Restore runtime/*.db
-$srcRuntime = Join-Path $BackupSet 'runtime'
-if (Test-Path -LiteralPath $srcRuntime) {
-    New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
-    Get-ChildItem -LiteralPath $runtimeDir -Filter 'data_*.db*' -ErrorAction SilentlyContinue | Remove-Item -Force
-    Copy-Item -Path (Join-Path $srcRuntime '*') -Destination $runtimeDir -Force
-    Write-DtOk "Restored runtime databases"
-} else {
-    # flat layout fallback
-    $flat = Get-ChildItem -LiteralPath $BackupSet -Filter 'data_*.db' -ErrorAction SilentlyContinue
-    if ($flat) {
-        New-Item -ItemType Directory -Path $runtimeDir -Force | Out-Null
-        Copy-Item -Path ($flat.FullName) -Destination $runtimeDir -Force
-        Write-DtOk "Restored flat data_*.db into runtime\"
+    [IO.File]::Move((Join-Path $Stage 'config.db'), $configDb)
+    foreach ($root in @('runtime', 'curves', 'archive', 'audit-archive', 'spool')) {
+        [IO.Directory]::Move((Join-Path $Stage $root), (Join-Path $DataRoot $root))
     }
 }
 
-Write-DtInfo "Starting app..."
-& "$PSScriptRoot\start.ps1" -InstallDir $InstallDir
-Start-Sleep -Seconds 3
-& "$PSScriptRoot\verify.ps1" -InstallDir $InstallDir
-Write-DtOk "Restore finished. Pre-restore copy kept at: $pre"
-Write-Host "BACKUPSET=$BackupSet"
-Write-Host "PRE_RESTORE=$pre"
+function Start-AndVerify([string]$InstallPath) {
+    & (Join-Path $PSScriptRoot 'start.ps1') -InstallDir $InstallPath
+    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 4) {
+        throw "start.ps1 failed with exit code $LASTEXITCODE"
+    }
+    & (Join-Path $PSScriptRoot 'verify.ps1') -InstallDir $InstallPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "verify.ps1 failed with exit code $LASTEXITCODE"
+    }
+}
+
+$stage = $null
+$preRestore = $null
+$appStopped = $false
+$dataSwitched = $false
+try {
+    $InstallDir = (Resolve-Path -LiteralPath $InstallDir).Path
+    if (-not (Test-Path -LiteralPath (Join-Path $InstallDir 'DataTrace.Web.exe'))) {
+        throw "Not an install dir: $InstallDir"
+    }
+    if ($Latest -and $BackupSet) { throw "Use either -Latest or -BackupSet, not both" }
+
+    $meta = Read-CustomerMeta -InstallDir $InstallDir
+    $configuredRoot = if ($meta.DataRoot) { [string]$meta.DataRoot } else { 'data' }
+    $dataRoot = if ([IO.Path]::IsPathRooted($configuredRoot)) { $configuredRoot } else { Join-Path $InstallDir $configuredRoot }
+    $dataRoot = [IO.Path]::GetFullPath($dataRoot)
+    $backupRoot = Join-Path $dataRoot 'backups'
+    if ($Latest) {
+        $BackupSet = Get-LatestFullBackupSet -BackupRoot $backupRoot
+    }
+    if ([string]::IsNullOrWhiteSpace($BackupSet)) { throw "Specify -BackupSet or -Latest" }
+
+    # Refuse legacy DB-only backup sets and validate every byte before stopping production.
+    $selected = Assert-FullBackupSet -BackupSet $BackupSet -InstallDir $InstallDir
+    $BackupSet = $selected.Path
+    Write-DtInfo "InstallDir : $InstallDir"
+    Write-DtInfo "DataRoot   : $dataRoot"
+    Write-DtInfo "BackupSet  : $BackupSet"
+    Write-DtOk "Preflight passed: $($selected.Summary.DatabaseCount) databases, $($selected.Summary.FileCount) files, SHA-256 and SQLite checks passed"
+
+    $pidFile = Get-PidFilePath -InstallDir $InstallDir
+    $instancePid = $null
+    if (Test-Path -LiteralPath $pidFile) {
+        $runningPid = [int](Get-Content -LiteralPath $pidFile | Select-Object -First 1)
+        $runningProcess = Get-Process -Id $runningPid -ErrorAction SilentlyContinue
+        $expectedExe = [IO.Path]::GetFullPath((Join-Path $InstallDir 'DataTrace.Web.exe'))
+        if ($runningProcess) {
+            if (-not $runningProcess.Path) {
+                throw "Cannot verify executable identity for PID=$runningPid; refusing to stop it"
+            }
+            if (-not [string]::Equals([IO.Path]::GetFullPath($runningProcess.Path), $expectedExe, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "PID file points to a different executable (PID=$runningPid); refusing to stop it"
+            }
+            $instancePid = $runningPid
+        }
+    }
+
+    Write-DtInfo "Stopping app..."
+    & (Join-Path $PSScriptRoot 'stop.ps1') -InstallDir $InstallDir
+    if ($LASTEXITCODE -ne 0) { throw "stop.ps1 failed with exit code $LASTEXITCODE" }
+    $appStopped = $true
+    if ($instancePid) {
+        $stopDeadline = (Get-Date).AddSeconds(15)
+        while ((Get-Process -Id $instancePid -ErrorAction SilentlyContinue) -and (Get-Date) -lt $stopDeadline) {
+            Start-Sleep -Milliseconds 250
+        }
+        if (Get-Process -Id $instancePid -ErrorAction SilentlyContinue) {
+            throw "Application PID=$instancePid did not stop; no live data has been changed"
+        }
+    }
+    $port = [int]$meta.Port
+    if ($port -gt 0 -and (Get-ListeningPid -Port $port)) {
+        throw "Port $port is still listening after stop.ps1; no live data has been changed"
+    }
+
+    # Reuse the same full-data writer for a verified rollback point.
+    New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
+    $existingSets = @{}
+    foreach ($directory in (Get-ChildItem -LiteralPath $backupRoot -Directory)) {
+        $existingSets[$directory.FullName.ToLowerInvariant()] = $true
+    }
+    $null = & (Join-Path $PSScriptRoot 'backup-now.ps1') -InstallDir $InstallDir
+    if ($LASTEXITCODE -ne 0) { throw "Could not create pre-restore full-data snapshot" }
+    $createdSets = @(Get-ChildItem -LiteralPath $backupRoot -Directory |
+        Where-Object {
+            -not $existingSets.ContainsKey($_.FullName.ToLowerInvariant()) -and
+            (Test-Path -LiteralPath (Join-Path $_.FullName 'manifest.json') -PathType Leaf)
+        })
+    if ($createdSets.Count -ne 1) { throw "Could not identify the newly generated rollback snapshot" }
+    $createdSet = $createdSets[0].FullName
+    $preRestore = Join-Path $backupRoot ("pre-restore-" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $suffix = 1
+    $basePreRestore = $preRestore
+    while (Test-Path -LiteralPath $preRestore) {
+        $preRestore = $basePreRestore + "-$suffix"
+        $suffix++
+    }
+    [IO.Directory]::Move($createdSet, $preRestore)
+    $preSnapshot = Assert-FullBackupSet -BackupSet $preRestore -InstallDir $InstallDir
+    Write-DtOk "Verified rollback snapshot: $preRestore"
+
+    $stage = New-ValidatedStage -SourceSet $BackupSet -Manifest $selected.Manifest -DataRoot $dataRoot -InstallPath $InstallDir
+    $dataSwitched = $true
+    Set-LiveDataFromStage -Stage $stage -DataRoot $dataRoot
+    $liveSummary = Test-LiveDataAgainstManifest -DataRoot $dataRoot -Manifest $selected.Manifest -InstallDir $InstallDir
+    Write-DtOk "Restored DataRoot verified: $($liveSummary.DatabaseCount) databases, $($liveSummary.FileCount) files"
+    Remove-Item -LiteralPath $stage -Recurse -Force
+    $stage = $null
+
+    Write-DtInfo "Starting app and verifying restored data..."
+    Start-AndVerify -InstallPath $InstallDir
+    $appStopped = $false
+    Write-DtOk "Restore finished. Full-data rollback snapshot kept at: $preRestore"
+    Write-Host "BACKUPSET=$BackupSet"
+    Write-Host "PRE_RESTORE=$preRestore"
+} catch {
+    $restoreError = $_.Exception.Message
+    if ($stage -and (Test-Path -LiteralPath $stage)) {
+        Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($dataSwitched -and $preRestore -and (Test-Path -LiteralPath $preRestore)) {
+        try {
+            Write-DtWarn "Restore failed; stopping app and rolling back to the verified pre-restore snapshot..."
+            & (Join-Path $PSScriptRoot 'stop.ps1') -InstallDir $InstallDir
+            $rollbackManifest = Get-FullBackupManifest -BackupSet $preRestore
+            $rollbackStage = New-ValidatedStage -SourceSet $preRestore -Manifest $rollbackManifest -DataRoot $dataRoot -InstallPath $InstallDir
+            Set-LiveDataFromStage -Stage $rollbackStage -DataRoot $dataRoot
+            $null = Test-LiveDataAgainstManifest -DataRoot $dataRoot -Manifest $rollbackManifest -InstallDir $InstallDir
+            Remove-Item -LiteralPath $rollbackStage -Recurse -Force
+            Start-AndVerify -InstallPath $InstallDir
+            $appStopped = $false
+            Write-DtOk "Rollback verified; original data restored"
+        } catch {
+            Write-DtFail "Automatic rollback failed: $($_.Exception.Message). Keep the pre-restore snapshot at $preRestore"
+        }
+    } elseif ($appStopped) {
+        try {
+            Start-AndVerify -InstallPath $InstallDir
+            $appStopped = $false
+        } catch {
+            Write-DtFail "Could not restart the unchanged original data: $($_.Exception.Message)"
+        }
+    }
+    Write-DtFail "Restore failed: $restoreError"
+    exit 1
+}

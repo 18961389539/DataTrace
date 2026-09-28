@@ -92,8 +92,10 @@
 
 ## 数据库备份
 
-- [ ] 确认 `appsettings.Production.json` / `customer.json` 中 `Backup:Enabled=true`，- [ ] 记下备份目录（默认 `{DataRoot}/backups`），并安排拷贝到其它磁盘/NAS
-- [ ] 安装后到设置页看「数据库备份」卡片；管理员点一次「立即备份」，确认生成带 `manifest.json` 的目录
-- [ ] 演练恢复：`.\restore.ps1 -InstallDir <安装目录> -Latest`（在测试目录演练，勿对生产盲试）
+- [ ] 确认 `appsettings.Production.json` / `customer.json` 中 `Backup:Enabled=true`；记下备份目录（默认 `{DataRoot}/backups`），并安排拷贝到其它磁盘/NAS
+- [ ] 安装后在设置页点「立即全量备份」，确认快照为 v2，数据库与文件校验数均通过
+- [ ] 执行只读验包：`.\verify-backup.ps1 -InstallDir <安装目录> -Latest`
+- [ ] 在隔离测试目录演练全量恢复：`.\restore.ps1 -InstallDir <测试安装目录> -Latest`；确认 `pre-restore-*` 回滚点和恢复后 HTTP / SQLite 验证结果
+- [ ] 单独备份安装目录的 `customer.json`、`appsettings.Production.json` 与程序发布文件；它们不属于 DataRoot 全量数据集
 - [ ] 升级仍走 `upgrade.ps1` 的 `backups/upgrade-*`；日常库备份与升级快照都要保留
 

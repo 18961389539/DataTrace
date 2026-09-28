@@ -1,3 +1,5 @@
+using DataTrace.Application.Alarms;
+using DataTrace.Application.Reporting;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 
@@ -91,8 +93,11 @@ public sealed class CollectQueryResult
 /// </summary>
 public sealed class JudgementCount
 {
-    /// <summary>所在自然日（当天 00:00）。</summary>
+    /// <summary>触发时刻所在自然日（当天 00:00）。和 <see cref="Hour"/> 一起才能归进班次。</summary>
     public DateTime Day { get; init; }
+
+    /// <summary>触发时刻的小时，0–23。班次按整点切，同一小时不会跨班。</summary>
+    public int Hour { get; init; }
     /// <summary>判定时生效的型号编码；空字符串表示当时未选型号。</summary>
     public string RecipeCode { get; init; } = "";
     public Judgement Judgement { get; init; }
@@ -150,14 +155,26 @@ public sealed class CurveFeaturePoint
 /// <summary>区间内某序列某个型号的样本计数。</summary>
 public sealed record CurveRecipeSampleCount(string RecipeCode, int Total, int Ng, int Unjudged = 0);
 
-public interface IRuntimeStore
+/// <summary>采集写入：落一条记录，或把在制会话标成异常。</summary>
+public interface ICollectWriter
 {
     Task SaveAsync(CollectSaveRequest request, CancellationToken cancellationToken = default);
+    Task MarkSessionAbnormalAsync(string monthKey, long sessionId, DateTime endTime, CancellationToken cancellationToken = default);
+}
+
+/// <summary>采集查询：明细、会话履历。不包含报表聚合。</summary>
+public interface ICollectQuery
+{
     Task<CollectQueryResult> QueryAsync(CollectQueryRequest request, CancellationToken cancellationToken = default);
     Task<CollectRecord?> GetRecordAsync(string monthKey, long recordId, CancellationToken cancellationToken = default);
     Task<PalletSession?> GetSessionAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<CollectRecord>> GetSessionRecordsAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesBySerialNoAsync(string serialNo, CancellationToken cancellationToken = default);
+}
+
+/// <summary>报表与基线用的窄投影。调用方看不到写入和删库。</summary>
+public interface IRuntimeAnalytics
+{
     Task<IReadOnlyList<CollectRecord>> QueryForReportAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -166,6 +183,18 @@ public interface IRuntimeStore
     /// <param name="stationId">工站过滤：null = 全部工站。</param>
     /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
     Task<IReadOnlyList<JudgementCount>> CountJudgementsAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 末站已经关掉的件。时间按会话结束时刻，不按各站的采集时刻。
+    /// 型号在取数时过滤；工站筛选留给汇总，因为选了工站之后看的是这一站自己的判定。
+    /// </summary>
+    Task<IReadOnlyList<FinishedPieceObservation>> ListFinishedPiecesAsync(DateTime from, DateTime to, string? recipeCode = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 各站完成时刻。用来判断某一班哪一站停过。
+    /// 调用方要多取班次两端以外的记录，才能看见跨过班次边界的那一段停顿。
+    /// </summary>
+    Task<IReadOnlyList<StationPass>> ListStationPassesAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default);
 
     /// <summary>日期范围内出现过的型号编码（含空串）；跨月库去重。</summary>
     Task<IReadOnlyList<string>> ListRecipeCodesAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default);
@@ -217,8 +246,30 @@ public interface IRuntimeStore
         DateTime to,
         CancellationToken cancellationToken = default);
 
-    Task MarkSessionAbnormalAsync(string monthKey, long sessionId, DateTime endTime, CancellationToken cancellationToken = default);
+    /// <summary>当月每条记录的工站与判定，供进程启动时重算连续 NG。库不存在时返回空，不新建月份库。</summary>
+    Task<IReadOnlyList<StationJudgementMark>> ListMonthJudgementsAsync(string monthKey, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 每个工站每个点位最近 perTag 条观测，供启动时重算预警连续件数和过程漂移。
+    /// 只取 since 之后的记录。库不存在时返回空，不新建月份库。
+    /// </summary>
+    Task<IReadOnlyList<TagObservation>> ListRecentTagObservationsAsync(
+        string monthKey,
+        DateTime since,
+        int perTag,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>按月保留：列出月份库并整月删除。</summary>
+public interface IRuntimeRetention
+{
+    IReadOnlyList<string> ListMonthKeys();
     Task DeleteMonthAsync(string monthKey, CancellationToken cancellationToken = default);
+}
+
+/// <summary>运行库的全部能力。新代码按上面的窄接口依赖，这个组合留给仍要一次拿全的调用方。</summary>
+public interface IRuntimeStore : ICollectWriter, ICollectQuery, IRuntimeAnalytics, IRuntimeRetention
+{
 }
 
 public interface IActiveSessionStore
@@ -304,9 +355,15 @@ public interface ICollectArchiveStore
     Task DeleteMonthAsync(string yyyy, string mm, CancellationToken cancellationToken = default);
 }
 
+/// <summary>还没补传入库的缓存件数，以及最早一笔的写入时间。</summary>
+public readonly record struct SpoolBacklog(int Count, DateTime? OldestAt);
+
 public interface ISpoolStore
 {
     Task SaveAsync(CollectSaveRequest request, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<(string FileName, CollectSaveRequest Request)>> ListAsync(CancellationToken cancellationToken = default);
     Task DeleteAsync(string fileName, CancellationToken cancellationToken = default);
+
+    /// <summary>只数文件、不读内容。看板和报警轮询用它，避免把每条缓存反序列化一遍。</summary>
+    Task<SpoolBacklog> DescribeAsync(CancellationToken cancellationToken = default);
 }

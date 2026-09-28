@@ -78,7 +78,7 @@ public class CollectPipelineTests
         Load(harness, stations[0], "P0009", seed: 3);
         await harness.RunAsync(stations[0]);
         Load(harness, ngStation, "P0009", injectNg: true, seed: 3);
-        Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(ngStation));
+        Assert.Equal(ResultCodes.QualityRejected, await harness.RunAsync(ngStation));
     }
 
     [Fact]
@@ -212,7 +212,7 @@ public class CollectPipelineTests
         // 覆盖压力点位为超上限值（上限 20kN）。
         harness.Simulator.SetFloat("D1100", 999f, harness.Plc.FloatWordOrder);
 
-        Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(station));
+        Assert.Equal(ResultCodes.QualityRejected, await harness.RunAsync(station));
 
         var item = Assert.Single((await harness.QueryAsync("P0003")).Items);
         Assert.Equal(Judgement.Ng, item.Record.Judgement);
@@ -530,7 +530,7 @@ public class CollectPipelineTests
         station.Curves.Single().Criteria.Add(new CurveCriterion { PeakMin = 999 });
         Load(harness, station, "P0021");
 
-        Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(station));
+        Assert.Equal(ResultCodes.QualityRejected, await harness.RunAsync(station));
 
         var item = Assert.Single((await harness.QueryAsync("P0021")).Items);
         Assert.Equal(Judgement.Ng, item.Record.Judgement);
@@ -586,7 +586,7 @@ public class CollectPipelineTests
         station.Curves.Single().Criteria.Add(new CurveCriterion { SeriesName = "位移", PeakMax = 1 });
         Load(harness, station, "P0024");
 
-        Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(station));
+        Assert.Equal(ResultCodes.QualityRejected, await harness.RunAsync(station));
 
         var item = Assert.Single((await harness.QueryAsync("P0024")).Items);
         var record = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
@@ -614,7 +614,7 @@ public class CollectPipelineTests
         // 同时把压力点位打到超上限，点位原因应当成为首因。
         harness.Simulator.SetFloat("D1100", 999f, harness.Plc.FloatWordOrder);
 
-        Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(station));
+        Assert.Equal(ResultCodes.QualityRejected, await harness.RunAsync(station));
 
         var item = Assert.Single((await harness.QueryAsync("P0026")).Items);
         var product = Assert.Single((await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id))!.Products);
@@ -636,7 +636,7 @@ public class CollectPipelineTests
         Assert.Single(refreshed.Curves.Single().Criteria);
 
         Load(harness, refreshed, "P0030");
-        Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(refreshed));
+        Assert.Equal(ResultCodes.QualityRejected, await harness.RunAsync(refreshed));
 
         var item = Assert.Single((await harness.QueryAsync("P0030")).Items);
         var product = Assert.Single((await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id))!.Products);
@@ -691,7 +691,7 @@ public class CollectPipelineTests
         // 21 同时越过了规格上限与预警上限：必须按超规格处理，不能只报预警。
         harness.Simulator.SetFloat("D1100", 21f, harness.Plc.FloatWordOrder);
 
-        Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(station));
+        Assert.Equal(ResultCodes.QualityRejected, await harness.RunAsync(station));
 
         var item = Assert.Single((await harness.QueryAsync("P0042")).Items);
         var full = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
@@ -769,7 +769,7 @@ public class CollectPipelineTests
 
         Load(harness, switched, "P0051");
         harness.Simulator.SetFloat("D1100", 19f, harness.Plc.FloatWordOrder);
-        Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(switched));
+        Assert.Equal(ResultCodes.QualityRejected, await harness.RunAsync(switched));
 
         var ngItem = Assert.Single((await harness.QueryAsync("P0051")).Items);
         Assert.Equal(Judgement.Ng, ngItem.Record.Judgement);
@@ -787,6 +787,35 @@ public class CollectPipelineTests
         harness.Simulator.SetFloat("D1100", 19f, harness.Plc.FloatWordOrder);
         Assert.Equal(ResultCodes.Success, await harness.RunAsync(cleared));
         Assert.Equal("", Assert.Single((await harness.QueryAsync("P0052")).Items).Record.RecipeCode);
+    }
+
+    [Fact]
+    public async Task Later_station_keeps_the_recipe_chosen_at_the_first_station()
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+        var recipe = harness.Snapshot.Recipes.Single(r => r.Code == "A100");
+        await harness.ConfigRepository.SetActiveRecipeAsync(recipe.Id);
+        await harness.RefreshSnapshotAsync();
+        var first = harness.Snapshot.Stations.OrderBy(s => s.Sequence).First();
+
+        Load(harness, first, "P0060");
+        await harness.RunAsync(first);
+
+        await harness.ConfigRepository.SetActiveRecipeAsync(null);
+        await harness.RefreshSnapshotAsync();
+        var second = harness.Snapshot.Stations.OrderBy(s => s.Sequence).Skip(1).First();
+        Load(harness, second, "P0060");
+        await harness.RunAsync(second);
+
+        var items = (await harness.QueryAsync("P0060")).Items;
+        Assert.Equal(2, items.Count);
+        Assert.All(items, item => Assert.Equal("A100", item.Record.RecipeCode));
+
+        var sessions = harness.Scope.ServiceProvider.GetRequiredService<IActiveSessionStore>();
+        var active = await sessions.FindByPalletAsync("P0060");
+        Assert.NotNull(active);
+        Assert.Equal("A100", active!.RecipeCode);
+        Assert.Equal(second.Code, active.LastStationCode);
     }
 
     [Fact]
@@ -826,7 +855,7 @@ public class CollectPipelineTests
 
         Load(harness, active, "P0054");
         harness.Simulator.SetFloat("D1100", 19f, harness.Plc.FloatWordOrder);
-        Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(active));
+        Assert.Equal(ResultCodes.QualityRejected, await harness.RunAsync(active));
 
         var item = Assert.Single((await harness.QueryAsync("P0054")).Items);
         var full = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);

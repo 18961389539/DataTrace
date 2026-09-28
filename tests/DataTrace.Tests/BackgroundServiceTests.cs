@@ -56,7 +56,6 @@ public class RetentionServiceTests
 
     private static RetentionHostedService CreateService(InfrastructureContext ctx) => new(
         ctx.ScopeFactory,
-        ctx.Provider.GetRequiredService<RuntimeDbFactory>(),
         ctx.Provider.GetRequiredService<ICurveFileStore>(),
         ctx.Provider.GetRequiredService<ICollectArchiveStore>(),
         ctx.Logger<RetentionHostedService>());
@@ -175,7 +174,11 @@ public class SpoolReplayServiceTests
     public async Task ReplaysEveryPendingRequestThenClearsSpool()
     {
         var runtime = new FakeRuntimeStore();
-        await using var ctx = await InfrastructureContext.CreateAsync(configure: s => s.AddSingleton<IRuntimeStore>(runtime));
+        await using var ctx = await InfrastructureContext.CreateAsync(configure: s =>
+        {
+            s.AddSingleton<IRuntimeStore>(runtime);
+            s.AddSingleton<ICollectWriter>(runtime);
+        });
         var spool = ctx.Provider.GetRequiredService<ISpoolStore>();
 
         await spool.SaveAsync(Request("P001"));
@@ -196,7 +199,11 @@ public class SpoolReplayServiceTests
     public async Task StopsAtFirstFailingRequestAndKeepsTheRest()
     {
         var runtime = new ThrowingAfterFirst();
-        await using var ctx = await InfrastructureContext.CreateAsync(configure: s => s.AddSingleton<IRuntimeStore>(runtime));
+        await using var ctx = await InfrastructureContext.CreateAsync(configure: s =>
+        {
+            s.AddSingleton<IRuntimeStore>(runtime);
+            s.AddSingleton<ICollectWriter>(runtime);
+        });
         var spool = ctx.Provider.GetRequiredService<ISpoolStore>();
 
         await spool.SaveAsync(Request("P001"));

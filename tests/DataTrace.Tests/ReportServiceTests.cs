@@ -55,16 +55,40 @@ public class ReportServiceTests
         var rows = (await service.GetThroughputAsync(Day1, Day2.AddDays(1), stationId: null)).ByDay;
 
         Assert.Equal(2, rows.Count);
-        Assert.Equal(Day1.Date, rows[0].Day);
+        Assert.Equal(Day1, rows[0].Day);
+        Assert.Equal("09-19 08:00–20:00", rows[0].ShiftLabel);
         Assert.Equal(3, rows[0].Total);
         Assert.Equal(2, rows[0].Ok);
         Assert.Equal(1, rows[0].Ng);
         Assert.Equal(2d / 3d, rows[0].FirstPassYield, precision: 6);
 
-        Assert.Equal(Day2.Date, rows[1].Day);
+        Assert.Equal(Day2, rows[1].Day);
         Assert.Equal(2, rows[1].Total);
         Assert.Equal(1, rows[1].Ok);
         Assert.Equal(0.5, rows[1].FirstPassYield);
+    }
+
+    [Fact]
+    public async Task Throughput_keeps_a_night_shift_together_across_midnight()
+    {
+        var store = new FakeRuntimeStore();
+        var night = new DateTime(2026, 9, 19, 21, 0, 0);
+        var afterMidnight = new DateTime(2026, 9, 20, 2, 0, 0);
+        var dayShift = new DateTime(2026, 9, 20, 8, 0, 0);
+        store.Records.Add(("202609", Record(night, Judgement.Ng, 10)));
+        store.Records.Add(("202609", Record(afterMidnight, Judgement.Ok, 10)));
+        store.Records.Add(("202609", Record(dayShift, Judgement.Ok, 10)));
+        var service = new ReportService(store);
+
+        var rows = (await service.GetThroughputAsync(night.Date, dayShift.Date.AddDays(1), stationId: null)).ByDay;
+
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(new DateTime(2026, 9, 19, 20, 0, 0), rows[0].Day);
+        Assert.Equal("09-19 20:00–09-20 08:00", rows[0].ShiftLabel);
+        Assert.Equal(2, rows[0].Total);
+        Assert.Equal(1, rows[0].Ng);
+        Assert.Equal(dayShift, rows[1].Day);
+        Assert.Equal(1, rows[1].Total);
     }
 
     [Fact]
@@ -75,7 +99,7 @@ public class ReportServiceTests
         var rows = (await service.GetThroughputAsync(Day1, Day2.AddDays(1), stationId: 10)).ByDay;
 
         var row = Assert.Single(rows);
-        Assert.Equal(Day1.Date, row.Day);
+        Assert.Equal(Day1, row.Day);
         Assert.Equal(2, row.Total);
         Assert.Equal(2, row.Ok);
         Assert.Equal(0, row.Ng);
@@ -90,7 +114,7 @@ public class ReportServiceTests
         var rows = (await service.GetThroughputAsync(Day2, Day2.AddDays(1), stationId: null)).ByDay;
 
         Assert.Single(rows);
-        Assert.Equal(Day2.Date, rows[0].Day);
+        Assert.Equal(Day2, rows[0].Day);
         Assert.Equal(2, rows[0].Total);
     }
 

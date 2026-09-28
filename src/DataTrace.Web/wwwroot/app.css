@@ -135,6 +135,32 @@
     padding: calc(var(--mud-appbar-height) + 16px) 16px 16px;
 }
 
+.dt-alarm-bar {
+    position: sticky;
+    top: var(--mud-appbar-height);
+    z-index: 20;
+    margin: 0 0 16px;
+}
+
+.dt-alarm-bar-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.dt-alarm-bar-note {
+    margin-top: 4px;
+    font-size: 0.85rem;
+    opacity: 0.9;
+}
+
+.dt-alarm-bar-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
 /* 顶栏里的角色胶囊：MudChip 的 Inherit 仍取正文深色，压在深色底上读不出来 */
 .mud-appbar .dt-appbar-chip {
     color: var(--mud-palette-appbar-text);
@@ -631,12 +657,21 @@ h5:focus,
     color: var(--mud-palette-error);
 }
 
+.dt-kpi {
+    flex-wrap: wrap;
+}
+
 .dt-kpi-hint {
     flex: 0 0 auto;
     font-size: 0.75rem;
     color: var(--mud-palette-text-secondary);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+}
+
+.dt-kpi-hint-wide {
+    flex: 1 0 100%;
+    white-space: normal;
 }
 
 .dt-live-cadence-secondary {
@@ -1519,6 +1554,9 @@ body.dt-shopfloor .mud-appbar {
 body.dt-shopfloor .mud-main-content {
     margin-left: 0 !important;
     padding: 12px 16px 24px !important;
+}
+body.dt-shopfloor .dt-alarm-bar {
+    top: 0;
 }
 /* 退出按钮包在 POST 表单里（GET 带副作用），外观仍是顶栏按钮。 */
 .dt-logout-form {

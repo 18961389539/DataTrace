@@ -565,7 +565,7 @@
 
     private void ToggleExpandedFromKeyboard(long id)
     {
-        _keyboardToggleAt[id] = DateTime.UtcNow;
+        _keyboardToggleAt[id] = DateTime.Now;
         ToggleExpanded(id);
     }
 
@@ -573,7 +573,7 @@
     {
         if (args.Detail == 0
             && _keyboardToggleAt.Remove(id, out var toggledAt)
-            && DateTime.UtcNow - toggledAt < TimeSpan.FromSeconds(1))
+            && DateTime.Now - toggledAt < TimeSpan.FromSeconds(1))
         {
             return;
         }

@@ -68,6 +68,12 @@ public static class SettingsLimits
     public static string? SimulatorPalletPoolError(int value)
         => Range(value, MinSimulatorPalletPool, MaxSimulatorPalletPool, "托盘池数量");
 
+    public static string? ShiftStartHourError(int value)
+        => value is >= 0 and <= 23 ? null : "班次起点必须在 0–23 之间";
+
+    public static string? ShiftLengthHoursError(int value)
+        => value is 8 or 12 or 24 ? null : "班次时长只能是 8、12 或 24 小时";
+
     /// <summary>整份设置的第一个越界项；返回 null 表示都可用。</summary>
     public static string? Error(SystemSettings settings)
         => ScanIntervalError(settings.ScanIntervalMs)
@@ -78,7 +84,9 @@ public static class SettingsLimits
            ?? MesTimeoutError(settings.MesTimeoutSeconds)
            ?? SimulatorIntervalError(settings.SimulatorIntervalMs)
            ?? SimulatorNgPercentError(settings.SimulatorNgPercent)
-           ?? SimulatorPalletPoolError(settings.SimulatorPalletPool);
+           ?? SimulatorPalletPoolError(settings.SimulatorPalletPool)
+           ?? ShiftStartHourError(settings.ShiftStartHour)
+           ?? ShiftLengthHoursError(settings.ShiftLengthHours);
 
     /// <summary>
     /// 保留年限下"最新会被清理掉"的月份（用于保存前预告清理范围）。

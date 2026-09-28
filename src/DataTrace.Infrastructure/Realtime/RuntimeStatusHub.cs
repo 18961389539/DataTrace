@@ -1,8 +1,15 @@
+using DataTrace.Application.Alarms;
 using DataTrace.Application.Realtime;
+using DataTrace.Application.Runtime;
 using DataTrace.Domain.Entities;
+using DataTrace.Domain.Enums;
 
 namespace DataTrace.Infrastructure.Realtime;
 
+/// <summary>
+/// 工站状态、最近记录、连续不合格和心跳只活在本进程。
+/// 连续不合格在启动时从当月库重算；最近记录和心跳从这次进程开始算。
+/// </summary>
 public sealed class RuntimeStatusHub : IRuntimeStatusHub, ICollectEventBus
 {
     private static readonly TimeSpan ChangedCoalesce = TimeSpan.FromMilliseconds(75);
@@ -17,7 +24,15 @@ public sealed class RuntimeStatusHub : IRuntimeStatusHub, ICollectEventBus
     private IReadOnlyList<CollectFeedItem> _recentSnapshot = [];
     private string? _activeRecipeCode;
     private string? _activeRecipeName;
-    private DateTime _lastCollectorUtc = DateTime.UtcNow;
+    private readonly Dictionary<(int StationId, StationStreakKind Kind), StationNgStreak> _ngStreaks = new();
+    private readonly Dictionary<(int StationId, int TagId), TagWarningStreak> _warnings = new();
+    private readonly Dictionary<(int StationId, int TagId), List<double>> _driftSeries = new();
+    private readonly Dictionary<(int StationId, int TagId), TagDriftNotice> _drifts = new();
+    private IReadOnlyList<OpenSessionNotice> _openSessions = [];
+    private IReadOnlyList<InProcessRecipe> _inProcessRecipes = [];
+    private readonly TaskCompletionSource _ngStreaksReady = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _ngStreakRestoreClaimed;
+    private DateTime _lastCollectorAt = DateTime.Now;
 
     private readonly object _notifyGate = new();
     private bool _notifyPending;
@@ -119,6 +134,8 @@ public sealed class RuntimeStatusHub : IRuntimeStatusHub, ICollectEventBus
 
         lock (_gate)
         {
+            NoteNgLocked(record);
+            NoteTagWatchLocked(record);
             _recent.Insert(0, item);
             if (_recent.Count > 40)
             {
@@ -132,6 +149,45 @@ public sealed class RuntimeStatusHub : IRuntimeStatusHub, ICollectEventBus
         ScheduleChanged();
     }
 
+    private void NoteNgLocked(CollectRecord record)
+        => NgStreakRebuild.Apply(_ngStreaks, record.StationId, record.StationCode, record.Judgement, record.ResultCode);
+
+    private void NoteTagWatchLocked(CollectRecord record)
+    {
+        foreach (var tag in record.TagValues)
+        {
+            TagWatchRules.ApplyWarning(
+                _warnings,
+                record.StationId,
+                record.StationCode,
+                tag.TagId,
+                tag.TagName,
+                tag.IsWarning,
+                tag.IsOutOfLimit);
+            if (tag.NumericValue is not double value || double.IsNaN(value) || double.IsInfinity(value))
+            {
+                continue;
+            }
+
+            var key = (record.StationId, tag.TagId);
+            if (!_driftSeries.TryGetValue(key, out var series))
+            {
+                series = [];
+                _driftSeries[key] = series;
+            }
+
+            TagWatchRules.Append(series, value);
+            var drift = TagWatchRules.DriftOf(record.StationId, record.StationCode, tag.TagId, tag.TagName, series);
+            if (drift is null)
+            {
+                _drifts.Remove(key);
+            }
+            else
+            {
+                _drifts[key] = drift.Value;
+            }
+        }
+    }
 
     public void SetActiveRecipe(string? code, string? name)
     {
@@ -153,16 +209,214 @@ public sealed class RuntimeStatusHub : IRuntimeStatusHub, ICollectEventBus
     }
 
 
-    public DateTime LastCollectorUtc
+    public IReadOnlyList<StationNgStreak> NgStreaks
     {
-        get { lock (_gate) { return _lastCollectorUtc; } }
+        get
+        {
+            lock (_gate)
+            {
+                return _ngStreaks.Values.ToList();
+            }
+        }
+    }
+
+    public Task NgStreaksReady => _ngStreaksReady.Task;
+
+    public bool TryClaimNgStreakRestore()
+        => Interlocked.CompareExchange(ref _ngStreakRestoreClaimed, 1, 0) == 0;
+
+    public void CompleteNgStreakRestore(IReadOnlyList<StationNgStreak> streaks)
+    {
+        lock (_gate)
+        {
+            _ngStreaks.Clear();
+            foreach (var streak in streaks)
+            {
+                if (streak.Count > 0)
+                {
+                    _ngStreaks[(streak.StationId, streak.Kind)] = streak;
+                }
+            }
+        }
+
+        _ngStreaksReady.TrySetResult();
+    }
+
+    public void AbandonNgStreakRestore() => _ngStreaksReady.TrySetResult();
+
+    public IReadOnlyList<TagWarningStreak> WarningStreaks
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _warnings.Values.ToList();
+            }
+        }
+    }
+
+    public IReadOnlyList<TagDriftNotice> DriftNotices
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _drifts.Values.ToList();
+            }
+        }
+    }
+
+    public void CompleteTagWatchRestore(IReadOnlyList<TagObservation> observations)
+    {
+        lock (_gate)
+        {
+            _warnings.Clear();
+            _driftSeries.Clear();
+            _drifts.Clear();
+            foreach (var observation in observations.OrderBy(item => item.CompleteTime).ThenBy(item => item.TagId))
+            {
+                TagWatchRules.ApplyWarning(
+                    _warnings,
+                    observation.StationId,
+                    observation.StationCode,
+                    observation.TagId,
+                    observation.TagName,
+                    observation.IsWarning,
+                    observation.IsOutOfLimit);
+                if (observation.NumericValue is not double value || double.IsNaN(value) || double.IsInfinity(value))
+                {
+                    continue;
+                }
+
+                var key = (observation.StationId, observation.TagId);
+                if (!_driftSeries.TryGetValue(key, out var series))
+                {
+                    series = [];
+                    _driftSeries[key] = series;
+                }
+
+                TagWatchRules.Append(series, value);
+                var drift = TagWatchRules.DriftOf(
+                    observation.StationId,
+                    observation.StationCode,
+                    observation.TagId,
+                    observation.TagName,
+                    series);
+                if (drift is null)
+                {
+                    _drifts.Remove(key);
+                }
+                else
+                {
+                    _drifts[key] = drift.Value;
+                }
+            }
+        }
+    }
+
+    public IReadOnlyList<OpenSessionNotice> OpenSessions
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _openSessions;
+            }
+        }
+    }
+
+    public void ReplaceOpenSessions(IReadOnlyList<OpenSessionNotice> sessions)
+    {
+        var next = sessions.ToList();
+        lock (_gate)
+        {
+            if (SameOpen(_openSessions, next))
+            {
+                return;
+            }
+
+            _openSessions = next;
+        }
+
+        ScheduleChanged();
+    }
+
+    public IReadOnlyList<InProcessRecipe> InProcessRecipes
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inProcessRecipes;
+            }
+        }
+    }
+
+    public void ReplaceInProcessRecipes(IReadOnlyList<InProcessRecipe> recipes)
+    {
+        var next = recipes.ToList();
+        lock (_gate)
+        {
+            if (SameRecipes(_inProcessRecipes, next))
+            {
+                return;
+            }
+
+            _inProcessRecipes = next;
+        }
+
+        ScheduleChanged();
+    }
+
+    private static bool SameRecipes(IReadOnlyList<InProcessRecipe> left, IReadOnlyList<InProcessRecipe> right)
+    {
+        if (left.Count != right.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < left.Count; i++)
+        {
+            if (!string.Equals(left[i].Code, right[i].Code, StringComparison.Ordinal) || left[i].Count != right[i].Count)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool SameOpen(IReadOnlyList<OpenSessionNotice> left, IReadOnlyList<OpenSessionNotice> right)
+    {
+        if (left.Count != right.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < left.Count; i++)
+        {
+            if (left[i].SessionId != right[i].SessionId
+                || left[i].PalletCode != right[i].PalletCode
+                || left[i].StationCode != right[i].StationCode
+                || left[i].OpenMinutes != right[i].OpenMinutes)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public DateTime LastCollectorAt
+    {
+        get { lock (_gate) { return _lastCollectorAt; } }
     }
 
     public void NoteCollectorTick()
     {
         lock (_gate)
         {
-            _lastCollectorUtc = DateTime.UtcNow;
+            _lastCollectorAt = DateTime.Now;
         }
     }
 
@@ -222,6 +476,7 @@ public sealed class RuntimeStatusHub : IRuntimeStatusHub, ICollectEventBus
            && a.LastResultCode == b.LastResultCode
            && a.LastJudgement == b.LastJudgement
            && a.LastCompleteTime == b.LastCompleteTime
+           && a.LastPieceGap == b.LastPieceGap
            && a.LastDurationMs == b.LastDurationMs
            && a.LastError == b.LastError
            && a.LastMonthKey == b.LastMonthKey

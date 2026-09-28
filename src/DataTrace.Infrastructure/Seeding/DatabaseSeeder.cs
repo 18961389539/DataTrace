@@ -34,6 +34,7 @@ public sealed class DatabaseSeeder
         await _db.Database.EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
         await _db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;", cancellationToken).ConfigureAwait(false);
         await EnsureAuditLogSchemaAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureAlarmSchemaAsync(cancellationToken).ConfigureAwait(false);
         await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "SimulatorAutoRun",
             "ALTER TABLE SystemSettings ADD COLUMN SimulatorAutoRun INTEGER NOT NULL DEFAULT 1", cancellationToken).ConfigureAwait(false);
         await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "SimulatorIntervalMs",
@@ -44,6 +45,12 @@ public sealed class DatabaseSeeder
             "ALTER TABLE SystemSettings ADD COLUMN SimulatorPalletPool INTEGER NOT NULL DEFAULT 20", cancellationToken).ConfigureAwait(false);
         await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "AuditRetentionYears",
             "ALTER TABLE SystemSettings ADD COLUMN AuditRetentionYears INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "AlarmWebhookUrl",
+            "ALTER TABLE SystemSettings ADD COLUMN AlarmWebhookUrl TEXT NULL", cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "ShiftStartHour",
+            "ALTER TABLE SystemSettings ADD COLUMN ShiftStartHour INTEGER NOT NULL DEFAULT 8", cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "ShiftLengthHours",
+            "ALTER TABLE SystemSettings ADD COLUMN ShiftLengthHours INTEGER NOT NULL DEFAULT 12", cancellationToken).ConfigureAwait(false);
 
         // 点位三级限值：老配置库缺这些列，采集侧读限值会直接报 no such column。
         await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "WarningLowerLimit",
@@ -59,6 +66,16 @@ public sealed class DatabaseSeeder
 
         await SqliteSchema.AddColumnIfMissingAsync(_db, "Recipes", "PreviousCodes",
             "ALTER TABLE Recipes ADD COLUMN PreviousCodes TEXT NULL", cancellationToken).ConfigureAwait(false);
+
+        // 在制索引要记住首站型号和最后停在哪一站。老库没有这些列时，采集侧一读就报 no such column。
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "ActiveSessions", "RecipeCode",
+            "ALTER TABLE ActiveSessions ADD COLUMN RecipeCode TEXT NOT NULL DEFAULT ''", cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "ActiveSessions", "LastStationId",
+            "ALTER TABLE ActiveSessions ADD COLUMN LastStationId INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "ActiveSessions", "LastStationCode",
+            "ALTER TABLE ActiveSessions ADD COLUMN LastStationCode TEXT NOT NULL DEFAULT ''", cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "ActiveSessions", "LastActivityAt",
+            "ALTER TABLE ActiveSessions ADD COLUMN LastActivityAt TEXT NULL", cancellationToken).ConfigureAwait(false);
 
         // 点位取值来源（0 = PLC 寄存器）与文件源点位读的那一个文件路径。
         // 老配置库没有这两列，采集侧读配置会直接报 no such column。
@@ -161,6 +178,28 @@ public sealed class DatabaseSeeder
         }
         await _db.Database.ExecuteSqlRawAsync(
             """CREATE INDEX IF NOT EXISTS "IX_AuditLogs_Time" ON "AuditLogs" ("Time")""",
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task EnsureAlarmSchemaAsync(CancellationToken cancellationToken)
+    {
+        // EnsureCreated 不会给已经有表的配置库补新表。报警要能跨重启留下来，这张表必须自己建。
+        await _db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE TABLE IF NOT EXISTS "AlarmIncidents" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_AlarmIncidents" PRIMARY KEY AUTOINCREMENT,
+                "Key" TEXT NOT NULL,
+                "Kind" INTEGER NOT NULL,
+                "Message" TEXT NOT NULL,
+                "RaisedAt" TEXT NOT NULL,
+                "AcknowledgedAt" TEXT NULL,
+                "AcknowledgedBy" TEXT NULL,
+                "ClearedAt" TEXT NULL
+            )
+            """,
+            cancellationToken).ConfigureAwait(false);
+        await _db.Database.ExecuteSqlRawAsync(
+            """CREATE INDEX IF NOT EXISTS "IX_AlarmIncidents_RaisedAt" ON "AlarmIncidents" ("RaisedAt")""",
             cancellationToken).ConfigureAwait(false);
     }
 

@@ -57,32 +57,32 @@ public interface IConfigRepository
     Task<int> GetVersionAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<PlcConnection>> GetPlcConnectionsAsync(CancellationToken cancellationToken = default);
     Task<PlcConnection?> GetPlcConnectionAsync(int id, CancellationToken cancellationToken = default);
-    Task SavePlcConnectionAsync(PlcConnection connection, CancellationToken cancellationToken = default);
+    Task<int> SavePlcConnectionAsync(SavePlcConnectionCommand connection, CancellationToken cancellationToken = default);
     Task DeletePlcConnectionAsync(int id, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<Station>> GetStationsAsync(CancellationToken cancellationToken = default);
     Task<Station?> GetStationAsync(int id, CancellationToken cancellationToken = default);
-    Task SaveStationAsync(Station station, CancellationToken cancellationToken = default);
+    Task<int> SaveStationAsync(SaveStationCommand station, CancellationToken cancellationToken = default);
     Task DeleteStationAsync(int id, CancellationToken cancellationToken = default);
 
-    Task SaveTagAsync(TagDefinition tag, CancellationToken cancellationToken = default);
+    Task<int> SaveTagAsync(SaveTagCommand tag, CancellationToken cancellationToken = default);
     Task DeleteTagAsync(int id, CancellationToken cancellationToken = default);
-    Task SaveCurveAsync(CurveDefinition curve, CancellationToken cancellationToken = default);
+    Task<int> SaveCurveAsync(SaveCurveCommand curve, CancellationToken cancellationToken = default);
     Task DeleteCurveAsync(int id, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 单独保存某条曲线的波形判据：传入的集合即最终状态（按主键增量增删改）。
     /// 与 <see cref="SaveCurveAsync"/> 分开，是为了让编辑器不必改动被跟踪实体的导航集合。
     /// </summary>
-    Task SaveCurveCriteriaAsync(int curveId, IReadOnlyList<CurveCriterion> criteria, CancellationToken cancellationToken = default);
+    Task SaveCurveCriteriaAsync(int curveId, IReadOnlyList<SaveCurveCriterionCommand> criteria, CancellationToken cancellationToken = default);
 
-    Task SaveHeartbeatAsync(HeartbeatSettings heartbeat, CancellationToken cancellationToken = default);
+    Task SaveHeartbeatAsync(SaveHeartbeatCommand heartbeat, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 保存系统设置。越界的取值（如保留年数为 0）会被拒绝并抛出 <see cref="InvalidOperationException"/>：
     /// 界面上的 Min/Max 只是输入框行为，脚本与历史脏数据可以直接写库，而这类值会删数据或压垮 PLC 通讯。
     /// </summary>
-    Task SaveSettingsAsync(SystemSettings settings, CancellationToken cancellationToken = default);
+    Task SaveSettingsAsync(SaveSettingsCommand settings, CancellationToken cancellationToken = default);
 
     /// <summary>MES 推送积压与最近一次推送结果，供设置页显示对接健康状态。</summary>
     Task<MesOutboxSnapshot> GetMesOutboxStatusAsync(CancellationToken cancellationToken = default);
@@ -93,13 +93,13 @@ public interface IConfigRepository
     /// 保存型号：先按主键增量同步限值覆盖行，再写入型号本身。
     /// 传入的 <see cref="Recipe.Limits"/> 即最终状态（空字段 = 沿用点位默认值）。
     /// </summary>
-    Task SaveRecipeAsync(Recipe recipe, CancellationToken cancellationToken = default);
+    Task<SavedRecipe> SaveRecipeAsync(SaveRecipeCommand recipe, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 只保存型号的限值覆盖行：传入的集合即最终状态，名称/启用状态/备注一律不动。
     /// 限值编辑器用它，免得把可能已过期的整份型号写回去。
     /// </summary>
-    Task SaveRecipeLimitsAsync(int recipeId, IReadOnlyList<RecipeLimit> limits, CancellationToken cancellationToken = default);
+    Task SaveRecipeLimitsAsync(int recipeId, IReadOnlyList<SaveRecipeLimitCommand> limits, CancellationToken cancellationToken = default);
 
     Task DeleteRecipeAsync(int id, CancellationToken cancellationToken = default);
 

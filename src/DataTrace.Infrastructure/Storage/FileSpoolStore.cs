@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DataTrace.Application.Runtime;
@@ -50,6 +51,28 @@ public sealed class FileSpoolStore : ISpoolStore
         return result;
     }
 
+    public Task<SpoolBacklog> DescribeAsync(CancellationToken cancellationToken = default)
+    {
+        if (!Directory.Exists(_root))
+        {
+            return Task.FromResult(new SpoolBacklog(0, null));
+        }
+
+        var count = 0;
+        DateTime? oldest = null;
+        foreach (var file in Directory.GetFiles(_root, "*.spool.json"))
+        {
+            count++;
+            var at = CreatedAt(file);
+            if (oldest is null || at < oldest)
+            {
+                oldest = at;
+            }
+        }
+
+        return Task.FromResult(new SpoolBacklog(count, oldest));
+    }
+
     public Task DeleteAsync(string fileName, CancellationToken cancellationToken = default)
     {
         var path = Path.Combine(_root, fileName);
@@ -59,5 +82,22 @@ public sealed class FileSpoolStore : ISpoolStore
         }
 
         return Task.CompletedTask;
+    }
+
+    private static DateTime CreatedAt(string path)
+    {
+        var name = Path.GetFileName(path);
+        if (name.Length >= 17
+            && DateTime.TryParseExact(
+                name.AsSpan(0, 17),
+                "yyyyMMddHHmmssfff",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var parsed))
+        {
+            return parsed;
+        }
+
+        return File.GetLastWriteTime(path);
     }
 }

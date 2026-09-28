@@ -8,7 +8,7 @@
 @using DataTrace.Plc.Codec
 @using DataTrace.Domain.Evaluation
 @inject IConfigRepository Config
-@inject IAuditLogger Audit
+@inject IConfigurationChanges Changes
 @inject AuthenticationStateProvider Auth
 @inject DtToast Toast
 @inject IDialogService DialogService
@@ -779,9 +779,9 @@
             var oldTag = isNew ? null : station.Tags.FirstOrDefault(t => t.Id == edited.Id);
             var oldSnap = oldTag is null ? null
                 : $"{oldTag.Address}; {oldTag.DataType}; limits={DisplayLabels.LimitRange(oldTag.LowerLimit, oldTag.UpperLimit)}";
-            await Config.SaveTagAsync(edited);
-            await AuditAsync(isNew ? "Create" : "Save", "TagDefinition", $"{station.Code}/{edited.Name}", oldSnap,
-                $"source={edited.Source}; {edited.Address}; {edited.DataType}; limits={DisplayLabels.LimitRange(edited.LowerLimit, edited.UpperLimit)}");
+            ReportAudit(await Changes.SaveTagAsync(edited, await AuditOf(
+                isNew ? "Create" : "Save", "TagDefinition", $"{station.Code}/{edited.Name}", oldSnap,
+                $"source={edited.Source}; {edited.Address}; {edited.DataType}; limits={DisplayLabels.LimitRange(edited.LowerLimit, edited.UpperLimit)}")));
             var tab = _tab;
             await Select(station);
             _tab = tab;
@@ -807,9 +807,9 @@
         clone.Enabled = enabled;
         try
         {
-            await Config.SaveTagAsync(clone);
-            await AuditAsync("Save", "TagDefinition", $"{_current.Code}/{tag.Name}",
-                $"enabled={tag.Enabled}", $"enabled={enabled}; {clone.Address}; {clone.DataType}");
+            ReportAudit(await Changes.SaveTagAsync(clone, await AuditOf(
+                "Save", "TagDefinition", $"{_current.Code}/{tag.Name}",
+                $"enabled={tag.Enabled}", $"enabled={enabled}; {clone.Address}; {clone.DataType}")));
             Toast.Add($"{tag.Name} 已{(enabled ? "启用" : "停用")}", Severity.Success);
         }
         finally
@@ -884,13 +884,13 @@
         await Run(isNew ? "添加曲线" : "保存曲线", async () =>
         {
             edited.StationId = station.Id;
-            await Config.SaveCurveAsync(edited);
             var code = edited.Code;
             var summary = $"points={edited.PointCount}; " +
                           $"y={SeriesAddress(edited, SeriesRole.Y)}; x={SeriesAddress(edited, SeriesRole.X)}; " +
                           $"enabled={edited.Enabled}";
-            await AuditAsync(isNew ? "Create" : "Save", "CurveDefinition", $"{station.Code}/{code}",
-                isNew ? null : summary, summary);
+            ReportAudit(await Changes.SaveCurveAsync(edited, await AuditOf(
+                isNew ? "Create" : "Save", "CurveDefinition", $"{station.Code}/{code}",
+                isNew ? null : summary, summary)));
             var tab = _tab;
             await Select(station);
             _tab = tab;
@@ -917,9 +917,9 @@
         clone.Enabled = enabled;
         try
         {
-            await Config.SaveCurveAsync(clone);
-            await AuditAsync("Save", "CurveDefinition", $"{_current.Code}/{curve.Code}",
-                $"enabled={curve.Enabled}", $"enabled={enabled}; {clone.Code}");
+            ReportAudit(await Changes.SaveCurveAsync(clone, await AuditOf(
+                "Save", "CurveDefinition", $"{_current.Code}/{curve.Code}",
+                $"enabled={curve.Enabled}", $"enabled={enabled}; {clone.Code}")));
             Toast.Add($"曲线 {curve.Code} 已{(enabled ? "启用" : "停用")}", Severity.Success);
         }
         finally
@@ -1068,8 +1068,8 @@
             PositionCount = 1,
             Enabled = true
         };
-        await Config.SaveStationAsync(station);
-        await AuditAsync("Create", "Station", station.Code, null, $"{station.Name}; plc={station.PlcConnectionId}; seq={station.Sequence}");
+        ReportAudit(await Changes.SaveStationAsync(station, await AuditOf(
+            "Create", "Station", station.Code, null, $"{station.Name}; plc={station.PlcConnectionId}; seq={station.Sequence}")));
         await ReloadList();
         await Select(station);
         _tab = 0;
@@ -1090,8 +1090,8 @@
             return;
         }
 
-        await Config.DeleteStationAsync(station.Id);
-        await AuditAsync("Delete", "Station", station.Code, $"{station.Name}; tags={tags}; curves={curves}", null);
+        ReportAudit(await Changes.DeleteStationAsync(station.Id, await AuditOf(
+            "Delete", "Station", station.Code, $"{station.Name}; tags={tags}; curves={curves}", null)));
         if (_current?.Id == station.Id)
         {
             _current = null;
@@ -1127,9 +1127,6 @@
 
         _current.Code = _current.Code.Trim();
         _current.Name = _current.Name.Trim();
-        // 路径原样交给采集侧用：这里只去掉手滑留下的首尾空格（UNC 与映射盘都可能有尾随空格）。
-        _current.DataFilePath = (_current.DataFilePath ?? "").Trim();
-        // 历史库里可能没有产品位行：这里补一条，否则用户刚填的有料地址会被静默丢掉。
         var position = _current.Positions.FirstOrDefault(p => p.Index == 1) ?? _current.Positions.FirstOrDefault();
         if (position is null)
         {
@@ -1138,15 +1135,16 @@
         }
 
         position.OccupiedAddress = string.IsNullOrWhiteSpace(_occupiedAddress) ? null : _occupiedAddress.Trim();
+        StationWriteNormalizer.Apply(_current);
 
         var before = _stations.FirstOrDefault(s => s.Id == _current.Id);
         var oldSnap = before is null ? null
             : $"{before.Name}; plc={before.PlcConnectionId}; trigger={before.TriggerAddress}; enabled={before.Enabled}";
-        await Config.SaveStationAsync(_current);
-        await AuditAsync("Save", "Station", _current.Code, oldSnap,
+        ReportAudit(await Changes.SaveStationAsync(_current, await AuditOf(
+            "Save", "Station", _current.Code, oldSnap,
             $"{_current.Name}; plc={_current.PlcConnectionId}; trigger={_current.TriggerAddress}; " +
             $"dataFile={_current.DataFilePath}; format={_current.DataFileFormat}; " +
-            $"occupied={position?.OccupiedAddress ?? "-"}; enabled={_current.Enabled}");
+            $"occupied={position?.OccupiedAddress ?? "-"}; enabled={_current.Enabled}")));
         Toast.Add($"{_current.Code} 已保存并下发采集器", Severity.Success);
         var id = _current.Id;
         var tab = _tab;
@@ -1167,8 +1165,8 @@
             return;
         }
 
-        await Config.DeleteTagAsync(tag.Id);
-        await AuditAsync("Delete", "TagDefinition", $"{_current.Code}/{tag.Name}", tag.Address, null);
+        ReportAudit(await Changes.DeleteTagAsync(tag.Id, await AuditOf(
+            "Delete", "TagDefinition", $"{_current.Code}/{tag.Name}", tag.Address, null)));
         var tab = _tab;
         await Select(_current);
         _tab = tab;
@@ -1209,9 +1207,9 @@
             // 不写 curve.Criteria：它是被跟踪实体的导航集合，替换它会和 EF 的导航修正
             // 互相打架（同一行会在集合里留下两份）。仓储按主键同步，随后重读即可。
             var beforeCount = curve.Criteria?.Count ?? 0;
-            await Config.SaveCurveCriteriaAsync(curve.Id, criteria);
-            await AuditAsync("Save", "CurveCriterion", $"{station.Code}/{curve.Code}",
-                $"count={beforeCount}", $"count={criteria.Count}");
+            ReportAudit(await Changes.SaveCurveCriteriaAsync(curve.Id, criteria, await AuditOf(
+                "Save", "CurveCriterion", $"{station.Code}/{curve.Code}",
+                $"count={beforeCount}", $"count={criteria.Count}")));
             var tab = _tab;
             await Select(station);
             _tab = tab;
@@ -1236,31 +1234,25 @@
             return;
         }
 
-        await Config.DeleteCurveAsync(curve.Id);
-        await AuditAsync("Delete", "CurveDefinition", $"{_current.Code}/{curve.Code}", curve.Name, null);
+        ReportAudit(await Changes.DeleteCurveAsync(curve.Id, await AuditOf(
+            "Delete", "CurveDefinition", $"{_current.Code}/{curve.Code}", curve.Name, null)));
         var tab = _tab;
         await Select(_current);
         _tab = tab;
         Toast.Add($"曲线 {curve.Code} 已删除", Severity.Success);
     });
 
-    /// <summary>
-    /// 写审计日志。失败时单独提示一次，而不是吞掉或者把已成功的保存说成失败。
-    /// </summary>
-    /// <remarks>
-    /// 配置已经落库并下发了，这时候告诉用户"保存失败"会让人反复保存；
-    /// 完全不说又会让"谁改了什么"出现空洞，所以两者分开讲。
-    /// </remarks>
-    private async Task AuditAsync(string action, string entityType, string key, string? oldValue, string? newValue)
+    private async Task<ConfigAudit> AuditOf(string action, string entityType, string key, string? oldValue, string? newValue)
     {
-        try
+        var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+        return new ConfigAudit(user, action, entityType, key, oldValue, newValue);
+    }
+
+    private void ReportAudit(ConfigurationChangeResult result)
+    {
+        if (result.AuditError is { } error)
         {
-            var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
-            await Audit.WriteAsync(user, action, entityType, key, oldValue, newValue);
-        }
-        catch (Exception ex)
-        {
-            Toast.Add($"操作已完成，但审计记录失败：{ex.Message}", Severity.Warning);
+            Toast.Add($"操作已完成，但审计记录失败：{error}", Severity.Warning);
         }
     }
 }

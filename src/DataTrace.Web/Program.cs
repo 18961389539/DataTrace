@@ -71,6 +71,10 @@ builder.Services.AddDataTracePlc();
 builder.Services.AddIoTClientDrivers();
 builder.Services.AddDataTraceCollector();
 builder.Services.AddHttpClient("mes");
+builder.Services.AddHttpClient("alarm", client => client.Timeout = TimeSpan.FromSeconds(5));
+builder.Services.AddSingleton<DataTrace.Web.Services.LineAlarmBoard>();
+builder.Services.AddSingleton<DataTrace.Application.Alarms.ILineAlarmBoard>(sp => sp.GetRequiredService<DataTrace.Web.Services.LineAlarmBoard>());
+builder.Services.AddHostedService<DataTrace.Web.Services.LineAlarmHostedService>();
 builder.Services.AddMudServices(config =>
 {
     // 提示统一出现在底部居中，操作反馈更醒目；时长与去重由 DtToast 按严重度分档控制。

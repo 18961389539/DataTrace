@@ -157,3 +157,55 @@ window.dtShopFloor = {
         }
     } catch (e) { }
 })();
+
+// 异常呼叫：方波短鸣，不依赖音频文件。浏览器未授权自动播放时，点「重新响铃」会在用户手势里恢复。
+window.dtAlarm = (function () {
+    var ctx = null;
+    var timer = null;
+
+    function beep() {
+        var AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) {
+            return;
+        }
+
+        if (!ctx) {
+            ctx = new AudioCtx();
+        }
+
+        if (ctx.state === 'suspended') {
+            ctx.resume();
+        }
+
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.2);
+    }
+
+    return {
+        start: function () {
+            if (timer) {
+                return;
+            }
+
+            beep();
+            timer = setInterval(beep, 1400);
+        },
+        stop: function () {
+            if (!timer) {
+                return;
+            }
+
+            clearInterval(timer);
+            timer = null;
+        }
+    };
+})();

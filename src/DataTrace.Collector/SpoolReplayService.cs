@@ -29,7 +29,7 @@ public sealed class SpoolReplayService : BackgroundService
                 if (items.Count > 0)
                 {
                     await using var scope = _scopeFactory.CreateAsyncScope();
-                    var runtime = scope.ServiceProvider.GetRequiredService<IRuntimeStore>();
+                    var runtime = scope.ServiceProvider.GetRequiredService<ICollectWriter>();
                     foreach (var (file, request) in items)
                     {
                         try

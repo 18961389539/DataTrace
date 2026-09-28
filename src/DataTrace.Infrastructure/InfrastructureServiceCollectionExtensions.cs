@@ -1,4 +1,6 @@
+using DataTrace.Application.Alarms;
 using DataTrace.Application.Configuration;
+using DataTrace.Application.Identity;
 using DataTrace.Application.Evaluation;
 using DataTrace.Application.Mes;
 using DataTrace.Application.Realtime;
@@ -87,15 +89,26 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddSingleton<ICurveFileStore>(_ => new CurveFileStore(curvePath));
         services.AddSingleton<ICollectArchiveStore>(_ => new CollectArchiveFileStore(archivePath));
         services.AddSingleton<ISpoolStore>(_ => new FileSpoolStore(spoolPath));
+        services.AddSingleton<IMesOutboxQueue, MesOutboxQueue>();
         // 基线缓存必须是单例：后台服务写、采集流水线读，两边看到的必须是同一份。
         services.AddSingleton<ICurveBaselineCache, CurveBaselineCache>();
 
         services.AddScoped<IConfigRepository, ConfigRepository>();
+        services.AddScoped<IConfigurationChanges, ConfigurationChangeService>();
+        services.AddScoped<ISettingsSave, SettingsSaveService>();
+        services.AddScoped<IUserAdministration, UserAdministration>();
         services.AddScoped<IAuditLogger, AuditLogger>();
+        services.AddScoped<IAlarmIncidents, AlarmIncidentStore>();
         services.AddScoped<AuditRetentionArchiveService>();
+        services.AddScoped<IAuditRetention>(sp => sp.GetRequiredService<AuditRetentionArchiveService>());
         services.AddScoped<IActiveSessionStore, ActiveSessionStore>();
         services.AddScoped<ISerialNumberGenerator, SerialNumberGenerator>();
-        services.AddScoped<IRuntimeStore, RuntimeStore>();
+        services.AddScoped<RuntimeStore>();
+        services.AddScoped<IRuntimeStore>(sp => sp.GetRequiredService<RuntimeStore>());
+        services.AddScoped<ICollectWriter>(sp => sp.GetRequiredService<RuntimeStore>());
+        services.AddScoped<ICollectQuery>(sp => sp.GetRequiredService<RuntimeStore>());
+        services.AddScoped<IRuntimeAnalytics>(sp => sp.GetRequiredService<RuntimeStore>());
+        services.AddScoped<IRuntimeRetention>(sp => sp.GetRequiredService<RuntimeStore>());
         services.AddScoped<IReportService, ReportService>();
         services.AddScoped<ISpcService, SpcService>();
         services.AddScoped<ICurveTemplateService, CurveTemplateService>();

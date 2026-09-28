@@ -97,24 +97,33 @@
         <MudGrid>
             <MudItem xs="12" md="6">
                 <MudPaper Class="pa-4 dt-fill">
-                    <MudText Typo="Typo.h6" Class="mb-2">直通率</MudText>
+                    <MudText Typo="Typo.h6" Class="mb-1">直通率</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted mb-2">
+                        每一行是一个班次，件数是这一班走出末站的件。任一站不合格，整件算不合格。末站完成时刻要落在所选日期里。
+                    </MudText>
+                    @if (_pieceDrag is not null)
+                    {
+                        <MudText Typo="Typo.body2" Class="mb-2">@_pieceDrag.Text</MudText>
+                    }
                     <MudTable Items="_fpy" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading">
                         <HeaderContent>
-                            <MudTh>日期</MudTh>
+                            <MudTh>班次</MudTh>
                             <MudTh Class="dt-num">总数</MudTh>
                             <MudTh Class="dt-num">OK</MudTh>
-                            <MudTh Class="dt-num">NG</MudTh>
+                            <MudTh Class="dt-num">NG <InfoHint Topic="HelpTexts.NgSource" /></MudTh>
                             <MudTh Class="dt-num">未判定</MudTh>
                             <MudTh Class="dt-num">直通率 <InfoHint Topic="HelpTexts.YieldRate" /></MudTh>
+                            <MudTh>少做 <InfoHint Topic="HelpTexts.ShiftShortfall" /></MudTh>
                         </HeaderContent>
                         <RowTemplate>
-                            <MudTd DataLabel="日期">@context.Day.ToString("yyyy-MM-dd")</MudTd>
+                            <MudTd DataLabel="班次">@(string.IsNullOrEmpty(context.ShiftLabel) ? context.Day.ToString("yyyy-MM-dd HH:mm") : context.ShiftLabel)</MudTd>
                             <MudTd DataLabel="总数" Class="dt-num">@context.Total</MudTd>
                             <MudTd DataLabel="OK" Class="dt-num">@context.Ok</MudTd>
                             <MudTd DataLabel="NG" Class="dt-num">
                                 @if (context.Ng > 0)
                                 {
                                     <strong class="dt-text-error">@context.Ng</strong>
+                                    <div class="dt-muted">@PieceYieldRules.NgSourceText(context.QualityNg, context.CollectNg)</div>
                                 }
                                 else
                                 {
@@ -127,15 +136,21 @@
                                     @context.FirstPassYield.ToString("P1")
                                 </MudChip>
                             </MudTd>
+                            <MudTd DataLabel="少做">@StopBrief(context.Day)</MudTd>
                         </RowTemplate>
                         <NoRecordsContent>
-                            <MudText Typo="Typo.body2" Class="dt-muted py-3">所选区间没有生产记录。</MudText>
+                            <MudText Typo="Typo.body2" Class="dt-muted py-3">所选区间没有走出末站的件。</MudText>
                         </NoRecordsContent>
                     </MudTable>
                     @if (_fpy.Count > 0)
                     {
                         <MudText Typo="Typo.caption" Class="dt-muted mt-2">
-                            区间合计：@_fpy.Sum(x => x.Total) 条，OK @_fpy.Sum(x => x.Ok) 条，
+                            区间合计：@_fpy.Sum(x => x.Total) 件，OK @_fpy.Sum(x => x.Ok) 件，
+                            @if (_fpy.Sum(x => x.Ng) > 0)
+                            {
+                                @PieceYieldRules.NgSourceText(_fpy.Sum(x => x.QualityNg), _fpy.Sum(x => x.CollectNg))
+                                <text>，</text>
+                            }
                             平均直通率 @AverageYield().ToString("P1")<InfoHint Topic="HelpTexts.AverageYield" />
                         </MudText>
                     }
@@ -514,6 +529,8 @@
     private List<TagDefinition> _tags = [];
     private IReadOnlyList<DailyThroughput> _fpy = [];
     private IReadOnlyList<RecipeThroughput> _byRecipe = [];
+    private PieceYieldDrag? _pieceDrag;
+    private Dictionary<DateTime, ShiftStopSummary> _stops = [];
     /// <summary>型号筛选：null/缺省=全部型号；<c>""</c>=未选型号；其它为精确匹配。作用于整份报表。</summary>
     private string? _recipeFilter;
 private IssueTopReport _defects = new();
@@ -817,7 +834,7 @@ private async Task OnStationChanged(int? stationId)
                 // 型号筛选作用于整份报表：口径一致才不会"选了 A100 却看到全部型号的不良"。
                 var recipeArg = ToRecipeQueryArg();
 
-                // 下面 4 组查询彼此没有依赖，可以并行：
+                // 下面几组查询彼此没有依赖，可以并行：
                 // ReportService / RuntimeStore 是无状态的运行时取数 —— 每次调用都用
                 // RuntimeDbFactory.Open 新建自己的 RuntimeDbContext（RuntimeStore.cs:42/138/258），
                 // 工厂里共享的 _ensured/_gate 也已加锁（RuntimeDbFactory.cs:60-96）；
@@ -826,19 +843,22 @@ private async Task OnStationChanged(int? stationId)
                 // 工站与型号一样是整份报表的筛选条件：不良/预警不跟着收窄，
                 // 选了 ST010 却看到全线的不良榜，现场就会去错工站找原因。
                 var recipeOptionsTask = RefreshRecipeOptionsAsync();
-                var throughputTask = ReportService.GetThroughputAsync(from, to, _stationId, recipeArg);
+                var throughputTask = ReportService.GetPieceYieldAsync(from, to, _stationId, recipeArg);
+                var stopTask = ReportService.GetShiftStopsAsync(from, to);
                 var defectsTask = ReportService.GetDefectTopAsync(from, to, _stationId, recipeCode: recipeArg);
                 var warningsTask = ReportService.GetWarningTopAsync(from, to, _stationId, recipeCode: recipeArg);
 
                 // 任一失败，WhenAll 一并抛出 → 走下面的 catch 统一 ClearResults，
                 // 与串行时"一次失败整体失败"的语义一致。
-                await Task.WhenAll(recipeOptionsTask, throughputTask, defectsTask, warningsTask);
+                await Task.WhenAll(recipeOptionsTask, throughputTask, stopTask, defectsTask, warningsTask);
 
                 // 数据全部到手之后，再按原顺序串行做派生计算：MergeByRecipe 依赖
                 // RefreshRecipeOptionsAsync 填好的 _knownRecipes，提前执行只会拿到旧值。
                 var throughput = await throughputTask;
-                _fpy = throughput.ByDay;
+                _fpy = throughput.ByShift;
                 _byRecipe = MergeByRecipe(throughput.ByRecipe);
+                _pieceDrag = throughput.Drag;
+                _stops = (await stopTask).ByShift.ToDictionary(row => row.ShiftStart);
                 _defects = await defectsTask;
                 _warnings = await warningsTask;
 
@@ -924,11 +944,16 @@ private async Task OnStationChanged(int? stationId)
         return parts.Count == 0 ? "reports" : $"reports?{string.Join("&", parts)}";
     }
 
+    private string StopBrief(DateTime shiftStart)
+        => _stops.TryGetValue(shiftStart, out var stop) ? stop.Brief : "—";
+
     private void ClearResults()
     {
         _fpy = [];
         // 这张表也要清：它同样会"进度条一消失还留着旧数字"。
         _byRecipe = [];
+        _pieceDrag = null;
+        _stops = [];
         _defects = new();
         _warnings = new();
         ClearTrend();

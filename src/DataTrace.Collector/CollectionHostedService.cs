@@ -51,6 +51,7 @@ public sealed class CollectionHostedService : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("采集服务已启动");
+        await NgStreakStartup.EnsureAsync(_scopeFactory, _status, _logger, stoppingToken).ConfigureAwait(false);
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -203,6 +204,7 @@ public sealed class CollectionHostedService : BackgroundService
                 LastResultCode = previous?.LastResultCode,
                 LastJudgement = previous?.LastJudgement ?? Judgement.None,
                 LastCompleteTime = previous?.LastCompleteTime,
+                LastPieceGap = previous?.LastPieceGap,
                 LastDurationMs = previous?.LastDurationMs,
                 LastError = previous?.LastError,
                 LastMonthKey = previous?.LastMonthKey,
@@ -409,7 +411,7 @@ public sealed class CollectionHostedService : BackgroundService
                 _heartbeats[plc.Id] = state;
             }
 
-            if (DateTime.UtcNow - state.LastWrite < TimeSpan.FromMilliseconds(Math.Max(200, plc.Heartbeat.IntervalMs)))
+            if (DateTime.Now - state.LastWrite < TimeSpan.FromMilliseconds(Math.Max(200, plc.Heartbeat.IntervalMs)))
             {
                 continue;
             }
@@ -452,7 +454,7 @@ public sealed class CollectionHostedService : BackgroundService
             {
                 // 成功失败都推进下次尝试时间：扫描周期远小于心跳周期，
                 // 失败时若只在成功时推进，断线的 PLC 会被每个扫描周期重试一次。
-                state.LastWrite = DateTime.UtcNow;
+                state.LastWrite = DateTime.Now;
             }
         }
     }

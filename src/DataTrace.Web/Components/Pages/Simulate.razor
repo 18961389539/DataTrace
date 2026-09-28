@@ -7,6 +7,7 @@
 @using DataTrace.Domain.Validation
 @using DataTrace.Plc.Simulator
 @inject IConfigRepository Config
+@inject IConfigurationChanges Changes
 @inject ILineSimulator Simulator
 @inject SimulatorCatalog Simulators
 @inject IDialogService DialogService
@@ -311,7 +312,14 @@
                 settings.SimulatorPalletPool = _pool!.Value;
             }
 
-            await Config.SaveSettingsAsync(settings);
+            var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            var result = await Changes.SaveSettingsAsync(settings, new ConfigAudit(
+                user, auditAction, "LineSimulator", "simulator", oldValues, SummarizeOptions(settings)));
+            if (result.AuditError is { } auditError)
+            {
+                Toast.Add($"审计记录失败：{auditError}", Severity.Warning);
+            }
+
             if (includeOptions)
             {
                 _loadedInterval = settings.SimulatorIntervalMs;
@@ -319,7 +327,6 @@
                 _loadedPool = settings.SimulatorPalletPool;
             }
 
-            await AuditSafe(auditAction, "simulator", oldValues, SummarizeOptions(settings));
             Toast.Add(
                 includeOptions
                     ? "仿真参数已保存"

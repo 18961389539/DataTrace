@@ -1,11 +1,8 @@
-using System.Net.Http.Json;
-using DataTrace.Application.Configuration;
-using DataTrace.Domain.Enums;
-using DataTrace.Infrastructure.Persistence;
-using Microsoft.EntityFrameworkCore;
+using DataTrace.Application.Mes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Net.Http.Json;
 
 namespace DataTrace.Collector;
 
@@ -32,7 +29,7 @@ public sealed class MesOutboxProcessor : BackgroundService
             try
             {
                 await using var scope = _scopeFactory.CreateAsyncScope();
-                var config = await scope.ServiceProvider.GetRequiredService<IConfigRepository>()
+                var config = await scope.ServiceProvider.GetRequiredService<Application.Configuration.IConfigRepository>()
                     .GetSnapshotAsync(stoppingToken).ConfigureAwait(false);
                 if (!config.Settings.MesEnabled || string.IsNullOrWhiteSpace(config.Settings.MesEndpoint))
                 {
@@ -40,18 +37,14 @@ public sealed class MesOutboxProcessor : BackgroundService
                     continue;
                 }
 
-                var db = scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
+                var queue = scope.ServiceProvider.GetRequiredService<IMesOutboxQueue>();
                 // 单轮多取一些：MES 停一段时间再恢复时积压是按托盘数累积的，
                 // 一轮 20 条、5 秒一轮只能排 4 条/秒，积压几万条要几小时才追平。
-                var pending = await db.MesOutbox
-                    .Where(x => x.Status == MesOutboxStatus.Pending)
-                    .OrderBy(x => x.CreatedAt)
-                    .Take(200)
-                    .ToListAsync(stoppingToken)
-                    .ConfigureAwait(false);
+                var pending = await queue.TakePendingAsync(200, stoppingToken).ConfigureAwait(false);
 
                 var client = _httpFactory.CreateClient("mes");
                 client.Timeout = TimeSpan.FromSeconds(Math.Max(3, config.Settings.MesTimeoutSeconds));
+                var attempts = new List<MesOutboxAttempt>();
 
                 foreach (var item in pending)
                 {
@@ -61,8 +54,8 @@ public sealed class MesOutboxProcessor : BackgroundService
                         continue;
                     }
 
-                    item.AttemptCount++;
-                    item.LastAttemptAt = DateTime.Now;
+                    var attemptCount = item.AttemptCount + 1;
+                    var attemptedAt = DateTime.Now;
                     try
                     {
                         using var content = JsonContent.Create(new
@@ -74,24 +67,30 @@ public sealed class MesOutboxProcessor : BackgroundService
                         });
                         var response = await client.PostAsync(config.Settings.MesEndpoint, content, stoppingToken)
                             .ConfigureAwait(false);
-                        if (response.IsSuccessStatusCode)
+                        attempts.Add(new MesOutboxAttempt
                         {
-                            item.Status = MesOutboxStatus.Succeeded;
-                            item.LastError = null;
-                        }
-                        else
-                        {
-                            item.LastError = $"HTTP {(int)response.StatusCode}";
-                        }
+                            Id = item.Id,
+                            AttemptCount = attemptCount,
+                            AttemptedAt = attemptedAt,
+                            Succeeded = response.IsSuccessStatusCode,
+                            Error = response.IsSuccessStatusCode ? null : $"HTTP {(int)response.StatusCode}"
+                        });
                     }
                     catch (Exception ex)
                     {
-                        item.LastError = ex.Message;
+                        attempts.Add(new MesOutboxAttempt
+                        {
+                            Id = item.Id,
+                            AttemptCount = attemptCount,
+                            AttemptedAt = attemptedAt,
+                            Succeeded = false,
+                            Error = ex.Message
+                        });
                         _logger.LogWarning(ex, "MES 推送失败 {Serial}", item.SerialNo);
                     }
                 }
 
-                await db.SaveChangesAsync(stoppingToken).ConfigureAwait(false);
+                await queue.SaveAttemptsAsync(attempts, stoppingToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

@@ -69,6 +69,10 @@ public abstract class WebTestBase : IDisposable
         Context.JSInterop.Mode = JSRuntimeMode.Loose;
         Context.Services.AddMudServices();
         Context.Services.AddSingleton<IConfigRepository>(Config);
+        Context.Services.AddSingleton<IConfigurationChanges>(sp =>
+            new ConfigurationChangeService(sp.GetRequiredService<IConfigRepository>(), sp.GetRequiredService<IAuditLogger>()));
+        Context.Services.AddSingleton<ISettingsSave>(sp =>
+            new SettingsSaveService(sp.GetRequiredService<IConfigRepository>(), sp.GetRequiredService<IConfigurationChanges>()));
         Context.Services.AddSingleton<ILineSimulator>(Simulator);
         Context.Services.AddSingleton(Simulators);
         Context.Services.AddSingleton<ISnackbar>(Toast.Mock.Object);

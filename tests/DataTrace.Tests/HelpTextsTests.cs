@@ -139,22 +139,23 @@ public class HelpTextsTests
         Assert.Equal("型号口径", HelpTexts.RecipeScope.Title);
 
         var count = Enumerate().Count();
-        Assert.True(count is >= 40 and <= 65, $"文案条目数 {count} 超出预期区间（40~65）");
+        Assert.True(count is >= 40 and <= 70, $"文案条目数 {count} 超出预期区间（40~70）");
     }
 
     [Theory]
-    [InlineData("", 6)]
+    [InlineData("", 9)]
     [InlineData("query", 6)]
-    [InlineData("reports", 8)]
+    [InlineData("reports", 11)]
     [InlineData("curve-baseline", 6)]
     [InlineData("logs", 5)]
     [InlineData("config/plc", 4)]
     [InlineData("config/stations", 4)]
     [InlineData("config/recipes", 7)]
-    [InlineData("config/settings", 6)]
+    [InlineData("config/settings", 8)]
     [InlineData("simulate", 5)]
     [InlineData("users", 5)]
     [InlineData("record", 7)]
+    [InlineData("alarms", 1)]
     public void Every_page_mapping_lists_topics_that_exist(string route, int expected)
     {
         // 页头「本页说明」按这份映射取条目；写错路由会让整页入口凭空消失，且没有任何别的检查能发现。

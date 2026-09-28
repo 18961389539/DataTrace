@@ -151,8 +151,9 @@ public sealed class ConfigRepository : IConfigRepository
     public Task<PlcConnection?> GetPlcConnectionAsync(int id, CancellationToken cancellationToken = default)
         => _db.PlcConnections.Include(x => x.Heartbeat).FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
-    public async Task SavePlcConnectionAsync(PlcConnection connection, CancellationToken cancellationToken = default)
+    public async Task<int> SavePlcConnectionAsync(SavePlcConnectionCommand command, CancellationToken cancellationToken = default)
     {
+        var connection = command.ToEntity();
         connection.Name = connection.Name.Trim();
 
         // 库里 Name 上有唯一索引，重名会抛出 SQLite 的原始错误；先在这里查出来，
@@ -170,11 +171,49 @@ public sealed class ConfigRepository : IConfigRepository
         }
         else
         {
-            _db.PlcConnections.Update(connection);
+            var existing = await _db.PlcConnections
+                .Include(x => x.Heartbeat)
+                .FirstOrDefaultAsync(x => x.Id == connection.Id, cancellationToken)
+                .ConfigureAwait(false);
+            if (existing is null)
+            {
+                _db.PlcConnections.Add(connection);
+            }
+            else
+            {
+                _db.Entry(existing).CurrentValues.SetValues(connection);
+                ApplyHeartbeat(existing, connection.Heartbeat);
+            }
         }
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
+        return connection.Id;
+    }
+    private void ApplyHeartbeat(PlcConnection existing, HeartbeatSettings? incoming)
+    {
+        if (incoming is null)
+        {
+            if (existing.Heartbeat is not null)
+            {
+                _db.Heartbeats.Remove(existing.Heartbeat);
+                existing.Heartbeat = null;
+            }
+
+            return;
+        }
+
+        if (existing.Heartbeat is null)
+        {
+            incoming.Id = 0;
+            incoming.PlcConnectionId = existing.Id;
+            existing.Heartbeat = incoming;
+            return;
+        }
+
+        incoming.Id = existing.Heartbeat.Id;
+        incoming.PlcConnectionId = existing.Id;
+        _db.Entry(existing.Heartbeat).CurrentValues.SetValues(incoming);
     }
 
     public async Task DeletePlcConnectionAsync(int id, CancellationToken cancellationToken = default)
@@ -203,35 +242,27 @@ public sealed class ConfigRepository : IConfigRepository
             cancellationToken);
 
     /// <summary>
-    /// 单个工站的详情读：刻意留在 scoped 上下文里（返回的实例被跟踪）。
+    /// 单个工站的详情读：返回未被跟踪的图，编辑表单可以改它，保存时再收成命令。
     /// </summary>
-    /// <remarks>
-    /// 工站页把这个实例直接绑到编辑表单，再原样交回 <see cref="SaveStationAsync"/> ——
-    /// 走的是"被跟踪对象改完一起 SaveChanges"这条路。改成脱离上下文属于写模型（P2）的改造范围，
-    /// 混在这次里做会把"编辑保存"整条链路一起改掉，风险不对等。
-    /// </remarks>
     public Task<Station?> GetStationAsync(int id, CancellationToken cancellationToken = default)
-        => _db.Stations
+        => _db.Stations.AsNoTracking()
             .Include(x => x.Positions)
             .Include(x => x.Tags)
             .Include(x => x.Curves).ThenInclude(c => c.Series)
             .Include(x => x.Curves).ThenInclude(c => c.Criteria)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
 
-    public async Task SaveStationAsync(Station station, CancellationToken cancellationToken = default)
+    public async Task<int> SaveStationAsync(SaveStationCommand command, CancellationToken cancellationToken = default)
     {
-        station.Code = station.Code.Trim();
-        station.Name = station.Name.Trim();
-        station.DataFilePath = (station.DataFilePath ?? "").Trim();
-        SyncPositions(station);
+        var station = command.ToEntity();
+        StationWriteNormalizer.Apply(station);
         await EnsureStationInvariantsAsync(station, cancellationToken).ConfigureAwait(false);
 
-        var entry = _db.Entry(station);
         if (station.Id == 0)
         {
             _db.Stations.Add(station);
         }
-        else if (entry.State == EntityState.Detached)
+        else
         {
             var existing = await _db.Stations
                 .Include(x => x.Positions)
@@ -247,6 +278,9 @@ public sealed class ConfigRepository : IConfigRepository
                 existing.Positions.Clear();
                 foreach (var p in station.Positions)
                 {
+                    // 命令物化出来的是新对象，但带着原来的主键。清掉再插入，避免和刚 Clear 的行抢同一个键。
+                    p.Id = 0;
+                    p.StationId = existing.Id;
                     existing.Positions.Add(p);
                 }
             }
@@ -254,6 +288,7 @@ public sealed class ConfigRepository : IConfigRepository
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
+        return station.Id;
     }
 
     /// <summary>
@@ -368,8 +403,9 @@ public sealed class ConfigRepository : IConfigRepository
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task SaveTagAsync(TagDefinition tag, CancellationToken cancellationToken = default)
+    public async Task<int> SaveTagAsync(SaveTagCommand command, CancellationToken cancellationToken = default)
     {
+        var tag = command.ToEntity();
         tag.Name = (tag.Name ?? "").Trim();
         if (tag.Name.Length == 0)
         {
@@ -444,6 +480,7 @@ public sealed class ConfigRepository : IConfigRepository
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
+        return tag.Id;
     }
 
     public async Task DeleteTagAsync(int id, CancellationToken cancellationToken = default)
@@ -461,8 +498,9 @@ public sealed class ConfigRepository : IConfigRepository
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task SaveCurveAsync(CurveDefinition curve, CancellationToken cancellationToken = default)
+    public async Task<int> SaveCurveAsync(SaveCurveCommand command, CancellationToken cancellationToken = default)
     {
+        var curve = command.ToEntity();
         curve.Code = curve.Code.Trim();
         if (curve.Code.Length == 0)
         {
@@ -504,6 +542,8 @@ public sealed class ConfigRepository : IConfigRepository
                 existing.Series.Clear();
                 foreach (var s in curve.Series)
                 {
+                    s.Id = 0;
+                    s.CurveDefinitionId = existing.Id;
                     existing.Series.Add(s);
                 }
             }
@@ -511,16 +551,17 @@ public sealed class ConfigRepository : IConfigRepository
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
+        return curve.Id;
     }
 
-    public async Task SaveCurveCriteriaAsync(int curveId, IReadOnlyList<CurveCriterion> criteria, CancellationToken cancellationToken = default)
+    public async Task SaveCurveCriteriaAsync(int curveId, IReadOnlyList<SaveCurveCriterionCommand> criteria, CancellationToken cancellationToken = default)
     {
         if (!await _db.Curves.AnyAsync(x => x.Id == curveId, cancellationToken).ConfigureAwait(false))
         {
             return;
         }
 
-        await SyncCriteriaAsync(curveId, criteria, cancellationToken).ConfigureAwait(false);
+        await SyncCriteriaAsync(curveId, criteria.Select(x => x.ToEntity()), cancellationToken).ConfigureAwait(false);
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -598,8 +639,9 @@ public sealed class ConfigRepository : IConfigRepository
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task SaveRecipeAsync(Recipe recipe, CancellationToken cancellationToken = default)
+    public async Task<SavedRecipe> SaveRecipeAsync(SaveRecipeCommand command, CancellationToken cancellationToken = default)
     {
+        var recipe = command.ToEntity();
         recipe.Code = recipe.Code.Trim();
         if (recipe.Id == 0 && recipe.Code.Length == 0)
         {
@@ -649,7 +691,7 @@ public sealed class ConfigRepository : IConfigRepository
                 .ConfigureAwait(false);
             if (existing is null)
             {
-                return;
+                return new SavedRecipe(recipe.Id, recipe.Code, recipe.Name);
             }
 
             var disabling = existing.Enabled && !recipe.Enabled;
@@ -705,6 +747,7 @@ public sealed class ConfigRepository : IConfigRepository
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
         await PushActiveRecipeToHubAsync(cancellationToken).ConfigureAwait(false);
+        return new SavedRecipe(recipe.Id, recipe.Code, recipe.Name);
     }
 
     /// <summary>
@@ -715,8 +758,9 @@ public sealed class ConfigRepository : IConfigRepository
     /// 那份快照可能是几分钟前读的，另一会话刚把这个型号停用/改名，一保存就会把旧值盖回去
     /// （甚至把已停用的型号重新启用，而当前型号指针早被清空，状态看上去毫无异常）。
     /// </remarks>
-    public async Task SaveRecipeLimitsAsync(int recipeId, IReadOnlyList<RecipeLimit> limits, CancellationToken cancellationToken = default)
+    public async Task SaveRecipeLimitsAsync(int recipeId, IReadOnlyList<SaveRecipeLimitCommand> limits, CancellationToken cancellationToken = default)
     {
+        var rows = limits.Select(x => x.ToEntity()).ToList();
         var recipe = await _db.Recipes.AsNoTracking()
             .FirstOrDefaultAsync(x => x.Id == recipeId, cancellationToken)
             .ConfigureAwait(false);
@@ -725,8 +769,8 @@ public sealed class ConfigRepository : IConfigRepository
             throw new InvalidOperationException($"型号 {recipeId} 不存在");
         }
 
-        await EnsureRecipeLimitsConsistentAsync(recipe.Code, limits, cancellationToken).ConfigureAwait(false);
-        await SyncLimitsAsync(recipeId, limits, cancellationToken).ConfigureAwait(false);
+        await EnsureRecipeLimitsConsistentAsync(recipe.Code, rows, cancellationToken).ConfigureAwait(false);
+        await SyncLimitsAsync(recipeId, rows, cancellationToken).ConfigureAwait(false);
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         // 自增版本号 → 采集器下一轮拉到新快照、按新限值判定。
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
@@ -930,23 +974,35 @@ public sealed class ConfigRepository : IConfigRepository
         to.TargetValue = from.TargetValue;
     }
 
-    public async Task SaveHeartbeatAsync(HeartbeatSettings heartbeat, CancellationToken cancellationToken = default)
+    public async Task SaveHeartbeatAsync(SaveHeartbeatCommand command, CancellationToken cancellationToken = default)
     {
+        var heartbeat = command.ToEntity();
         if (heartbeat.Id == 0)
         {
             _db.Heartbeats.Add(heartbeat);
         }
         else
         {
-            _db.Heartbeats.Update(heartbeat);
+            var existing = await _db.Heartbeats
+                .FirstOrDefaultAsync(x => x.Id == heartbeat.Id, cancellationToken)
+                .ConfigureAwait(false);
+            if (existing is null)
+            {
+                _db.Heartbeats.Add(heartbeat);
+            }
+            else
+            {
+                _db.Entry(existing).CurrentValues.SetValues(heartbeat);
+            }
         }
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task SaveSettingsAsync(SystemSettings settings, CancellationToken cancellationToken = default)
+    public async Task SaveSettingsAsync(SaveSettingsCommand command, CancellationToken cancellationToken = default)
     {
+        var settings = command.ToEntity();
         // 界面的 Min/Max 只是输入框行为，脚本与历史脏数据可以直接写库：
         // 保留年数为 0 会被清理任务当成 1 年（删数据），扫描间隔为 0 会被采集端当成 20ms（压垮 PLC 通讯）。
         if (SettingsLimits.Error(settings) is { } error)
@@ -960,7 +1016,17 @@ public sealed class ConfigRepository : IConfigRepository
         }
         else
         {
-            _db.SystemSettings.Update(settings);
+            var existing = await _db.SystemSettings
+                .FirstOrDefaultAsync(x => x.Id == settings.Id, cancellationToken)
+                .ConfigureAwait(false);
+            if (existing is null)
+            {
+                _db.SystemSettings.Add(settings);
+            }
+            else
+            {
+                _db.Entry(existing).CurrentValues.SetValues(settings);
+            }
         }
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -1043,29 +1109,5 @@ public sealed class ConfigRepository : IConfigRepository
         }
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    private static void SyncPositions(Station station)
-    {
-        station.PositionCount = 1;
-        var keep = station.Positions.OrderBy(x => x.Index).FirstOrDefault(x => x.Index == 1)
-                   ?? station.Positions.OrderBy(x => x.Index).FirstOrDefault();
-        station.Positions.Clear();
-        if (keep is null)
-        {
-            keep = new ProductPositionDefinition { Index = 1, Name = "产品" };
-        }
-        else
-        {
-            keep.Index = 1;
-            // 有料地址要原样保留：采集端仍按它做空位判定，
-            // 这里清掉就等于"点一次保存，空位检测悄悄失效"。
-            if (string.IsNullOrWhiteSpace(keep.Name) || keep.Name.StartsWith("产品位", StringComparison.Ordinal))
-            {
-                keep.Name = "产品";
-            }
-        }
-
-        station.Positions.Add(keep);
     }
 }

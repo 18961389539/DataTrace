@@ -1,3 +1,4 @@
+using DataTrace.Infrastructure.Identity;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Options;
 
@@ -105,27 +106,7 @@ public sealed class PasswordPolicy
     }
 
     /// <summary>把 IdentityResult 错误码翻成中文；未知码回退原文。</summary>
-    public static string FormatIdentityErrors(IdentityResult result)
-    {
-        if (result.Succeeded)
-        {
-            return "";
-        }
+    public static string FormatIdentityErrors(IdentityResult result) => IdentityErrorText.Format(result);
 
-        return string.Join("；", result.Errors.Select(TranslateError));
-    }
-
-    public static string TranslateError(IdentityError error) => error.Code switch
-    {
-        "PasswordTooShort" => "密码长度不足",
-        "PasswordRequiresDigit" => "密码须包含数字",
-        "PasswordRequiresLower" => "密码须包含小写字母",
-        "PasswordRequiresUpper" => "密码须包含大写字母",
-        "PasswordRequiresNonAlphanumeric" => "密码须包含特殊字符",
-        "PasswordRequiresUniqueChars" => "密码中不同字符数量不足",
-        "PasswordMismatch" => "密码不正确",
-        "DuplicateUserName" => "用户名已存在",
-        "InvalidUserName" => "用户名不合法",
-        _ => string.IsNullOrWhiteSpace(error.Description) ? error.Code : error.Description
-    };
+    public static string TranslateError(IdentityError error) => IdentityErrorText.Translate(error);
 }

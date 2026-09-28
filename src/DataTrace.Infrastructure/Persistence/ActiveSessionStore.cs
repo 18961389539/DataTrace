@@ -30,6 +30,10 @@ public sealed class ActiveSessionStore : IActiveSessionStore
             existing.SessionId = session.SessionId;
             existing.MonthKey = session.MonthKey;
             existing.StartTime = session.StartTime;
+            existing.RecipeCode = session.RecipeCode ?? "";
+            existing.LastStationId = session.LastStationId;
+            existing.LastStationCode = session.LastStationCode ?? "";
+            existing.LastActivityAt = session.LastActivityAt;
         }
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);

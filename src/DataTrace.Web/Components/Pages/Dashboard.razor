@@ -1,9 +1,12 @@
 @page "/"
 @attribute [Authorize]
+@using DataTrace.Application.Alarms
 @using DataTrace.Application.Backup
 @using DataTrace.Application.Configuration
 @using DataTrace.Application.Realtime
 @using DataTrace.Application.Reporting
+@using DataTrace.Application.Runtime
+@using DataTrace.Domain
 @using DataTrace.Domain.Constants
 @using DataTrace.Domain.Enums
 @implements IDisposable
@@ -14,6 +17,7 @@
 @inject AuthenticationStateProvider AuthState
 @inject NavigationManager Nav
 @inject IReportService Reports
+@inject ISpoolStore Spool
 @inject IJSRuntime Js
 
 <PageHeader Title="实时看板" HelpRoute="/">
@@ -63,6 +67,13 @@
     </Actions>
 </PageHeader>
 
+@if (_inProcessNote is not null)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
+        @_inProcessNote
+    </MudAlert>
+}
+
 @if (_productionSimWarning && _showSimulationDetails)
 {
     <div id="dt-simulation-details">
@@ -82,32 +93,36 @@
 }
 
 @* KPI 独立成条：跟页头的状态芯片平铺在一起时它们权重相同，扫一眼分不出主次。
-   今日件数的口径（Asia/Shanghai）与三态判定的说明跟着各自的 ⓘ 走。 *@
+   本班完成的口径与三态判定的说明跟着各自的 ⓘ 走。 *@
 <div class="dt-kpi-bar">
     <div class="dt-kpi">
         <div class="dt-kpi-main">
-            <span class="dt-kpi-label">今日采集<InfoHint Topic="HelpTexts.TodayScope" /></span>
+            <span class="dt-kpi-label">本班完成<InfoHint Topic="HelpTexts.TodayScope" /></span>
             <span class="dt-kpi-value">@_shiftTotal</span>
         </div>
-        <span class="dt-kpi-hint">OK @_shiftOk · 未判定 @_shiftNone</span>
+        <span class="dt-kpi-hint">@_shiftWindowText · OK @_shiftOk · 未判定 @_shiftNone</span>
+        <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftStopText <InfoHint Topic="HelpTexts.ShiftShortfall" /></span>
     </div>
     <div class="dt-kpi">
         <div class="dt-kpi-main">
             <span class="dt-kpi-label">直通率<InfoHint Topic="HelpTexts.YieldRate" /></span>
             <span class="dt-kpi-value">@_shiftYieldText</span>
         </div>
+        <span class="dt-kpi-hint">@_shiftDragText</span>
     </div>
     <div class="dt-kpi">
         <div class="dt-kpi-main">
-            <span class="dt-kpi-label">今日 NG<InfoHint Topic="HelpTexts.JudgementThreeState" /></span>
+            <span class="dt-kpi-label">本班 NG<InfoHint Topic="HelpTexts.JudgementThreeState" /></span>
             <span class="dt-kpi-value dt-kpi-value-alert">@_shiftNg</span>
         </div>
+        <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftNgSourceText <InfoHint Topic="HelpTexts.NgSource" /></span>
     </div>
     <div class="dt-kpi">
         <div class="dt-kpi-main">
-            <span class="dt-kpi-label">平均节拍</span>
-            <span class="dt-kpi-value">@AvgCadenceText</span>
+            <span class="dt-kpi-label">当前间隔<InfoHint Topic="HelpTexts.PieceGap" /></span>
+            <span class="dt-kpi-value">@PaceText</span>
         </div>
+        <span class="dt-kpi-hint">@PaceHint</span>
     </div>
 </div>
 
@@ -129,6 +144,24 @@
 {
     <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
         「启用采集」当前是关闭的：PLC 不再被扫描，看板数值与「最近采集」都不会再变化。需要恢复请到「系统设置」打开。
+    </MudAlert>
+}
+
+@if (_spoolCount > 0)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
+        有 @_spoolCount 件采集记录写库失败，正在补传。@( _spoolOldest is DateTime spoolOldest ? $"最早一笔 {spoolOldest:HH:mm:ss}。" : "")
+        超过 @SystemDefaults.SpoolBacklogWarnMinutes 分钟仍未入库时，所有页面会响铃，直到有人接手。
+    </MudAlert>
+}
+
+@if (_openSessions.Count > 0)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
+        @foreach (var session in _openSessions)
+        {
+            <div>托盘 @session.PalletCode（@(string.IsNullOrWhiteSpace(session.SerialNo) ? "无序列号" : session.SerialNo)）已在制 @session.OpenMinutes 分钟，停在 @session.StationCode，还没走到末站。</div>
+        }
     </MudAlert>
 }
 
@@ -265,13 +298,24 @@ else
     private IReadOnlyList<CollectFeedItem> _recent = [];
     private IReadOnlyList<CollectFeedItem> _recentPreview = [];
     private bool _collectEnabled = true;
+    private int _spoolCount;
+    private DateTime? _spoolOldest;
+    private IReadOnlyList<OpenSessionNotice> _openSessions = [];
+    private string? _inProcessNote;
+    private string _shiftWindowText = ShiftWindow.Containing(DateTime.Now, SystemDefaults.ShiftStartHour, SystemDefaults.ShiftLengthHours).Label;
+    private string _shiftDragText = "";
+    private string _shiftNgSourceText = "";
+    private string _shiftStopText = "";
+    private DateTime _shiftWindowStart;
 
     private int _shiftTotal;
     private int _shiftOk;
     private int _shiftNg;
+    private int _shiftQualityNg;
+    private int _shiftCollectNg;
     private int _shiftNone;
     private string _shiftYieldText = "—";
-    private DateTime _shiftFetchedUtc = DateTime.MinValue;
+    private DateTime _shiftFetchedAt = DateTime.MinValue;
     private bool _shiftBusy;
     private int _configVersion = -1;
     private Timer? _uiTimer;
@@ -307,6 +351,7 @@ else
         }
 
         Refresh();
+        await RefreshSpoolAsync();
         EvaluateStale();
         Status.Changed += OnChanged;
         // 5 秒一跳：这一跳只做"轻活"（比版本号 + 推进卡片上的相对时间），
@@ -342,6 +387,7 @@ else
         // 工站→点位/曲线/序列/判据 与 型号→限值 的关联链）挪到下面的定时跳里按版本号比对，
         // 否则采集侧每秒推好几次事件，这条重查询就跟着跑好几次。
         Refresh();
+        await RefreshSpoolAsync();
         await RefreshShiftAsync(force: false);
         EvaluateStale();
         StateHasChanged();
@@ -350,6 +396,7 @@ else
     private async Task OnUiTickAsync()
     {
         EvaluateStale();
+        await RefreshSpoolAsync();
         try
         {
             var ver = await Config.GetVersionAsync();
@@ -359,7 +406,7 @@ else
                 await RefreshConfigAlertsAsync();
                 await RefreshShiftAsync(force: true);
             }
-            else if ((DateTime.UtcNow - _shiftFetchedUtc).TotalSeconds >= ShiftCacheSeconds)
+            else if ((DateTime.Now - _shiftFetchedAt).TotalSeconds >= ShiftCacheSeconds)
             {
                 await RefreshShiftAsync(force: false);
             }
@@ -374,6 +421,20 @@ else
         StateHasChanged();
     }
 
+    private async Task RefreshSpoolAsync()
+    {
+        try
+        {
+            var spool = await Spool.DescribeAsync();
+            _spoolCount = spool.Count;
+            _spoolOldest = spool.OldestAt;
+        }
+        catch
+        {
+            // 目录暂时读不到时保留上次数字，下一跳再试。
+        }
+    }
+
     private void EvaluateStale()
     {
         // 采集关闭时用专用告警，不叠「数据过期」。
@@ -383,8 +444,8 @@ else
             return;
         }
 
-        var collectorBeatUtc = Status.LastCollectorUtc;
-        _collectorHasBeat = collectorBeatUtc != DateTime.MinValue;
+        var collectorBeat = Status.LastCollectorAt;
+        _collectorHasBeat = collectorBeat != DateTime.MinValue;
         if (!_collectorHasBeat)
         {
             _dataStale = true;
@@ -392,7 +453,7 @@ else
             return;
         }
 
-        var age = DateTime.UtcNow - collectorBeatUtc;
+        var age = DateTime.Now - collectorBeat;
         _dataStale = age.TotalSeconds > SystemDefaults.StaleHeartbeatSeconds;
         _collectorAgeText = age.TotalSeconds < 0
             ? "刚刚"
@@ -424,30 +485,49 @@ else
     private async Task RefreshShiftAsync(bool force)
     {
         if (_shiftBusy) return;
-        if (!force && (DateTime.UtcNow - _shiftFetchedUtc).TotalSeconds < ShiftCacheSeconds) return;
+
+        AppConfigurationSnapshot? snap = null;
+        try
+        {
+            snap = await Config.GetSnapshotAsync();
+        }
+        catch
+        {
+            // 班次读不出来就用上次的窗口
+        }
+
+        var startHour = snap?.Settings.ShiftStartHour ?? SystemDefaults.ShiftStartHour;
+        var lengthHours = snap?.Settings.ShiftLengthHours ?? SystemDefaults.ShiftLengthHours;
+        var window = ShiftWindow.Containing(DateTime.Now, startHour, lengthHours);
+        if (!force && window.Start == _shiftWindowStart && (DateTime.Now - _shiftFetchedAt).TotalSeconds < ShiftCacheSeconds) return;
 
         _shiftBusy = true;
         try
         {
-            var day = ShanghaiClock.Today;
-            var report = await Reports.GetThroughputAsync(day, day.AddDays(1).AddTicks(-1), null);
-            var rows = report.ByDay;
-            var today = rows.FirstOrDefault(r => r.Day.Date == day) ?? rows.FirstOrDefault();
-            if (today is null)
-            {
-                _shiftTotal = _shiftOk = _shiftNg = _shiftNone = 0;
-                _shiftYieldText = "—";
-            }
-            else
-            {
-                _shiftTotal = today.Total;
-                _shiftOk = today.Ok;
-                _shiftNg = today.Ng;
-                _shiftNone = today.None;
-                _shiftYieldText = today.Ok + today.Ng == 0 ? "—" : today.FirstPassYield.ToString("P1");
-            }
-
-            _shiftFetchedUtc = DateTime.UtcNow;
+            var yieldTask = Reports.GetPieceYieldAsync(window.Start, window.End.AddTicks(-1), null);
+            var stopTask = Reports.GetShiftStopsAsync(window.Start, window.End.AddTicks(-1));
+            await Task.WhenAll(yieldTask, stopTask);
+            var report = await yieldTask;
+            var stops = await stopTask;
+            _shiftTotal = report.ByShift.Sum(row => row.Total);
+            _shiftOk = report.ByShift.Sum(row => row.Ok);
+            _shiftNg = report.ByShift.Sum(row => row.Ng);
+            _shiftQualityNg = report.ByShift.Sum(row => row.QualityNg);
+            _shiftCollectNg = report.ByShift.Sum(row => row.CollectNg);
+            _shiftNone = report.ByShift.Sum(row => row.None);
+            _shiftYieldText = _shiftOk + _shiftNg == 0 ? "—" : ((double)_shiftOk / (_shiftOk + _shiftNg)).ToString("P1");
+            _shiftNgSourceText = PieceYieldRules.NgSourceText(_shiftQualityNg, _shiftCollectNg);
+            _shiftDragText = _shiftTotal == 0
+                ? "本班还没有走完的件"
+                : _shiftOk + _shiftNg == 0
+                    ? "走完的件都还没有判定"
+                    : report.Drag?.Text
+                      ?? (_shiftCollectNg > 0 ? "没有点位超差，不合格来自没采成" : "本班没有不合格件");
+            _shiftStopText = stops.ByShift.FirstOrDefault(row => row.ShiftStart == window.Start)?.Detail
+                ?? "本班各站没有明显停顿";
+            _shiftWindowText = window.Label;
+            _shiftWindowStart = window.Start;
+            _shiftFetchedAt = DateTime.Now;
         }
         catch
         {
@@ -467,6 +547,8 @@ else
         // 内联排序就会跟着每 5 秒重排一遍。
         _orderedStations = _stations.OrderBy(SeverityRank).ThenBy(s => s.Sequence).ToList();
         _recent = Status.Recent;
+        _openSessions = Status.OpenSessions;
+        _inProcessNote = InProcessRecipes.Note(Status.ActiveRecipeCode, Status.InProcessRecipes ?? []);
         // 看板只展示最近十余条，完整历史去「数据查询」，避免表格占满整屏。
         _recentPreview = _recent.Take(12).ToList();
     }
@@ -489,8 +571,17 @@ else
             ? $"心跳超时 · {_collectorAgeText}"
             : $"心跳正常 · {_collectorAgeText}";
 
-    /// <summary>平均节拍：各工站最近一次采集耗时的均值；一台都没采过时给「—」。</summary>
-    private string AvgCadenceText => DurationFormat.Average(_stations.Select(s => s.LastDurationMs));
+    /// <summary>当前间隔：同一工站相邻两件的完成间隔里，最长的那一站。还没有两件时给「—」。</summary>
+    private StationPaceRules.Pace? CurrentPace => StationPaceRules.Slowest(
+        _stations.Select(station => new StationPaceRules.Sample(
+            station.StationCode,
+            station.Sequence,
+            station.State != StationRuntimeState.Disabled,
+            station.LastPieceGap)));
+
+    private string PaceText => CurrentPace?.Text ?? "—";
+
+    private string PaceHint => CurrentPace?.Hint ?? "还没有相邻的两件";
 
     /// <summary>
     /// 工站严重度：故障 → NG → 采集中 → 空闲 → 停用。看板上最该被看见的工位排在最前，
@@ -508,10 +599,21 @@ else
 
     private bool CanManageRecipes => _canManageRecipes;
 
-    private string ActiveRecipeLabel =>
-        string.IsNullOrEmpty(Status.ActiveRecipeCode)
-            ? "未选择型号·按点位默认限值"
-            : $"当前型号 {Status.ActiveRecipeCode}" + (string.IsNullOrEmpty(Status.ActiveRecipeName) ? "" : $"（{Status.ActiveRecipeName}）");
+    private string ActiveRecipeLabel
+    {
+        get
+        {
+            var next = InProcessRecipes.Display(Status.ActiveRecipeCode);
+            if (!string.IsNullOrEmpty(Status.ActiveRecipeName))
+            {
+                next = $"{Status.ActiveRecipeCode}（{Status.ActiveRecipeName}）";
+            }
+
+            return _inProcessNote is null
+                ? (string.IsNullOrEmpty(Status.ActiveRecipeCode) ? "未选择型号·按点位默认限值" : $"当前型号 {next}")
+                : $"下一件起 {next}";
+        }
+    }
 
     private static string RecipeLabel(string? code)
         => string.IsNullOrEmpty(code) ? "未选型号" : code;

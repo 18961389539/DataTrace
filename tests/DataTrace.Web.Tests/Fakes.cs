@@ -67,14 +67,15 @@ public sealed class FakeConfigRepository : IConfigRepository
         SimulatorIntervalMs = src.SimulatorIntervalMs,
         SimulatorNgPercent = src.SimulatorNgPercent,
         SimulatorPalletPool = src.SimulatorPalletPool,
-        ActiveRecipeId = src.ActiveRecipeId
+        ActiveRecipeId = src.ActiveRecipeId,
+        AlarmWebhookUrl = src.AlarmWebhookUrl
     };
 
-    public Task SaveSettingsAsync(SystemSettings settings, CancellationToken cancellationToken = default)
+    public Task SaveSettingsAsync(SaveSettingsCommand settings, CancellationToken cancellationToken = default)
     {
         Calls.Add(nameof(SaveSettingsAsync));
         ThrowIfConfigured();
-        SavedSettings.Add(settings);
+        SavedSettings.Add(settings.ToEntity());
         return Task.CompletedTask;
     }
 
@@ -95,8 +96,11 @@ public sealed class FakeConfigRepository : IConfigRepository
     public Task<PlcConnection?> GetPlcConnectionAsync(int id, CancellationToken cancellationToken = default)
         => Task.FromResult(Snapshot.PlcConnections.FirstOrDefault(x => x.Id == id));
 
-    public Task SavePlcConnectionAsync(PlcConnection connection, CancellationToken cancellationToken = default)
-        => Recorded(nameof(SavePlcConnectionAsync));
+    public Task<int> SavePlcConnectionAsync(SavePlcConnectionCommand connection, CancellationToken cancellationToken = default)
+    {
+        Calls.Add(nameof(SavePlcConnectionAsync));
+        return Task.FromResult(connection.Id);
+    }
 
     public Task DeletePlcConnectionAsync(int id, CancellationToken cancellationToken = default)
         => Recorded(nameof(DeletePlcConnectionAsync));
@@ -107,46 +111,67 @@ public sealed class FakeConfigRepository : IConfigRepository
     public Task<Station?> GetStationAsync(int id, CancellationToken cancellationToken = default)
         => Task.FromResult(Snapshot.Stations.FirstOrDefault(x => x.Id == id));
 
-    public Task SaveStationAsync(Station station, CancellationToken cancellationToken = default)
+    public Task<int> SaveStationAsync(SaveStationCommand station, CancellationToken cancellationToken = default)
     {
-        SavedStations.Add(station);
-        return Recorded(nameof(SaveStationAsync));
+        var entity = station.ToEntity();
+        SavedStations.Add(entity);
+        Calls.Add(nameof(SaveStationAsync));
+        return Task.FromResult(entity.Id);
     }
 
     public Task DeleteStationAsync(int id, CancellationToken cancellationToken = default)
         => Recorded(nameof(DeleteStationAsync));
 
-    public Task SaveTagAsync(TagDefinition tag, CancellationToken cancellationToken = default)
+    public Task<int> SaveTagAsync(SaveTagCommand tag, CancellationToken cancellationToken = default)
     {
-        SavedTags.Add(tag);
-        return Recorded(nameof(SaveTagAsync));
+        var entity = tag.ToEntity();
+        entity.PositionIndex = 1;
+        entity.Name = (entity.Name ?? "").Trim();
+        SavedTags.Add(entity);
+        Calls.Add(nameof(SaveTagAsync));
+        return Task.FromResult(entity.Id);
     }
 
     public Task DeleteTagAsync(int id, CancellationToken cancellationToken = default)
         => Recorded(nameof(DeleteTagAsync));
 
-    public Task SaveCurveAsync(CurveDefinition curve, CancellationToken cancellationToken = default)
+    public Task<int> SaveCurveAsync(SaveCurveCommand curve, CancellationToken cancellationToken = default)
     {
-        SavedCurves.Add(curve);
-        return Recorded(nameof(SaveCurveAsync));
+        var entity = curve.ToEntity();
+        entity.PositionIndex = 1;
+        entity.Code = entity.Code.Trim();
+        SavedCurves.Add(entity);
+        Calls.Add(nameof(SaveCurveAsync));
+        return Task.FromResult(entity.Id);
     }
 
     public Task DeleteCurveAsync(int id, CancellationToken cancellationToken = default)
         => Recorded(nameof(DeleteCurveAsync));
 
-    public Task SaveCurveCriteriaAsync(int curveId, IReadOnlyList<CurveCriterion> criteria, CancellationToken cancellationToken = default)
+    public Task SaveCurveCriteriaAsync(int curveId, IReadOnlyList<SaveCurveCriterionCommand> criteria, CancellationToken cancellationToken = default)
         => Recorded(nameof(SaveCurveCriteriaAsync));
 
-    public Task SaveHeartbeatAsync(HeartbeatSettings heartbeat, CancellationToken cancellationToken = default)
+    public Task SaveHeartbeatAsync(SaveHeartbeatCommand heartbeat, CancellationToken cancellationToken = default)
         => Recorded(nameof(SaveHeartbeatAsync));
 
     public Task<IReadOnlyList<Recipe>> GetRecipesAsync(CancellationToken cancellationToken = default)
         => Task.FromResult(Snapshot.Recipes);
 
-    public Task SaveRecipeAsync(Recipe recipe, CancellationToken cancellationToken = default)
-        => Recorded(nameof(SaveRecipeAsync));
+    public Task<SavedRecipe> SaveRecipeAsync(SaveRecipeCommand recipe, CancellationToken cancellationToken = default)
+    {
+        Calls.Add(nameof(SaveRecipeAsync));
+        var entity = recipe.ToEntity();
+        entity.Code = entity.Code.Trim();
+        entity.Name = entity.Name.Trim();
+        if (entity.Name.Length == 0)
+        {
+            entity.Name = entity.Code;
+        }
 
-    public Task SaveRecipeLimitsAsync(int recipeId, IReadOnlyList<RecipeLimit> limits, CancellationToken cancellationToken = default)
+        return Task.FromResult(new SavedRecipe(entity.Id, entity.Code, entity.Name));
+    }
+
+    public Task SaveRecipeLimitsAsync(int recipeId, IReadOnlyList<SaveRecipeLimitCommand> limits, CancellationToken cancellationToken = default)
         => Recorded(nameof(SaveRecipeLimitsAsync));
 
     public Task DeleteRecipeAsync(int id, CancellationToken cancellationToken = default)

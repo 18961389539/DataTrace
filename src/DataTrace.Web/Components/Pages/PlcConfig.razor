@@ -2,7 +2,7 @@
 @attribute [Authorize(Roles = "Administrator,Engineer")]
 @using DataTrace.Application.Configuration
 @inject IConfigRepository Config
-@inject IAuditLogger Audit
+@inject IConfigurationChanges Changes
 @inject AuthenticationStateProvider Auth
 @inject IDialogService DialogService
 @inject DtToast Toast
@@ -157,29 +157,26 @@
 
         await Write(isNew ? "新增" : "保存", async () =>
         {
-            await Config.SavePlcConnectionAsync(saved);
-            await AuditAsync(isNew ? "Create" : "Save", "PlcConnection", saved.Name,
+            ReportAudit(await Changes.SavePlcConnectionAsync(saved, await AuditOf(
+                isNew ? "Create" : "Save", "PlcConnection", saved.Name,
                 isNew ? null : oldValue,
-                SummarizePlc(saved));
+                SummarizePlc(saved))));
             await Reload();
             Toast.Add(isNew ? $"已新增 {saved.Name}" : $"已保存 {saved.Name}", Severity.Success);
         });
     }
 
-    /// <summary>
-    /// 写审计日志。失败单独提示：连接已经保存并会下发给采集器，
-    /// 这时候报"保存失败"会让人反复保存，什么都不说又会留下追溯空洞。
-    /// </summary>
-    private async Task AuditAsync(string action, string entityType, string key, string? oldValue, string? newValue)
+    private async Task<ConfigAudit> AuditOf(string action, string entityType, string key, string? oldValue, string? newValue)
     {
-        try
+        var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+        return new ConfigAudit(user, action, entityType, key, oldValue, newValue);
+    }
+
+    private void ReportAudit(ConfigurationChangeResult result)
+    {
+        if (result.AuditError is { } error)
         {
-            var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
-            await Audit.WriteAsync(user, action, entityType, key, oldValue, newValue);
-        }
-        catch (Exception ex)
-        {
-            Toast.Add($"操作已完成，但审计记录失败：{ex.Message}", Severity.Warning);
+            Toast.Add($"操作已完成，但审计记录失败：{error}", Severity.Warning);
         }
     }
 
@@ -213,8 +210,8 @@
 
         await Write("删除", async () =>
         {
-            await Config.DeletePlcConnectionAsync(item.Id);
-            await AuditAsync("Delete", "PlcConnection", item.Name, $"{item.Host}:{item.Port}", null);
+            ReportAudit(await Changes.DeletePlcConnectionAsync(item.Id, await AuditOf(
+                "Delete", "PlcConnection", item.Name, $"{item.Host}:{item.Port}", null)));
             await Reload();
             Toast.Add($"已删除 {item.Name}", Severity.Success);
         });

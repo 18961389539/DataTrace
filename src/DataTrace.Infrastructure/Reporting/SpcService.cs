@@ -13,10 +13,10 @@ namespace DataTrace.Infrastructure.Reporting;
 /// </summary>
 public sealed class SpcService : ISpcService
 {
-    private readonly IRuntimeStore _store;
+    private readonly IRuntimeAnalytics _store;
     private readonly IConfigRepository _config;
 
-    public SpcService(IRuntimeStore store, IConfigRepository config)
+    public SpcService(IRuntimeAnalytics store, IConfigRepository config)
     {
         _store = store;
         _config = config;

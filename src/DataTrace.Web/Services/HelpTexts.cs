@@ -30,18 +30,23 @@ public static class HelpTexts
 
     public static readonly HelpTopic YieldRate = new(
         "直通率",
-        "= OK ÷ (OK + NG)，「未判定」既不进分子也不进分母。",
-        "分母为 0 时显示 —；它是质量指标，不阻断生产。");
+        "走出末站的一件。任一站不合格，整件算不合格；未判定不进分母。",
+        "中间站判废、后面仍 OK，不再把那些 OK 记进合格率。");
 
     public static readonly HelpTopic TodayScope = new(
-        "今日统计",
-        "按北京时间自然日统计，00:00 起算，跨零点自动归零。",
-        "数据查询的「今天」按 Web 主机本地日期预设；主机不在北京时间时，两页统计日期可能不同。");
+        "本班统计",
+        "从系统设置里的班次起点起算，到本班结束；夜班跨零点仍算同一班。",
+        "看板本班完成的是走出末站的件数。数据查询的「今天」仍是自然日。");
 
     public static readonly HelpTopic JudgementThreeState = new(
         "判定三态",
         "OK = 全部点位都在规格限内；NG = 任一点位超规格限或该取的值取空；未判定 = 还没得出结论。",
         "未判定多出现在采集中断或读取失败时，排查先看结果码。");
+
+    public static readonly HelpTopic NgSource = new(
+        "不合格来源",
+        "结果码 11 和采成后仍判废算质量不合格；结果码 3–10 算没采成。",
+        "没采成的件收紧规格限没有用，先查测量、跳站和文件。");
 
     public static readonly HelpTopic LimitThreeTiers = new(
         "限值三档",
@@ -57,6 +62,11 @@ public static class HelpTexts
         "最近节拍",
         "距最近一次工站完成的时间；产线本就没料时变慢不算异常。",
         $"超过 {SystemDefaults.CadenceWarnSeconds} 秒转黄、{SystemDefaults.CadenceIdleSeconds / 60} 分钟转灰，要和顶部「数据已停止更新」的告警一起看。");
+
+    public static readonly HelpTopic PieceGap = new(
+        "当前间隔",
+        "同一工站相邻两件完成的间隔；看板上是间隔最长的那一站。",
+        "这一站决定这一班最多能做多少件，班中去疏通不用等到班后。");
 
     // ---------- 数据查询 ----------
 
@@ -77,8 +87,8 @@ public static class HelpTexts
 
     public static readonly HelpTopic ResultCode = new(
         "结果码",
-        $"采集握手码：1 = 触发待采集，2 = 采集成功，3~{ResultCodes.ArchiveFailed} 是各类异常（读失败、写库失败等）。",
-        "它与限值判定独立；3/6/7 查通讯或数据库。PLC 失败记入审计，不计产品记录与产量。");
+        $"2 采集成功并放行，11 质量不合格；3–{ResultCodes.ArchiveFailed} 是读失败、写库失败等采集故障。",
+        "11 写回 PLC 且不放行；3、6、7 是采集故障，不计产量。");
 
     public static readonly HelpTopic RecipeScope = new(
         "型号口径",
@@ -89,8 +99,18 @@ public static class HelpTexts
 
     public static readonly HelpTopic AverageYield = new(
         "平均直通率",
-        "= 区间 ΣOK ÷ Σ(OK + NG)，按件加权，不是每日直通率的算术平均。",
-        "各日产量悬殊时两个算法会差得明显；口径与看板「直通率」一致。");
+        "区间内走出末站的 OK 件 ÷ (OK 件 + NG 件)，按件加权。",
+        "各班件数悬殊时不要把各班直通率做平均；口径与看板一致。");
+
+    public static readonly HelpTopic ShiftWindow = new(
+        "班次窗口",
+        "第一班从该整点开始，每班 8、12 或 24 小时，各班首尾相接。",
+        "看板的本班件数和报表里的每一行都按这个窗口切。");
+
+    public static readonly HelpTopic ShiftShortfall = new(
+        "少做停点",
+        "整线安静超过平时节拍，就把这段时间记在当时件停住的工站。",
+        "用来看少做的件停在哪一站、停了多久，不用人确认。");
 
     public static readonly HelpTopic IssueShare = new(
         "Top N 占比",
@@ -164,7 +184,12 @@ public static class HelpTexts
     public static readonly HelpTopic MesOutbox = new(
         "MES 积压",
         "待推送 = 已采集但还没成功发给 MES 的记录条数。",
-        $"积压不会丢记录，系统按退避重试；超过 {SystemDefaults.MesBacklogWarnHours} 小时未成功会红字告警，先查地址与网络。");
+        $"积压不会丢记录，系统按退避重试；超过 {SystemDefaults.MesBacklogWarnHours} 小时未成功会在所有已打开的页面呼叫，先查地址与网络。");
+
+    public static readonly HelpTopic AlarmCall = new(
+        "异常呼叫",
+        $"心跳、故障、补传、连续 {SystemDefaults.ConsecutiveNgAlarmCount} 件预警或不合格、漂移、在制超时都会响铃，直到有人接手。",
+        "待接手前会响并重复通知；接手后停铃。托盘被盖掉同样要接手。");
 
     // ---------- 工站配置 ----------
 
@@ -300,7 +325,7 @@ public static class HelpTexts
 
     public static readonly HelpTopic SimLastWriteBack = new(
         "最近回写",
-        $"显示采集端写回触发寄存器的响应码：2 是采集成功，3–{ResultCodes.ArchiveFailed} 分别是读失败、托盘码非法、校验失败等。",
+        $"写回触发寄存器的码：2 采集成功并放行，{ResultCodes.QualityRejected} 质量不合格，3–{ResultCodes.ArchiveFailed} 是采集故障。",
         "它不是 PLC 写的值；仿真等不到这个回写（寄存器一直等于触发值）就判超时。");
 
     // ---------- 记录明细 ----------
@@ -371,15 +396,16 @@ public static class HelpTexts
         var path = route.Split('?')[0].Trim('/').ToLowerInvariant();
         return path switch
         {
-            "" => [YieldRate, TodayScope, JudgementThreeState, LimitThreeTiers, StaleData, Cadence],
+            "" => [YieldRate, TodayScope, JudgementThreeState, LimitThreeTiers, StaleData, Cadence, ShiftShortfall, NgSource, PieceGap],
             "query" => [RangeScope, MatchMode, ExportLimit, ResultCode, RecipeScope, JudgementThreeState],
-            "reports" => [YieldRate, AverageYield, RecipeScope, IssueShare, LimitThreeTiers, TrendSampleLimit, Capability, SegmentAsterisk],
+            "reports" => [YieldRate, AverageYield, ShiftWindow, ShiftShortfall, NgSource, RecipeScope, IssueShare, LimitThreeTiers, TrendSampleLimit, Capability, SegmentAsterisk],
             "curve-baseline" => [BaselineSampleCounts, RecipeMismatch, DeviationThresholds, OnlineBaseline, CriterionDisabled, CurveFeatureAxis],
             "logs" => [LogTimeRange, LogTimestamp, LogEntityKey, LogChange, LogKeyword],
             "config/plc" => [Heartbeat, PlcEnabled, MergeGap, SimulatorBrand],
             "config/stations" => [TriggerValue, TagDataSource, BoolAddress, FirstLastStation],
             "config/recipes" => [RecipeCode, RecipeEnabled, RecipeCopy, LimitMergeRule, TargetValue, LimitEffect, CoverablePoints],
-            "config/settings" => [SaveToDispatch, ScanInterval, WriteRetry, ConfigSource, Retention, MesOutbox],
+            "config/settings" => [SaveToDispatch, ScanInterval, WriteRetry, ShiftWindow, ConfigSource, Retention, MesOutbox, AlarmCall],
+            "alarms" => [AlarmCall],
             "simulate" => [SimAutoRun, SimPalletInterval, SimNgPercent, SimRunLine, SimLastWriteBack],
             "users" => [Lockout, RoleScope, DeleteUser, UserNameImmutable, DisplayName],
             "record" => [LimitThreeTiers, JudgementThreeState, LimitColumns, OverTolerance, CurvePointCount, DeviationThresholds, RecipeScope],
@@ -402,8 +428,8 @@ public static class HelpTexts
                     "先看顶部采集状态、心跳和 PLC 异常，再看工站卡片。卡片状态按停用、故障、采集中、NG、OK 等状态表达；点位异常会突出显示。点选「本站明细」可直接检查最近一条记录。",
                     "「最近采集」是便于巡线的 12 条摘要，不是完整历史；需要按时间、托盘、工站等条件查找时进入数据查询。"),
                 Section("指标与点位",
-                    "今日件数按 OK、NG、未判定分开展示。直通率为 OK ÷ (OK + NG)，未判定不进分子或分母；平均节拍是各工站最近一次采集耗时的平均值。",
-                    "顶部最近节拍表示距离最近一次工站完成经过的时间，与平均节拍含义不同。卡片展示 5 个以内的全部点位；点位更多时优先显示超限/预警项，普通点位可展开查看。"),
+                    "本班完成按走出末站的件数统计，从班次起点算到本班结束。一件在任一站不合格，整件算不合格；未判定不进直通率。不合格再分成质量不合格和没采成。直通率旁边写出本班拉低合格率最多的工站和点位，只统计质量不合格。少做停点按整线安静的时间记在当时件停住的工站，并估出少做的件数。当前间隔是同一工站相邻两件完成相隔的时间，看板上写出间隔最长的那一站。",
+                    "顶部最近节拍表示距离最近一次工站完成经过的时间，与当前间隔含义不同。卡片展示 5 个以内的全部点位；点位更多时优先显示超限/预警项，普通点位可展开查看。"),
                 Section("异常排查",
                     "若数据新鲜度异常，先确认采集服务是否运行，再看 PLC 连接状态、工站握手地址及最近记录的结果码和错误信息。若 PLC 正常但最近节拍变慢，也要区分产线无料、工站停用和采集链路停止。",
                     "卡片的颜色、状态图标和文字共同表达同一状态；点位预警用于提前关注，超限才进入判废判定。")
@@ -420,8 +446,8 @@ public static class HelpTexts
                     "起止日期都包含整日。托盘码和流水号采用包含匹配，不是前缀匹配；工站、判定、结果码及具体型号按所选值筛选。型号「全部」不限制型号，「未选型号」只找型号为空的记录。",
                     "命中数是分页前的总数，翻页不会改变它；结果按触发时间从新到旧排列。点击记录行或明细入口可打开完整快照。"),
                 Section("判定与结果码",
-                    "判定描述质量结论：OK、NG 或未判定；结果码描述采集握手与归档处理结果，两者不是同一字段。结果码 1 是待采集触发态，通常不会作为已完成记录展示。",
-                    "读失败、校验失败或归档失败应先沿结果码和错误信息排查通讯/数据链路，不能只凭它判断产品工艺不合格。"),
+                    "判定是 OK、NG 或未判定。结果码 2 是采集成功并放行，11 是质量不合格、不放行；3–10 是这一件没有采成。结果码 1 是待采集触发态，通常不会作为已完成记录展示。",
+                    "读失败、校验失败或归档失败应先沿结果码和错误信息排查通讯或数据链路，不能把它当成工艺不合格。工艺不合格看结果码 11 和判定 NG。"),
                 Section("导出与注意事项",
                     $"导出按当前筛选和排序取前 {SystemDefaults.ExportRowLimit:N0} 条；超过上限时页面会提示截断。需要完整导出时缩小日期范围或增加筛选条件后分批导出。",
                     "导出权限按页面角色控制。若查询不到旧记录，先确认时间范围、型号筛选和记录保留周期；月库记录被清理后无法从查询页恢复。")
@@ -447,7 +473,7 @@ public static class HelpTexts
                     "报表从区间数据汇总质量与过程表现，可按工站、型号和日期范围查看直通率、型号汇总、不良/预警 Top N、参数趋势及过程能力。趋势和过程能力需要再选择数值点位。",
                     "按筛选条件刷新后，各图表和表格使用对应区间；趋势与过程能力可能在首屏摘要之后加载。需要留档时，可导出有权限的趋势数据。"),
                 Section("质量与 Top N",
-                    "区间直通率按总 OK ÷ (总 OK + 总 NG) 计算，未判定排除；按件数加权，不是每天直通率的简单平均。不良榜统计超规格次数，预警榜单独统计预警次数。",
+                    "直通率表每一行是一个班次，件数是这一班走出末站的件；任一站不合格，整件只算一次不合格。不合格分成质量不合格和没采成，没采成不进直通率旁边的点位。区间直通率按这些件的 OK ÷ (OK + NG) 计算，未判定排除，不是各班直通率的简单平均。选了工站时，这张表只看该站自己的判定。少做一列是这一班停得最久的地方和时长；整线同时停下时，记在当时在制件停住的工站。不良榜仍按超规格次数统计。",
                     "榜单按点位名称聚合次数；不筛工站时，不同工站的同名点位可能合并。占比以区间内相应类别的总次数为分母，榜内占比未达到 100% 时，差额来自未显示项目。"),
                 Section("趋势与过程能力",
                     $"趋势和过程能力单次最多处理最近 {SystemDefaults.TrendSampleLimit:N0} 个采样点；达到上限会提示数据截断，可缩短日期区间查看更早时段。规格限发生变化时，过程能力按限值分段计算，带星号的限值可能来自当前配置估计。",
@@ -525,7 +551,7 @@ public static class HelpTexts
                     "型号覆盖只用于数值点位。规格上限/下限、预警上限/下限和目标值逐字段合并；覆盖字段留空表示沿用点位默认值，而不是关闭该限值。覆盖与默认值合并后仍须满足上下限和预警带关系。",
                     "五个覆盖字段全部为空时该点位不保留覆盖记录。布尔、字符串点位不在覆盖矩阵中；需要调整它们的行为时应回到工站点位配置。"),
                 Section("生效时间与历史",
-                    "保存覆盖或切换当前型号会递增配置版本，采集端在后续获取配置快照时使用新型号/限值。变更不会重算已经采集的记录；记录明细保留当时实际限值。",
+                    "已经在制的件仍用进首站时的型号走到末站，新型号从下一件起。同一型号只改限值时，在制件的后续工站用改后的数字。变更不会重算已经采集的记录；记录明细保留当时实际限值。",
                     "停用或删除当前型号会清除当前选择，后续采集回落到点位默认限值。改编码不会重写历史记录；报表按页面视图区分全部型号汇总与单编码精确筛选。"),
                 Section("上线前检查",
                     "核对编码唯一性、型号启用状态、目标型号是否已设为当前，以及覆盖后的有效值是否符合工艺要求。对一个字段留空时，务必确认继承的默认值符合该型号要求。",
@@ -541,7 +567,7 @@ public static class HelpTexts
                     "启用 MES 推送时检查 HTTP(S) 地址、超时与网络可达性；失败记录会留在待推送队列并重试。保留年数按整月清理运行记录和曲线文件，审计日志不受该年限控制。"),
                 Section("配置生效与运行影响",
                     "配置库参数保存后写入配置版本，采集端在后续读取快照时使用新值。停用采集需要先确认，再保存设置；停采期间不会继续读取工站，但已有历史记录仍可查询。",
-                    "运行状态卡片显示当前配置来源、备份和 MES 积压情况。积压持续增加时先检查 MES 地址、网络和对端可用性，不要通过删除运行记录来清理队列。"),
+                    "运行状态卡片显示当前配置来源、备份和 MES 积压情况。积压持续增加时先检查 MES 地址、网络和对端可用性，不要通过删除运行记录来清理队列。采集心跳中断、工站故障、补传积压、MES 积压，以及同一工站连续质量不合格或连续采集失败，会在所有已打开的页面响铃，直到有人在报警页接手。托盘没走完又进首站也会叫人。填写了异常呼叫地址时，后台还会按间隔把尚未接手的异常 POST 出去。"),
                 Section("不可逆操作与检查",
                     "缩短保留年数前仔细核对页面提示的清理月份，并先确认是否需要备份；被清理的整月运行库与曲线文件不可恢复。在线备份包不包含曲线文件，波形资料需按单独的文件管理方案留存。",
                     "客户约定的设备数量上限是提醒信息，不一定会阻止保存；检查默认口令提示和管理员权限。修改后回看页面状态及看板心跳，确认配置确实被采集端接收。")
@@ -555,7 +581,7 @@ public static class HelpTexts
                     "先设置托盘间隔、NG 比例和托盘池大小，再点击保存参数；自动跑线开关是独立操作。需要单次验证时选择工站触发；需要验证首末站和托盘会话时输入托盘码并运行整线。",
                     "托盘池为 1 时每轮重复同一托盘码。NG 比例按托盘抽取随机结果，单托盘最多挑一个工站注入异常；没有启用且带数值规格限的点位时，该轮未必能产生 NG。"),
                 Section("回写与状态",
-                    "触发后观察当前托盘、当前工站、最近回写码和完成计数。回写码 2 表示采集成功，其他码表示采集/归档过程中的相应问题；它描述采集端响应，不是 PLC 自己的质量判定。",
+                    "触发后观察当前托盘、当前工站、最近回写码和完成计数。回写码 2 表示采集成功并放行，11 表示质量不合格、不放行，3–10 表示采集或归档失败。",
                     "整线按顺序逐站触发并等待采集端回写，每站等待有超时上限。页面显示未走完时，查看停在哪一站及回写码，再核对采集服务、PLC/工站启用状态和握手地址。"),
                 Section("安全边界",
                     "仿真开关会立即改变后台运行状态，参数则需单独保存；两者不是同一次提交。开启自动跑线前确认不会把测试记录混入真实生产报表，必要时先停采或在测试环境操作。",
@@ -575,6 +601,21 @@ public static class HelpTexts
                 Section("操作结果与审计",
                     "用户创建、角色调整、密码重置、解锁和删除会分别执行并记录审计；创建账号与分配角色是分步操作，界面提示部分失败时要回列表核对实际账号状态。",
                     "审计日志记录操作者、对象和操作结果，不保存明文密码。权限调整后可让用户重新登录，再按实际页面入口确认授权范围。")
+            ],
+            "alarms" =>
+            [
+                Section("页面用途",
+                    "报警页列出还要人处理的异常：采集心跳停止、工站故障、补传积压、MES 积压超时，以及同一工站连续质量不合格或连续采集失败。托盘没走完又被下一件盖掉也留在这里。这些记录保存在配置库，程序重启后仍然在，换班的人能看到上一班没接的报警。",
+                    "顶部红条出现在每一个已打开的页面上，用来把人叫过来。红条上的静音只关掉这一台电脑的声音，报警本身还在，必须到本页点接手才算有人负责。"),
+                Section("什么时候会叫",
+                    "采集开着但心跳超过规定秒数没有刷新，会叫采集心跳。工站读失败、文件读不到、归档失败或回写失败，会马上叫工站故障。写库失败的件进补传，超过规定分钟仍在就叫补传积压。同一点位连续落在预警带达到规定件数，或控制图最新一点超出控制限、连续落在中心线同一侧，会叫预警和过程漂移。托盘超过规定分钟还没走到末站，会叫在制超时，并写明托盘、序列号和停在哪一站。MES 开着且最老的一条积压超过规定小时，会叫 MES 积压。同一工站连续达到规定件数时，质量不合格和采集失败或跳站分开叫。",
+                    "条件还在时，说法会跟着更新，例如连续件数变多。条件消失后，这条记录不会自己消失：它变成已恢复、仍待接手，避免异常只闪一下就没人知道发生过。"),
+                Section("接手之后",
+                    "管理员、工程师和操作员可以接手。接手记下登录名和时间，红条停止响铃，配置了呼叫地址时也不再为这一条重复 POST。访客只能查看，不能替别人接手。",
+                    "接手不等于异常已经好了。心跳仍然停着、积压还在或连续 NG 还没被合格件打断时，本页继续显示已接手、尚未解除。等条件真正消失，这条才进入最近结束。"),
+                Section("和别的页面怎么配合",
+                    "查某一件产品为什么不合格，仍然去数据查询和记录明细，报警页不代替单件记录。MES 积压要回到系统设置看地址和队列，不要在这里删运行数据。",
+                    "同一条异常在被接手并解除之前只保留一条。下一轮重新发生时另开一条，所以最近结束里能按时间看出上一班谁接过、什么时候解除。")
             ],
             _ => []
         };

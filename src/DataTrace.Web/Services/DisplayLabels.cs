@@ -61,6 +61,7 @@ public static class DisplayLabels
             "config/settings" => "系统设置",
             "users" => "用户",
             "logs" => "审计日志",
+            "alarms" => "报警",
             "not-found" => "页面不存在",
             _ => null
         };
@@ -71,7 +72,7 @@ public static class DisplayLabels
     [
         "Create", "Update", "Save", "Delete", "Login", "LoginFailed", "Logout", "Toggle", "Switch", "Export",
         "Activate", "Deactivate", "Enable", "Disable", "Copy", "Recode", "SaveLimits",
-        "ResetPassword", "Unlock", "Backup", "DeleteRuntimeMonth", "ArchiveAndPurge"
+        "ResetPassword", "Unlock", "Backup", "DeleteRuntimeMonth", "ArchiveAndPurge", "Acknowledge"
     ];
 
     /// <summary>审计对象类型码全集。</summary>
@@ -79,7 +80,7 @@ public static class DisplayLabels
     [
         "PlcConnection", "Station", "TagDefinition", "CurveDefinition", "CurveCriterion",
         "Recipe", "RecipeLimit", "SystemSettings", "User", "Backup", "Query", "Record", "Report",
-        "AuditLog", "RuntimeData"
+        "AuditLog", "RuntimeData", "Alarm"
     ];
 
     public static string AuditAction(string? action) => action switch
@@ -106,6 +107,7 @@ public static class DisplayLabels
         "Backup" => "备份",
         "DeleteRuntimeMonth" => "清理运行数据",
         "ArchiveAndPurge" => "归档并清理审计",
+        "Acknowledge" => "接手",
         _ => NullOr(action)
     };
 
@@ -126,6 +128,7 @@ public static class DisplayLabels
         "Query" => "数据查询",
         "Record" => "采集记录",
         "Report" => "报表",
+        "Alarm" => "报警",
         _ => NullOr(entityType)
     };
 
@@ -137,7 +140,7 @@ public static class DisplayLabels
     public static bool IsChangeAction(string? action)
         => action is not (
             "Login" or "LoginFailed" or "Logout" or "Unlock" or "Export"
-            or "Backup" or "DeleteRuntimeMonth" or "ArchiveAndPurge");
+            or "Backup" or "DeleteRuntimeMonth" or "ArchiveAndPurge" or "Acknowledge");
 
     /// <summary>关键字若匹配某动作的中文标签，返回这些动作码，供服务端 OR 查询。</summary>
     public static IReadOnlyList<string> ActionsMatchingKeyword(string? keyword)

@@ -39,6 +39,27 @@ public static class SystemDefaults
     /// <summary>数据库备份超过它没成功就算"陈旧"，看板与设置页都会告警（小时）。</summary>
     public const int BackupStaleHours = 48;
 
-    /// <summary>MES 推送积压超过它就在界面上红字告警（小时）。</summary>
+    /// <summary>MES 推送积压超过它就呼叫（小时）。</summary>
     public const int MesBacklogWarnHours = 1;
+
+    /// <summary>同一工站连续这么多件 NG 就呼叫。</summary>
+    public const int ConsecutiveNgAlarmCount = 3;
+
+    /// <summary>异常仍未解除时，隔这么久再呼叫一次（分钟）。</summary>
+    public const int AlarmRepeatMinutes = 15;
+
+    /// <summary>后台检查异常的间隔（秒）。</summary>
+    public const int AlarmPollSeconds = 5;
+
+    /// <summary>写库失败后的补传文件超过它仍在，就呼叫（分钟）。</summary>
+    public const int SpoolBacklogWarnMinutes = 5;
+
+    /// <summary>托盘会话超过它还没走到末站，就呼叫（分钟）。</summary>
+    public const int OpenSessionWarnMinutes = 30;
+
+    /// <summary>第一班从当天这个整点开始。看板本班件数和报表按班分行都用它。</summary>
+    public const int ShiftStartHour = 8;
+
+    /// <summary>每一班的时长（小时）。只能是 8、12 或 24，各班首尾相接。</summary>
+    public const int ShiftLengthHours = 12;
 }

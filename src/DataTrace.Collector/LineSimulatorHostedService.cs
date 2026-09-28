@@ -227,8 +227,8 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
 
     private static async Task<short?> WaitHandshakeAsync(InMemoryPlcDriver plc, Station station, CancellationToken cancellationToken)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(8);
-        while (DateTime.UtcNow < deadline)
+        var deadline = DateTime.Now.AddSeconds(8);
+        while (DateTime.Now < deadline)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var word = (short)plc.GetWord(station.TriggerAddress);

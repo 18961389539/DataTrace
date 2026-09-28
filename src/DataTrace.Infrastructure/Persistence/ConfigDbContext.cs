@@ -25,6 +25,7 @@ public sealed class ConfigDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<ConfigVersion> ConfigVersions => Set<ConfigVersion>();
     public DbSet<MesOutboxItem> MesOutbox => Set<MesOutboxItem>();
+    public DbSet<AlarmIncident> AlarmIncidents => Set<AlarmIncident>();
     public DbSet<Recipe> Recipes => Set<Recipe>();
     public DbSet<RecipeLimit> RecipeLimits => Set<RecipeLimit>();
 
@@ -92,6 +93,7 @@ public sealed class ConfigDbContext : IdentityDbContext<ApplicationUser>
 
         builder.Entity<SerialCounter>(e => e.HasIndex(x => x.DayKey).IsUnique());
         builder.Entity<AuditLog>(e => e.HasIndex(x => x.Time));
+        builder.Entity<AlarmIncident>(e => e.HasIndex(x => x.RaisedAt));
         builder.Entity<MesOutboxItem>(e => e.HasIndex(x => new { x.Status, x.CreatedAt }));
     }
 }

@@ -13,10 +13,10 @@ namespace DataTrace.Infrastructure.Reporting;
 /// </summary>
 public sealed class CurveTemplateService : ICurveTemplateService
 {
-    private readonly IRuntimeStore _store;
+    private readonly IRuntimeAnalytics _store;
     private readonly IConfigRepository _config;
 
-    public CurveTemplateService(IRuntimeStore store, IConfigRepository config)
+    public CurveTemplateService(IRuntimeAnalytics store, IConfigRepository config)
     {
         _store = store;
         _config = config;

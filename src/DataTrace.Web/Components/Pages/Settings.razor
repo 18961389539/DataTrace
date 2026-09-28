@@ -8,6 +8,8 @@
 @using DataTrace.Domain.Validation
 @using DataTrace.Web.Options
 @inject IConfigRepository Config
+@inject IConfigurationChanges Changes
+@inject ISettingsSave SettingsSave
 @inject ILineSimulator Simulator
 @inject DtToast Toast
 @inject IDialogService DialogService
@@ -224,6 +226,29 @@ else
                                          aria-label="写回重试间隔(ms)" />
                         <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
+                    <div class="dt-settings-row">
+                        <div>
+                            <div class="dt-settings-row-name">班次起点(时)<InfoHint Topic="HelpTexts.ShiftWindow" /></div>
+                            <div class="dt-settings-row-hint">第一班从当天这个整点开始。夜班跨过零点仍算同一班</div>
+                        </div>
+                        <MudNumericField @bind-Value="_edit.ShiftStartHour" @bind-Value:after="() => _shiftStartError = null"
+                                         Min="0" Max="23"
+                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true"
+                                         Error="@(_shiftStartError is not null)" ErrorText="@_shiftStartError"
+                                         aria-label="班次起点(时)" />
+                        <span class="dt-src-badge edit">可在此修改·配置库</span>
+                    </div>
+                    <div class="dt-settings-row">
+                        <div>
+                            <div class="dt-settings-row-name">班次时长(小时)</div>
+                            <div class="dt-settings-row-hint">只能是 8、12 或 24。各班首尾相接，看板本班件数和报表按班分行都用它</div>
+                        </div>
+                        <MudNumericField @bind-Value="_edit.ShiftLengthHours" @bind-Value:after="() => _shiftLengthError = null"
+                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true"
+                                         Error="@(_shiftLengthError is not null)" ErrorText="@_shiftLengthError"
+                                         aria-label="班次时长(小时)" />
+                        <span class="dt-src-badge edit">可在此修改·配置库</span>
+                    </div>
 
                     <MudDivider Class="my-3" />
 
@@ -266,8 +291,9 @@ else
                 <MudPaper Class="pa-4 mb-3 dt-settings-section" id="sec-data" Elevation="1">
                     <MudText Typo="Typo.subtitle1" Class="mb-1">数据与备份</MudText>
                     <MudText Typo="Typo.caption" Class="dt-muted mb-3">
-                        定时在线备份 config.db 与 runtime 月库（SQLite Backup API，不停服）；默认每天本地 @(_backupStatus?.DailyTime ?? "02:30")，
-                        保留 @(_backupStatus?.RetentionDays ?? 30) 天 / 最多 @(_backupStatus?.MaxBackups ?? 60) 套。曲线文件本身不进备份包。
+                        定时全量备份 config.db、runtime 月库、curves、archive、audit-archive 与 spool；数据库使用 SQLite Backup API，文件逐项 SHA-256 校验。
+                        默认每天本地 @(_backupStatus?.DailyTime ?? "02:30")，保留 @(_backupStatus?.RetentionDays ?? 30) 天 / 最多 @(_backupStatus?.MaxBackups ?? 60) 套。
+                        不含程序文件、安装目录配置及 backups 自身；恢复前会重新校验清单和数据库。
                     </MudText>
 
                     <div class="dt-settings-row">
@@ -300,13 +326,34 @@ else
                     </div>
                     <div class="dt-settings-row">
                         <div>
-                            <div class="dt-settings-row-name">备份保留</div>
-                            <div class="dt-settings-row-hint">备份套数保留策略，与「保留年数」互不替代</div>
+                                <div class="dt-settings-row-name">最近全量校验</div>
+                                <div class="dt-settings-row-hint">SHA-256 文件清单 + SQLite quick_check；恢复前会再次校验。</div>
                         </div>
                         <MudText Typo="Typo.body2">
-                            @(_backupStatus?.RetentionDays ?? 30) 天 / 最多 @(_backupStatus?.MaxBackups ?? 60) 份
+                                @if (_backupStatus.LastBackupFormatVersion >= 2)
+                                {
+                                    <text>v2 · @_backupStatus.LastDatabaseCount 个数据库 · @_backupStatus.LastVerifiedFileCount / @_backupStatus.LastFileCount 个文件通过</text>
+                                }
+                                else if (_backupStatus.LastSuccessAt is not null)
+                                {
+                                    <text>旧版仅数据库 · 请重新生成全量备份</text>
+                                }
+                                else
+                                {
+                                    <text>尚无已验证的全量备份</text>
+                                }
                         </MudText>
-                        <span class="dt-src-badge ro">客户配置·只读</span>
+                            <span class="dt-src-badge rt">上次成功快照</span>
+                        </div>
+                        <div class="dt-settings-row">
+                            <div>
+                                <div class="dt-settings-row-name">备份保留</div>
+                                <div class="dt-settings-row-hint">备份套数保留策略，与「保留年数」互不替代</div>
+                            </div>
+                            <MudText Typo="Typo.body2">
+                                @(_backupStatus?.RetentionDays ?? 30) 天 / 最多 @(_backupStatus?.MaxBackups ?? 60) 份
+                            </MudText>
+                            <span class="dt-src-badge ro">客户配置·只读</span>
                     </div>
 
                     @if (_backupStatusError is { } backupError)
@@ -371,9 +418,9 @@ else
 
                         <AuthorizeView Roles="Administrator">
                             <Authorized>
-                                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RunBackupNow"
+                                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="RunBackupNow"
                                            Disabled="_backingUp" StartIcon="@Icons.Material.Filled.Backup">
-                                    @(_backingUp ? "备份中…" : "立即备份")
+                                    @(_backingUp ? "全量备份中…" : "立即全量备份")
                                 </MudButton>
                             </Authorized>
                             <NotAuthorized>
@@ -459,6 +506,23 @@ else
                             </MudText>
                         }
                     }
+                </MudPaper>
+
+                <MudPaper Class="pa-4 mb-3 dt-settings-section" id="sec-alarm" Elevation="1">
+                    <MudText Typo="Typo.subtitle1" Class="mb-3">异常呼叫<InfoHint Topic="HelpTexts.AlarmCall" /></MudText>
+                    <div class="dt-settings-row">
+                        <div>
+                            <div class="dt-settings-row-name">呼叫地址</div>
+                            <div class="dt-settings-row-hint">
+                                留空时，采集心跳中断、MES 积压和连续 @SystemDefaults.ConsecutiveNgAlarmCount 件 NG 只在已打开的页面响铃。
+                                填写后，同一条异常还会每 @SystemDefaults.AlarmRepeatMinutes 分钟 POST 到这个地址。
+                            </div>
+                        </div>
+                        <MudTextField @bind-Value="_edit.AlarmWebhookUrl" Immediate="true" Margin="Margin.Dense"
+                                      Variant="Variant.Outlined" Placeholder="http://notify.local/datatrace"
+                                      aria-label="异常呼叫地址" />
+                        <span class="dt-src-badge edit">可在此修改·配置库</span>
+                    </div>
                 </MudPaper>
 
                 <MudPaper Class="pa-4 mb-3 dt-settings-section" id="sec-security" Elevation="1">
@@ -548,13 +612,14 @@ else
         ("sec-collect", "采集与仿真"),
         ("sec-data", "数据与备份"),
         ("sec-mes", "MES 对接"),
+        ("sec-alarm", "异常呼叫"),
         ("sec-security", "安全"),
         ("sec-about", "关于"),
     ];
 
     private SystemSettings? _settings;
-    private EditFields _edit = new();
-    private EditFields _loaded = new();
+    private SettingsEdit _edit = new();
+    private SettingsEdit _loaded = new();
     private string _savedSiteName = "";
     private string? _savedLogoPath;
     private bool _loading = true;
@@ -579,55 +644,9 @@ else
     private string? _retentionError;
     private string? _auditRetentionError;
     private string? _mesTimeoutError;
+    private string? _shiftStartError;
+    private string? _shiftLengthError;
     private string _activeSection = "sec-basic";
-
-    /// <summary>
-    /// 页面上可编辑的字段。
-    /// </summary>
-    /// <remarks>
-    /// 数值一律用可空 int 承接输入：输入框被清空或敲进非法字符时拿到的是 null，
-    /// 而不是被 MudNumericField 悄悄夹成下限 —— "保留年数"夹成 1 会在 6 小时内
-    /// 把超过一年的整月库与曲线文件全删掉，而界面只提示"配置已保存"。
-    /// </remarks>
-    private sealed class EditFields
-    {
-        public int? ScanIntervalMs { get; set; }
-        public int? WriteRetryCount { get; set; }
-        public int? WriteRetryDelayMs { get; set; }
-        public int? RetentionYears { get; set; }
-        public int? AuditRetentionYears { get; set; }
-        public int? MesTimeoutSeconds { get; set; }
-        public bool CollectEnabled { get; set; }
-        public bool MesEnabled { get; set; }
-        public string? MesEndpoint { get; set; }
-
-        public EditFields Clone() => (EditFields)MemberwiseClone();
-
-        /// <summary>逐字段比较（脏检查用）：任何一个字段与载入值不同就算有未保存的更改。</summary>
-        public bool DiffersFrom(EditFields other)
-            => ScanIntervalMs != other.ScanIntervalMs
-               || WriteRetryCount != other.WriteRetryCount
-               || WriteRetryDelayMs != other.WriteRetryDelayMs
-               || RetentionYears != other.RetentionYears
-               || AuditRetentionYears != other.AuditRetentionYears
-               || MesTimeoutSeconds != other.MesTimeoutSeconds
-               || CollectEnabled != other.CollectEnabled
-               || MesEnabled != other.MesEnabled
-               || !string.Equals(MesEndpoint ?? "", other.MesEndpoint ?? "", StringComparison.Ordinal);
-
-        public static EditFields From(SystemSettings s) => new()
-        {
-            ScanIntervalMs = s.ScanIntervalMs,
-            WriteRetryCount = s.WriteRetryCount,
-            WriteRetryDelayMs = s.WriteRetryDelayMs,
-            RetentionYears = s.RetentionYears,
-            AuditRetentionYears = s.AuditRetentionYears,
-            MesTimeoutSeconds = s.MesTimeoutSeconds,
-            CollectEnabled = s.CollectEnabled,
-            MesEnabled = s.MesEnabled,
-            MesEndpoint = s.MesEndpoint
-        };
-    }
 
     private bool SettingsDirty => _settings is not null && _edit.DiffersFrom(_loaded);
 
@@ -673,6 +692,7 @@ else
         _backupStatus is null ? Color.Default
         : _backupStatusError is not null ? Color.Error
         : !_backupStatus.Enabled || _backupStatus.IsStaleOrFailed(TimeSpan.FromHours(SystemDefaults.BackupStaleHours)) ? Color.Error
+        : _backupStatus.LastSuccessAt is not null && _backupStatus.LastBackupFormatVersion < 2 ? Color.Warning
         : Color.Success;
 
     private string BackupChipText =>
@@ -680,7 +700,8 @@ else
         : _backupStatusError is not null ? "读取失败"
         : !_backupStatus.Enabled ? "已关闭"
         : _backupStatus.IsStaleOrFailed(TimeSpan.FromHours(SystemDefaults.BackupStaleHours)) ? "异常"
-        : "正常";
+        : _backupStatus.LastBackupFormatVersion < 2 ? "旧版数据库备份"
+        : "全量已校验";
 
     private string BackupDetail
     {
@@ -694,8 +715,12 @@ else
                 var err = _backupStatus.LastError ?? "未知错误";
                 return $"最近失败：{err}";
             }
+            if (_backupStatus.LastSuccessAt is not null && _backupStatus.LastBackupFormatVersion < 2)
+            {
+                return "旧版仅含数据库；请生成包含归档文件的全量备份";
+            }
             var when = _backupStatus.LastSuccessAt?.ToLocalTime().ToString("HH:mm") ?? "尚无";
-            return $"{when} 成功 · {FormatBytes(_backupStatus.LastBackupBytes)}";
+            return $"{when} 全量已校验 · {FormatBytes(_backupStatus.LastBackupBytes)}";
         }
     }
 
@@ -716,10 +741,11 @@ else
         }
     }
 
-        private static string SummarizeSettings(SystemSettings s)
-        => $"scan={s.ScanIntervalMs}ms; retry={s.WriteRetryCount}×{s.WriteRetryDelayMs}ms; retentionYears={s.RetentionYears}; " +
-           $"auditRetentionYears={s.AuditRetentionYears}; collect={s.CollectEnabled}; mes={s.MesEnabled}; " +
-           $"mesTimeout={s.MesTimeoutSeconds}s; endpoint={s.MesEndpoint}";
+    private async Task<ConfigAudit> AuditOf(string action, string entityType, string key, string? oldValue, string? newValue)
+    {
+        var user = (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+        return new ConfigAudit(user, action, entityType, key, oldValue, newValue);
+    }
 
     /// <summary>
     /// 写审计日志，失败时单独提示一次。
@@ -821,9 +847,9 @@ else
             }
 
             _settings = snap.Settings;
-            _edit = EditFields.From(_settings);
+            _edit = SettingsEdit.From(_settings);
             _loaded = _edit.Clone();
-            _scanError = _retryError = _retryDelayError = _retentionError = _mesTimeoutError = null;
+            _scanError = _retryError = _retryDelayError = _retentionError = _mesTimeoutError = _shiftStartError = _shiftLengthError = null;
             _auditRetentionError = null;
             _productionSimWarning = Branding.EnvironmentName.Equals("Production", StringComparison.OrdinalIgnoreCase)
                 && _settings is { SimulatorAutoRun: true };
@@ -865,9 +891,9 @@ else
     {
         if (_settings is null || _saving) return;
 
-        if (_edit.MesEnabled && !IsHttpUrl(_edit.MesEndpoint))
+        if (SettingsEditRules.UrlError(_edit) is { } urlError)
         {
-            Toast.Add("已启用 MES 推送，但地址不是合法的 http(s) 地址", Severity.Warning);
+            Toast.Add(urlError, Severity.Warning);
             return;
         }
 
@@ -900,6 +926,7 @@ else
         string? brandErr = null;
         var settingsSaved = false;
         var brandSaved = false;
+        var settingsBlocked = false;
 
         try
         {
@@ -907,35 +934,47 @@ else
             {
                 try
                 {
-                    // 库里的最新一行：只把本页真的改过的字段写回去。
-                    // 整行覆盖会把另一会话刚保存的其它字段悄悄回滚（两边都看到"保存成功"）。
-                    // 但快照是全局共享的只读实例（见 IConfigRepository.GetSnapshotAsync），
-                    // 必须先克隆再打补丁 —— 否则改动会留在共享快照里，保存失败也照样被别的页面读走。
-                    var target = (await Config.GetSnapshotAsync()).Settings.Clone();
-                    var oldSnap = SummarizeSettings(target);
-                    if (_edit.ScanIntervalMs != _loaded.ScanIntervalMs) target.ScanIntervalMs = _edit.ScanIntervalMs!.Value;
-                    if (_edit.WriteRetryCount != _loaded.WriteRetryCount) target.WriteRetryCount = _edit.WriteRetryCount!.Value;
-                    if (_edit.WriteRetryDelayMs != _loaded.WriteRetryDelayMs) target.WriteRetryDelayMs = _edit.WriteRetryDelayMs!.Value;
-                    if (_edit.RetentionYears != _loaded.RetentionYears) target.RetentionYears = _edit.RetentionYears!.Value;
-                    if (_edit.AuditRetentionYears != _loaded.AuditRetentionYears) target.AuditRetentionYears = _edit.AuditRetentionYears!.Value;
-                    if (_edit.MesTimeoutSeconds != _loaded.MesTimeoutSeconds) target.MesTimeoutSeconds = _edit.MesTimeoutSeconds!.Value;
-                    if (_edit.CollectEnabled != _loaded.CollectEnabled) target.CollectEnabled = _edit.CollectEnabled;
-                    // 地址统一去掉首尾空白：带空格的 URL 能过校验、也会被原样存进库与审计里。
-                    var endpoint = string.IsNullOrWhiteSpace(_edit.MesEndpoint) ? null : _edit.MesEndpoint.Trim();
-                    if (!string.Equals(endpoint, _loaded.MesEndpoint ?? "", StringComparison.Ordinal)
-                        || _edit.MesEnabled != _loaded.MesEnabled)
+                    var user = (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+                    var saved = await SettingsSave.SaveAsync(_edit, _loaded, user);
+                    if (saved.ValidationMessage is { } invalid)
                     {
-                        target.MesEndpoint = endpoint;
-                        target.MesEnabled = _edit.MesEnabled;
+                        Toast.Add(invalid, Severity.Warning);
+                        settingsBlocked = true;
                     }
+                    else if (saved.Failure is { } failure)
+                    {
+                        settingsErr = failure;
+                    }
+                    else if (saved.Saved is { } snapshot)
+                    {
+                        if (saved.AuditError is { } auditError)
+                        {
+                            Toast.Add($"审计记录失败：{auditError}", Severity.Warning);
+                        }
 
-                    await Config.SaveSettingsAsync(target);
-                    await AuditSafe("Save", "SystemSettings", "settings", oldSnap, SummarizeSettings(target));
-                    _settings = target;
-                    _edit = EditFields.From(target);
-                    _loaded = _edit.Clone();
-                    Simulator.SetRunning(target.SimulatorAutoRun);
-                    settingsSaved = true;
+                        var shown = _settings.Clone();
+                        shown.ScanIntervalMs = snapshot.ScanIntervalMs;
+                        shown.WriteRetryCount = snapshot.WriteRetryCount;
+                        shown.WriteRetryDelayMs = snapshot.WriteRetryDelayMs;
+                        shown.RetentionYears = snapshot.RetentionYears;
+                        shown.AuditRetentionYears = snapshot.AuditRetentionYears;
+                        shown.MesTimeoutSeconds = snapshot.MesTimeoutSeconds;
+                        shown.ShiftStartHour = snapshot.ShiftStartHour;
+                        shown.ShiftLengthHours = snapshot.ShiftLengthHours;
+                        shown.CollectEnabled = snapshot.CollectEnabled;
+                        shown.MesEnabled = snapshot.MesEnabled;
+                        shown.MesEndpoint = snapshot.MesEndpoint;
+                        shown.AlarmWebhookUrl = snapshot.AlarmWebhookUrl;
+                        shown.SimulatorAutoRun = snapshot.SimulatorAutoRun;
+                        shown.SimulatorIntervalMs = snapshot.SimulatorIntervalMs;
+                        shown.SimulatorNgPercent = snapshot.SimulatorNgPercent;
+                        shown.SimulatorPalletPool = snapshot.SimulatorPalletPool;
+                        _settings = shown;
+                        _edit = SettingsEdit.From(shown);
+                        _loaded = _edit.Clone();
+                        Simulator.SetRunning(shown.SimulatorAutoRun);
+                        settingsSaved = true;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -943,7 +982,7 @@ else
                 }
             }
 
-            if (needBrand)
+            if (!settingsBlocked && needBrand)
             {
                 try
                 {
@@ -971,6 +1010,11 @@ else
         finally
         {
             _saving = false;
+        }
+
+        if (settingsBlocked)
+        {
+            return;
         }
 
         // 保存成功但 Logo 文件不在：顶栏会是一片空白，用户很难想到是文件名写错了。
@@ -1015,10 +1059,6 @@ else
         }
     }
 
-    private static bool IsHttpUrl(string? url)
-        => Uri.TryCreate(url, UriKind.Absolute, out var uri)
-           && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
-
     /// <summary>
     /// 数值字段的保存前校验：空值（输入框被清空或敲进非法字符）与越界都拦下来。
     /// </summary>
@@ -1040,8 +1080,12 @@ else
             : SettingsLimits.AuditRetentionYearsError(auditYears);
         _mesTimeoutError = _edit.MesTimeoutSeconds is not { } timeout ? "MES 超时不能为空"
             : SettingsLimits.MesTimeoutError(timeout);
+        _shiftStartError = _edit.ShiftStartHour is not { } shiftStart ? "班次起点不能为空"
+            : SettingsLimits.ShiftStartHourError(shiftStart);
+        _shiftLengthError = _edit.ShiftLengthHours is not { } shiftLength ? "班次时长不能为空"
+            : SettingsLimits.ShiftLengthHoursError(shiftLength);
 
-        var bad = new[] { _scanError, _retryError, _retryDelayError, _retentionError, _auditRetentionError, _mesTimeoutError }
+        var bad = new[] { _scanError, _retryError, _retryDelayError, _retentionError, _auditRetentionError, _mesTimeoutError, _shiftStartError, _shiftLengthError }
             .Count(x => x is not null);
         if (bad == 0)
         {
@@ -1118,15 +1162,15 @@ else
             if (result.Success)
             {
                 await AuditSafe("Backup", "Backup", "manual", "start",
-                    $"success; path={result.BackupPath}; bytes={result.TotalBytes}",
+                    $"success; path={result.BackupPath}; db={result.DatabaseCount}; files={result.Files.Count}; verified={result.VerifiedFileCount}; bytes={result.TotalBytes}",
                     correlationId: correlationId);
-                Toast.Add($"备份完成：{result.BackupPath}", Severity.Success);
+                Toast.Add($"全量备份完成：{result.DatabaseCount} 个数据库，{result.VerifiedFileCount} 个文件校验通过", Severity.Success);
             }
             else
             {
                 await AuditSafe("Backup", "Backup", "manual", "started", $"fail; {result.Error}",
                     outcome: "Failure", correlationId: correlationId);
-                Toast.Add($"备份失败：{result.Error}", Severity.Error);
+                Toast.Add($"全量备份失败：{result.Error}", Severity.Error);
             }
         }
         catch (Exception ex)

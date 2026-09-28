@@ -182,8 +182,8 @@ else
                结果码与限值判定是两件事，否则现场会把读取失败当成工艺问题。 *@
             <MudTooltip Arrow="true" RootClass="dt-help-popover">
                 <ChildContent>
-                    @* 九个码里只有「采集成功」是成功，其余都是这一件没采成。全是默认色时
-                       「PLC 读取失败」和「采集成功」长得一样，一屏扫下去找不出要处理的行。 *@
+                    @* 2 是放行；11 是质量不合格，同样写成红色。采集故障码也是红色，
+                       否则和放行长得一样，一屏扫下去找不出要处理的行。 *@
                     <span class="@ResultCodeClass(context.Record.ResultCode)">@ResultCodes.Describe(context.Record.ResultCode)</span>
                 </ChildContent>
                 <TooltipContent>
@@ -267,7 +267,7 @@ else
     /// </summary>
     private static readonly short[] ResultCodeOptions =
     [
-        ResultCodes.Success, ResultCodes.InvalidPalletCode,
+        ResultCodes.Success, ResultCodes.QualityRejected, ResultCodes.InvalidPalletCode,
         ResultCodes.DataValidationFailed, ResultCodes.DatabaseWriteFailed, ResultCodes.InternalError,
         ResultCodes.ProcessAbnormal, ResultCodes.FileSourceFailed, ResultCodes.ArchiveFailed
     ];
@@ -275,7 +275,7 @@ else
     private static string ResultCodeLabel(short code) => $"{code} · {ResultCodes.Describe(code)}";
 
     /// <summary>
-    /// 结果码着色：9 个码里只有「采集成功」算成功，其余都是这一件没采成；
+    /// 结果码着色：2 是放行；11 质量不合格和 3–10 采集故障都标红。
     /// Trigger 是「触发待采集」的中间态，用预警色与真失败区分开。
     /// </summary>
     private static string ResultCodeClass(short code) => code switch

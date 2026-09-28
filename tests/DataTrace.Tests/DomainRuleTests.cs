@@ -306,6 +306,7 @@ public class DomainRuleTests
     [InlineData(ResultCodes.ProcessAbnormal, "流程异常（跳站等）")]
     [InlineData(ResultCodes.FileSourceFailed, "数据文件读取失败")]
     [InlineData(ResultCodes.ArchiveFailed, "原始数据归档失败")]
+    [InlineData(ResultCodes.QualityRejected, "质量不合格")]
     public void Result_codes_describe_known_codes(short code, string expected)
         => Assert.Equal(expected, ResultCodes.Describe(code));
 
@@ -319,7 +320,7 @@ public class DomainRuleTests
     [Fact]
     public void Result_codes_are_contiguous_and_distinct()
     {
-        // 1 为触发，2–10 为采集结果，必须连续且互不相同，PLC 侧按同一套码表解读。
+        // 1 为触发，2–10 为采集结果且连续；11 是质量不合格，另加的回写码。
         short[] codes =
         [
             ResultCodes.Trigger, ResultCodes.Success, ResultCodes.PlcReadFailed,
@@ -330,13 +331,15 @@ public class DomainRuleTests
 
         Assert.Equal(codes.Distinct().Count(), codes.Length);
         Assert.Equal(Enumerable.Range(1, 10).Select(i => (short)i), codes);
+        Assert.Equal(ResultCodes.QualityRejected, (short)11);
+        Assert.True(StationConfigLimits.IsWriteBackCode(ResultCodes.QualityRejected));
     }
 
     // ---------- 工站配置的硬性上限 ----------
 
     [Theory]
     [InlineData((short)1)]
-    [InlineData((short)11)]
+    [InlineData((short)12)]
     [InlineData((short)100)]
     [InlineData((short)-1)]
     public void Trigger_value_allows_values_outside_the_write_back_range(short value)
@@ -352,6 +355,7 @@ public class DomainRuleTests
     // 文件源失败码与归档失败码同样是回写码：触发值取它们一样会让触发位永远清不掉。
     [InlineData(ResultCodes.FileSourceFailed)]
     [InlineData(ResultCodes.ArchiveFailed)]
+    [InlineData(ResultCodes.QualityRejected)]
     public void Trigger_value_rejects_write_back_codes(short value)
     {
         // 触发与回写共用寄存器：取值相同会让触发位永远清不掉，工站被反复触发。

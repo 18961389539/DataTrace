@@ -272,7 +272,7 @@ public class JsonSourceTests
         Assert.Equal(1, await db.AuditLogs.CountAsync());
     }
 
-    /// <summary>老月库补归档列：每个进程第一次打开该月库时补齐，否则明细页与落库都会报缺列。</summary>
+    /// <summary>老月库补归档列：版本还停在补丁之前时，重新打开会把缺的列补上。</summary>
     [Fact]
     public async Task Old_month_database_gets_the_new_archive_columns_when_opened()
     {
@@ -284,6 +284,7 @@ public class JsonSourceTests
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE CollectRecords DROP COLUMN ArchivePath");
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE CollectRecords DROP COLUMN ArchiveFileSize");
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE CollectRecords DROP COLUMN ArchiveCrc32");
+        await db.Database.ExecuteSqlRawAsync("""UPDATE "RuntimeSchemaVersion" SET "Version" = 0 WHERE "Id" = 1""");
         await db.DisposeAsync();
         // 句柄由连接池持有，不排空的话 Windows 上删文件/重开可能撞 sharing violation。
         SqliteConnection.ClearAllPools();
@@ -406,7 +407,7 @@ public class JsonSourceTests
         // 同一秒内覆写、mtime 不变也照样要重读：绝不沿用上一件的值。
         WriteSource(station, """{"force": 25, "temp": 40}""");
         Trigger(harness, station, "P0081");
-        Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(station));
+        Assert.Equal(ResultCodes.QualityRejected, await harness.RunAsync(station));
 
         var query = await harness.QueryAsync("P0081");
         Assert.Equal(2, query.Total);

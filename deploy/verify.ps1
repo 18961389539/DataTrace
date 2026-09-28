@@ -124,7 +124,9 @@ if (Test-Path $prodSettings) {
     }
 }
 
-$dataDir = Join-Path $InstallDir 'data'
+$configuredDataRoot = if ($meta.DataRoot) { [string]$meta.DataRoot } else { 'data' }
+$dataDir = if ([IO.Path]::IsPathRooted($configuredDataRoot)) { $configuredDataRoot } else { Join-Path $InstallDir $configuredDataRoot }
+$dataDir = [IO.Path]::GetFullPath($dataDir)
 Assert-Check (Test-Path $dataDir) "data directory" $dataDir
 
 $writable = $false

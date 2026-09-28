@@ -14,6 +14,8 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
 {
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
     private static readonly TimeSpan CatchUpAge = TimeSpan.FromHours(24);
+    private const int BackupFormatVersion = 2;
+    private static readonly string[] DataDirectories = ["runtime", "curves", "archive", "audit-archive", "spool"];
 
     private readonly DataRootPaths _paths;
     private readonly IOptionsMonitor<BackupOptions> _options;
@@ -55,6 +57,9 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
                 LastBackupPath = _state.LastBackupPath,
                 LastBackupBytes = _state.LastBackupBytes,
                 LastFileCount = _state.LastFileCount,
+                LastDatabaseCount = _state.LastDatabaseCount,
+                LastVerifiedFileCount = _state.LastVerifiedFileCount,
+                LastBackupFormatVersion = _state.LastBackupFormatVersion,
                 NextScheduledAt = ComputeNextScheduled(opts)
             };
         }
@@ -92,7 +97,7 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
         }
 
         var started = DateTimeOffset.Now;
-        string? createdSet = null;
+        string? incompleteSet = null;
         try
         {
             var opts = _options.CurrentValue;
@@ -107,25 +112,28 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
                 unique = $"{setDir}_{i}";
             }
 
-            Directory.CreateDirectory(unique);
-            createdSet = unique;
+            incompleteSet = Path.Combine(backupRoot, $".incomplete-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(incompleteSet);
+            foreach (var directory in DataDirectories)
+            {
+                Directory.CreateDirectory(Path.Combine(incompleteSet, directory));
+            }
 
             var sources = DiscoverSqliteFiles();
-            if (sources.Count == 0)
+            if (!sources.Any(source => string.Equals(source.LogicalName, "config.db", StringComparison.OrdinalIgnoreCase)))
             {
-                const string emptyMsg = "未找到可备份的 SQLite 数据库（config.db / runtime/data_*.db）";
-                _logger.LogWarning(emptyMsg);
-                // 失败就不留目录：空目录/半套目录会让人以为"备份过一次"，保留策略也只清成功备份。
-                TryDeleteSet(unique);
-                createdSet = null;
-                PersistStatus(started, false, emptyMsg, null, 0, 0);
+                const string emptyMsg = "缺少必需的配置数据库 config.db；不能创建可恢复备份";
+                _logger.LogWarning("{Error}", emptyMsg);
+                TryDeleteSet(incompleteSet);
+                incompleteSet = null;
+                PersistStatus(started, false, emptyMsg, null, 0, 0, 0, 0);
                 return new BackupRunResult
                 {
                     Success = false,
                     Error = emptyMsg,
                     StartedAt = started,
                     FinishedAt = DateTimeOffset.Now,
-                    BackupPath = unique
+                    BackupPath = null
                 };
             }
 
@@ -134,7 +142,7 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
             foreach (var src in sources)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var destPath = Path.Combine(unique, src.LogicalName);
+                var destPath = ResolveChildPath(incompleteSet, src.LogicalName);
                 Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
                 await BackupSqliteOnlineAsync(src.FullPath, destPath, cancellationToken).ConfigureAwait(false);
 
@@ -145,6 +153,7 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
                 files.Add(new BackupFileInfo
                 {
                     FileName = src.LogicalName.Replace('\\', '/'),
+                    Kind = "sqlite",
                     SizeBytes = len,
                     Sha256 = sha,
                     IntegrityOk = ok,
@@ -155,48 +164,88 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
                 {
                     var err = $"完整性校验失败: {src.LogicalName}: {detail}";
                     _logger.LogError("{Error}", err);
-                    TryDeleteSet(unique);
-                    createdSet = null;
-                    PersistStatus(started, false, err, null, total, files.Count);
+                    TryDeleteSet(incompleteSet);
+                    incompleteSet = null;
+                    PersistStatus(started, false, err, null, total, files.Count, sources.Count, files.Count(f => f.IntegrityOk));
                     return new BackupRunResult
                     {
                         Success = false,
                         Error = err,
                         StartedAt = started,
                         FinishedAt = DateTimeOffset.Now,
-                        BackupPath = unique,
+                        BackupPath = null,
                         TotalBytes = total,
+                        DatabaseCount = sources.Count,
+                        VerifiedFileCount = files.Count(f => f.IntegrityOk),
                         Files = files
                     };
                 }
             }
 
+            foreach (var directory in DataDirectories)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var sourceDirectory = Path.Combine(_paths.Root, directory);
+                if (!Directory.Exists(sourceDirectory))
+                {
+                    continue;
+                }
+
+                foreach (var sourcePath in EnumerateDataFiles(sourceDirectory, directory, opts.ResolveBackupDirectory(_paths.Root)))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var logicalName = Path.GetRelativePath(_paths.Root, sourcePath).Replace('\\', '/');
+                    var destination = ResolveChildPath(incompleteSet, logicalName);
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                    var (length, sha) = await CopyAndHashAsync(sourcePath, destination, cancellationToken).ConfigureAwait(false);
+                    total += length;
+                    files.Add(new BackupFileInfo
+                    {
+                        FileName = logicalName,
+                        Kind = "file",
+                        SizeBytes = length,
+                        Sha256 = sha,
+                        IntegrityOk = true,
+                        IntegrityDetail = "sha256"
+                    });
+                }
+            }
+
+            var verifiedCount = files.Count(file => file.IntegrityOk);
             var appVersion = typeof(DatabaseBackupService).Assembly.GetName().Version?.ToString() ?? "";
             var manifest = new
             {
+                formatVersion = BackupFormatVersion,
+                backupType = "full-data",
+                complete = true,
                 appVersion,
                 createdAt = started.ToString("o"),
                 finishedAt = DateTimeOffset.Now.ToString("o"),
                 dataRoot = _paths.Root,
+                roots = new[] { "config.db" }.Concat(DataDirectories).ToArray(),
                 files = files.Select(f => new
                 {
                     file = f.FileName,
+                    kind = f.Kind,
                     sizeBytes = f.SizeBytes,
                     sha256 = f.Sha256,
                     integrity = f.IntegrityOk ? "ok" : f.IntegrityDetail
                 }).ToList()
             };
             await File.WriteAllTextAsync(
-                Path.Combine(unique, "manifest.json"),
+                Path.Combine(incompleteSet, "manifest.json"),
                 JsonSerializer.Serialize(manifest, JsonOpts),
                 cancellationToken).ConfigureAwait(false);
 
+            // Publish only a complete, verified set; restore -Latest ignores incomplete staging folders.
+            Directory.Move(incompleteSet, unique);
+            incompleteSet = null;
             var deletedSets = ApplyRetention(backupRoot, opts, unique);
 
-            PersistStatus(started, true, null, unique, total, files.Count);
+            PersistStatus(started, true, null, unique, total, files.Count, sources.Count, verifiedCount);
             _logger.LogInformation(
-                "数据库备份成功：{Path}，{Count} 个文件，{Bytes} 字节，清理旧备份集 {Deleted}",
-                unique, files.Count, total, deletedSets);
+                "全量数据备份成功：{Path}，{DatabaseCount} 个数据库，{FileCount} 个文件，{Bytes} 字节，清理旧备份集 {Deleted}",
+                unique, sources.Count, files.Count, total, deletedSets);
 
             return new BackupRunResult
             {
@@ -205,16 +254,17 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
                 FinishedAt = DateTimeOffset.Now,
                 BackupPath = unique,
                 TotalBytes = total,
+                DatabaseCount = sources.Count,
+                VerifiedFileCount = verifiedCount,
                 Files = files,
                 DeletedBackupSets = deletedSets
             };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "数据库备份失败");
-            // 异常也要收尾：留下的半套目录没有 manifest，保留策略又只在成功时才清理。
-            TryDeleteSet(createdSet);
-            PersistStatus(started, false, ex.Message, null, 0, 0);
+            _logger.LogError(ex, "全量数据备份失败");
+            TryDeleteSet(incompleteSet);
+            PersistStatus(started, false, ex.Message, null, 0, 0, 0, 0);
             return new BackupRunResult
             {
                 Success = false,
@@ -268,6 +318,108 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
         }
 
         return list;
+    }
+
+    private static IEnumerable<string> EnumerateDataFiles(string sourceRoot, string logicalRoot, string backupRoot)
+    {
+        var pending = new Stack<string>();
+        pending.Push(sourceRoot);
+        while (pending.Count > 0)
+        {
+            var directory = pending.Pop();
+            foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+            {
+                var fullPath = Path.GetFullPath(entry);
+                if (IsSameOrChildPath(fullPath, backupRoot))
+                {
+                    continue;
+                }
+
+                var attributes = File.GetAttributes(fullPath);
+                if ((attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    throw new InvalidDataException($"数据目录包含不支持的链接/重解析点：{fullPath}");
+                }
+
+                if ((attributes & FileAttributes.Directory) != 0)
+                {
+                    pending.Push(fullPath);
+                    continue;
+                }
+
+                var relative = Path.GetRelativePath(sourceRoot, fullPath);
+                if (string.Equals(logicalRoot, "runtime", StringComparison.OrdinalIgnoreCase)
+                    && !relative.Contains(Path.DirectorySeparatorChar)
+                    && IsRuntimeDatabaseArtifact(Path.GetFileName(fullPath)))
+                {
+                    // Runtime monthly DBs were captured with SQLite Backup API; never copy live WAL/SHM sidecars.
+                    continue;
+                }
+
+                yield return fullPath;
+            }
+        }
+    }
+
+    private static bool IsRuntimeDatabaseArtifact(string fileName) =>
+        fileName.StartsWith("data_", StringComparison.OrdinalIgnoreCase)
+        && (fileName.EndsWith(".db", StringComparison.OrdinalIgnoreCase)
+            || fileName.EndsWith(".db-wal", StringComparison.OrdinalIgnoreCase)
+            || fileName.EndsWith(".db-shm", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsSameOrChildPath(string path, string parent)
+    {
+        var normalizedParent = Path.GetFullPath(parent)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var normalizedPath = Path.GetFullPath(path)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return string.Equals(normalizedPath, normalizedParent, StringComparison.OrdinalIgnoreCase)
+            || normalizedPath.StartsWith(normalizedParent + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            || normalizedPath.StartsWith(normalizedParent + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ResolveChildPath(string root, string relativePath)
+    {
+        var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var fullPath = Path.GetFullPath(Path.Combine(fullRoot, relativePath));
+        if (!fullPath.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            && !fullPath.StartsWith(fullRoot + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidDataException($"备份路径越界：{relativePath}");
+        }
+
+        return fullPath;
+    }
+
+    private static async Task<(long Length, string Sha256)> CopyAndHashAsync(
+        string sourcePath,
+        string destinationPath,
+        CancellationToken cancellationToken)
+    {
+        var sourceBefore = new FileInfo(sourcePath);
+        var initialLength = sourceBefore.Length;
+        var initialWriteTime = sourceBefore.LastWriteTimeUtc;
+
+        await using (var source = new FileStream(
+            sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 81920, useAsync: true))
+        await using (var destination = new FileStream(
+            destinationPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
+        {
+            await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+            await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        sourceBefore.Refresh();
+        var copiedLength = new FileInfo(destinationPath).Length;
+        if (!sourceBefore.Exists
+            || sourceBefore.Length != initialLength
+            || sourceBefore.LastWriteTimeUtc != initialWriteTime
+            || copiedLength != initialLength)
+        {
+            throw new IOException($"Source file changed while being backed up: {sourcePath}");
+        }
+
+        return (copiedLength, await Sha256FileAsync(destinationPath, cancellationToken).ConfigureAwait(false));
     }
 
     private static async Task BackupSqliteOnlineAsync(string sourcePath, string destPath, CancellationToken ct)
@@ -404,7 +556,9 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
         string? error,
         string? path,
         long bytes,
-        int fileCount)
+        int fileCount,
+        int databaseCount,
+        int verifiedFileCount)
     {
         lock (_statusGate)
         {
@@ -417,6 +571,9 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
                 _state.LastBackupPath = path;
                 _state.LastBackupBytes = bytes;
                 _state.LastFileCount = fileCount;
+                _state.LastDatabaseCount = databaseCount;
+                _state.LastVerifiedFileCount = verifiedFileCount;
+                _state.LastBackupFormatVersion = BackupFormatVersion;
             }
             else if (path is not null)
             {
@@ -463,6 +620,9 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
                 _state.LastBackupPath = snap.LastBackupPath;
                 _state.LastBackupBytes = snap.LastBackupBytes;
                 _state.LastFileCount = snap.LastFileCount;
+                _state.LastDatabaseCount = snap.LastDatabaseCount;
+                _state.LastVerifiedFileCount = snap.LastVerifiedFileCount;
+                _state.LastBackupFormatVersion = snap.LastBackupFormatVersion;
             }
         }
         catch
@@ -504,5 +664,8 @@ public sealed class DatabaseBackupService : IDatabaseBackupService
         public string? LastBackupPath { get; set; }
         public long LastBackupBytes { get; set; }
         public int LastFileCount { get; set; }
+        public int LastDatabaseCount { get; set; }
+        public int LastVerifiedFileCount { get; set; }
+        public int LastBackupFormatVersion { get; set; }
     }
 }

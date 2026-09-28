@@ -1,0 +1,212 @@
+@page "/alarms"
+@attribute [Authorize]
+@implements IDisposable
+@using DataTrace.Application.Alarms
+@using DataTrace.Domain.Constants
+@using Microsoft.AspNetCore.Components.Authorization
+@inject IAlarmIncidents Incidents
+@inject ILineAlarmBoard Board
+@inject AuthenticationStateProvider Auth
+@inject DtToast Toast
+
+<PageHeader Title="报警" HelpRoute="alarms" Description="还没人接手的会一直留在这里，并在所有页面顶部响铃。静音只关本机声音。" />
+
+@if (_loadError is not null)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-3">@_loadError</MudAlert>
+}
+else if (_attention.Count == 0)
+{
+    <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true" Class="mb-3">
+        没有待接手的报警。
+    </MudAlert>
+}
+else
+{
+    <MudText Typo="Typo.subtitle1" Class="mb-2">待处理 @_attention.Count</MudText>
+    @if (!_canTake)
+    {
+        <MudText Typo="Typo.body2" Class="dt-muted mb-2">当前账号是访客，只能查看，不能接手。</MudText>
+    }
+    <MudTable Items="_attention" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-4">
+        <HeaderContent>
+            <MudTh>发生时间</MudTh>
+            <MudTh>类型</MudTh>
+            <MudTh>内容</MudTh>
+            <MudTh>状态</MudTh>
+            <MudTh>接手</MudTh>
+            <MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="发生时间">@When(context.RaisedAt)</MudTd>
+            <MudTd DataLabel="类型">@KindText(context.Kind)</MudTd>
+            <MudTd DataLabel="内容">@context.Message</MudTd>
+            <MudTd DataLabel="状态">@StatusText(context)</MudTd>
+            <MudTd DataLabel="接手">@OwnerText(context)</MudTd>
+            <MudTd DataLabel="操作">
+                @if (context.NeedsOwner && _canTake)
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                               Disabled="_working" OnClick="@(() => Take(context))">接手</MudButton>
+                }
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+}
+
+<MudText Typo="Typo.subtitle1" Class="mb-2">最近结束</MudText>
+@if (_recent.Count == 0)
+{
+    <MudText Typo="Typo.body2" Class="dt-muted">还没有已经接手并解除的报警。</MudText>
+}
+else
+{
+    <MudTable Items="_recent" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+        <HeaderContent>
+            <MudTh>发生时间</MudTh>
+            <MudTh>解除时间</MudTh>
+            <MudTh>类型</MudTh>
+            <MudTh>内容</MudTh>
+            <MudTh>接手</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="发生时间">@When(context.RaisedAt)</MudTd>
+            <MudTd DataLabel="解除时间">@When(context.ClearedAt)</MudTd>
+            <MudTd DataLabel="类型">@KindText(context.Kind)</MudTd>
+            <MudTd DataLabel="内容">@context.Message</MudTd>
+            <MudTd DataLabel="接手">@OwnerText(context)</MudTd>
+        </RowTemplate>
+    </MudTable>
+}
+
+@code {
+    private IReadOnlyList<AlarmIncidentDraft> _attention = [];
+    private IReadOnlyList<AlarmIncidentDraft> _recent = [];
+    private string? _loadError;
+    private bool _canTake;
+    private bool _working;
+    private bool _refreshing;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var user = (await Auth.GetAuthenticationStateAsync()).User;
+        _canTake = user.IsInRole(AppRoles.Administrator)
+                   || user.IsInRole(AppRoles.Engineer)
+                   || user.IsInRole(AppRoles.Operator);
+        Board.Changed += OnChanged;
+        await Reload(pushBoard: false);
+    }
+
+    private void OnChanged() => _ = InvokeAsync(() => Reload(pushBoard: false));
+
+    private async Task Take(AlarmIncidentDraft item)
+    {
+        if (_working || !item.NeedsOwner)
+        {
+            return;
+        }
+
+        _working = true;
+        try
+        {
+            var actor = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            var result = await Incidents.AcknowledgeAsync(item.Id, actor);
+            if (!result.Found)
+            {
+                Toast.Add("这条报警已经不在", Severity.Warning);
+            }
+            else if (result.AlreadyTaken)
+            {
+                Toast.Add($"已由 {result.TakenBy} 接手", Severity.Info);
+            }
+            else
+            {
+                Toast.Add("已接手", Severity.Success);
+            }
+
+            if (result.AuditError is { } auditError)
+            {
+                Toast.Add($"操作已完成，但审计记录失败：{auditError}", Severity.Warning);
+            }
+
+            await Reload(pushBoard: true);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"接手失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _working = false;
+        }
+    }
+
+    private async Task Reload(bool pushBoard)
+    {
+        if (_refreshing)
+        {
+            return;
+        }
+
+        _refreshing = true;
+        try
+        {
+            _attention = await Incidents.ListAttentionAsync();
+            _recent = await Incidents.ListRecentClosedAsync(30);
+            _loadError = null;
+            if (pushBoard)
+            {
+                Board.Replace(new LineAlarmSnapshot(_attention.Where(item => item.NeedsOwner).Select(ToAlarm).ToList()));
+            }
+        }
+        catch (Exception ex)
+        {
+            _attention = [];
+            _recent = [];
+            _loadError = $"报警加载失败：{ex.Message}";
+        }
+        finally
+        {
+            _refreshing = false;
+        }
+    }
+
+    private static LineAlarm ToAlarm(AlarmIncidentDraft item)
+        => new(
+            item.Key,
+            item.Kind,
+            item.StillActive ? item.Message : item.Message + "（已恢复，仍待接手）");
+
+    private static string KindText(LineAlarmKind kind) => kind switch
+    {
+        LineAlarmKind.HeartbeatStale => "采集心跳",
+        LineAlarmKind.MesBacklog => "MES 积压",
+        LineAlarmKind.ConsecutiveNg => "连续不合格",
+        LineAlarmKind.StationFault => "工站故障",
+        LineAlarmKind.SpoolBacklog => "补传积压",
+        LineAlarmKind.ConsecutiveProcess => "连续采集失败",
+        LineAlarmKind.SessionSuperseded => "托盘被盖掉",
+        LineAlarmKind.ConsecutiveWarning => "连续预警",
+        LineAlarmKind.ProcessDrift => "过程漂移",
+        LineAlarmKind.OpenSession => "在制超时",
+        _ => kind.ToString()
+    };
+
+    private static string StatusText(AlarmIncidentDraft item)
+    {
+        if (item.NeedsOwner)
+        {
+            return item.StillActive ? "待接手" : "已恢复，待接手";
+        }
+
+        return "已接手，尚未解除";
+    }
+
+    private static string OwnerText(AlarmIncidentDraft item)
+        => item.AcknowledgedBy is null ? "—" : $"{item.AcknowledgedBy} {When(item.AcknowledgedAt)}";
+
+    private static string When(DateTime? time)
+        => time?.ToString("yyyy-MM-dd HH:mm:ss") ?? "—";
+
+    public void Dispose() => Board.Changed -= OnChanged;
+}

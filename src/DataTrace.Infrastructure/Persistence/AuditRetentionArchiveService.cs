@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 
 namespace DataTrace.Infrastructure.Persistence;
 
-public sealed class AuditRetentionArchiveService
+public sealed class AuditRetentionArchiveService : IAuditRetention
 {
     private const int BatchSize = 2000;
     private readonly IAuditLogger _audit;
@@ -188,7 +188,7 @@ public sealed class AuditRetentionArchiveService
             }
 
             var sha256 = await ComputeSha256Async(archivePath, cancellationToken).ConfigureAwait(false);
-            var manifest = new ArchiveManifest(monthKey, fileName, rows, minId, maxId, idAtMost, sha256, DateTime.UtcNow);
+            var manifest = new ArchiveManifest(monthKey, fileName, rows, minId, maxId, idAtMost, sha256, DateTime.Now);
             await File.WriteAllTextAsync(
                 Path.Combine(tempDirectory, "manifest.json"),
                 JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }),
@@ -356,5 +356,5 @@ public sealed class AuditRetentionArchiveService
         long MaxId,
         long IdAtMost,
         string Sha256,
-        DateTime CreatedAtUtc);
+        DateTime CreatedAt);
 }

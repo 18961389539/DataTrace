@@ -279,6 +279,9 @@ public class FileSpoolStoreTests
         var store = new FileSpoolStore(workspace.Path("spool"));
 
         Assert.Empty(await store.ListAsync());
+        var backlog = await store.DescribeAsync();
+        Assert.Equal(0, backlog.Count);
+        Assert.Null(backlog.OldestAt);
     }
 
     [Fact]
@@ -301,6 +304,9 @@ public class FileSpoolStoreTests
         await store.SaveAsync(BuildRequest("P0001", "20260919-000001"));
 
         Assert.Single(Directory.GetFiles(root, "*.spool.json"));
+        var backlog = await store.DescribeAsync();
+        Assert.Equal(1, backlog.Count);
+        Assert.NotNull(backlog.OldestAt);
         var items = await store.ListAsync();
         var (file, request) = Assert.Single(items);
         Assert.EndsWith(".spool.json", file);

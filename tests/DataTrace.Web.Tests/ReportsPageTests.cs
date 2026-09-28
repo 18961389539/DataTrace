@@ -59,12 +59,15 @@ public class ReportsPageTests : WebTestBase
             .Setup(s => s.ListRecipeCodesAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<string>());
         _reports
-            .Setup(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ThroughputReport
+            .Setup(r => r.GetPieceYieldAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PieceYieldReport
             {
-                ByDay = [],
+                ByShift = [],
                 ByRecipe = [new RecipeThroughput { RecipeCode = "A100", Total = 3, Ok = 3 }]
             });
+        _reports
+            .Setup(r => r.GetShiftStopsAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ShiftStopReport());
         _reports
             .Setup(r => r.GetDefectTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueTopReport());
@@ -120,7 +123,7 @@ public class ReportsPageTests : WebTestBase
         await SelectRecipeAsync(cut, "A100");
 
         // 一条都不能漏：漏了就会出现"选了 A100 却看到全部型号的不良"。
-        _reports.Verify(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
+        _reports.Verify(r => r.GetPieceYieldAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
         _reports.Verify(r => r.GetDefectTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<int>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
         _reports.Verify(r => r.GetWarningTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<int>(), "A100", It.IsAny<CancellationToken>()), Times.Once);
         _reports.Verify(r => r.GetTrendAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), 1, "A100", It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Once);
@@ -128,7 +131,7 @@ public class ReportsPageTests : WebTestBase
 
         // 每次加载只查一次产量：按日与按型号是同一份数据的两个切面，不该把区间内记录查两遍。
         // 上面那条 A100 断言覆盖改筛选后那一次加载，这条覆盖首次加载（不限型号）。
-        _reports.Verify(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), null, It.IsAny<CancellationToken>()), Times.Once);
+        _reports.Verify(r => r.GetPieceYieldAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), null, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
@@ -181,7 +184,7 @@ public class ReportsPageTests : WebTestBase
 
         await SelectRecipeAsync(cut, "");
 
-        _reports.Verify(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), "", It.IsAny<CancellationToken>()), Times.Once);
+        _reports.Verify(r => r.GetPieceYieldAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), "", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     /// <summary>
@@ -196,7 +199,7 @@ public class ReportsPageTests : WebTestBase
         var station = cut.FindComponents<MudSelect<int?>>()[0];
         await cut.InvokeAsync(() => station.Instance.ValueChanged.InvokeAsync(10));
 
-        _reports.Verify(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), 10, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+        _reports.Verify(r => r.GetPieceYieldAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), 10, It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
         _reports.Verify(r => r.GetDefectTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), 10, It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
         _reports.Verify(r => r.GetWarningTopAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), 10, It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -240,7 +243,7 @@ public class ReportsPageTests : WebTestBase
 
         var chosen = await SelectRecipeAsync(cut, "__EMPTY__");
 
-        _reports.Verify(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), "__EMPTY__", It.IsAny<CancellationToken>()), Times.Once);
+        _reports.Verify(r => r.GetPieceYieldAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), "__EMPTY__", It.IsAny<CancellationToken>()), Times.Once);
         // 回读仍是这个编码，且与选项本身相等：被读成哨兵的话 MudSelect 就认不出选中项了。
         var bound = cut.FindComponent<MudSelect<RecipeFilterValue>>().Instance.Value;
         Assert.Equal("__EMPTY__", bound?.Recipe);
@@ -260,10 +263,10 @@ public class ReportsPageTests : WebTestBase
             Recipes = [new Recipe { Id = 7, Code = "B300", Name = "改码后的型号", PreviousCodes = "A100" }]
         };
         _reports
-            .Setup(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ThroughputReport
+            .Setup(r => r.GetPieceYieldAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PieceYieldReport
             {
-                ByDay = [],
+                ByShift = [],
                 ByRecipe =
                 [
                     new RecipeThroughput { RecipeCode = "B300", Total = 5, Ok = 5 },
@@ -292,7 +295,7 @@ public class ReportsPageTests : WebTestBase
         Assert.Contains("A100", cut.Markup);
 
         _reports
-            .Setup(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetPieceYieldAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("月库被占用"));
         ClickButton(cut, "刷新报表");
 
@@ -310,7 +313,7 @@ public class ReportsPageTests : WebTestBase
     {
         var cut = Render();
         _reports
-            .Setup(r => r.GetThroughputAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Setup(r => r.GetPieceYieldAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("月库被占用"));
 
         ClickButton(cut, "刷新报表");

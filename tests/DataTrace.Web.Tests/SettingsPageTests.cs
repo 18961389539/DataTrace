@@ -1,3 +1,4 @@
+using DataTrace.Application.Backup;
 using DataTrace.Application.Configuration;
 using DataTrace.Domain.Entities;
 using DataTrace.Web.Components.Pages;
@@ -28,6 +29,48 @@ public class SettingsPageTests : WebTestBase
         Assert.Contains("扫描间隔", cut.Markup);
         Assert.DoesNotContain("系统设置读取失败", cut.Markup);
         Assert.Single(Config.Calls.Where(c => c == nameof(Config.GetSnapshotAsync)));
+    }
+
+    [Fact]
+    public void ShowsFullBackupCoverageAndVerifiedFileCounts()
+    {
+        Backup.Setup(backup => backup.GetStatus()).Returns(new BackupStatusSnapshot
+        {
+            Enabled = true,
+            LastSucceeded = true,
+            LastSuccessAt = DateTimeOffset.Now,
+            LastBackupFormatVersion = 2,
+            LastDatabaseCount = 3,
+            LastFileCount = 9,
+            LastVerifiedFileCount = 9
+        });
+
+        var cut = Render();
+
+        Assert.Contains("全量已校验", cut.Markup);
+        Assert.Contains("v2", cut.Markup);
+        Assert.Contains("3 个数据库", cut.Markup);
+        Assert.Contains("9 / 9 个文件通过", cut.Markup);
+        Assert.Contains("audit-archive", cut.Markup);
+        Assert.Contains("SHA-256", cut.Markup);
+    }
+
+    [Fact]
+    public void MarksLegacyDatabaseOnlyBackupAsNeedingFullBackup()
+    {
+        Backup.Setup(backup => backup.GetStatus()).Returns(new BackupStatusSnapshot
+        {
+            Enabled = true,
+            LastSucceeded = true,
+            LastSuccessAt = DateTimeOffset.Now,
+            LastFileCount = 2
+        });
+
+        var cut = Render();
+
+        Assert.Contains("旧版数据库备份", cut.Markup);
+        Assert.Contains("旧版仅含数据库", cut.Markup);
+        Assert.Contains("请重新生成全量备份", cut.Markup);
     }
 
     [Fact]
@@ -300,5 +343,29 @@ public class SettingsPageTests : WebTestBase
         // 保存本身要成功（文件名可能是刚拷进去还没放对位置），但必须提示顶栏会没有 Logo。
         Assert.Contains(Toast.Messages, m => m.Contains("品牌已写入 customer.json"));
         Assert.Contains(Toast.Messages, m => m.Contains("branding 目录下没有"));
+    }
+
+    [Fact]
+    public void SaveRejectsAnAlarmWebhookThatIsNotHttp()
+    {
+        var cut = Render();
+
+        TypeIntoAriaLabel(cut, "异常呼叫地址", "notify.local/hook");
+        ClickButton(cut, "保存");
+
+        Assert.Empty(Config.SavedSettings);
+        Assert.Equal(Severity.Warning, Toast.LastSeverity);
+        Assert.Contains("异常呼叫地址不是合法的 http(s) 地址", Toast.LastMessage);
+    }
+
+    [Fact]
+    public void SaveStoresTheAlarmWebhook()
+    {
+        var cut = Render();
+
+        TypeIntoAriaLabel(cut, "异常呼叫地址", "https://notify.local/datatrace");
+        ClickButton(cut, "保存");
+
+        Assert.Equal("https://notify.local/datatrace", Assert.Single(Config.SavedSettings).AlarmWebhookUrl);
     }
 }

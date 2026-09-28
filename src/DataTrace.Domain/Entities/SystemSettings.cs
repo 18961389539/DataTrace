@@ -1,3 +1,5 @@
+using DataTrace.Domain.Constants;
+
 namespace DataTrace.Domain.Entities;
 
 public class SystemSettings
@@ -33,10 +35,22 @@ public class SystemSettings
     public int SimulatorPalletPool { get; set; } = 20;
 
     /// <summary>
-    /// 当前生效的产品型号（配方）。null = 使用点位自身默认限值。
-    /// 由人在界面上手工切换；切换会自增配置版本，采集器下一次轮询即换用新限值。
+    /// 下一件将使用的产品型号。null = 新件按点位默认限值。
+    /// 已经在制的件仍用进首站时记下的型号，不随这次切换改变。
     /// </summary>
     public int? ActiveRecipeId { get; set; }
+
+    /// <summary>第一班从当天这个整点开始。0–23。</summary>
+    public int ShiftStartHour { get; set; } = SystemDefaults.ShiftStartHour;
+
+    /// <summary>每一班多少小时。只能是 8、12 或 24。</summary>
+    public int ShiftLengthHours { get; set; } = SystemDefaults.ShiftLengthHours;
+
+    /// <summary>
+    /// 异常呼叫地址。留空则只在已打开的页面响铃；填写后采集中断、MES 积压和连续 NG
+    /// 还会 POST 到这个 http(s) 地址。
+    /// </summary>
+    public string? AlarmWebhookUrl { get; set; }
 
     /// <summary>
     /// 复制一份用于"先打补丁再保存"的副本。

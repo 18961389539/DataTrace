@@ -237,11 +237,14 @@ Start-Service -Name DataTrace-CustomerA
 
 采集记录与曲线文件的长期保留由系统设置页「保留年数」控制（配置库 `SystemSettings.RetentionYears`），由 `RetentionHostedService` 约每 6 小时删除超过年限的整月 `runtime/data_yyyyMM.db` 及对应曲线目录；与备份套数保留（`Backup:RetentionDays` / `MaxBackups`）是两套机制，互不替代。已废弃的 `Backup:RecordRetention` 配置键若仍存在会被忽略。
 
-- 备份内容：`config.db`（含 Identity）+ `runtime/data_yyyyMM.db`。使用 SQLite Online Backup API，**不要**对正在运行的库做裸文件拷贝。
-- 每套备份目录形如 `data/backups/2026-09-24_0230/`，内含 `manifest.json`（版本、时间、大小、SHA256、quick_check）。
+- 全量数据范围：`config.db`（含 Identity）、`runtime/` 月库及其它文件、`curves/`、`archive/`、`audit-archive/`、`spool/`。数据库使用 SQLite Online Backup API；其它文件逐项记录大小和 SHA-256。备份目录本身不递归纳入。
+- 每套备份目录形如 `data/backups/2026-09-24_0230/`，只在完整清单写入后发布；`manifest.json` 的 `formatVersion=2`、`backupType=full-data`、`complete=true` 表明这是可验证的全量数据集。
+- **不包含**应用程序二进制、安装目录的 `customer.json` / `appsettings.Production.json` 和运行日志；这些部署资产应按客户运维策略单独备份。
 - **强烈建议**把 `backups` 目录定期拷到其它磁盘或 NAS；本机同盘不能防磁盘损坏。
-- 设置页「数据库备份」卡片可查看状态；管理员可「立即备份」。
-- `deploy/backup-now.ps1`：维护窗口离线备份（可选 `-StopApp`）；运行中优先用设置页按钮。
-- `deploy/restore.ps1 -InstallDir ... -Latest`（或 `-BackupSet`）：停应用 → 当前库挪到 `pre-restore-*` → 恢复 → 启动并 verify。
+- 设置页「数据与备份」显示数据库数、文件校验数和快照大小；管理员可「立即全量备份」。
+- `deploy/verify-backup.ps1 -InstallDir ... -Latest`（或 `-BackupSet`）可只读验证清单、每个文件的大小/SHA-256 和 SQLite `quick_check`，不会停止应用或改写数据；请使用与安装包位数匹配的 PowerShell，脚本通过应用目录内的原生 SQLite 库执行校验。
+- `deploy/backup-now.ps1`：维护窗口离线全量备份（可选 `-StopApp`）；运行中优先用设置页按钮。
+- `deploy/restore.ps1 -InstallDir ... -Latest`（或 `-BackupSet`）：先完整预检；通过后停应用，生成并验证当前数据的 `pre-restore-*` 全量回滚点，再暂存和切换目标数据；启动前对现场文件集合、大小、SHA-256 和 SQLite `quick_check` 再验证，通过后才启动并做服务检查。失败时尝试回滚并重启原数据。
+- 旧版数据库专用备份（manifest v2 之前）不满足全量恢复要求，`restore.ps1` 会拒绝使用；不要删除旧备份，必要时先在隔离目录由运维人员按数据库专用流程恢复。
 - `upgrade.ps1` 仍使用升级专用 `backups/upgrade-*` 整目录快照（含二进制）；与每日库备份互补，未强行合并。
 

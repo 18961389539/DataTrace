@@ -1,7 +1,6 @@
 using DataTrace.Application.Configuration;
 using DataTrace.Application.Runtime;
 using DataTrace.Domain.Constants;
-using DataTrace.Infrastructure.Persistence;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -11,20 +10,17 @@ namespace DataTrace.Collector;
 public sealed class RetentionHostedService : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly RuntimeDbFactory _factory;
     private readonly ICurveFileStore _curves;
     private readonly ICollectArchiveStore _archives;
     private readonly ILogger<RetentionHostedService> _logger;
 
     public RetentionHostedService(
         IServiceScopeFactory scopeFactory,
-        RuntimeDbFactory factory,
         ICurveFileStore curves,
         ICollectArchiveStore archives,
         ILogger<RetentionHostedService> logger)
     {
         _scopeFactory = scopeFactory;
-        _factory = factory;
         _curves = curves;
         _archives = archives;
         _logger = logger;
@@ -42,10 +38,10 @@ public sealed class RetentionHostedService : BackgroundService
                 var years = Math.Max(1, snapshot.Settings.RetentionYears);
                 var cutoff = DateTime.Now.AddYears(-years);
                 var cutoffKey = cutoff.ToString("yyyyMM");
-                var runtime = scope.ServiceProvider.GetRequiredService<IRuntimeStore>();
+                var runtime = scope.ServiceProvider.GetRequiredService<IRuntimeRetention>();
                 var audit = scope.ServiceProvider.GetRequiredService<IAuditLogger>();
 
-                foreach (var month in _factory.ListMonthKeys())
+                foreach (var month in runtime.ListMonthKeys())
                 {
                     if (string.CompareOrdinal(month, cutoffKey) < 0)
                     {
@@ -108,7 +104,7 @@ public sealed class RetentionHostedService : BackgroundService
                 if (snapshot.Settings.AuditRetentionYears > 0)
                 {
                     var removed = await scope.ServiceProvider
-                        .GetRequiredService<AuditRetentionArchiveService>()
+                        .GetRequiredService<IAuditRetention>()
                         .ArchiveAndPurgeAsync(snapshot.Settings.AuditRetentionYears, stoppingToken)
                         .ConfigureAwait(false);
                     if (removed > 0)

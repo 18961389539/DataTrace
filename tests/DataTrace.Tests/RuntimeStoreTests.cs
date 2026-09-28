@@ -79,7 +79,8 @@ public class RuntimeStoreTests
 
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
 
-        // 模拟老版本留下的月份库：把新加的四列去掉。
+        // 模拟更早的月份库：缺列，并且结构版本退回到补丁之前。
+        // 版本已经是当前值时，打开不会再补列 —— 老库的特征是“版本号还没到这一档”。
         await using (var raw = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
         {
             await raw.OpenAsync();
@@ -89,6 +90,10 @@ public class RuntimeStoreTests
                 drop.CommandText = $"""ALTER TABLE "TagValues" DROP COLUMN "{column}" """;
                 await drop.ExecuteNonQueryAsync();
             }
+
+            await using var rewind = raw.CreateCommand();
+            rewind.CommandText = """UPDATE "RuntimeSchemaVersion" SET "Version" = 0 WHERE "Id" = 1""";
+            await rewind.ExecuteNonQueryAsync();
         }
 
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
@@ -115,6 +120,15 @@ public class RuntimeStoreTests
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
 
         Assert.All(columns, column => Assert.Contains(column, present, StringComparer.OrdinalIgnoreCase));
+
+        await using (var version = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
+        {
+            await version.OpenAsync();
+            await using var probe = version.CreateCommand();
+            probe.CommandText = """SELECT "Version" FROM "RuntimeSchemaVersion" WHERE "Id" = 1""";
+            var stamped = Convert.ToInt32(await probe.ExecuteScalarAsync());
+            Assert.Equal(RuntimeSchema.CurrentVersion, stamped);
+        }
     }
 
     /// <summary>
@@ -1083,5 +1097,78 @@ public class RuntimeStoreTests
         await env.Store.SaveAsync(FirstStation("202609", "P0001", "S3", Day1.AddMinutes(2)));
         Assert.Equal(2, (await env.Sessions.ListAsync()).Count);
         Assert.Equal("S3", (await env.Sessions.FindByPalletAsync("P0001"))!.SerialNo);
+    }
+
+    /// <summary>
+    /// 合格率的分母是走出末站的件：中途判废、末站仍 OK，只算一件不合格。
+    /// 点位超限已经记过的原因里不再重复「压力超限」。没走到末站的件不进这张表。
+    /// </summary>
+    [Fact]
+    public async Task Finished_pieces_are_closed_sessions_and_do_not_repeat_limit_reasons()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+
+        var scrap = FirstStation("202609", "P0001", "S1", Day1, Judgement.Ng);
+        scrap.Record.RecipeCode = "A100";
+        await env.Store.SaveAsync(scrap);
+        var scrapClose = FollowingStation(
+            "202609", "P0001", "S1", Day1.AddMinutes(2), scrap.Record.PalletSessionId,
+            close: true, judgement: Judgement.Ok, stationId: 40, stationCode: "ST040");
+        scrapClose.Record.RecipeCode = "A100";
+        await env.Store.SaveAsync(scrapClose);
+
+        var ok = FirstStation("202609", "P0002", "S2", Day1.AddHours(1));
+        ok.Record.RecipeCode = "A100";
+        await env.Store.SaveAsync(ok);
+        var okClose = FollowingStation(
+            "202609", "P0002", "S2", Day1.AddHours(1).AddMinutes(2), ok.Record.PalletSessionId, close: true);
+        okClose.Record.RecipeCode = "B200";
+        await env.Store.SaveAsync(okClose);
+
+        await env.Store.SaveAsync(FirstStation("202609", "P0003", "S3", Day1.AddHours(2), Judgement.Ng));
+
+        var late = FirstStation("202609", "P0004", "S4", Day1.AddDays(1).AddHours(2));
+        await env.Store.SaveAsync(late);
+        await env.Store.SaveAsync(FollowingStation(
+            "202609", "P0004", "S4", Day1.AddDays(1).AddHours(2).AddMinutes(1), late.Record.PalletSessionId, close: true));
+
+        var from = Day1.Date;
+        var to = Day1.Date.AddDays(1).AddTicks(-1);
+        var pieces = await env.Store.ListFinishedPiecesAsync(from, to);
+
+        Assert.Equal(2, pieces.Count);
+        var ngPiece = Assert.Single(pieces, piece => piece.SessionId == scrap.Record.PalletSessionId);
+        Assert.Equal(Judgement.Ng, ngPiece.Judgement);
+        Assert.Equal("A100", ngPiece.RecipeCode);
+        Assert.Equal(new[] { "ST010", "ST040" }, ngPiece.Stations.Select(station => station.StationCode));
+        var fault = Assert.Single(ngPiece.Faults);
+        Assert.Equal("ST010", fault.StationCode);
+        Assert.Equal("压力", fault.Name);
+
+        var okPiece = Assert.Single(pieces, piece => piece.SessionId == ok.Record.PalletSessionId);
+        Assert.Equal(Judgement.Ok, okPiece.Judgement);
+        Assert.Equal("B200", okPiece.RecipeCode);
+        Assert.Empty(okPiece.Faults);
+
+        var onlyA = await env.Store.ListFinishedPiecesAsync(from, to, "A100");
+        Assert.Equal(ngPiece.SessionId, Assert.Single(onlyA).SessionId);
+    }
+
+    [Fact]
+    public async Task Station_passes_are_the_completion_times_inside_the_range()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        var first = FirstStation("202609", "P0001", "S1", Day1);
+        await env.Store.SaveAsync(first);
+        await env.Store.SaveAsync(FollowingStation(
+            "202609", "P0001", "S1", Day1.AddMinutes(5), first.Record.PalletSessionId,
+            stationId: 20, stationCode: "ST020"));
+
+        var passes = await env.Store.ListStationPassesAsync(Day1.AddMinutes(-1), Day1.AddMinutes(1));
+
+        var pass = Assert.Single(passes);
+        Assert.Equal("ST010", pass.StationCode);
+        Assert.Equal(first.Record.PalletSessionId, pass.SessionId);
+        Assert.Equal(first.Record.CompleteTime, pass.CompleteTime);
     }
 }

@@ -52,6 +52,11 @@
         <NavMenu />
     </MudDrawer>
     <MudMainContent Class="dt-main">
+        <AuthorizeView>
+            <Authorized>
+                <LineAlarmBar />
+            </Authorized>
+        </AuthorizeView>
         @Body
     </MudMainContent>
 </MudLayout>

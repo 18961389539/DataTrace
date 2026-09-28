@@ -3,6 +3,7 @@ namespace DataTrace.Application.Backup;
 public sealed class BackupFileInfo
 {
     public required string FileName { get; init; }
+    public required string Kind { get; init; }
     public required long SizeBytes { get; init; }
     public required string Sha256 { get; init; }
     public required bool IntegrityOk { get; init; }
@@ -17,6 +18,8 @@ public sealed class BackupRunResult
     public DateTimeOffset StartedAt { get; init; }
     public DateTimeOffset FinishedAt { get; init; }
     public long TotalBytes { get; init; }
+    public int DatabaseCount { get; init; }
+    public int VerifiedFileCount { get; init; }
     public IReadOnlyList<BackupFileInfo> Files { get; init; } = [];
     public int DeletedBackupSets { get; init; }
 }
@@ -36,6 +39,9 @@ public sealed class BackupStatusSnapshot
     public string? LastBackupPath { get; init; }
     public long LastBackupBytes { get; init; }
     public int LastFileCount { get; init; }
+    public int LastDatabaseCount { get; init; }
+    public int LastVerifiedFileCount { get; init; }
+    public int LastBackupFormatVersion { get; init; }
     public DateTimeOffset? NextScheduledAt { get; init; }
 
     public bool IsStaleOrFailed(TimeSpan staleAfter)

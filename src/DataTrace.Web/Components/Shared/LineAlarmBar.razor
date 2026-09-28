@@ -1,0 +1,91 @@
+@using DataTrace.Application.Alarms
+@implements IDisposable
+@inject ILineAlarmBoard Board
+@inject IJSRuntime Js
+
+@if (_alarms.Count > 0)
+{
+    <div class="dt-alarm-bar" role="alert" aria-live="assertive">
+        <MudAlert Severity="Severity.Error" Variant="Variant.Filled" Dense="true" Class="mb-0" NoIcon="false">
+            <div class="dt-alarm-bar-row">
+                <div>
+                    @foreach (var alarm in _alarms)
+                    {
+                        <div>@alarm.Message</div>
+                    }
+                    @if (_muted)
+                    {
+                        <div class="dt-alarm-bar-note">声音已静音，异常仍在。</div>
+                    }
+                </div>
+                <div class="dt-alarm-bar-actions">
+                    <MudButton Variant="Variant.Outlined" Color="Color.Inherit" Size="Size.Small" Href="/alarms">
+                        去接手
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Inherit" Size="Size.Small"
+                               OnClick="ToggleMute">
+                        @(_muted ? "重新响铃" : "静音")
+                    </MudButton>
+                </div>
+            </div>
+        </MudAlert>
+    </div>
+}
+
+@code {
+    private IReadOnlyList<LineAlarm> _alarms = [];
+    private string? _mutedSignature;
+    private bool _sounding;
+
+    private bool _muted => _alarms.Count > 0 && Signature == _mutedSignature;
+
+    private bool ShouldSound => _alarms.Count > 0 && !_muted;
+
+    private string Signature => string.Join('|', _alarms.Select(a => a.Key));
+
+    protected override void OnInitialized()
+    {
+        _alarms = Board.Current.Alarms;
+        Board.Changed += OnChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (ShouldSound == _sounding)
+        {
+            return;
+        }
+
+        _sounding = ShouldSound;
+        try
+        {
+            await Js.InvokeVoidAsync(_sounding ? "dtAlarm.start" : "dtAlarm.stop");
+        }
+        catch (JSException)
+        {
+            // 工控机浏览器拦自动播放或没有音频设备时，红条仍然在。
+        }
+    }
+
+    private void OnChanged() => _ = InvokeAsync(Refresh);
+
+    private void Refresh()
+    {
+        _alarms = Board.Current.Alarms;
+        StateHasChanged();
+    }
+
+    private void ToggleMute()
+    {
+        _mutedSignature = _muted ? null : Signature;
+    }
+
+    public void Dispose()
+    {
+        Board.Changed -= OnChanged;
+        if (_sounding)
+        {
+            _ = Js.InvokeVoidAsync("dtAlarm.stop");
+        }
+    }
+}

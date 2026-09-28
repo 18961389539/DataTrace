@@ -1,4 +1,6 @@
+using DataTrace.Application.Alarms;
 using DataTrace.Application.Configuration;
+using DataTrace.Application.Reporting;
 using DataTrace.Application.Runtime;
 using DataTrace.Collector;
 using DataTrace.Domain.Entities;
@@ -273,20 +275,58 @@ internal class FakeRuntimeStore : IRuntimeStore
         => Task.FromResult<IReadOnlyList<DataTrace.Domain.Entities.CollectRecord>>(
             Records.Where(x => x.Record.TriggerTime >= from && x.Record.TriggerTime <= to).Select(x => x.Record).ToList());
 
+    public Task<IReadOnlyList<StationJudgementMark>> ListMonthJudgementsAsync(string monthKey, CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<StationJudgementMark>>(
+            Records.Where(x => x.MonthKey == monthKey)
+                .Select(x => new StationJudgementMark
+                {
+                    StationId = x.Record.StationId,
+                    StationCode = x.Record.StationCode,
+                    CompleteTime = x.Record.CompleteTime,
+                    Judgement = x.Record.Judgement,
+                    ResultCode = x.Record.ResultCode
+                })
+                .ToList());
+
+    public Task<IReadOnlyList<TagObservation>> ListRecentTagObservationsAsync(
+        string monthKey,
+        DateTime since,
+        int perTag,
+        CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<TagObservation>>([]);
+
     public Task<IReadOnlyList<JudgementCount>> CountJudgementsAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default)
         => Task.FromResult<IReadOnlyList<JudgementCount>>(
             Records
                 .Where(x => x.Record.TriggerTime >= from && x.Record.TriggerTime <= to)
                 .Where(x => stationId is null || x.Record.StationId == stationId)
                 .Where(x => recipeCode is null || x.Record.RecipeCode == recipeCode)
-                .GroupBy(x => new { Day = x.Record.TriggerTime.Date, x.Record.RecipeCode, x.Record.Judgement })
+                .GroupBy(x => new { Day = x.Record.TriggerTime.Date, Hour = x.Record.TriggerTime.Hour, x.Record.RecipeCode, x.Record.Judgement })
                 .Select(g => new JudgementCount
                 {
                     Day = g.Key.Day,
+                    Hour = g.Key.Hour,
                     RecipeCode = g.Key.RecipeCode ?? "",
                     Judgement = g.Key.Judgement,
                     Count = g.Count()
                 })
+                .ToList());
+
+    public List<StationPass> StationPasses { get; } = [];
+
+    public Task<IReadOnlyList<StationPass>> ListStationPassesAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<StationPass>>(
+            StationPasses
+                .Where(pass => pass.CompleteTime >= from && pass.CompleteTime <= to)
+                .ToList());
+
+    public List<FinishedPieceObservation> FinishedPieces { get; } = [];
+
+    public Task<IReadOnlyList<FinishedPieceObservation>> ListFinishedPiecesAsync(DateTime from, DateTime to, string? recipeCode = null, CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<FinishedPieceObservation>>(
+            FinishedPieces
+                .Where(piece => piece.EndTime >= from && piece.EndTime <= to)
+                .Where(piece => recipeCode is null || piece.RecipeCode == recipeCode)
                 .ToList());
 
     public Task<IReadOnlyList<string>> ListRecipeCodesAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default)
@@ -347,6 +387,9 @@ internal class FakeRuntimeStore : IRuntimeStore
 
         return Task.CompletedTask;
     }
+
+    public IReadOnlyList<string> ListMonthKeys()
+        => Records.Select(x => x.MonthKey).Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
 
     public Task DeleteMonthAsync(string monthKey, CancellationToken cancellationToken = default)
     {
