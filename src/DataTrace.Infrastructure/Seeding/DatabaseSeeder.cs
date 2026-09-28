@@ -33,6 +33,7 @@ public sealed class DatabaseSeeder
     {
         await _db.Database.EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
         await _db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;", cancellationToken).ConfigureAwait(false);
+        await EnsureAuditLogSchemaAsync(cancellationToken).ConfigureAwait(false);
         await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "SimulatorAutoRun",
             "ALTER TABLE SystemSettings ADD COLUMN SimulatorAutoRun INTEGER NOT NULL DEFAULT 1", cancellationToken).ConfigureAwait(false);
         await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "SimulatorIntervalMs",
@@ -41,6 +42,8 @@ public sealed class DatabaseSeeder
             "ALTER TABLE SystemSettings ADD COLUMN SimulatorNgPercent INTEGER NOT NULL DEFAULT 8", cancellationToken).ConfigureAwait(false);
         await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "SimulatorPalletPool",
             "ALTER TABLE SystemSettings ADD COLUMN SimulatorPalletPool INTEGER NOT NULL DEFAULT 20", cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "AuditRetentionYears",
+            "ALTER TABLE SystemSettings ADD COLUMN AuditRetentionYears INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
 
         // 点位三级限值：老配置库缺这些列，采集侧读限值会直接报 no such column。
         await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "WarningLowerLimit",
@@ -102,6 +105,10 @@ public sealed class DatabaseSeeder
         {
             SeedDemoLine();
         }
+        else
+        {
+            await EnsureDemoStationsAsync(cancellationToken).ConfigureAwait(false);
+        }
 
         await CollapseToSingleProductAsync(cancellationToken).ConfigureAwait(false);
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
@@ -109,6 +116,52 @@ public sealed class DatabaseSeeder
         // 演示型号必须在点位落库拿到主键之后才能建（限值覆盖行要引用 TagId）。
         await SeedDemoRecipeAsync(cancellationToken).ConfigureAwait(false);
         _logger.LogInformation("配置库初始化完成");
+    }
+
+    private async Task EnsureAuditLogSchemaAsync(CancellationToken cancellationToken)
+    {
+        // EnsureCreated does not create tables in a non-empty legacy database.
+        await _db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE TABLE IF NOT EXISTS "AuditLogs" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_AuditLogs" PRIMARY KEY AUTOINCREMENT,
+                "Time" TEXT NOT NULL,
+                "UserName" TEXT NOT NULL,
+                "Action" TEXT NOT NULL,
+                "EntityType" TEXT NOT NULL,
+                "EntityKey" TEXT NULL,
+                "OldValue" TEXT NULL,
+                "NewValue" TEXT NULL,
+                "Outcome" TEXT NOT NULL DEFAULT 'Success',
+                "Source" TEXT NOT NULL DEFAULT 'Legacy / unknown',
+                "SourceIp" TEXT NULL,
+                "CorrelationId" TEXT NULL
+            )
+            """,
+            cancellationToken).ConfigureAwait(false);
+
+        var outcomeColumnMissing = !SqliteSchema.ColumnExists(_db, "AuditLogs", "Outcome");
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "AuditLogs", "Outcome",
+            """ALTER TABLE "AuditLogs" ADD COLUMN "Outcome" TEXT NOT NULL DEFAULT 'Success'""",
+            cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "AuditLogs", "Source",
+            """ALTER TABLE "AuditLogs" ADD COLUMN "Source" TEXT NOT NULL DEFAULT 'Legacy / unknown'""",
+            cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "AuditLogs", "SourceIp",
+            """ALTER TABLE "AuditLogs" ADD COLUMN "SourceIp" TEXT NULL""",
+            cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "AuditLogs", "CorrelationId",
+            """ALTER TABLE "AuditLogs" ADD COLUMN "CorrelationId" TEXT NULL""",
+            cancellationToken).ConfigureAwait(false);
+        if (outcomeColumnMissing)
+        {
+            await _db.Database.ExecuteSqlRawAsync(
+                """UPDATE "AuditLogs" SET "Outcome" = 'Failure' WHERE "Action" = 'LoginFailed' AND "Outcome" = 'Success'""",
+                cancellationToken).ConfigureAwait(false);
+        }
+        await _db.Database.ExecuteSqlRawAsync(
+            """CREATE INDEX IF NOT EXISTS "IX_AuditLogs_Time" ON "AuditLogs" ("Time")""",
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -212,13 +265,82 @@ public sealed class DatabaseSeeder
             y: "D3600", x: "D4000"));
 
         plc.Stations.Add(CreateStation(
-            "ST030", "下线工站", 30, first: false, last: true,
+            "ST030", "下线工站", 30, first: false, last: false,
             trigger: "D1400", pallet: "D1410",
             press: "D1500", temp: "D1510",
             y: "D5200", x: "D5600"));
 
+        foreach (var station in CreateAdditionalDemoStations())
+        {
+            plc.Stations.Add(station);
+        }
+
         _db.PlcConnections.Add(plc);
     }
+
+    private async Task EnsureDemoStationsAsync(CancellationToken cancellationToken)
+    {
+        var demoPlc = await _db.PlcConnections
+            .Include(p => p.Stations)
+            .FirstOrDefaultAsync(
+                p => p.Name == "模拟PLC" && p.Brand == PlcBrand.Simulator,
+                cancellationToken)
+            .ConfigureAwait(false);
+        if (demoPlc is null)
+        {
+            return;
+        }
+
+        var existingCodes = (await _db.Stations
+            .Select(s => s.Code)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false))
+            .ToHashSet(StringComparer.Ordinal);
+        var changed = false;
+        foreach (var station in CreateAdditionalDemoStations())
+        {
+            if (existingCodes.Add(station.Code))
+            {
+                demoPlc.Stations.Add(station);
+                changed = true;
+            }
+        }
+
+        var previousLastStation = demoPlc.Stations.FirstOrDefault(s => s.Code == "ST030");
+        if (previousLastStation?.IsLastStation == true)
+        {
+            previousLastStation.IsLastStation = false;
+            changed = true;
+        }
+
+        if (changed)
+        {
+            var version = await _db.ConfigVersions.FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+            if (version is not null)
+            {
+                version.Version++;
+            }
+        }
+    }
+
+    private static Station[] CreateAdditionalDemoStations() =>
+    [
+        CreateStation(
+            "ST040", "装配工站", 40, first: false, last: false,
+            trigger: "D1600", pallet: "D1610",
+            press: "D1700", temp: "D1710",
+            y: "D6800", x: "D7200"),
+        CreateStation(
+            "ST050", "性能检测工站", 50, first: false, last: false,
+            trigger: "D1800", pallet: "D1810",
+            press: "D1900", temp: "D1910",
+            y: "D8400", x: "D8800"),
+        CreateStation(
+            "ST060", "终检工站", 60, first: false, last: true,
+            trigger: "D2000", pallet: "D2010",
+            press: "D2100", temp: "D2110",
+            y: "D10000", x: "D10400")
+    ];
 
     private async Task CollapseToSingleProductAsync(CancellationToken cancellationToken)
     {

@@ -30,14 +30,19 @@ public static class CurveTemplateBuilder
     /// <summary>用合格样本构建模板。样本为空时返回全维度零样本的模板。</summary>
     public static CurveTemplate Build(IReadOnlyList<CurveFeature> samples)
     {
-        if (samples is null || samples.Count == 0)
+        var finiteSamples = samples?
+            .Where(CurveFeatureDimensions.HasFiniteValues)
+            .ToList() ?? [];
+        if (finiteSamples.Count == 0)
         {
             return new CurveTemplate
             {
                 SampleCount = 0,
                 ScorableDimensionCount = 0,
                 IsReliable = false,
-                Note = $"没有可用于建立基线的合格样本（至少需要 {MinimumReliableSamples} 条）。",
+                Note = samples is { Count: > 0 }
+                    ? "样本均包含 NaN/Infinity 等无效特征，不能建立基线。"
+                    : $"没有可用于建立基线的合格样本（至少需要 {MinimumReliableSamples} 条）。",
                 Dimensions = CurveFeatureDimensions.All.Select(d => new CurveDimensionBaseline { Dimension = d }).ToList()
             };
         }
@@ -45,18 +50,18 @@ public static class CurveTemplateBuilder
         var dimensions = new List<CurveDimensionBaseline>(CurveFeatureDimensions.All.Count);
         foreach (var dimension in CurveFeatureDimensions.All)
         {
-            dimensions.Add(BuildDimension(dimension, samples));
+            dimensions.Add(BuildDimension(dimension, finiteSamples));
         }
 
         var scorable = dimensions.Count(d => d.IsScorable);
-        var reliable = samples.Count >= MinimumReliableSamples && scorable > 0;
+        var reliable = finiteSamples.Count >= MinimumReliableSamples && scorable > 0;
 
         return new CurveTemplate
         {
-            SampleCount = samples.Count,
+            SampleCount = finiteSamples.Count,
             ScorableDimensionCount = scorable,
             IsReliable = reliable,
-            Note = BuildNote(samples.Count, scorable, reliable),
+            Note = BuildNote(finiteSamples.Count, scorable, reliable),
             Dimensions = dimensions
         };
     }

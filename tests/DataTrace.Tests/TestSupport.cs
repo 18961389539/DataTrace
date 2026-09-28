@@ -238,6 +238,37 @@ internal class FakeRuntimeStore : IRuntimeStore
         => Task.FromResult<IReadOnlyList<DataTrace.Domain.Entities.CollectRecord>>(
             Records.Where(x => x.MonthKey == monthKey && x.Record.PalletSessionId == sessionId).Select(x => x.Record).ToList());
 
+    public Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesBySerialNoAsync(
+        string serialNo,
+        CancellationToken cancellationToken = default)
+    {
+        var matches = Records
+            .Where(x => string.Equals(x.Record.SerialNo, serialNo, StringComparison.Ordinal))
+            .ToList();
+        var traces = matches
+            .Where(x => x.Record.PalletSessionId > 0 && x.Record.PalletSession is not null)
+            .GroupBy(x => (x.MonthKey, x.Record.PalletSessionId))
+            .Select(group => new CollectSessionTrace
+            {
+                MonthKey = group.Key.MonthKey,
+                SessionId = group.Key.PalletSessionId,
+                Session = group.First().Record.PalletSession,
+                Records = group.Select(x => x.Record).ToList()
+            })
+            .ToList();
+        traces.AddRange(matches
+            .Where(x => x.Record.PalletSessionId <= 0 || x.Record.PalletSession is null)
+            .Select(x => new CollectSessionTrace
+            {
+                MonthKey = x.MonthKey,
+                SessionId = null,
+                Session = null,
+                Records = [x.Record]
+            }));
+        return Task.FromResult<IReadOnlyList<CollectSessionTrace>>(
+            traces.OrderByDescending(x => x.Session?.StartTime ?? x.Records[0].TriggerTime).ToList());
+    }
+
     public Task<IReadOnlyList<DataTrace.Domain.Entities.CollectRecord>> QueryForReportAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default)
         => Task.FromResult<IReadOnlyList<DataTrace.Domain.Entities.CollectRecord>>(
             Records.Where(x => x.Record.TriggerTime >= from && x.Record.TriggerTime <= to).Select(x => x.Record).ToList());
@@ -335,7 +366,8 @@ internal class FakeRuntimeStore : IRuntimeStore
         DateTime to,
         int take,
         IReadOnlyCollection<string>? recipeCodes = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        DataTrace.Domain.Enums.Judgement? judgement = null)
     {
         if (take <= 0)
         {
@@ -346,6 +378,7 @@ internal class FakeRuntimeStore : IRuntimeStore
             .Where(r => r.Record.TriggerTime >= from && r.Record.TriggerTime <= to)
             // 型号过滤与真身同语义：先过滤再 take（"最新 N 条"针对的是筛出来的那批）。
             .Where(r => recipeCodes is null || recipeCodes.Count == 0 || recipeCodes.Contains(r.Record.RecipeCode))
+            .Where(r => judgement is null || r.Record.Judgement == judgement)
             .SelectMany(r => r.Curves
                 .Where(c => c.Record.CurveDefinitionId == curveDefinitionId)
                 .SelectMany(c => c.Features
@@ -355,7 +388,7 @@ internal class FakeRuntimeStore : IRuntimeStore
                         CurveRecordId = c.Record.Id,
                         Time = r.Record.TriggerTime,
                         PalletCode = r.Record.PalletCode,
-                        IsNg = r.Record.Judgement == DataTrace.Domain.Enums.Judgement.Ng,
+                        ActualJudgement = r.Record.Judgement,
                         RecipeCode = r.Record.RecipeCode,
                         SeriesName = f.SeriesName,
                         Role = f.Role,
@@ -387,7 +420,8 @@ internal class FakeRuntimeStore : IRuntimeStore
                 .Select(g => new CurveRecipeSampleCount(
                     g.Key,
                     g.Count(),
-                    g.Count(x => x.r.Record.Judgement == DataTrace.Domain.Enums.Judgement.Ng)))
+                    g.Count(x => x.r.Record.Judgement == DataTrace.Domain.Enums.Judgement.Ng),
+                    g.Count(x => x.r.Record.Judgement == DataTrace.Domain.Enums.Judgement.None)))
                 .OrderByDescending(x => x.Total)
                 .ThenBy(x => x.RecipeCode, StringComparer.Ordinal)
                 .ToList());

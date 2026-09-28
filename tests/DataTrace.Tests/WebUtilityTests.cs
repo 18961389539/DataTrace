@@ -27,6 +27,10 @@ public class CsvExporterTests
     public void Build_with_no_rows_emits_only_header()
         => Assert.Equal("a,b", CsvExporter.Build(new[] { "a", "b" }, Array.Empty<string[]>()));
 
+    [Fact]
+    public void BuildRow_uses_the_same_csv_escaping_for_streamed_exports()
+        => Assert.Equal("\"a,b\",'=1+1,", CsvExporter.BuildRow(new string?[] { "a,b", "=1+1", null }));
+
     [Theory]
     [InlineData("含,逗号", "\"含,逗号\"")]
     [InlineData("含\"引号", "\"含\"\"引号\"")]
@@ -423,6 +427,9 @@ public class DisplayLabelsTests
     [InlineData("Logout", false)]
     [InlineData("LoginFailed", false)]
     [InlineData("Unlock", false)]
+    [InlineData("Backup", false)]
+    [InlineData("DeleteRuntimeMonth", false)]
+    [InlineData("ArchiveAndPurge", false)]
     public void IsChangeAction_separates_edits_from_events(string action, bool expected)
         => Assert.Equal(expected, DisplayLabels.IsChangeAction(action));
 
@@ -430,13 +437,19 @@ public class DisplayLabelsTests
     [InlineData("Update", "修改")]
     [InlineData("LoginFailed", "登录失败")]
     [InlineData("Unlock", "解除锁定")]
+    [InlineData("DeleteRuntimeMonth", "清理运行数据")]
+    [InlineData("ArchiveAndPurge", "归档并清理审计")]
     public void AuditAction_names_the_user_management_actions(string action, string expected)
         => Assert.Equal(expected, DisplayLabels.AuditAction(action));
 
     [Fact]
     public void KnownAuditActions_covers_every_action_the_user_page_writes()
         => Assert.All(
-            new[] { "Create", "Update", "Delete", "ResetPassword", "Unlock" },
+            new[]
+            {
+                "Create", "Update", "Delete", "ResetPassword", "Unlock",
+                "Export", "Backup", "DeleteRuntimeMonth", "ArchiveAndPurge"
+            },
             action => Assert.Contains(action, DisplayLabels.KnownAuditActions));
 
     [Theory]

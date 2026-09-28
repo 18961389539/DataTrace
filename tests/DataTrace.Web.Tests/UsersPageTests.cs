@@ -63,28 +63,62 @@ public class UsersPageTests : WebTestBase, IDisposable
     // ---------- P3：不再预填共享初始口令 ----------
 
     [Fact]
-    public void New_user_form_does_not_prefill_a_shared_password()
+    public void New_user_opens_a_dialog_without_a_prefilled_shared_password()
     {
+        var provider = RenderDialogHost();
         var cut = RenderUsers();
 
-        var password = cut.FindAll("input[type=password]").First();
+        Assert.DoesNotContain("初始密码", cut.Markup);
+        OpenCreateDialog(cut, provider);
+
+        var password = provider.FindAll("input[type=password]").First();
         Assert.True(
             string.IsNullOrEmpty(password.GetAttribute("value")),
             $"初始密码不该预填，实际「{password.GetAttribute("value")}」");
 
-        // 规则说明仍在，只是值要管理员自己填。
-        Assert.Contains("必填", cut.Markup);
+        Assert.Contains("必填", provider.Markup);
+        Assert.Contains("新用户角色", provider.Markup);
+        Assert.Contains("操作员", provider.Markup);
+    }
+
+    [Fact]
+    public void Search_filters_users_by_username_or_display_name()
+    {
+        var cut = RenderUsers();
+
+        TypeInto(cut, "搜索账号", "张工");
+
+        cut.WaitForAssertion(() =>
+        {
+            var rows = cut.FindAll("tbody tr");
+            Assert.Single(rows);
+            Assert.Contains("zhang", rows[0].TextContent);
+            Assert.DoesNotContain("admin", rows[0].TextContent);
+        });
+    }
+
+    [Fact]
+    public void Default_role_and_lock_filters_show_all_accounts()
+    {
+        var cut = RenderUsers();
+
+        var rows = cut.FindAll("tbody tr");
+        Assert.Equal(2, rows.Count);
+        Assert.Contains(rows, row => row.TextContent.Contains("admin"));
+        Assert.Contains(rows, row => row.TextContent.Contains("zhang"));
     }
 
     [Fact]
     public void Submitting_without_a_password_is_refused_on_the_field_and_creates_nothing()
     {
+        var provider = RenderDialogHost();
         var cut = RenderUsers();
+        OpenCreateDialog(cut, provider);
 
-        TypeInto(cut, "用户名", "newbie");
-        TypeInto(cut, "显示名", "新来的");
-        ClickButton(cut, "创建");
-        cut.WaitForAssertion(() => Assert.Contains("请填写初始密码", cut.Markup));
+        TypeInto(provider, "用户名", "newbie");
+        TypeInto(provider, "显示名", "新来的");
+        ClickButton(provider, "创建");
+        provider.WaitForAssertion(() => Assert.Contains("请填写初始密码", provider.Markup));
 
         Assert.DoesNotContain("newbie", UserNames());
     }
@@ -94,15 +128,17 @@ public class UsersPageTests : WebTestBase, IDisposable
     [Fact]
     public void A_name_identity_would_refuse_is_rejected_before_the_write()
     {
+        var provider = RenderDialogHost();
         var cut = RenderUsers();
+        OpenCreateDialog(cut, provider);
 
-        TypeInto(cut, "用户名", "张三丰");
-        TypeInto(cut, "显示名", "三丰");
-        TypeInto(cut, "初始密码", "Newbie@123");
-        ClickButton(cut, "创建");
+        TypeInto(provider, "用户名", "张三丰");
+        TypeInto(provider, "显示名", "三丰");
+        TypeInto(provider, "初始密码", "Newbie@123");
+        ClickButton(provider, "创建");
 
         // 报在字段上，而不是等 Identity 回一句英文错误码再弹 Toast。
-        cut.WaitForAssertion(() => Assert.Contains(UserNameRules.Error("张三丰")!, cut.Markup));
+        provider.WaitForAssertion(() => Assert.Contains(UserNameRules.Error("张三丰")!, provider.Markup));
         Assert.DoesNotContain("张三丰", UserNames());
     }
 
@@ -117,11 +153,13 @@ public class UsersPageTests : WebTestBase, IDisposable
                 It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("审计库只读"));
 
+        var provider = RenderDialogHost();
         var cut = RenderUsers();
-        TypeInto(cut, "用户名", "newbie");
-        TypeInto(cut, "显示名", "新来的");
-        TypeInto(cut, "初始密码", "Newbie@123");
-        ClickButton(cut, "创建");
+        OpenCreateDialog(cut, provider);
+        TypeInto(provider, "用户名", "newbie");
+        TypeInto(provider, "显示名", "新来的");
+        TypeInto(provider, "初始密码", "Newbie@123");
+        ClickButton(provider, "创建");
 
         cut.WaitForAssertion(() =>
             Assert.Contains(Toast.Messages, m => m.StartsWith("操作已完成，但审计记录失败", StringComparison.Ordinal)));
@@ -226,6 +264,12 @@ public class UsersPageTests : WebTestBase, IDisposable
         var provider = Context.RenderComponent<MudDialogProvider>();
         provider.Render();
         return provider;
+    }
+
+    private void OpenCreateDialog(IRenderedFragment page, IRenderedFragment provider)
+    {
+        ClickButton(page, "新增用户");
+        provider.WaitForAssertion(() => Assert.Contains("新建用户", provider.Markup));
     }
 
     /// <summary>按行内文字点按钮：几行操作列长得一样，只能先定位到那一行。</summary>

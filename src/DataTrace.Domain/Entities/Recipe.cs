@@ -11,7 +11,7 @@ public class Recipe
 {
     public int Id { get; set; }
 
-    /// <summary>型号编码，全局唯一。</summary>
+    /// <summary>型号内部编码，全局唯一；用于运行记录与基线关联，新建时由系统生成。</summary>
     public string Code { get; set; } = "";
 
     public string Name { get; set; } = "";

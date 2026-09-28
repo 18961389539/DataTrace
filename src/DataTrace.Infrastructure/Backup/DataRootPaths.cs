@@ -10,6 +10,7 @@ public sealed class DataRootPaths
         RuntimeDirectory = Path.Combine(Root, "runtime");
         CurvesDirectory = Path.Combine(Root, "curves");
         ArchiveDirectory = Path.Combine(Root, "archive");
+        AuditArchiveDirectory = Path.Combine(Root, "audit-archive");
         SpoolDirectory = Path.Combine(Root, "spool");
     }
 
@@ -18,5 +19,6 @@ public sealed class DataRootPaths
     public string RuntimeDirectory { get; }
     public string CurvesDirectory { get; }
     public string ArchiveDirectory { get; }
+    public string AuditArchiveDirectory { get; }
     public string SpoolDirectory { get; }
 }

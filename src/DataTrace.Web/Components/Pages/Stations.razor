@@ -1,4 +1,4 @@
-﻿@page "/config/stations"
+@page "/config/stations"
 @attribute [Authorize(Roles = "Administrator,Engineer")]
 @using DataTrace.Application.Configuration
 @using DataTrace.Domain.Entities
@@ -40,24 +40,20 @@
             @foreach (var station in _stations)
             {
                 var selected = station.Id == _current?.Id;
-                <div class="@(selected ? "station-list-item active" : "station-list-item")" @onclick="() => Select(station)">
-                    <MudStack Row="true" AlignItems="AlignItems.Start">
-                        <div>
-                            <MudText Typo="Typo.subtitle2">@station.Code</MudText>
-                            <MudText Typo="Typo.body2">@station.Name</MudText>
-                            <MudText Typo="Typo.caption">
-                                @RoleLabel(station) · @PlcName(station.PlcConnectionId) · 点位 @station.Tags.Count · 曲线 @station.Curves.Count
-                            </MudText>
-                        </div>
-                        <MudSpacer />
-                        <span @onclick:stopPropagation="true">
-                            <MudTooltip Text="删除工站">
-                                <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline" Color="Color.Error" Size="Size.Small"
-                                               aria-label="@($"删除工站 {station.Code}")"
-                                               Disabled="_busy" OnClick="@(() => DeleteDevice(station))" />
-                            </MudTooltip>
+                <div class="@(selected ? "station-list-item active" : "station-list-item")">
+                    <button type="button" class="station-list-item-select" aria-pressed="@selected"
+                            @onclick="() => Select(station)">
+                        <span class="station-list-item-code">@station.Code</span>
+                        <span class="station-list-item-name">@station.Name</span>
+                        <span class="station-list-item-meta">
+                            @RoleLabel(station) · @PlcName(station.PlcConnectionId) · 点位 @station.Tags.Count · 曲线 @station.Curves.Count
                         </span>
-                    </MudStack>
+                    </button>
+                    <MudTooltip Text="删除工站">
+                        <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline" Color="Color.Error" Size="Size.Small"
+                                       aria-label="@($"删除工站 {station.Code}")"
+                                       Disabled="_busy" OnClick="@(() => DeleteDevice(station))" />
+                    </MudTooltip>
                 </div>
             }
         </MudPaper>

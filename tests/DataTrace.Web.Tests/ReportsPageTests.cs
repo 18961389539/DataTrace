@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Bunit;
 using DataTrace.Application.Configuration;
 using DataTrace.Application.Reporting;
 using DataTrace.Application.Runtime;
@@ -144,8 +145,12 @@ public class ReportsPageTests : WebTestBase
 
         var cut = Render();
 
-        // 趋势一条都还没回来，直通率那一屏（含按型号表）已经在页面上了，导出按钮也如实地说"没有点可导"。
+        // 趋势一条都还没回来，直通率那一屏（含按型号表）已经在页面上了。
         Assert.Contains("A100", cut.Markup);
+
+        // 「导出趋势」跟着它导出的数据一起挪进了参数趋势页签，要看按钮得先切过去；
+        // 切过去之后那一屏仍是同一个 circuit，按钮依旧如实地说"没有点可导"。
+        OpenTrendTab(cut);
         Assert.True(ExportButtonDisabled(cut));
 
         gate.SetResult([new TrendPoint { Time = SampleTime, Value = 12.5, PalletCode = "P0001" }]);
@@ -153,7 +158,18 @@ public class ReportsPageTests : WebTestBase
         cut.WaitForAssertion(() => Assert.False(ExportButtonDisabled(cut)));
     }
 
-    private static bool ExportButtonDisabled(IRenderedComponent<Reports> cut)
+    /// <summary>
+    /// 切到「参数趋势」页签。MudTabs 一次只渲染当前面板，而「导出趋势」与截断说明都在这个
+    /// 页签里 —— 它们只服务于趋势数据，挂在全局筛选区时会跑到跟它无关的直通率页签上。
+    /// </summary>
+    private static void OpenTrendTab(IRenderedFragment cut)
+    {
+        var tab = cut.FindAll(".mud-tab").SingleOrDefault(t => t.TextContent.Contains("参数趋势"));
+        Assert.NotNull(tab);
+        tab.Click();
+    }
+
+    private static bool ExportButtonDisabled(IRenderedFragment cut)
         => cut.FindAll("button")
             .First(b => b.TextContent.Contains("导出趋势"))
             .HasAttribute("disabled");
@@ -322,6 +338,7 @@ public class ReportsPageTests : WebTestBase
         _role = role;
 
         var cut = Render();
+        OpenTrendTab(cut);
 
         Assert.Equal(visible, cut.FindAll("button").Any(b => b.TextContent.Contains("导出趋势")));
     }
@@ -363,6 +380,8 @@ public class ReportsPageTests : WebTestBase
     public void Trend_truncation_is_stated_on_the_page_only_when_it_happens()
     {
         var cut = Render();
+        // 截断说的是趋势与过程能力，这句话现在就在参数趋势页签里。
+        OpenTrendTab(cut);
 
         // 首屏之后那一轮趋势先落定（默认桩值只有一个点，没截断），再改桩值刷新 —— 断言才说得清是谁的结果。
         cut.WaitForAssertion(() => _reports.Verify(
@@ -404,6 +423,7 @@ public class ReportsPageTests : WebTestBase
     public async Task Export_writes_an_audit_entry_naming_the_range_and_the_filters()
     {
         var cut = Render();
+        OpenTrendTab(cut);
 
         ClickButton(cut, "导出趋势");
         await cut.InvokeAsync(() => Task.CompletedTask);
@@ -423,6 +443,7 @@ public class ReportsPageTests : WebTestBase
                 It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("config.db 被占用"));
         var cut = Render();
+        OpenTrendTab(cut);
 
         ClickButton(cut, "导出趋势");
         await cut.InvokeAsync(() => Task.CompletedTask);

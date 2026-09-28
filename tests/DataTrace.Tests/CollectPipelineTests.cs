@@ -1,3 +1,4 @@
+using DataTrace.Application.Configuration;
 using DataTrace.Application.Realtime;
 using DataTrace.Application.Runtime;
 using DataTrace.Collector;
@@ -71,7 +72,7 @@ public class CollectPipelineTests
         }
 
         var okQuery = await harness.QueryAsync("P0008");
-        Assert.Equal(3, okQuery.Total);
+        Assert.Equal(6, okQuery.Total);
 
         var ngStation = stations[1];
         Load(harness, stations[0], "P0009", seed: 3);
@@ -92,7 +93,7 @@ public class CollectPipelineTests
         }
 
         var query = await harness.QueryAsync("P0010");
-        Assert.Equal(3, query.Total);
+        Assert.Equal(6, query.Total);
         var sessionId = query.Items[0].Record.PalletSessionId;
         Assert.True(sessionId > 0);
 
@@ -105,7 +106,7 @@ public class CollectPipelineTests
         Assert.Equal(query.Items[0].Record.SerialNo, session.SerialNo);
         Assert.NotNull(session.EndTime);
 
-        // 三个工站共用同一序列号，说明会话被正确复用而非重复建。
+        // 六个工站共用同一序列号，说明会话被正确复用而非重复建。
         Assert.Single(query.Items.Select(i => i.Record.SerialNo).Distinct());
     }
 
@@ -156,6 +157,11 @@ public class CollectPipelineTests
         Assert.Equal(ResultCodes.PlcReadFailed, status.LastResultCode);
         Assert.NotNull(status.LastError);
         Assert.Equal(0, (await harness.QueryAsync("P0001")).Total);
+
+        var audit = harness.Scope.ServiceProvider.GetRequiredService<IAuditLogger>();
+        var (failures, total) = await audit.QueryAsync(keyword: station.Code, action: "CollectFailure");
+        Assert.Equal(1, total);
+        Assert.Equal("Failure", Assert.Single(failures).Outcome);
     }
 
     [Fact]
@@ -418,8 +424,8 @@ public class CollectPipelineTests
     {
         await using var harness = await CollectHarness.CreateAsync();
 
-        // 演示产线是 3 工站、首尾已标记，采集侧依赖这两个标记判断会话开关。
-        Assert.Equal(3, harness.Stations.Count);
+        // 演示产线是 6 工站、首尾已标记，采集侧依赖这两个标记判断会话开关。
+        Assert.Equal(6, harness.Stations.Count);
         Assert.True(harness.Stations[0].IsFirstStation);
         Assert.True(harness.Stations[^1].IsLastStation);
         Assert.All(harness.Stations, s => Assert.True(s.Enabled));

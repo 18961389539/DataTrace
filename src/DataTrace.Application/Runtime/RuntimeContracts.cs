@@ -66,6 +66,18 @@ public sealed class CollectRecordListItem
     public required CollectRecord Record { get; init; }
 }
 
+/// <summary>
+/// 单件履历：记录从对应月份库按精确流水号查出，并按会话 ID 归组。
+/// Session 为空表示历史记录缺少有效的会话关联，不能假定履历完整。
+/// </summary>
+public sealed class CollectSessionTrace
+{
+    public required string MonthKey { get; init; }
+    public long? SessionId { get; init; }
+    public PalletSession? Session { get; init; }
+    public required IReadOnlyList<CollectRecord> Records { get; init; }
+}
+
 public sealed class CollectQueryResult
 {
     public required int Total { get; init; }
@@ -120,8 +132,10 @@ public sealed class CurveFeaturePoint
 
     public string PalletCode { get; init; } = "";
 
-    /// <summary>所属采集记录的判定；基线只用合格样本建立。</summary>
-    public bool IsNg { get; init; }
+    /// <summary>所属采集记录的实际判定；只有 OK 样本可以建立基线。</summary>
+    public Judgement ActualJudgement { get; init; }
+
+    public bool IsNg => ActualJudgement == Judgement.Ng;
 
     /// <summary>该曲线判定时生效的产品型号；用于避免切换型号后基线整体失配。</summary>
     public string RecipeCode { get; init; } = "";
@@ -134,7 +148,7 @@ public sealed class CurveFeaturePoint
 }
 
 /// <summary>区间内某序列某个型号的样本计数。</summary>
-public sealed record CurveRecipeSampleCount(string RecipeCode, int Total, int Ng);
+public sealed record CurveRecipeSampleCount(string RecipeCode, int Total, int Ng, int Unjudged = 0);
 
 public interface IRuntimeStore
 {
@@ -143,6 +157,7 @@ public interface IRuntimeStore
     Task<CollectRecord?> GetRecordAsync(string monthKey, long recordId, CancellationToken cancellationToken = default);
     Task<PalletSession?> GetSessionAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<CollectRecord>> GetSessionRecordsAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesBySerialNoAsync(string serialNo, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<CollectRecord>> QueryForReportAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -188,7 +203,8 @@ public interface IRuntimeStore
         DateTime to,
         int take,
         IReadOnlyCollection<string>? recipeCodes = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        Judgement? judgement = null);
 
     /// <summary>
     /// 区间内某条曲线某序列的样本数按型号分布（型号编码 → 条数）。

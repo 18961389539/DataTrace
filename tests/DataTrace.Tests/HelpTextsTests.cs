@@ -147,7 +147,7 @@ public class HelpTextsTests
     [InlineData("query", 6)]
     [InlineData("reports", 8)]
     [InlineData("curve-baseline", 6)]
-    [InlineData("logs", 4)]
+    [InlineData("logs", 5)]
     [InlineData("config/plc", 4)]
     [InlineData("config/stations", 4)]
     [InlineData("config/recipes", 7)]
@@ -161,9 +161,20 @@ public class HelpTextsTests
         var topics = HelpTexts.ForPage(route);
         Assert.NotEmpty(topics);
         Assert.Equal(expected, topics.Count);
+        var guide = HelpTexts.GuideForPage(route);
+        Assert.True(guide.Count >= 4, $"{route} 缺少完整的页面操作指南");
+        Assert.All(guide, section => Assert.All(section.Paragraphs,
+            paragraph => Assert.False(string.IsNullOrWhiteSpace(paragraph), $"{route}/{section.Title} 有空段落")));
+        var detailLength = guide.Sum(section => section.Title.Length
+            + section.Paragraphs.Sum(paragraph => paragraph.Length));
+        Assert.True(detailLength >= 500, $"{route} 的页面说明过于简略，当前 {detailLength} 字");
     }
 
     [Fact]
     public void Unknown_route_has_no_topics()
         => Assert.Empty(HelpTexts.ForPage("不存在的路由"));
+
+    [Fact]
+    public void Unknown_route_has_no_page_guide()
+        => Assert.Empty(HelpTexts.GuideForPage("不存在的路由"));
 }

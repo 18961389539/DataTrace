@@ -92,6 +92,7 @@ public static class InfrastructureServiceCollectionExtensions
 
         services.AddScoped<IConfigRepository, ConfigRepository>();
         services.AddScoped<IAuditLogger, AuditLogger>();
+        services.AddScoped<AuditRetentionArchiveService>();
         services.AddScoped<IActiveSessionStore, ActiveSessionStore>();
         services.AddScoped<ISerialNumberGenerator, SerialNumberGenerator>();
         services.AddScoped<IRuntimeStore, RuntimeStore>();

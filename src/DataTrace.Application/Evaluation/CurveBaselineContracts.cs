@@ -8,6 +8,8 @@ public readonly record struct CurveBaselineKey(int CurveDefinitionId, string Ser
 /// <summary>某一时刻生效的整套波形基线。</summary>
 public sealed class CurveBaselineSnapshot
 {
+    public static readonly TimeSpan MaxAge = TimeSpan.FromMinutes(15);
+
     /// <summary>建立这批基线时生效的产品型号；空串表示未选型号。</summary>
     public required string RecipeCode { get; init; }
 
@@ -17,6 +19,13 @@ public sealed class CurveBaselineSnapshot
     public required IReadOnlyDictionary<CurveBaselineKey, CurveTemplate> Templates { get; init; }
 
     public int Count => Templates.Count;
+
+    /// <summary>刷新时间在未来或超过有效期时均视为过期。</summary>
+    public bool IsFresh(DateTime now)
+    {
+        var age = now - RefreshedAt;
+        return age >= TimeSpan.Zero && age <= MaxAge;
+    }
 
     /// <summary>取某条序列的基线；没有则返回 null（调用方据此跳过打分，而不是造一个空模板）。</summary>
     public CurveTemplate? Find(int curveDefinitionId, string seriesName)

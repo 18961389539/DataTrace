@@ -208,7 +208,12 @@ app.MapPost("/account/login", async (
     {
         try
         {
-            await audit.WriteAsync(userName, "Login", "User", userName, null, "success");
+            await audit.WriteAsync(
+                userName, "Login", "User", userName, null, "登录成功",
+                outcome: "Success",
+                source: "Login endpoint",
+                sourceIp: http.Connection.RemoteIpAddress?.ToString(),
+                correlationId: http.TraceIdentifier);
         }
         catch (Exception ex)
         {
@@ -224,9 +229,12 @@ app.MapPost("/account/login", async (
     {
         try
         {
-            // 来源 IP 要一起记：只看到"某人失败了 200 次"是定位不到攻击面的。
-            var ip = http.Connection.RemoteIpAddress?.ToString() ?? "-";
-            await audit.WriteAsync(userName, "LoginFailed", "User", userName, null, $"reason={error}; ip={ip}");
+            await audit.WriteAsync(
+                userName, "LoginFailed", "User", userName, null, $"reason={error}",
+                outcome: "Failure",
+                source: "Login endpoint",
+                sourceIp: http.Connection.RemoteIpAddress?.ToString(),
+                correlationId: http.TraceIdentifier);
         }
         catch (Exception ex)
         {
@@ -258,7 +266,11 @@ app.MapPost("/account/logout", async (
     {
         try
         {
-            await audit.WriteAsync(userName, "Logout", "User", userName, null, null);
+            await audit.WriteAsync(
+                userName, "Logout", "User", userName, null, null,
+                source: "Logout endpoint",
+                sourceIp: http.Connection.RemoteIpAddress?.ToString(),
+                correlationId: http.TraceIdentifier);
         }
         catch (Exception ex)
         {
@@ -269,8 +281,18 @@ app.MapPost("/account/logout", async (
     return Results.Redirect("/");
 }).AllowAnonymous();
 // Soft-404：未知路径由 Pages/NotFound.razor 的 @page "/{*path:nonfile}" 接住并渲染友好页，
+
+app.MapGet("/audit-export/{id:guid}", (Guid id) =>
+{
+    var path = Path.Combine(Path.GetTempPath(), $"datatrace_audit_{id:N}.csv");
+    return File.Exists(path)
+        ? Results.File(path, "text/csv; charset=utf-8", $"datatrace_audit_{DateTime.Now:yyyyMMdd_HHmmss}.csv")
+        : Results.NotFound();
+}).RequireAuthorization("Config");
+
 // 避免真 404 返回空白；客户端导航仍走 Routes.razor 的 <NotFound>。
 app.MapRazorComponents<App>()
+    .AddInteractiveServerRenderMode()
     .AddInteractiveServerRenderMode()
     .DisableAntiforgery();
 

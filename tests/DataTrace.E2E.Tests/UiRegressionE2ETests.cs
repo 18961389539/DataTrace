@@ -98,7 +98,7 @@ public class UiRegressionE2ETests : E2ETestBase
     [InlineData("/config/settings")]
     [InlineData("/simulate")]
     [InlineData("/users")]
-    public async Task NoRouteLeavesAFocusRingOnItsHeading(string path)
+    public async Task SharedPageHeadingsStayCompactWithoutAFocusRing(string path)
     {
         // 两半都要成立：焦点确实落到页标题上（键盘与读屏用户才知道页面换了），
         // 而那是程序性聚焦，不该在标题周围画出橙色焦点环。
@@ -115,8 +115,12 @@ public class UiRegressionE2ETests : E2ETestBase
         var outline = await Page.EvaluateAsync<string>("""
             () => getComputedStyle(document.activeElement).outlineStyle
             """);
+        var fontSize = await Page.Locator("h5.dt-page-title").EvaluateAsync<double>("""
+            element => Number.parseFloat(getComputedStyle(element).fontSize)
+            """);
 
         Assert.Equal("none", outline);
+        Assert.InRange(fontSize, 18, 20);
     }
 
     [Fact]
@@ -390,6 +394,160 @@ public class UiRegressionE2ETests : E2ETestBase
             "菜单按钮没有可供读屏使用的可访问名");
 
         Assert.Equal(0, await Page.EvaluateAsync<int>("() => document.querySelectorAll('[arialabel]').length"));
+    }
+
+    [Fact]
+    public async Task DashboardKpiSummaryStaysOnOneLine()
+    {
+        await Page.AddInitScriptAsync("localStorage.removeItem('dt-shopfloor');");
+        await Page.GotoAsync(App.BaseUrl);
+        await WaitForCircuitReadyAsync();
+        await Page.GetByRole(AriaRole.Button, new() { Name = "大屏模式" }).ClickAsync();
+        await Page.WaitForFunctionAsync("() => document.body.classList.contains('dt-shopfloor')");
+
+        var firstKpi = Page.Locator(".dt-kpi").First;
+        var desktopLayout = await firstKpi.EvaluateAsync<bool[]>("""
+            element => {
+                const main = element.querySelector('.dt-kpi-main').getBoundingClientRect();
+                const hint = element.querySelector('.dt-kpi-hint').getBoundingClientRect();
+                return [
+                    getComputedStyle(element).display === 'flex',
+                    main.top < hint.bottom && hint.top < main.bottom,
+                    element.scrollWidth <= element.clientWidth
+                ];
+            }
+            """);
+
+        Assert.True(desktopLayout[0], "KPI 内容应使用单行布局");
+        Assert.True(desktopLayout[1], "辅助统计应与主指标处于同一行");
+        Assert.True(desktopLayout[2], "KPI 内容不应横向溢出");
+
+        await Page.SetViewportSizeAsync(390, 844);
+        var mobileWidths = await Page.Locator(".dt-kpi").EvaluateAllAsync<double[]>(
+            "elements => elements.map(element => element.getBoundingClientRect().width)");
+
+        Assert.True(mobileWidths[0] > mobileWidths[1] * 1.6, "窄屏首张 KPI 应跨两列以容纳完整单行内容");
+        Assert.True(
+            await firstKpi.EvaluateAsync<bool>("element => element.scrollWidth <= element.clientWidth"),
+            "窄屏 KPI 内容不应溢出");
+    }
+
+    [Fact]
+    public async Task ShopFloorModeHidesAppBarAndKeepsExitAction()
+    {
+        await Page.AddInitScriptAsync("localStorage.removeItem('dt-shopfloor');");
+        await Page.GotoAsync(App.BaseUrl);
+        await WaitForCircuitReadyAsync();
+
+        var menu = Page.Locator(".dt-appbar-menu");
+        var utilities = Page.Locator(".dt-appbar-utilities");
+        var identity = Page.Locator(".dt-appbar-identity");
+        Assert.NotEqual("none", await menu.EvaluateAsync<string>("element => getComputedStyle(element).display"));
+        Assert.NotEqual("none", await utilities.EvaluateAsync<string>("element => getComputedStyle(element).display"));
+        Assert.NotEqual("none", await identity.EvaluateAsync<string>("element => getComputedStyle(element).display"));
+
+        await Page.GetByRole(AriaRole.Button, new() { Name = "大屏模式" }).ClickAsync();
+        await Page.WaitForFunctionAsync("() => document.body.classList.contains('dt-shopfloor')");
+
+        Assert.False(await Page.Locator(".mud-appbar").IsVisibleAsync());
+        Assert.Equal(1, await Page.GetByRole(AriaRole.Button, new() { Name = "退出大屏" }).CountAsync());
+
+        await Page.GetByRole(AriaRole.Button, new() { Name = "退出大屏" }).ClickAsync();
+        await Page.WaitForFunctionAsync("() => !document.body.classList.contains('dt-shopfloor')");
+
+        Assert.NotEqual("none", await menu.EvaluateAsync<string>("element => getComputedStyle(element).display"));
+        Assert.NotEqual("none", await utilities.EvaluateAsync<string>("element => getComputedStyle(element).display"));
+        Assert.NotEqual("none", await identity.EvaluateAsync<string>("element => getComputedStyle(element).display"));
+    }
+
+    [Fact]
+    public async Task ThemeSwitchPersistsAcrossReload()
+    {
+        await Page.GotoAsync(App.BaseUrl);
+        await WaitForCircuitReadyAsync();
+
+        var appBar = Page.Locator(".mud-appbar");
+        var lightAppBarColor = await appBar.EvaluateAsync<string>("element => getComputedStyle(element).backgroundColor");
+        var darkSwitch = Page.GetByRole(AriaRole.Button, new() { Name = "切换到深色主题" });
+        await ActUntilAsync(() => darkSwitch.ClickAsync(), "切换到浅色主题", "切换到深色主题");
+
+        await Page.WaitForFunctionAsync(
+            "(lightColor) => document.documentElement.classList.contains('dt-theme-dark') " +
+            "&& getComputedStyle(document.querySelector('.mud-appbar')).backgroundColor !== lightColor",
+            lightAppBarColor,
+            new PageWaitForFunctionOptions { Timeout = 10000 });
+
+        var darkAppBarColor = await appBar.EvaluateAsync<string>("element => getComputedStyle(element).backgroundColor");
+        Assert.Equal("dark", await Page.EvaluateAsync<string>("() => localStorage.getItem('dt-theme-mode')"));
+        Assert.Equal(
+            "切换到浅色主题",
+            await Page.GetByRole(AriaRole.Button, new() { Name = "切换到浅色主题" }).GetAttributeAsync("aria-label"));
+
+        await Page.ReloadAsync();
+        await Page.WaitForFunctionAsync(
+            "() => document.documentElement.classList.contains('dt-theme-dark') " +
+            "&& localStorage.getItem('dt-theme-mode') === 'dark'");
+        await WaitForCircuitReadyAsync();
+
+        Assert.Equal(darkAppBarColor, await appBar.EvaluateAsync<string>("element => getComputedStyle(element).backgroundColor"));
+        Assert.Equal(
+            "切换到浅色主题",
+            await Page.GetByRole(AriaRole.Button, new() { Name = "切换到浅色主题" }).GetAttributeAsync("aria-label"));
+    }
+
+    [Fact]
+    public async Task PwaManifestWorkerAndInstallActionAreAvailable()
+    {
+        await Page.GotoAsync(App.BaseUrl);
+        await WaitForCircuitReadyAsync();
+
+        Assert.Equal(
+            "manifest.webmanifest",
+            await Page.Locator("link[rel='manifest']").GetAttributeAsync("href"));
+
+        var manifestDetails = await Page.EvaluateAsync<string>("""
+            async () => {
+                const response = await fetch('/manifest.webmanifest');
+                const manifest = await response.json();
+                const png192 = manifest.icons.find(icon => icon.sizes === '192x192' && icon.purpose === 'any');
+                const png512 = manifest.icons.find(icon => icon.sizes === '512x512' && icon.purpose === 'any');
+                const maskable = manifest.icons.find(icon => icon.sizes === '512x512' && icon.purpose === 'maskable');
+                const iconResponse = await fetch(png192.src);
+                return [
+                    manifest.display,
+                    manifest.start_url,
+                    png192?.type,
+                    png512?.type,
+                    maskable?.type,
+                    iconResponse.ok,
+                    response.headers.get('content-type').split(';')[0]
+                ].join('|');
+            }
+            """);
+        Assert.Equal(
+            "standalone|/|image/png|image/png|image/png|true|application/manifest+json",
+            manifestDetails);
+
+        await Page.WaitForFunctionAsync("""
+            async () => {
+                const registration = await navigator.serviceWorker.getRegistration();
+                return Boolean(registration?.active?.scriptURL.endsWith('/service-worker.js'));
+            }
+            """);
+
+        await Page.EvaluateAsync("""
+            () => {
+                const event = new Event('beforeinstallprompt', { cancelable: true });
+                event.prompt = async () => {};
+                event.userChoice = Promise.resolve({ outcome: 'accepted' });
+                window.dispatchEvent(event);
+            }
+            """);
+
+        var installButton = Page.GetByRole(AriaRole.Button, new() { Name = "安装 DataTrace 应用" });
+        await installButton.WaitForAsync();
+        await installButton.ClickAsync();
+        await installButton.WaitForAsync(new() { State = WaitForSelectorState.Detached });
     }
 
     private Task<string> PageInnerTextInDialogAsync() => Page.Locator(".mud-dialog").InnerTextAsync();

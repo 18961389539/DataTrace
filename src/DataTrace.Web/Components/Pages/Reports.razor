@@ -57,142 +57,168 @@
             </MudItem>
         </MudGrid>
         <MudStack Row="true" Spacing="2" Class="mt-1 mb-2 flex-wrap">
-            <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
+            @* 区间、工站、型号、点位改了都会自动重算，这个按钮只用于"数据又变了想再取一次"，
+               所以不再占主按钮位。文案必须留着：E2E 是靠点它触发取数的。 *@
+            <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Outlined"
                        StartIcon="@Icons.Material.Filled.Refresh" Disabled="_loading">
                 @(_loading ? "统计中…" : "刷新报表")
             </MudButton>
-            @if (_canExport)
-            {
-                <MudButton Variant="Variant.Outlined" OnClick="ExportTrend" Disabled="_exporting || _trend.Count == 0"
-                           StartIcon="@(_exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)">
-                    @(_exporting ? "导出中…" : "导出趋势")
-                </MudButton>
-            }
+            @* 「导出趋势」不在这里：它导出的是「参数趋势」页签的数据，挂在全局筛选区时，
+               站在直通率页签上也能看见它，而且趋势没取完之前一直灰着、没人知道为什么。 *@
+            <MudText Typo="Typo.caption" Class="dt-muted align-self-center">改任一条件即自动重算</MudText>
         </MudStack>
     </form>
 </MudPaper>
 
-@if (_trendTruncated)
+@* 与查询页、日志页同一套：改完条件只剩一屏数字，条件本身就看不回来了。
+   点位不列进来 —— 它不是"筛掉什么"，只是趋势与过程能力共用的看图对象。 *@
+@if (ActiveFilters.Count > 0)
 {
-    @* 少算了就得说出来：不说的话图上那个偏窄的时间轴会被当成"区间内就这些点"。 *@
-    <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mb-3">
-        该点位在所选区间内的采样点超过单次上限，参数趋势与过程能力只统计<b>最近 @SystemDefaults.TrendSampleLimit 点</b>。
-        需要更早的数据请缩小区间。
-    </MudAlert>
+    <div class="dt-filter-chips mb-3">
+        <MudText Typo="Typo.caption" Class="dt-muted">当前条件</MudText>
+        @foreach (var filter in ActiveFilters)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
+                @filter.Label
+                <MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close"
+                               aria-label="@($"移除筛选条件：{filter.Label}")"
+                               OnClick="@(() => ClearOneAsync(filter.Clear))" />
+            </MudChip>
+        }
+        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ClearAllFiltersAsync">清空全部</MudButton>
+    </div>
 }
 
 <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-3"
          AlwaysShowScrollButtons="true">
     <MudTabPanel Text="直通率">
+        @* 栅格是流式 12 栏：两块 md=6 之间夹一个 xs=12，后一块就被挤到下一行的左半边，
+           右半边整块空掉。所以两张半宽卡必须挨着，整行的卡排在它们后面。 *@
         <MudGrid>
+            <MudItem xs="12" md="6">
+                <MudPaper Class="pa-4 dt-fill">
+                    <MudText Typo="Typo.h6" Class="mb-2">直通率</MudText>
+                    <MudTable Items="_fpy" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading">
+                        <HeaderContent>
+                            <MudTh>日期</MudTh>
+                            <MudTh Class="dt-num">总数</MudTh>
+                            <MudTh Class="dt-num">OK</MudTh>
+                            <MudTh Class="dt-num">NG</MudTh>
+                            <MudTh Class="dt-num">未判定</MudTh>
+                            <MudTh Class="dt-num">直通率 <InfoHint Topic="HelpTexts.YieldRate" /></MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="日期">@context.Day.ToString("yyyy-MM-dd")</MudTd>
+                            <MudTd DataLabel="总数" Class="dt-num">@context.Total</MudTd>
+                            <MudTd DataLabel="OK" Class="dt-num">@context.Ok</MudTd>
+                            <MudTd DataLabel="NG" Class="dt-num">
+                                @if (context.Ng > 0)
+                                {
+                                    <strong class="dt-text-error">@context.Ng</strong>
+                                }
+                                else
+                                {
+                                    @context.Ng
+                                }
+                            </MudTd>
+                            <MudTd DataLabel="未判定" Class="dt-num">@context.None</MudTd>
+                            <MudTd DataLabel="直通率" Class="dt-num">
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@YieldColor(context.FirstPassYield)">
+                                    @context.FirstPassYield.ToString("P1")
+                                </MudChip>
+                            </MudTd>
+                        </RowTemplate>
+                        <NoRecordsContent>
+                            <MudText Typo="Typo.body2" Class="dt-muted py-3">所选区间没有生产记录。</MudText>
+                        </NoRecordsContent>
+                    </MudTable>
+                    @if (_fpy.Count > 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="dt-muted mt-2">
+                            区间合计：@_fpy.Sum(x => x.Total) 条，OK @_fpy.Sum(x => x.Ok) 条，
+                            平均直通率 @AverageYield().ToString("P1")<InfoHint Topic="HelpTexts.AverageYield" />
+                        </MudText>
+                    }
+                </MudPaper>
+            </MudItem>
 
-    <MudItem xs="12" md="6">
-        <MudPaper Class="pa-4 dt-fill">
-            <MudText Typo="Typo.h6" Class="mb-2">直通率</MudText>
-            <MudTable Items="_fpy" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading">
-                <HeaderContent>
-                    <MudTh>日期</MudTh>
-                    <MudTh Class="dt-num">总数</MudTh>
-                    <MudTh Class="dt-num">OK</MudTh>
-                    <MudTh Class="dt-num">NG</MudTh>
-                    <MudTh Class="dt-num">未判定</MudTh>
-<MudTh Class="dt-num">直通率 <InfoHint Topic="HelpTexts.YieldRate" /></MudTh>
-                </HeaderContent>
-                <RowTemplate>
-                    <MudTd DataLabel="日期">@context.Day.ToString("yyyy-MM-dd")</MudTd>
-                    <MudTd DataLabel="总数" Class="dt-num">@context.Total</MudTd>
-                    <MudTd DataLabel="OK" Class="dt-num">@context.Ok</MudTd>
-                    <MudTd DataLabel="NG" Class="dt-num">
-                        @if (context.Ng > 0)
-                        {
-                            <strong class="dt-text-error">@context.Ng</strong>
-                        }
-                        else
-                        {
-                            @context.Ng
-                        }
-                    </MudTd>
-                                        <MudTd DataLabel="未判定" Class="dt-num">@context.None</MudTd>
-<MudTd DataLabel="直通率" Class="dt-num">
-                        <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@YieldColor(context.FirstPassYield)">
-                            @context.FirstPassYield.ToString("P1")
-                        </MudChip>
-                    </MudTd>
-                </RowTemplate>
-                <NoRecordsContent>
-                    <MudText Typo="Typo.body2" Class="dt-muted py-3">所选区间没有生产记录。</MudText>
-                </NoRecordsContent>
-            </MudTable>
-            @if (_fpy.Count > 0)
-            {
-                <MudText Typo="Typo.caption" Class="dt-muted mt-2">
-                    区间合计：@_fpy.Sum(x => x.Total) 条，OK @_fpy.Sum(x => x.Ok) 条，
-                    平均直通率 @AverageYield().ToString("P1")<InfoHint Topic="HelpTexts.AverageYield" />
-                </MudText>
-            }
-        </MudPaper>
-    </MudItem>
+            <MudItem xs="12" md="6">
+                <MudPaper Class="pa-4 dt-fill">
+                    <MudText Typo="Typo.h6" Class="mb-2">不良 Top N <InfoHint Topic="HelpTexts.IssueShare" /></MudText>
+                    <IssueTopTable Items="_defects.Items" Loading="_loading" Share="DefectShare"
+                                   EmptyText="区间内没有不良记录，工站状态良好。" />
+                    @if (_defects.Items.Count > 0)
+                    {
+                        @* 分母是区间内全部超限次数，不是榜内合计：榜内合计永远 100%，
+                           那样就看不出"榜外还有一大截"，也就不会去查第 11 个点位。 *@
+                        <MudText Typo="Typo.caption" Class="dt-muted mt-2">
+                            区间共 @_defects.Total 次超规格，下表列出前 @_defects.Items.Count 项；占比以全部次数为分母。
+                        </MudText>
+                    }
+                </MudPaper>
+            </MudItem>
 
-    <MudItem xs="12">
-        <MudPaper Class="pa-4 dt-fill mt-3">
-            <MudText Typo="Typo.h6" Class="mb-2">按产品型号 <InfoHint Topic="HelpTexts.RecipeScope" /></MudText>
-            <MudTable Items="_byRecipe" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading">
-                <HeaderContent>
-                    <MudTh>型号</MudTh>
-                    <MudTh Class="dt-num">产量</MudTh>
-                    <MudTh Class="dt-num">OK</MudTh>
-                    <MudTh Class="dt-num">NG</MudTh>
-                    <MudTh Class="dt-num">未判定</MudTh>
-                    <MudTh Class="dt-num">直通率</MudTh>
-                </HeaderContent>
-                <RowTemplate>
-                    <MudTd DataLabel="型号">@FormatRecipeRow(context.RecipeCode)</MudTd>
-                    <MudTd DataLabel="产量" Class="dt-num">@context.Total</MudTd>
-                    <MudTd DataLabel="OK" Class="dt-num">@context.Ok</MudTd>
-                    <MudTd DataLabel="NG" Class="dt-num">@context.Ng</MudTd>
-                    <MudTd DataLabel="未判定" Class="dt-num">@context.Pending</MudTd>
-                    <MudTd DataLabel="直通率" Class="dt-num">@((context.PassRate * 100).ToString("0.0"))%</MudTd>
-                </RowTemplate>
-                <NoRecordsContent>
-                    <MudText Class="dt-muted">所选范围内没有记录。</MudText>
-                </NoRecordsContent>
-            </MudTable>
-        </MudPaper>
-    </MudItem>
-    <MudItem xs="12" md="6">
-        <MudPaper Class="pa-4 dt-fill">
-            <MudText Typo="Typo.h6" Class="mb-2">不良 Top N <InfoHint Topic="HelpTexts.IssueShare" /></MudText>
-            <IssueTopTable Items="_defects.Items" Loading="_loading" Share="DefectShare"
-                           EmptyText="区间内没有不良记录，工站状态良好。" />
-            @if (_defects.Items.Count > 0)
-            {
-                @* 分母是区间内全部超限次数，不是榜内合计：榜内合计永远 100%，
-                   那样就看不出"榜外还有一大截"，也就不会去查第 11 个点位。 *@
-                <MudText Typo="Typo.caption" Class="dt-muted mt-2">
-                    区间共 @_defects.Total 次超规格，下表列出前 @_defects.Items.Count 项；占比以全部次数为分母。
-                </MudText>
-            }
-        </MudPaper>
-    </MudItem>
-    <MudItem xs="12">
-        <MudPaper Class="pa-4">
-            <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
-                <MudText Typo="Typo.h6">预警 Top N <InfoHint Topic="HelpTexts.LimitThreeTiers" /></MudText>
-                <MudSpacer />
-                <MudText Typo="Typo.caption" Class="dt-muted">
-                    落在黄区、尚未判废。这里先热起来，说明趋势正在往限值漂。
-                </MudText>
-            </MudStack>
-            <IssueTopTable Items="_warnings.Items" Loading="_loading" Share="WarningShare"
-                           EmptyText="区间内没有任何点位进入预警带。若这里长期为空，也可能说明预警限还没配。" />
-            @if (_warnings.Items.Count > 0)
-            {
-                <MudText Typo="Typo.caption" Class="dt-muted mt-2">
-                    区间共 @_warnings.Total 次进入预警带，下表列出前 @_warnings.Items.Count 项；占比以全部次数为分母。
-                </MudText>
-            }
-        </MudPaper>
-    </MudItem>
+            <MudItem xs="12">
+                <MudPaper Class="pa-4">
+                    <MudText Typo="Typo.h6" Class="mb-2">按产品型号 <InfoHint Topic="HelpTexts.RecipeScope" /></MudText>
+                    <MudTable Items="_byRecipe" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading">
+                        <HeaderContent>
+                            <MudTh>型号</MudTh>
+                            <MudTh Class="dt-num">产量</MudTh>
+                            <MudTh Class="dt-num">OK</MudTh>
+                            <MudTh Class="dt-num">NG</MudTh>
+                            <MudTh Class="dt-num">未判定</MudTh>
+                            <MudTh Class="dt-num">直通率</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="型号">@FormatRecipeRow(context.RecipeCode)</MudTd>
+                            <MudTd DataLabel="产量" Class="dt-num">@context.Total</MudTd>
+                            <MudTd DataLabel="OK" Class="dt-num">@context.Ok</MudTd>
+                            @* 与上面那张直通率表同一套画法：两张表并排在同一屏，
+                               同一个 NG 一处标红一处不标，看着像两个不同的数。 *@
+                            <MudTd DataLabel="NG" Class="dt-num">
+                                @if (context.Ng > 0)
+                                {
+                                    <strong class="dt-text-error">@context.Ng</strong>
+                                }
+                                else
+                                {
+                                    @context.Ng
+                                }
+                            </MudTd>
+                            <MudTd DataLabel="未判定" Class="dt-num">@context.Pending</MudTd>
+                            <MudTd DataLabel="直通率" Class="dt-num">
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@YieldColor(context.PassRate)">
+                                    @context.PassRate.ToString("P1")
+                                </MudChip>
+                            </MudTd>
+                        </RowTemplate>
+                        <NoRecordsContent>
+                            <MudText Class="dt-muted">所选范围内没有记录。</MudText>
+                        </NoRecordsContent>
+                    </MudTable>
+                </MudPaper>
+            </MudItem>
+
+            <MudItem xs="12">
+                <MudPaper Class="pa-4">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2">
+                        <MudText Typo="Typo.h6">预警 Top N <InfoHint Topic="HelpTexts.LimitThreeTiers" /></MudText>
+                        <MudSpacer />
+                        <MudText Typo="Typo.caption" Class="dt-muted">
+                            落在黄区、尚未判废。这里先热起来，说明趋势正在往限值漂。
+                        </MudText>
+                    </MudStack>
+                    <IssueTopTable Items="_warnings.Items" Loading="_loading" Share="WarningShare" BarClass="warn"
+                                   EmptyText="区间内没有任何点位进入预警带。若这里长期为空，也可能说明预警限还没配。" />
+                    @if (_warnings.Items.Count > 0)
+                    {
+                        <MudText Typo="Typo.caption" Class="dt-muted mt-2">
+                            区间共 @_warnings.Total 次进入预警带，下表列出前 @_warnings.Items.Count 项；占比以全部次数为分母。
+                        </MudText>
+                    }
+                </MudPaper>
+            </MudItem>
         </MudGrid>
     </MudTabPanel>
     <MudTabPanel Text="参数趋势">
@@ -207,7 +233,30 @@
                         <MudSelectItem T="int" Value="@tag.Id">@TagOptionLabel(tag)</MudSelectItem>
                     }
                 </MudSelect>
+                @* 导出跟着它导出的数据走：原来放在筛选区时，站在直通率页签上也能看见它，
+                   而趋势没取完之前它还一直灰着 —— 现在两件事都在同一个地方，禁用也说得清。 *@
+                @if (_canExport)
+                {
+                    <MudTooltip Arrow="true" Text="@ExportTooltipText">
+                        <ChildContent>
+                            <MudButton Variant="Variant.Outlined" OnClick="ExportTrend" Disabled="_exporting || _trend.Count == 0"
+                                       StartIcon="@(_exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)">
+                                @(_exporting ? "导出中…" : "导出趋势")
+                            </MudButton>
+                        </ChildContent>
+                    </MudTooltip>
+                }
             </MudStack>
+
+            @* 少算了就得说出来：不说的话图上那个偏窄的时间轴会被当成"区间内就这些点"。
+               放在页签里而不是页签外 —— 挂在外面时它会出现在跟它无关的直通率页签上。 *@
+            @if (_trendTruncated)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+                    该点位在所选区间内的采样点超过单次上限，参数趋势与过程能力只统计<b>最近 @SystemDefaults.TrendSampleLimit 点</b>。
+                    需要更早的数据请缩小区间。
+                </MudAlert>
+            }
 
             @if (_tags.Count == 0)
             {
@@ -280,6 +329,15 @@
             }
             else
             {
+                @if (_trendTruncated)
+                {
+                    @* 同一条截断在这里也得说一次：过程能力用的是同一批采样点，
+                       而这两个页签一次只渲染一个，挂在页签外又会把这句话塞进直通率页签。 *@
+                    <MudText Typo="Typo.caption" Class="dt-text-warning mb-2">
+                        采样点超过单次上限，过程能力同样只统计最近 @SystemDefaults.TrendSampleLimit 点。
+                    </MudText>
+                }
+
                 @if (_spc.SpecChangedInWindow)
                 {
                     <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mb-3">
@@ -306,7 +364,12 @@
                             <MudTd DataLabel="Cp">@SpcCalculator.Format(context.Summary.Cp)</MudTd>
                             <MudTd DataLabel="Cpk">@SpcCalculator.Format(context.Summary.Cpk)</MudTd>
                             <MudTd DataLabel="Ppk">@SpcCalculator.Format(context.Summary.Ppk)</MudTd>
-                            <MudTd DataLabel="结论">@VerdictLabel(context.Summary.Verdict)</MudTd>
+                            <MudTd DataLabel="结论">
+                                @* 顶部那个结论是 chip，分段表里却是纯文本 —— 同一份结论两种分量。 *@
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@VerdictColor(context.Summary.Verdict)">
+                                    @VerdictLabel(context.Summary.Verdict)
+                                </MudChip>
+                            </MudTd>
                         </RowTemplate>
                     </MudTable>
                     @if (_spc.Segments.Any(s => s.LimitsFromConfig))
@@ -356,13 +419,15 @@
                         <MudItem xs="6" sm="4" md="3" lg="2">
                             <div class="dt-metric">
                                 <div class="dt-metric-label">Cpk（组内）<InfoHint Topic="HelpTexts.Capability" /></div>
-                                <div class="dt-metric-value">@SpcCalculator.Format(segment.Summary.Cpk)</div>
+                                @* 六个卡里只有这两个是"能力结论"，其余是过程事实。
+                                   着色复用 SpcVerdict 的既有阈值，不另造一套分档。 *@
+                                <div class="dt-metric-value @VerdictTextClass(segment.Summary.Verdict)">@SpcCalculator.Format(segment.Summary.Cpk)</div>
                             </div>
                         </MudItem>
                         <MudItem xs="6" sm="4" md="3" lg="2">
                             <div class="dt-metric">
                                 <div class="dt-metric-label">Ppk（总体）</div>
-                                <div class="dt-metric-value">@SpcCalculator.Format(segment.Summary.Ppk)</div>
+                                <div class="dt-metric-value @VerdictTextClass(segment.Summary.Verdict)">@SpcCalculator.Format(segment.Summary.Ppk)</div>
                             </div>
                         </MudItem>
                         <MudItem xs="6" sm="4" md="3" lg="2">
@@ -725,6 +790,9 @@ private async Task OnStationChanged(int? stationId)
     {
         if (DateRangeFilter.IsReversed(_from, _to))
         {
+            ClearResults();
+            _loadFailed = false;
+            _trendFailed = false;
             Toast.Add(DateRangeFilter.ReversedRangeMessage, Severity.Warning);
             return;
         }
@@ -1192,6 +1260,99 @@ private async Task OnStationChanged(int? stationId)
         SpcVerdict.Incapable => Color.Error,
         _ => Color.Default
     };
+
+    /// <summary>
+    /// 指标卡数字的着色。与 <see cref="VerdictColor"/> 同一套结论、同一套阈值，
+    /// 只是这里给的是 CSS 类：chip 用主题色，卡内数字用文本色。
+    /// 数据不足时不着色 —— 那是"没结论"，不是"合格"。
+    /// </summary>
+    private static string VerdictTextClass(SpcVerdict verdict) => verdict switch
+    {
+        SpcVerdict.Capable => "dt-text-success",
+        SpcVerdict.Marginal => "dt-text-warning",
+        SpcVerdict.Incapable => "dt-text-error",
+        _ => ""
+    };
+
+    /// <summary>
+    /// 导出按钮的悬停说明。点位在所选区间内没有采样点时按钮是禁用的，
+    /// 不给一句话就只是一次"点了没反应"。
+    /// </summary>
+    private string ExportTooltipText => _trend.Count == 0
+        ? "当前点位在所选区间内没有采样点，没有可导出的趋势"
+        : $"导出当前趋势的 {_trend.Count} 个采样点";
+
+    /// <summary>一个生效条件：显示文案 + 摘掉它的动作。</summary>
+    private sealed record ActiveFilter(string Label, Action Clear);
+
+    /// <summary>
+    /// chips 行的数据。默认区间是「近 7 天」，等于它就不列 —— 否则一进页面
+    /// 就挂着一个删掉也毫无变化的 chip。
+    /// </summary>
+    private IReadOnlyList<ActiveFilter> ActiveFilters
+    {
+        get
+        {
+            var list = new List<ActiveFilter>();
+
+            if (!IsDefaultRange)
+            {
+                list.Add(new($"区间 {DateRangeFilter.Format(_from, _to)}", () =>
+                {
+                    _from = DateTime.Today.AddDays(-6);
+                    _to = DateTime.Today;
+                }));
+            }
+
+            if (_stationId is { } stationId)
+            {
+                list.Add(new($"工站 {StationLabel(stationId)}", () => _stationId = null));
+            }
+
+            if (_recipeFilter is { } recipe)
+            {
+                list.Add(new($"型号 {FormatRecipeRow(recipe)}", () => _recipeFilter = null));
+            }
+
+            return list;
+        }
+    }
+
+    private bool IsDefaultRange
+        => DateRangeFilter.StartOf(_from) == DateTime.Today.AddDays(-6)
+           && DateRangeFilter.StartOf(_to) == DateTime.Today;
+
+    /// <summary>工站 chip 上的编码；站被删掉时退成 Id，别显示一个空标签。</summary>
+    private string StationLabel(int id)
+    {
+        var station = _stations.FirstOrDefault(s => s.Id == id);
+        if (station is null)
+        {
+            return id.ToString();
+        }
+
+        return !string.IsNullOrWhiteSpace(station.Code) ? station.Code
+            : !string.IsNullOrWhiteSpace(station.Name) ? station.Name
+            : id.ToString();
+    }
+
+    private async Task ClearAllFiltersAsync()
+    {
+        _stationId = null;
+        _recipeFilter = null;
+        _from = DateTime.Today.AddDays(-6);
+        _to = DateTime.Today;
+        RefreshTags();
+        await Load();
+    }
+
+    private async Task ClearOneAsync(Action clear)
+    {
+        clear();
+        // 换工站会换掉可选点位列表，必须先重算，否则还在按旧工站的点位取趋势。
+        RefreshTags();
+        await Load();
+    }
 
     private static string RuleLabel(SpcRule rule) => rule switch
     {

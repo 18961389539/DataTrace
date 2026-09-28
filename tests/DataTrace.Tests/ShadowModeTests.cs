@@ -1,3 +1,4 @@
+using System.Globalization;
 using DataTrace.Application.Evaluation;
 using DataTrace.Application.Reporting;
 using DataTrace.Application.Runtime;
@@ -8,6 +9,7 @@ using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
 using DataTrace.Infrastructure.Reporting;
 using Microsoft.Extensions.DependencyInjection;
+using DataTrace.Plc.Codec;
 
 namespace DataTrace.Tests;
 
@@ -69,6 +71,63 @@ public class ShadowModeTests
         Assert.Equal(0, feature.BaselineSampleCount);
     }
 
+    [Theory]
+    [InlineData("NaN")]
+    [InlineData("Infinity")]
+    [InlineData("-Infinity")]
+    public async Task Non_finite_waveform_is_rejected_but_raw_curve_is_preserved(string rawValue)
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+        var station = harness.Station(0);
+        var curve = station.Curves.First();
+        var series = curve.Series.First();
+        var invalid = float.Parse(rawValue, CultureInfo.InvariantCulture);
+        LoadCycle(harness, "P0061");
+        harness.Simulator.SetWords(
+            series.StartAddress,
+            ValueCodec.EncodeNumeric(invalid, series.DataType, harness.Plc.FloatWordOrder));
+
+        Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(station));
+
+        var record = await LoadRecordAsync(harness, "P0061");
+        Assert.NotNull(record);
+        Assert.Equal(Judgement.Ng, record!.Judgement);
+        Assert.Contains("NaN 或 Infinity", record.ErrorMessage);
+
+        var curveRecord = Assert.Single(record.Curves);
+        Assert.DoesNotContain(curveRecord.Features, feature => feature.SeriesName == series.Name);
+
+        var fileStore = harness.Scope.ServiceProvider.GetRequiredService<ICurveFileStore>();
+        var payload = await fileStore.ReadAsync(curveRecord.RelativePath, curveRecord.Crc32);
+        var persistedSeries = Assert.Single(payload.Series, item => item.Name == series.Name);
+        Assert.Contains(persistedSeries.Values, value => !float.IsFinite(value));
+    }
+
+    [Fact]
+    public async Task Expired_baseline_is_not_used_for_shadow_scoring()
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+        var station = harness.Station(0);
+        var curve = station.Curves.First();
+        ReplaceBaseline(
+            harness,
+            curve.Id,
+            "压力",
+            recipeCode: "",
+            center: 1,
+            sigma: 0.01,
+            refreshedAt: DateTime.Now - CurveBaselineSnapshot.MaxAge - TimeSpan.FromSeconds(1));
+
+        LoadCycle(harness, "P0055");
+        Assert.Equal(ResultCodes.Success, await harness.RunAsync(station));
+
+        var feature = (await LoadRecordAsync(harness, "P0055"))!.Curves.First()
+            .Features.Single(f => f.SeriesName == "压力");
+        Assert.Null(feature.DeviationVerdict);
+        Assert.Null(feature.DeviationRmsZ);
+        Assert.Equal(0, feature.BaselineSampleCount);
+    }
+
     [Fact]
     public async Task Baseline_of_another_recipe_is_not_used_at_all()
     {
@@ -125,6 +184,18 @@ public class ShadowModeTests
         for (var index = 0; index < 5; index++)
         {
             fake.Saved.Add(Sample(curve.Id, start.AddMinutes(100 + index), $"N{index:000}", Judgement.Ng, "", 40));
+        }
+
+        // 最新的未判定记录不能挤掉较早的 OK 样本；SQL 取样边界应先过滤成明确合格的数据。
+        for (var index = 0; index < CurveBaselineFactory.MaxSamplesPerSeries + 10; index++)
+        {
+            fake.Saved.Add(Sample(
+                curve.Id,
+                start.AddHours(3).AddMinutes(index),
+                $"U{index:000}",
+                Judgement.None,
+                "",
+                40));
         }
 
         var factory = new CurveBaselineFactory(harness.ConfigRepository, fake);
@@ -217,6 +288,18 @@ public class ShadowModeTests
                 9 + (index % 5 - 2) * 0.1));
         }
 
+        // 同型号的近期未判定记录也不能挤掉更早的 OK 样本。
+        for (var index = 0; index < CurveBaselineFactory.MaxSamplesPerSeries + 10; index++)
+        {
+            fake.Saved.Add(Sample(
+                curve.Id,
+                start.AddHours(6).AddMinutes(index),
+                $"U{index:000}",
+                Judgement.None,
+                "",
+                40));
+        }
+
         var factory = new CurveBaselineFactory(harness.ConfigRepository, fake);
         var snapshot = await factory.BuildAsync(DateTime.Now.AddMinutes(5));
 
@@ -277,22 +360,24 @@ public class ShadowModeTests
 
         var service = new CurveTemplateService(fake, harness.ConfigRepository);
         var report = await service.GetBaselineAsync(
-            curve.Id, "压力", DateTime.Today.AddDays(-2), DateTime.Today.AddDays(1));
+            curve.Id, "压力", DateTime.Today.AddDays(-2), DateTime.Today.AddDays(1),
+            recentCount: 4);
 
         Assert.NotNull(report);
         var shadow = report!.Shadow;
 
-        // 24 条都拿到了偏离结论。T2 是合格样本会参与建基线，
-        // 但中位数 + MAD 让它影响不到基线中心。
-        Assert.Equal(24, shadow.Checked);
+        // 四条近期样本是独立评估集，均使用之前的 20 条 OK 样本建模。
+        Assert.Equal(4, shadow.Checked);
         Assert.Equal(1, shadow.TruePositive);
         Assert.Equal(1, shadow.FalsePositive);
         Assert.Equal(1, shadow.FalseNegative);
-        Assert.Equal(21, shadow.TrueNegative);
+        Assert.Equal(1, shadow.TrueNegative);
 
         // 报警中有真问题、不良中被抓到，各只有一条。
         Assert.Equal(0.5, shadow.Precision!.Value, 10);
         Assert.Equal(0.5, shadow.Recall!.Value, 10);
+        Assert.Equal(0.5, shadow.FalsePositiveRate!.Value, 10);
+        Assert.Equal(0.25, shadow.FalseAlertShare!.Value, 10);
     }
 
     [Fact]
@@ -311,6 +396,7 @@ public class ShadowModeTests
         Assert.Null(report.Shadow.Precision);
         Assert.Null(report.Shadow.Recall);
         Assert.Null(report.Shadow.FalsePositiveRate);
+        Assert.Null(report.Shadow.FalseAlertShare);
     }
 
     // ---------- 夹具 ----------
@@ -342,13 +428,14 @@ public class ShadowModeTests
         string seriesName,
         string recipeCode,
         double center,
-        double sigma)
+        double sigma,
+        DateTime? refreshedAt = null)
     {
         var cache = harness.Scope.ServiceProvider.GetRequiredService<ICurveBaselineCache>();
         cache.Replace(new CurveBaselineSnapshot
         {
             RecipeCode = recipeCode,
-            RefreshedAt = DateTime.Now,
+            RefreshedAt = refreshedAt ?? DateTime.Now,
             Templates = new Dictionary<CurveBaselineKey, CurveTemplate>
             {
                 [new CurveBaselineKey(curveDefinitionId, seriesName)] = new()

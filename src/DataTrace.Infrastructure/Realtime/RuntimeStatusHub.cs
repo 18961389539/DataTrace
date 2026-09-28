@@ -248,6 +248,11 @@ public sealed class RuntimeStatusHub : IRuntimeStatusHub, ICollectEventBus
             if (left.Name != right.Name
                 || left.Display != right.Display
                 || left.Unit != right.Unit
+                || left.NumericValue != right.NumericValue
+                || left.LowerLimit != right.LowerLimit
+                || left.UpperLimit != right.UpperLimit
+                || left.WarningLowerLimit != right.WarningLowerLimit
+                || left.WarningUpperLimit != right.WarningUpperLimit
                 || left.OutOfLimit != right.OutOfLimit
                 || left.Warning != right.Warning)
             {

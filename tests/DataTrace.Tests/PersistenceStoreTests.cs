@@ -1,4 +1,4 @@
-﻿using DataTrace.Domain.Constants;
+using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
@@ -237,7 +237,71 @@ public class AuditLoggerTests
         Assert.Equal("42", log.EntityKey);
         Assert.Equal("上限=10", log.OldValue);
         Assert.Equal("上限=12", log.NewValue);
+        Assert.Equal("Success", log.Outcome);
+        Assert.Equal("Blazor Server UI", log.Source);
+        Assert.False(string.IsNullOrWhiteSpace(log.CorrelationId));
         Assert.True(log.Time > DateTime.Now.AddMinutes(-1));
+    }
+
+    [Fact]
+    public async Task Write_persists_request_trace_metadata_and_keyword_searches_it()
+    {
+        using var workspace = new TempWorkspace();
+        await using var db = await TestDatabase.CreateConfigAsync(workspace.Path("config.db"));
+        var logger = new AuditLogger(db);
+
+        await logger.WriteAsync(
+            "admin", "LoginFailed", "User", "admin", null, "bad credentials",
+            outcome: "Failure",
+            source: "Login endpoint",
+            sourceIp: "192.0.2.10",
+            correlationId: "request-123");
+
+        var log = await db.AuditLogs.SingleAsync();
+        Assert.Equal("Failure", log.Outcome);
+        Assert.Equal("Login endpoint", log.Source);
+        Assert.Equal("192.0.2.10", log.SourceIp);
+        Assert.Equal("request-123", log.CorrelationId);
+
+        var (matches, total) = await logger.QueryAsync(keyword: "request-123");
+        Assert.Equal(1, total);
+        Assert.Equal(log.Id, Assert.Single(matches).Id);
+    }
+
+    [Fact]
+    public async Task Query_filters_by_outcome_source_and_correlation_and_orders_trace_events()
+    {
+        using var workspace = new TempWorkspace();
+        await using var db = await TestDatabase.CreateConfigAsync(workspace.Path("config.db"));
+        var logger = new AuditLogger(db);
+
+        await logger.WriteAsync(
+            "admin", "Update", "Station", "ST010", "old", "new",
+            source: "Blazor Server UI",
+            correlationId: "trace-group-1");
+        await logger.WriteAsync(
+            "admin", "Delete", "Station", "ST010", "new", null,
+            outcome: "Failure",
+            source: "PLC gateway",
+            correlationId: "trace-group-1");
+        await logger.WriteAsync(
+            "admin", "Update", "Station", "ST020", "old", "new",
+            outcome: "Failure",
+            source: "Login endpoint",
+            correlationId: "trace-group-2");
+
+        var (filtered, filteredTotal) = await logger.QueryAsync(
+            outcome: "Failure",
+            source: "PLC",
+            correlationId: "trace-group-1");
+        Assert.Equal(1, filteredTotal);
+        Assert.Equal("Delete", Assert.Single(filtered).Action);
+
+        var (timeline, timelineTotal) = await logger.QueryAsync(
+            correlationId: "trace-group-1",
+            newestFirst: false);
+        Assert.Equal(2, timelineTotal);
+        Assert.Equal(new[] { "Update", "Delete" }, timeline.Select(x => x.Action));
     }
 
     [Fact]
@@ -264,6 +328,62 @@ public class AuditLoggerTests
         Assert.Equal(2, limited.Count);
         Assert.Equal("Action4", limited[0].Action);
         Assert.Equal("Action3", limited[1].Action);
+    }
+
+    [Fact]
+    public async Task Query_id_ceiling_keeps_a_long_export_stable_when_new_rows_arrive()
+    {
+        using var workspace = new TempWorkspace();
+        await using var db = await TestDatabase.CreateConfigAsync(workspace.Path("config.db"));
+        var logger = new AuditLogger(db);
+
+        await logger.WriteAsync("admin", "BeforeExport", "User", "admin", null, null);
+        var exportCeiling = await logger.GetLatestIdAsync();
+        await logger.WriteAsync("admin", "DuringExport", "User", "admin", null, null);
+
+        var (items, total) = await logger.QueryAsync(idAtMost: exportCeiling);
+
+        Assert.Equal(1, total);
+        Assert.Equal("BeforeExport", Assert.Single(items).Action);
+        Assert.Equal(2, await logger.GetLatestIdAsync());
+    }
+
+    [Fact]
+    public async Task Query_pages_all_audit_rows_above_the_old_export_cap()
+    {
+        using var workspace = new TempWorkspace();
+        await using var db = await TestDatabase.CreateConfigAsync(workspace.Path("config.db"));
+        var timestamp = DateTime.Now;
+        db.AuditLogs.AddRange(Enumerable.Range(0, 5001).Select(index => new AuditLog
+        {
+            Time = timestamp.AddTicks(index),
+            UserName = "admin",
+            Action = $"Action{index}",
+            EntityType = "User",
+            EntityKey = index.ToString()
+        }));
+        await db.SaveChangesAsync();
+
+        var logger = new AuditLogger(db);
+        var idAtMost = await logger.GetLatestIdAsync();
+        var exportedIds = new List<long>();
+        var skip = 0;
+
+        while (true)
+        {
+            var (items, total) = await logger.QueryAsync(skip: skip, take: 2000, idAtMost: idAtMost);
+            Assert.Equal(5001, total);
+            if (items.Count == 0)
+            {
+                break;
+            }
+
+            exportedIds.AddRange(items.Select(item => item.Id));
+            skip += items.Count;
+        }
+
+        Assert.Equal(5001, exportedIds.Count);
+        Assert.Equal(5001, exportedIds.Distinct().Count());
     }
 
     [Fact]

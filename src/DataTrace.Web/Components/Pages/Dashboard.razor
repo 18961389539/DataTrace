@@ -19,7 +19,17 @@
 <PageHeader Title="实时看板" HelpRoute="/">
     <ChildContent>
         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_stations.Count 台工站</MudChip>
-        <LiveCadenceChip LastBeat="LastBeat" />
+        @if (_productionSimWarning)
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined"
+                     Icon="@Icons.Material.Filled.Science" OnClick="ToggleSimulationDetails"
+                     aria-expanded="@_showSimulationDetails" aria-controls="dt-simulation-details"
+                     aria-label="@(_showSimulationDetails ? "收起模拟数据说明" : "查看模拟数据说明")">
+                模拟数据
+            </MudChip>
+        }
+        <LiveCadenceChip LastBeat="LastBeat" FreshnessText="@FreshnessText"
+                         FreshnessColor="@FreshnessColor" FreshnessIcon="@FreshnessIcon" />
 
         @if (CanManageRecipes)
         {
@@ -53,37 +63,53 @@
     </Actions>
 </PageHeader>
 
+@if (_productionSimWarning && _showSimulationDetails)
+{
+    <div id="dt-simulation-details">
+        <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined"
+                  Class="dt-simulation-detail mb-3">
+            <div class="dt-simulation-detail-content">
+                <MudText Typo="Typo.body2" Class="dt-simulation-detail-text">
+                    当前已开启「启动后自动跑仿真」。看板与采集记录来自内置模拟器，不代表真实产线。
+                </MudText>
+                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                           EndIcon="@Icons.Material.Filled.ChevronRight" Href="/simulate">
+                    前往 PLC 仿真
+                </MudButton>
+            </div>
+        </MudAlert>
+    </div>
+}
+
 @* KPI 独立成条：跟页头的状态芯片平铺在一起时它们权重相同，扫一眼分不出主次。
    今日件数的口径（Asia/Shanghai）与三态判定的说明跟着各自的 ⓘ 走。 *@
 <div class="dt-kpi-bar">
     <div class="dt-kpi">
-        <span class="dt-kpi-label">今日采集<InfoHint Topic="HelpTexts.TodayScope" /></span>
-        <span class="dt-kpi-value">@_shiftTotal</span>
+        <div class="dt-kpi-main">
+            <span class="dt-kpi-label">今日采集<InfoHint Topic="HelpTexts.TodayScope" /></span>
+            <span class="dt-kpi-value">@_shiftTotal</span>
+        </div>
         <span class="dt-kpi-hint">OK @_shiftOk · 未判定 @_shiftNone</span>
     </div>
     <div class="dt-kpi">
-        <span class="dt-kpi-label">直通率<InfoHint Topic="HelpTexts.YieldRate" /></span>
-        <span class="dt-kpi-value">@_shiftYieldText</span>
+        <div class="dt-kpi-main">
+            <span class="dt-kpi-label">直通率<InfoHint Topic="HelpTexts.YieldRate" /></span>
+            <span class="dt-kpi-value">@_shiftYieldText</span>
+        </div>
     </div>
     <div class="dt-kpi">
-        <span class="dt-kpi-label">今日 NG<InfoHint Topic="HelpTexts.JudgementThreeState" /></span>
-        <span class="dt-kpi-value dt-kpi-value-alert">@_shiftNg</span>
+        <div class="dt-kpi-main">
+            <span class="dt-kpi-label">今日 NG<InfoHint Topic="HelpTexts.JudgementThreeState" /></span>
+            <span class="dt-kpi-value dt-kpi-value-alert">@_shiftNg</span>
+        </div>
     </div>
     <div class="dt-kpi">
-        <span class="dt-kpi-label">平均节拍</span>
-        <span class="dt-kpi-value">@AvgCadenceText</span>
+        <div class="dt-kpi-main">
+            <span class="dt-kpi-label">平均节拍</span>
+            <span class="dt-kpi-value">@AvgCadenceText</span>
+        </div>
     </div>
 </div>
-
-@if (_shopFloor)
-{
-    <div class="dt-shopfloor-exit">
-        <MudButton Variant="Variant.Filled" Color="Color.Primary"
-                   StartIcon="@Icons.Material.Filled.FullscreenExit"
-                   OnClick="ToggleShopFloorAsync">退出大屏</MudButton>
-    </div>
-}
-
 
 @if (_dataStale)
 {
@@ -99,13 +125,6 @@
     </MudAlert>
 }
 
-@if (_productionSimWarning)
-{
-    @* 开着仿真在 Production 是允许的（现场可以自己决定），所以这里只陈述事实、不再要求关闭。 *@
-    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
-        当前开着「启动后自动跑仿真」：看板与采集记录来自内置模拟器，不代表真实产线。可在「PLC 仿真」页关闭。
-    </MudAlert>
-}
 @if (!_collectEnabled)
 {
     <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
@@ -228,6 +247,7 @@ else
     private const string ShopFloorKey = "dt-shopfloor";
 
     private bool _productionSimWarning;
+    private bool _showSimulationDetails;
     private bool _backupStale;
     private bool _isAdmin;
     private bool _canManageRecipes;
@@ -235,6 +255,8 @@ else
     /// <summary>User preference for recent-collect panel (localStorage dtRecentOpen). Forced closed while shop-floor.</summary>
     private bool _recentOpenPref;
     private bool _dataStale;
+    private bool _collectorHasBeat;
+    private string _collectorAgeText = "等待采集心跳";
 
     private IReadOnlyList<PlcRuntimeStatus> _plcs = [];
     private IReadOnlyList<StationRuntimeStatus> _stations = [];
@@ -253,6 +275,8 @@ else
     private bool _shiftBusy;
     private int _configVersion = -1;
     private Timer? _uiTimer;
+
+    private void ToggleSimulationDetails() => _showSimulationDetails = !_showSimulationDetails;
 
     protected override async Task OnInitializedAsync()
     {
@@ -359,8 +383,26 @@ else
             return;
         }
 
-        var age = DateTime.UtcNow - Status.LastCollectorUtc;
+        var collectorBeatUtc = Status.LastCollectorUtc;
+        _collectorHasBeat = collectorBeatUtc != DateTime.MinValue;
+        if (!_collectorHasBeat)
+        {
+            _dataStale = true;
+            _collectorAgeText = "等待采集心跳";
+            return;
+        }
+
+        var age = DateTime.UtcNow - collectorBeatUtc;
         _dataStale = age.TotalSeconds > SystemDefaults.StaleHeartbeatSeconds;
+        _collectorAgeText = age.TotalSeconds < 0
+            ? "刚刚"
+            : age.TotalSeconds < 5
+                ? "刚刚"
+                : age.TotalSeconds < 60
+                    ? $"{(int)age.TotalSeconds} 秒前"
+                    : age.TotalMinutes < 60
+                        ? $"{(int)age.TotalMinutes} 分前"
+                        : $"{(int)age.TotalHours} 小时前";
     }
 
     private async Task RefreshConfigAlertsAsync()
@@ -430,6 +472,22 @@ else
     }
 
     private DateTime? LastBeat => _stations.Select(s => s.LastCompleteTime).Max();
+
+    private Color FreshnessColor => !_collectEnabled
+        ? Color.Warning
+        : _dataStale ? Color.Error : Color.Success;
+
+    private string FreshnessIcon => !_collectEnabled
+        ? Icons.Material.Filled.Pause
+        : _dataStale ? Icons.Material.Filled.Warning : Icons.Material.Filled.CheckCircle;
+
+    private string FreshnessText => !_collectEnabled
+        ? "采集已暂停"
+        : !_collectorHasBeat
+            ? "等待采集心跳"
+            : _dataStale
+            ? $"心跳超时 · {_collectorAgeText}"
+            : $"心跳正常 · {_collectorAgeText}";
 
     /// <summary>平均节拍：各工站最近一次采集耗时的均值；一台都没采过时给「—」。</summary>
     private string AvgCadenceText => DurationFormat.Average(_stations.Select(s => s.LastDurationMs));

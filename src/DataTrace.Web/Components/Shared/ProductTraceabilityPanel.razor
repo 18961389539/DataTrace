@@ -1,0 +1,500 @@
+@using DataTrace.Application.Configuration
+@using DataTrace.Application.Runtime
+@using DataTrace.Domain.Constants
+@using DataTrace.Domain.Entities
+@using DataTrace.Domain.Enums
+@using DataTrace.Web.Services
+@inject IRuntimeStore Store
+@inject IConfigRepository Config
+@inject NavigationManager Nav
+
+<MudPaper Class="dt-filter-card mb-3">
+    <form @onsubmit="SubmitSearchAsync" @onsubmit:preventDefault="true">
+        <MudStack Row="true" AlignItems="AlignItems.End" Spacing="2" Class="flex-wrap">
+            <MudTextField T="string" @bind-Value="_serialNo" Label="产品流水号"
+                          Placeholder="输入完整流水号，精确匹配"
+                          Immediate="true" Disabled="_loading"
+                          Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Tag"
+                          Class="dt-trace-search-field" />
+            <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@(_loading ? Icons.Material.Filled.Sync : Icons.Material.Filled.Search)"
+                       Disabled="_loading">
+                @(_loading ? "追溯中…" : "查询履历")
+            </MudButton>
+            <MudButton Variant="Variant.Text" OnClick="ClearSearch" Disabled="_loading"
+                       StartIcon="@Icons.Material.Filled.RestartAlt">清空</MudButton>
+        </MudStack>
+    </form>
+</MudPaper>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">@_error</MudAlert>
+}
+else if (_loading)
+{
+    <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="150px" />
+}
+else if (_searched && _traces.Count == 0)
+{
+    <MudAlert Severity="Severity.Info" Dense="true">
+        没有找到完全匹配的流水号。请核对编号，或确认对应月库记录仍在保留期内。
+    </MudAlert>
+}
+else if (_traces.Count > 0 && SelectedTrace is { } trace)
+{
+    @if (_traces.Count > 1)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">
+            该流水号关联到多个生产会话，不能合并推断；请选择要查看的会话。
+        </MudAlert>
+        <MudPaper Class="dt-filter-card mb-3">
+            <MudSelect T="string" Value="_selectedTraceKey" ValueChanged="SelectTrace"
+                       Label="生产会话" Dense="true" ShrinkLabel="true">
+                @foreach (var candidate in _traces)
+                {
+                    <MudSelectItem T="string" Value="@TraceKey(candidate)">
+                        @TraceOption(candidate)
+                    </MudSelectItem>
+                }
+            </MudSelect>
+        </MudPaper>
+    }
+
+    <MudPaper Class="pa-3 mb-3">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap mb-2">
+            <MudText Typo="Typo.subtitle1" Class="dt-trace-serial">@trace.Records[0].SerialNo</MudText>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@TraceStatusColor(trace)">
+                @TraceStatusText(trace)
+            </MudChip>
+            <MudSpacer />
+            <MudText Typo="Typo.caption" Class="dt-muted">
+                @StationCoverageText(trace)
+            </MudText>
+        </MudStack>
+        <MudStack Row="true" Spacing="3" Class="flex-wrap dt-trace-summary">
+            <MudText Typo="Typo.caption"><span class="dt-muted">型号</span> @RecipeLabel(trace)</MudText>
+            <MudText Typo="Typo.caption"><span class="dt-muted">托盘</span> @trace.Records[0].PalletCode</MudText>
+            <MudText Typo="Typo.caption"><span class="dt-muted">会话</span> @TraceKey(trace)</MudText>
+            <MudText Typo="Typo.caption"><span class="dt-muted">起止</span> @TraceTimeRange(trace)</MudText>
+            <MudText Typo="Typo.caption">
+                <span class="dt-muted">最终判定</span> @FinalJudgement(trace)
+            </MudText>
+        </MudStack>
+    </MudPaper>
+
+    @if (trace.Session is null)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">
+            记录没有有效的会话关联。以下为流水号匹配到的记录，但系统无法保证它们属于同一完整生产过程。
+        </MudAlert>
+    }
+    @if (_stations.Count == 0)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">
+            当前没有可用的工站路线配置，无法判断缺站；实际采集记录仍可在下方逐条查看。
+        </MudAlert>
+    }
+    else
+    {
+        <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">
+            缺站判断按当前启用工站及顺序对照；若历史期间工艺路线有调整，缺站提示仅供参考。
+        </MudAlert>
+    }
+
+    <MudPaper Class="pa-3 mb-3 dt-trace-history">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2 flex-wrap">
+            <MudText Typo="Typo.subtitle2">工站履历</MudText>
+            @if (MissingStationCount(trace) > 0)
+            {
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning">
+                    当前路线缺 @MissingStationCount(trace) 站
+                </MudChip>
+            }
+            @if (trace.Records.Any(r => r.ResultCode == ResultCodes.ProcessAbnormal))
+            {
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Error">检测到跳站/流程异常</MudChip>
+            }
+        </MudStack>
+        <div class="dt-trace-timeline">
+            @foreach (var step in RouteSteps(trace))
+            {
+                var stepRecords = RecordsForStep(step, trace);
+                <div class="@StepClass(step)">
+                    <div class="dt-trace-rail" aria-hidden="true">
+                        <span class="dt-trace-marker">
+                            @(step.Record is null
+                                ? "!"
+                                : step.Record.ResultCode != ResultCodes.Success || step.Record.Judgement == Judgement.Ng
+                                    ? "×"
+                                    : step.Record.Judgement == Judgement.Ok ? "✓" : "·")
+                        </span>
+                    </div>
+                    <div class="dt-trace-station-card">
+                        <div class="dt-trace-station-head">
+                            <div class="dt-trace-station-identity">
+                                <span class="dt-trace-station-code">@step.Code</span>
+                                <span class="dt-trace-station-name">@step.Name</span>
+                            </div>
+                            @if (step.Record is { } record)
+                            {
+                                <div class="dt-trace-station-status">
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                                             Color="@JudgementColor(record.Judgement)">
+                                        @DisplayLabels.JudgementText(record.Judgement)
+                                    </MudChip>
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                             Color="@ResultColor(record)">
+                                        @ResultCodes.Describe(record.ResultCode)
+                                    </MudChip>
+                                </div>
+                            }
+                            else
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning">
+                                    @StepStatus(step, trace)
+                                </MudChip>
+                            }
+                        </div>
+
+                        @if (step.Record is { } summaryRecord)
+                        {
+                            <div class="dt-trace-station-meta">
+                                <span class="dt-trace-step-time">@summaryRecord.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                                <span>@summaryRecord.TagValues.Count 点位 · @summaryRecord.Curves.Count 曲线</span>
+                                @if (summaryRecord.TagValues.Any(v => v.IsOutOfLimit))
+                                {
+                                    <span class="dt-trace-over-limit">
+                                        @summaryRecord.TagValues.Count(v => v.IsOutOfLimit) 项超限
+                                    </span>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(summaryRecord.ErrorMessage))
+                                {
+                                    <MudTooltip Text="@summaryRecord.ErrorMessage">
+                                        <span class="dt-trace-record-error">
+                                            <MudIcon Icon="@Icons.Material.Filled.Info" Size="Size.Small" Color="Color.Warning" />
+                                            采集信息
+                                        </span>
+                                    </MudTooltip>
+                                }
+                                @if (stepRecords.Count > 1)
+                                {
+                                    <MudText Typo="Typo.caption" Class="dt-muted">本工站 @stepRecords.Count 条记录</MudText>
+                                }
+                                @foreach (var detailRecord in stepRecords)
+                                {
+                                    <MudButton Size="Size.Small" Variant="Variant.Text"
+                                               EndIcon="@Icons.Material.Filled.ChevronRight"
+                                               Href="@DetailUrl(trace, detailRecord)">
+                                        @(stepRecords.Count > 1 ? $"{detailRecord.TriggerTime:HH:mm:ss} 明细" : "查看明细")
+                                    </MudButton>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </MudPaper>
+}
+else
+{
+    <MudPaper Class="pa-4">
+        <MudText Typo="Typo.body2" Class="dt-muted">
+            输入产品流水号后，可查看该次生产的工站顺序、采集结果及各站明细。
+        </MudText>
+    </MudPaper>
+}
+
+@code {
+    [Parameter] public string? InitialSerialNo { get; set; }
+    [Parameter] public EventCallback<string?> OnSearchCompleted { get; set; }
+
+    private string? _serialNo;
+    private string? _appliedInitialSerial;
+    private string? _selectedTraceKey;
+    private string? _error;
+    private bool _loading;
+    private bool _searched;
+    private IReadOnlyList<CollectSessionTrace> _traces = [];
+    private IReadOnlyList<Station> _stations = [];
+    private Dictionary<string, string> _recipeNames = new(StringComparer.Ordinal);
+
+    private CollectSessionTrace? SelectedTrace
+        => _traces.FirstOrDefault(x => TraceKey(x) == _selectedTraceKey);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var initial = InitialSerialNo?.Trim() ?? "";
+        if (string.Equals(initial, _appliedInitialSerial, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _appliedInitialSerial = initial;
+        _serialNo = initial;
+        if (!string.IsNullOrWhiteSpace(initial))
+        {
+            await SearchAsync(syncUrl: false);
+        }
+        else
+        {
+            ClearResult();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var snapshot = await Config.GetSnapshotAsync();
+        _stations = snapshot.Stations
+            .Where(s => s.Enabled)
+            .OrderBy(s => s.Sequence)
+            .ThenBy(s => s.Id)
+            .ToList();
+        _recipeNames = snapshot.Recipes
+            .Where(r => !string.IsNullOrWhiteSpace(r.Code))
+            .GroupBy(r => r.Code, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First().Name ?? "", StringComparer.Ordinal);
+    }
+
+    private Task SubmitSearchAsync() => SearchAsync();
+
+    private async Task SearchAsync(bool syncUrl = true)
+    {
+        var serialNo = _serialNo?.Trim() ?? "";
+        if (serialNo.Length == 0)
+        {
+            ClearResult();
+            _searched = false;
+            _error = "请输入完整产品流水号。";
+            return;
+        }
+
+        _serialNo = serialNo;
+        _appliedInitialSerial = serialNo;
+        ClearResult();
+        _loading = true;
+        _searched = true;
+        try
+        {
+            _traces = await Store.FindSessionTracesBySerialNoAsync(serialNo);
+            _selectedTraceKey = _traces.Count > 0 ? TraceKey(_traces[0]) : null;
+        }
+        catch (Exception ex)
+        {
+            _traces = [];
+            _selectedTraceKey = null;
+            _error = $"追溯查询失败：{ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+
+        if (syncUrl)
+        {
+            await OnSearchCompleted.InvokeAsync(serialNo);
+        }
+    }
+
+    private async Task ClearSearch()
+    {
+        _serialNo = "";
+        _appliedInitialSerial = "";
+        ClearResult();
+        _searched = false;
+        await OnSearchCompleted.InvokeAsync(null);
+    }
+
+    private void ClearResult()
+    {
+        _traces = [];
+        _selectedTraceKey = null;
+        _error = null;
+    }
+
+    private void SelectTrace(string? key) => _selectedTraceKey = key;
+
+    private string TraceKey(CollectSessionTrace trace)
+        => trace.SessionId is { } sessionId
+            ? $"{trace.MonthKey}:S{sessionId}"
+            : $"{trace.MonthKey}:R{trace.Records[0].Id}";
+
+    private string TraceOption(CollectSessionTrace trace)
+    {
+        var start = trace.Session?.StartTime ?? trace.Records[0].TriggerTime;
+        var status = trace.Session?.Status switch
+        {
+            SessionStatus.Closed => "已结束",
+            SessionStatus.Abnormal => "流程异常",
+            SessionStatus.Open => "进行中",
+            _ => "会话缺失"
+        };
+        var key = trace.SessionId is { } sessionId
+            ? $"{trace.MonthKey}/{sessionId}"
+            : $"{trace.MonthKey}/记录 {trace.Records[0].Id}";
+        return $"{start:yyyy-MM-dd HH:mm:ss} · {status} · {key}";
+    }
+
+    private IReadOnlyList<TraceStep> RouteSteps(CollectSessionTrace trace)
+    {
+        var byStation = trace.Records
+            .GroupBy(r => r.StationId)
+            .ToDictionary(g => g.Key, g => g.OrderBy(r => r.TriggerTime).ThenBy(r => r.Id).Last());
+        var steps = _stations
+            .Select(s => new TraceStep(s.Id, s.Code, s.Name, true, byStation.GetValueOrDefault(s.Id)))
+            .ToList();
+        var configuredIds = _stations.Select(s => s.Id).ToHashSet();
+        steps.AddRange(trace.Records
+            .Where(r => !configuredIds.Contains(r.StationId))
+            .GroupBy(r => r.StationId)
+            .Select(g =>
+            {
+                var record = g.OrderBy(r => r.TriggerTime).ThenBy(r => r.Id).Last();
+                return new TraceStep(record.StationId, record.StationCode, "当前未启用", false, record);
+            })
+            .OrderBy(s => s.Record?.TriggerTime));
+        return steps;
+    }
+
+    private static IReadOnlyList<CollectRecord> RecordsForStep(TraceStep step, CollectSessionTrace trace)
+        => trace.Records
+            .Where(r => r.StationId == step.StationId)
+            .OrderBy(r => r.TriggerTime)
+            .ThenBy(r => r.Id)
+            .ToList();
+
+    private int ExpectedStationCount => _stations.Count;
+
+    private string StationCoverageText(CollectSessionTrace trace)
+        => _stations.Count == 0
+            ? $"当前路线未配置 · 记录 {trace.Records.Count} 条"
+            : $"工站 {PresentStationCount(trace)}/{ExpectedStationCount} · 记录 {trace.Records.Count} 条";
+
+    private int PresentStationCount(CollectSessionTrace trace)
+        => trace.Records.Select(r => r.StationId).Distinct().Count(id => _stations.Any(s => s.Id == id));
+
+    private int MissingStationCount(CollectSessionTrace trace)
+    {
+        var visited = trace.Records.Select(r => r.StationId).ToHashSet();
+        return _stations.Count(s => !visited.Contains(s.Id));
+    }
+
+    private string TraceStatusText(CollectSessionTrace trace)
+    {
+        if (trace.Session is null)
+        {
+            return "会话关联缺失";
+        }
+
+        if (trace.Session.Status == SessionStatus.Abnormal ||
+            trace.Records.Any(r => r.ResultCode == ResultCodes.ProcessAbnormal))
+        {
+            return "流程异常";
+        }
+
+        if (trace.Session.Status == SessionStatus.Open)
+        {
+            return $"进行中 · 已采集 {PresentStationCount(trace)}/{ExpectedStationCount}";
+        }
+
+        if (_stations.Count == 0)
+        {
+            return "会话已结束 · 路线不可判定";
+        }
+
+        var missing = MissingStationCount(trace);
+        return missing > 0 ? $"会话已结束 · 当前路线缺 {missing} 站" : "工序完成";
+    }
+
+    private Color TraceStatusColor(CollectSessionTrace trace)
+    {
+        if (trace.Session is null || trace.Session.Status == SessionStatus.Abnormal ||
+            trace.Records.Any(r => r.ResultCode == ResultCodes.ProcessAbnormal))
+        {
+            return Color.Error;
+        }
+
+        if (trace.Session.Status == SessionStatus.Open)
+        {
+            return Color.Warning;
+        }
+
+        return _stations.Count == 0 ? Color.Info : Color.Success;
+    }
+
+    private string StepClass(TraceStep step)
+    {
+        var state = step.Record is null
+            ? "dt-trace-missing"
+            : step.Record.ResultCode != ResultCodes.Success || step.Record.Judgement == Judgement.Ng
+                ? "dt-trace-fault"
+                : step.Record.Judgement == Judgement.Ok ? "dt-trace-ok" : "dt-trace-unjudged";
+        return $"dt-trace-timeline-item {state}{(step.IsConfigured ? "" : " dt-trace-unconfigured")}";
+    }
+
+    private static string StepStatus(TraceStep step, CollectSessionTrace trace)
+    {
+        if (step.Record is null)
+        {
+            return trace.Session?.Status == SessionStatus.Open ? "待过站" : "缺记录";
+        }
+
+        if (step.Record.ResultCode != ResultCodes.Success)
+        {
+            return ResultCodes.Describe(step.Record.ResultCode);
+        }
+
+        return DisplayLabels.JudgementText(step.Record.Judgement);
+    }
+
+    private static Color JudgementColor(Judgement judgement)
+        => judgement switch
+        {
+            Judgement.Ok => Color.Success,
+            Judgement.Ng => Color.Error,
+            _ => Color.Default
+        };
+
+    private static Color ResultColor(CollectRecord record)
+        => record.ResultCode == ResultCodes.Success ? Color.Success : Color.Error;
+
+    private string RecipeLabel(CollectSessionTrace trace)
+    {
+        var code = trace.Records.Select(r => r.RecipeCode).FirstOrDefault(c => !string.IsNullOrWhiteSpace(c));
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            return "未选型号";
+        }
+
+        return _recipeNames.TryGetValue(code, out var name) && !string.IsNullOrWhiteSpace(name)
+            ? $"{code} · {name}"
+            : code;
+    }
+
+    private string TraceTimeRange(CollectSessionTrace trace)
+    {
+        var start = trace.Session?.StartTime ?? trace.Records[0].TriggerTime;
+        var end = trace.Session?.EndTime ?? trace.Records.Max(r => r.CompleteTime);
+        return $"{start:yyyy-MM-dd HH:mm:ss} — {end:yyyy-MM-dd HH:mm:ss}";
+    }
+
+    private static string FinalJudgement(CollectSessionTrace trace)
+    {
+        var judgement = trace.Session?.Judgement ?? Judgement.None;
+        if (judgement == Judgement.None && trace.Records.Count > 0)
+        {
+            judgement = trace.Records[^1].Judgement;
+        }
+        return DisplayLabels.JudgementText(judgement);
+    }
+
+    private string DetailUrl(CollectSessionTrace trace, CollectRecord record)
+    {
+        var serial = Uri.EscapeDataString(_serialNo?.Trim() ?? record.SerialNo);
+        var back = $"query?view=trace&trace={serial}";
+        return $"/query/{trace.MonthKey}/{record.Id}?back={Uri.EscapeDataString(back)}";
+    }
+
+    private sealed record TraceStep(int StationId, string Code, string Name, bool IsConfigured, CollectRecord? Record);
+}

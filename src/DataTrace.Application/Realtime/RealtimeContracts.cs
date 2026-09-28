@@ -28,6 +28,11 @@ public sealed class StationLiveTag
     public required string Name { get; init; }
     public required string Display { get; init; }
     public string? Unit { get; init; }
+    public double? NumericValue { get; init; }
+    public double? LowerLimit { get; init; }
+    public double? UpperLimit { get; init; }
+    public double? WarningLowerLimit { get; init; }
+    public double? WarningUpperLimit { get; init; }
 
     /// <summary>超出规格限（红区），该点位的记录会判废。</summary>
     public bool OutOfLimit { get; init; }

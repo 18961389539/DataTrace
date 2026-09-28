@@ -1,4 +1,5 @@
 using DataTrace.Domain.Entities;
+using DataTrace.Domain.Enums;
 
 namespace DataTrace.Domain.Evaluation;
 
@@ -96,6 +97,9 @@ public static class CurveFeatureDimensions
         CurveFeatureDimension.RiseIndex => feature.RiseIndex,
         _ => throw new ArgumentOutOfRangeException(nameof(dimension), dimension, "未知的波形特征维度")
     };
+
+    public static bool HasFiniteValues(CurveFeature? feature)
+        => feature is not null && All.All(dimension => double.IsFinite(Read(feature, dimension)));
 
     /// <summary>维度中文名，供界面与导出直接使用。</summary>
     public static string Label(CurveFeatureDimension dimension) => dimension switch
@@ -232,7 +236,10 @@ public enum CurveTemplateVerdict
     Suspicious = 2,
 
     /// <summary>显著偏离，疑似异常波形。</summary>
-    Abnormal = 3
+    Abnormal = 3,
+
+    /// <summary>特征包含 NaN 或 Infinity，不能可靠评分。</summary>
+    InvalidFeature = 4
 }
 
 /// <summary>一条曲线相对基线的比对结果。</summary>
@@ -244,8 +251,12 @@ public sealed record CurveTemplateScore
 
     public string PalletCode { get; init; } = "";
 
-    /// <summary>该曲线所属采集记录的判定，便于对照"偏离分是否抓到了真实不良"。</summary>
-    public bool IsNg { get; init; }
+    /// <summary>该曲线所属采集记录的实际判定；未判定样本不计入影子四格统计。</summary>
+    public Judgement ActualJudgement { get; init; }
+
+    public bool IsNg => ActualJudgement == Judgement.Ng;
+
+    public bool IsQualified => ActualJudgement == Judgement.Ok;
 
     /// <summary>
     /// 综合偏离分：各维度 z 分数的均方根（RMS）。

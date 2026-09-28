@@ -21,6 +21,7 @@ public sealed class RuntimeStore : IRuntimeStore
     public async Task SaveAsync(CollectSaveRequest request, CancellationToken cancellationToken = default)
     {
         var writtenFiles = new List<string>();
+        var databaseCommitted = false;
         try
         {
             foreach (var curve in request.Curves)
@@ -85,12 +86,18 @@ public sealed class RuntimeStore : IRuntimeStore
                 {
                     session.Status = SessionStatus.Closed;
                     session.EndTime = request.Record.CompleteTime;
-                    session.Judgement = request.Record.Judgement;
+                    var judgements = await db.CollectRecords.AsNoTracking()
+                        .Where(record => record.PalletSessionId == session.Id)
+                        .Select(record => record.Judgement)
+                        .ToListAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                    session.Judgement = CombineSessionJudgements(judgements);
                 }
             }
 
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+            databaseCommitted = true;
 
             if (request.RemoveActiveSession)
             {
@@ -104,6 +111,11 @@ public sealed class RuntimeStore : IRuntimeStore
         }
         catch
         {
+            if (databaseCommitted)
+            {
+                throw;
+            }
+
             // 曲线文件必须由写它的那个存储来删：只有它知道自己的根目录。
             // 以前这里自己拼 cwd + "data/curves"，Windows 服务的工作目录是 System32，
             // 而且 DataRoot 也可能指到别处，两种情况下回滚都静默失效、留下孤儿文件。
@@ -113,7 +125,7 @@ public sealed class RuntimeStore : IRuntimeStore
             {
                 try
                 {
-                    await _curves.DeleteFileAsync(relative, cancellationToken).ConfigureAwait(false);
+                    await _curves.DeleteFileAsync(relative, CancellationToken.None).ConfigureAwait(false);
                 }
                 catch
                 {
@@ -127,53 +139,41 @@ public sealed class RuntimeStore : IRuntimeStore
 
     public async Task<CollectQueryResult> QueryAsync(CollectQueryRequest request, CancellationToken cancellationToken = default)
     {
-        var months = RuntimeDbFactory.MonthsInRange(request.From, request.To)
-            .Where(_factory.Exists)
-            .OrderByDescending(x => x)
-            .ToList();
+        var months = ExistingMonthKeys();
+        var total = 0;
+        var candidates = new List<CollectRecordListItem>();
+        var perMonthTake = (int)Math.Min(
+            int.MaxValue,
+            (long)Math.Max(0, request.Skip) + Math.Max(0, request.Take));
 
-        var counts = new List<(string Month, int Count)>();
         foreach (var month in months)
         {
             await using var db = _factory.Open(month);
-            var count = await Filter(db.CollectRecords.AsNoTracking(), request).CountAsync(cancellationToken).ConfigureAwait(false);
-            counts.Add((month, count));
-        }
-
-        var total = counts.Sum(x => x.Count);
-        var skip = request.Skip;
-        var take = request.Take;
-        var items = new List<CollectRecordListItem>();
-
-        foreach (var (month, count) in counts)
-        {
-            if (take <= 0)
+            var filtered = Filter(db.CollectRecords.AsNoTracking(), request);
+            total += await filtered.CountAsync(cancellationToken).ConfigureAwait(false);
+            if (perMonthTake == 0)
             {
-                break;
-            }
-
-            if (skip >= count)
-            {
-                skip -= count;
                 continue;
             }
 
-            await using var db = _factory.Open(month);
-            // 列表 / 导出不需要 Products 导航：界面只展示记录头字段，Include 会放大到万行级导出。
-            // 明细页走 GetRecordAsync，仍会 Include Products / TagValues / Curves。
-            var page = await Filter(db.CollectRecords.AsNoTracking(), request)
+            // Records can be stored in their session's start-month database even when their
+            // trigger time is later. Fetch each database's local top N, then merge globally.
+            var page = await filtered
                 .OrderByDescending(x => x.TriggerTime)
-                // 同毫秒并列的记录要有稳定次序：只按时间排序时，翻页取到的是两批"并列中的任意几条"，
-                // 结果就是某些行重复出现、另一些行一次都不出现。
                 .ThenByDescending(x => x.Id)
-                .Skip(skip)
-                .Take(take)
+                .Take(perMonthTake)
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
-            skip = 0;
-            take -= page.Count;
-            items.AddRange(page.Select(r => new CollectRecordListItem { MonthKey = month, Record = r }));
+            candidates.AddRange(page.Select(r => new CollectRecordListItem { MonthKey = month, Record = r }));
         }
+
+        var items = candidates
+            .OrderByDescending(x => x.Record.TriggerTime)
+            .ThenByDescending(x => x.MonthKey, StringComparer.Ordinal)
+            .ThenByDescending(x => x.Record.Id)
+            .Skip(Math.Max(0, request.Skip))
+            .Take(Math.Max(0, request.Take))
+            .ToList();
 
         return new CollectQueryResult { Total = total, Items = items };
     }
@@ -227,10 +227,69 @@ public sealed class RuntimeStore : IRuntimeStore
             .ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesBySerialNoAsync(
+        string serialNo,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(serialNo))
+        {
+            return [];
+        }
+
+        var traces = new List<CollectSessionTrace>();
+        foreach (var month in _factory.ListMonthKeys()
+                     .Where(RuntimeDbFactory.IsValidMonthKey)
+                     .OrderByDescending(x => x, StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await using var db = _factory.Open(month);
+            var records = await db.CollectRecords.AsNoTracking()
+                .Where(x => x.SerialNo == serialNo)
+                .Include(x => x.PalletSession)
+                .Include(x => x.Products)
+                .Include(x => x.TagValues)
+                .Include(x => x.Curves)
+                .AsSplitQuery()
+                .OrderBy(x => x.TriggerTime)
+                .ThenBy(x => x.Id)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            foreach (var group in records
+                         .Where(x => x.PalletSessionId > 0 && x.PalletSession is not null)
+                         .GroupBy(x => x.PalletSessionId))
+            {
+                var ordered = group.ToList();
+                traces.Add(new CollectSessionTrace
+                {
+                    MonthKey = month,
+                    SessionId = group.Key,
+                    Session = ordered[0].PalletSession,
+                    Records = ordered
+                });
+            }
+
+            foreach (var record in records.Where(x => x.PalletSessionId <= 0 || x.PalletSession is null))
+            {
+                traces.Add(new CollectSessionTrace
+                {
+                    MonthKey = month,
+                    SessionId = null,
+                    Session = null,
+                    Records = [record]
+                });
+            }
+        }
+
+        return traces
+            .OrderByDescending(x => x.Session?.StartTime ?? x.Records[0].TriggerTime)
+            .ToList();
+    }
+
     public async Task<IReadOnlyList<CollectRecord>> QueryForReportAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default)
     {
         var list = new List<CollectRecord>();
-        foreach (var month in RuntimeDbFactory.MonthsInRange(from, to).Where(_factory.Exists))
+        foreach (var month in ExistingMonthKeys())
         {
             await using var db = _factory.Open(month);
             var part = await db.CollectRecords.AsNoTracking()
@@ -253,7 +312,7 @@ public sealed class RuntimeStore : IRuntimeStore
         CancellationToken cancellationToken = default)
     {
         var counts = new List<JudgementCount>();
-        foreach (var month in RuntimeDbFactory.MonthsInRange(from, to).Where(_factory.Exists))
+        foreach (var month in ExistingMonthKeys())
         {
             await using var db = _factory.Open(month);
             var query = db.CollectRecords.AsNoTracking()
@@ -299,7 +358,7 @@ public sealed class RuntimeStore : IRuntimeStore
         CancellationToken cancellationToken = default)
     {
         var codes = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var month in RuntimeDbFactory.MonthsInRange(from, to).Where(_factory.Exists))
+        foreach (var month in ExistingMonthKeys())
         {
             await using var db = _factory.Open(month);
             var part = await db.CollectRecords.AsNoTracking()
@@ -344,7 +403,7 @@ public sealed class RuntimeStore : IRuntimeStore
         CancellationToken cancellationToken)
     {
         var points = new List<TagIssuePoint>();
-        foreach (var month in RuntimeDbFactory.MonthsInRange(from, to).Where(_factory.Exists))
+        foreach (var month in ExistingMonthKeys())
         {
             await using var db = _factory.Open(month);
             // 显式 join 而不是靠导航属性，保证被翻译成单条带 WHERE 的 SQL，
@@ -399,11 +458,7 @@ public sealed class RuntimeStore : IRuntimeStore
         // take > 0 时从最新的月库往回取、凑够就停：每个月都取 take 条的话，
         // "单次最多 take 点"这个上限在跨年区间上会被放大十几倍（高频点位一年十几万条），
         // 而更早的月库不可能提供更新的点，取它们纯属白读。
-        var months = RuntimeDbFactory.MonthsInRange(from, to).Where(_factory.Exists).ToList();
-        if (take > 0)
-        {
-            months.Reverse();
-        }
+        var months = ExistingMonthKeys();
 
         foreach (var month in months)
         {
@@ -449,15 +504,11 @@ public sealed class RuntimeStore : IRuntimeStore
                 .ConfigureAwait(false);
             points.AddRange(part);
 
-            if (take > 0 && points.Count >= take)
-            {
-                break;
-            }
         }
 
         if (take <= 0)
         {
-            return points;
+            return points.OrderBy(p => p.Time).ToList();
         }
 
         // 跨月合并后重新取全局最新 take 条：已取到的点比所有未读的月库都新，
@@ -476,7 +527,8 @@ public sealed class RuntimeStore : IRuntimeStore
         DateTime to,
         int take,
         IReadOnlyCollection<string>? recipeCodes = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Judgement? judgement = null)
     {
         var points = new List<CurveFeaturePoint>();
         if (take <= 0)
@@ -490,7 +542,7 @@ public sealed class RuntimeStore : IRuntimeStore
 
         // 倒序走月库、取够即停：每个月都取 take 条的话，跨年区间的读取量会按月份数放大，
         // 而更早的月库不可能提供更新的点。
-        var months = RuntimeDbFactory.MonthsInRange(from, to).Where(_factory.Exists).Reverse().ToList();
+        var months = ExistingMonthKeys();
 
         foreach (var month in months)
         {
@@ -514,6 +566,11 @@ public sealed class RuntimeStore : IRuntimeStore
                             && x.record.TriggerTime >= from
                             && x.record.TriggerTime <= to);
 
+            if (judgement is { } requiredJudgement)
+            {
+                query = query.Where(x => x.record.Judgement == requiredJudgement);
+            }
+
             if (!string.IsNullOrWhiteSpace(seriesName))
             {
                 query = query.Where(x => x.feature.SeriesName == seriesName);
@@ -532,7 +589,7 @@ public sealed class RuntimeStore : IRuntimeStore
                     CurveRecordId = x.curve.Id,
                     Time = x.record.TriggerTime,
                     PalletCode = x.record.PalletCode,
-                    IsNg = x.record.Judgement == Judgement.Ng,
+                    ActualJudgement = x.record.Judgement,
                     RecipeCode = x.record.RecipeCode,
                     SeriesName = x.feature.SeriesName,
                     Role = x.feature.Role,
@@ -564,10 +621,6 @@ public sealed class RuntimeStore : IRuntimeStore
 
             points.AddRange(part);
 
-            if (points.Count >= take)
-            {
-                break;
-            }
         }
 
         // 跨月合并后重新取全局最新 take 条：已取到的点比所有未读的月库都新，
@@ -586,8 +639,8 @@ public sealed class RuntimeStore : IRuntimeStore
         DateTime to,
         CancellationToken cancellationToken = default)
     {
-        var counts = new Dictionary<string, (int Total, int Ng)>(StringComparer.Ordinal);
-        foreach (var month in RuntimeDbFactory.MonthsInRange(from, to).Where(_factory.Exists))
+        var counts = new Dictionary<string, (int Total, int Ng, int Unjudged)>(StringComparer.Ordinal);
+        foreach (var month in ExistingMonthKeys())
         {
             await using var db = _factory.Open(month);
             var part = await db.CurveFeatures
@@ -611,7 +664,8 @@ public sealed class RuntimeStore : IRuntimeStore
                 {
                     RecipeCode = g.Key,
                     Total = g.Count(),
-                    Ng = g.Count(x => x.record.Judgement == Judgement.Ng)
+                    Ng = g.Count(x => x.record.Judgement == Judgement.Ng),
+                    Unjudged = g.Count(x => x.record.Judgement == Judgement.None)
                 })
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
@@ -620,14 +674,18 @@ public sealed class RuntimeStore : IRuntimeStore
             {
                 var code = item.RecipeCode ?? "";
                 var current = counts.GetValueOrDefault(code);
-                counts[code] = (current.Total + item.Total, current.Ng + item.Ng);
+                counts[code] = (
+                    current.Total + item.Total,
+                    current.Ng + item.Ng,
+                    current.Unjudged + item.Unjudged);
             }
         }
 
         return counts
             .OrderByDescending(kv => kv.Value.Total)
             .ThenBy(kv => kv.Key, StringComparer.Ordinal)
-            .Select(kv => new CurveRecipeSampleCount(kv.Key, kv.Value.Total, kv.Value.Ng))
+            .Select(kv => new CurveRecipeSampleCount(
+                kv.Key, kv.Value.Total, kv.Value.Ng, kv.Value.Unjudged))
             .ToList();
     }
 
@@ -693,4 +751,27 @@ public sealed class RuntimeStore : IRuntimeStore
     /// </summary>
     private static IQueryable<CollectRecord> ApplyRecipeFilter(IQueryable<CollectRecord> query, string? recipeCode)
         => recipeCode is null ? query : query.Where(x => x.RecipeCode == recipeCode);
+
+    /// <summary>
+    /// Sessions keep their records in the month database where the session began.
+    /// Time-based queries must therefore search every retained database and filter by TriggerTime.
+    /// </summary>
+    private List<string> ExistingMonthKeys()
+        => _factory.ListMonthKeys()
+            .Where(RuntimeDbFactory.IsValidMonthKey)
+            .Where(_factory.Exists)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToList();
+
+    private static Judgement CombineSessionJudgements(IReadOnlyCollection<Judgement> judgements)
+    {
+        if (judgements.Count == 0 || judgements.All(judgement => judgement == Judgement.None))
+        {
+            return Judgement.None;
+        }
+
+        return judgements.Any(judgement => judgement == Judgement.Ng)
+            ? Judgement.Ng
+            : Judgement.Ok;
+    }
 }

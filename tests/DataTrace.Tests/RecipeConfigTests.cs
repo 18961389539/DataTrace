@@ -182,15 +182,38 @@ public class RecipeRepositoryTests
     }
 
     [Fact]
-    public async Task Rejects_blank_and_illegal_codes()
+    public async Task Rejects_explicit_codes_with_unsupported_characters()
     {
         await using var harness = await CollectHarness.CreateAsync();
         var repo = harness.ConfigRepository;
 
         await Assert.ThrowsAsync<InvalidOperationException>(
-            () => repo.SaveRecipeAsync(new Recipe { Code = "   ", Name = "空编码" }));
-        await Assert.ThrowsAsync<InvalidOperationException>(
             () => repo.SaveRecipeAsync(new Recipe { Code = "P,Q", Name = "逗号编码" }));
+    }
+
+    [Fact]
+    public async Task Generates_a_stable_internal_code_for_new_recipes_without_one()
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+        var repo = harness.ConfigRepository;
+        var recipe = new Recipe { Name = "自动编码型号" };
+
+        await repo.SaveRecipeAsync(recipe);
+
+        Assert.StartsWith("SYS-", recipe.Code);
+        Assert.Null(RecipeCodeRules.Error(recipe.Code));
+        var generatedCode = recipe.Code;
+
+        var second = new Recipe { Name = "另一个自动编码型号" };
+        await repo.SaveRecipeAsync(second);
+        Assert.NotEqual(generatedCode, second.Code);
+
+        recipe.Name = "修改后的名称";
+        await repo.SaveRecipeAsync(recipe);
+
+        var saved = (await repo.GetSnapshotAsync()).Recipes.Single(r => r.Id == recipe.Id);
+        Assert.Equal(generatedCode, saved.Code);
+        Assert.Equal("修改后的名称", saved.Name);
     }
 
     [Fact]

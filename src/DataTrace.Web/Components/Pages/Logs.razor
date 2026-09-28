@@ -3,7 +3,10 @@
 @using DataTrace.Application.Configuration
 @using DataTrace.Domain.Entities
 @using DataTrace.Web.Components.Shared
+@using DataTrace.Web.Services
+@using Microsoft.AspNetCore.Components.Authorization
 @inject IAuditLogger Audit
+@inject AuthenticationStateProvider AuthState
 @inject IJSRuntime Js
 @inject DtToast Toast
 
@@ -11,10 +14,6 @@
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">
             命中 @_total 条（配置库 AuditLogs；每页 @PageSize 条）
-            @if (_total > ExportCap)
-            {
-                <text>；导出上限 @ExportCap 条</text>
-            }
         </MudText>
     </Actions>
 </PageHeader>
@@ -30,20 +29,21 @@
     {
         <MudText Typo="Typo.body2" Class="dt-muted px-4 pb-3">
             审计日志保存在配置库（config.db / AuditLogs），与运行时月库相互独立。
-            「系统设置 → 保留年数」只清理过期的运行时月库与曲线文件，<b>不会</b>按年数清理本页审计记录。
+            「系统设置 → 运行数据保留年数」不影响审计日志；审计日志单独设置为 0 时永久在线保留。
+            设置为 1–30 年后，过期完整月份先归档到 audit-archive 并校验清单，再清理数据库记录。
         </MudText>
     }
 </MudPaper>
 
 <MudPaper Class="dt-filter-card mb-3">
     <MudGrid Class="dt-filters">
-        <MudItem xs="12" sm="6" md="3">
+        <MudItem xs="12" sm="6" md="6">
             <MudTextField @bind-Value="_keyword" @bind-Value:after="OnFilterChanged" Label="关键字"
-                          Placeholder="用户 / 对象 / 键 / 变更内容"
+                          Placeholder="用户 / 对象 / 键 / 变更 / 来源 / 追踪 ID"
                           Immediate="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" />
             <InfoHint Topic="HelpTexts.LogKeyword" />
         </MudItem>
-        <MudItem xs="12" sm="6" md="3">
+        <MudItem xs="12" sm="6" md="6">
             <MudSelect T="string" @bind-Value="_action" @bind-Value:after="OnFilterChanged" Label="动作" Clearable="true">
                 @foreach (var action in _actions)
                 {
@@ -51,35 +51,61 @@
                 }
             </MudSelect>
         </MudItem>
-        <MudItem xs="12" sm="6" md="3">
-            <MudSelect T="string" @bind-Value="_user" @bind-Value:after="OnFilterChanged" Label="用户" Clearable="true">
-                @foreach (var user in _users)
-                {
-                    <MudSelectItem T="string" Value="@user">@user</MudSelectItem>
-                }
-            </MudSelect>
-        </MudItem>
-        <MudItem xs="12" sm="6" md="3">
-            <MudSelect T="string" @bind-Value="_entityType" @bind-Value:after="OnFilterChanged" Label="对象" Clearable="true">
-                @foreach (var entity in _entityTypes)
-                {
-                    <MudSelectItem T="string" Value="@entity">@DisplayLabels.EntityType(entity)</MudSelectItem>
-                }
-            </MudSelect>
-        </MudItem>
     </MudGrid>
+
+    <div id="dt-log-advanced-filters" class="dt-log-advanced-filters" hidden="@(!_moreFiltersOpen)">
+        <MudGrid Class="dt-filters">
+            <MudItem xs="12" sm="6" md="6">
+                <MudSelect T="string" @bind-Value="_user" @bind-Value:after="OnFilterChanged" Label="用户" Clearable="true">
+                    @foreach (var user in _users)
+                    {
+                        <MudSelectItem T="string" Value="@user">@user</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="6">
+                <MudSelect T="string" @bind-Value="_entityType" @bind-Value:after="OnFilterChanged" Label="对象" Clearable="true">
+                    @foreach (var entity in _entityTypes)
+                    {
+                        <MudSelectItem T="string" Value="@entity">@DisplayLabels.EntityType(entity)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4">
+                <MudSelect T="string" @bind-Value="_outcome" @bind-Value:after="OnFilterChanged" Label="结果" Clearable="true">
+                    <MudSelectItem T="string" Value="@("Success")">成功</MudSelectItem>
+                    <MudSelectItem T="string" Value="@("Failure")">失败</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4">
+                <MudTextField @bind-Value="_source" @bind-Value:after="OnFilterChanged" Label="来源"
+                              Placeholder="按来源名称匹配" Immediate="true" Clearable="true" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4">
+                <MudTextField @bind-Value="_correlationId" @bind-Value:after="OnFilterChanged" Label="关联 ID"
+                              Placeholder="粘贴完整关联 ID" Immediate="true" Clearable="true" />
+            </MudItem>
+        </MudGrid>
+    </div>
 
     @* 时间区间与数据查询页共用同一套组件与自然日口径。审计最常圈定的是「某一天」，
        只有下界的「近 N 天」做不到；而且滚动 168 小时和自然日不是一回事，
        同一个「近 7 天」在两页查出不同条数，比没有这个功能更糟。 *@
     <DateRangeFilter @bind-From="_from" @bind-To="_to" OnRangeChanged="OnFilterChanged" />
 
-    <MudStack Row="true" Spacing="2" Class="pb-3">
+    <MudStack Row="true" Spacing="2" Class="pb-3 dt-log-filter-actions">
+        <MudButton Variant="Variant.Text" Size="Size.Small"
+                   aria-expanded="@(_moreFiltersOpen ? "true" : "false")"
+                   aria-controls="dt-log-advanced-filters"
+                   StartIcon="@(_moreFiltersOpen ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
+                   OnClick="@(() => _moreFiltersOpen = !_moreFiltersOpen)">
+            更多筛选@(AdvancedFilterCount > 0 ? $" · {AdvancedFilterCount}" : "")
+        </MudButton>
         <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="@(() => Reload())"
                    StartIcon="@Icons.Material.Filled.Refresh" Disabled="_loading">刷新</MudButton>
         <MudButton Variant="Variant.Outlined" OnClick="ExportCsv" Disabled="_exporting || _total == 0"
                    StartIcon="@(_exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)">
-            @(_exporting ? "导出中…" : "导出")
+            @(_exporting ? $"导出中 {_exportedRows:N0}/{_exportTotal:N0}" : "完整导出")
         </MudButton>
     </MudStack>
 </MudPaper>
@@ -108,6 +134,21 @@
             <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
                      >对象 @DisplayLabels.EntityType(_entityType)<MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close" aria-label="移除该筛选条件" OnClick="@(() => ClearOneAsync(() => _entityType = ""))" /></MudChip>
         }
+        @if (!string.IsNullOrWhiteSpace(_outcome))
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                     >结果 @OutcomeLabel(_outcome)<MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close" aria-label="移除该筛选条件" OnClick="@(() => ClearOneAsync(() => _outcome = ""))" /></MudChip>
+        }
+        @if (!string.IsNullOrWhiteSpace(_source))
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                     >来源 @_source<MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close" aria-label="移除该筛选条件" OnClick="@(() => ClearOneAsync(() => _source = null))" /></MudChip>
+        }
+        @if (!string.IsNullOrWhiteSpace(_correlationId))
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                     >关联 ID @_correlationId<MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close" aria-label="移除该筛选条件" OnClick="@(() => ClearOneAsync(() => _correlationId = null))" /></MudChip>
+        }
         @if (_from is not null || _to is not null)
         {
             <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
@@ -117,6 +158,69 @@
         }
         <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ClearAllAsync">清空全部</MudButton>
     </div>
+}
+
+@if (!string.IsNullOrWhiteSpace(_timelineCorrelationId))
+{
+    <MudPaper Class="dt-audit-timeline-panel mb-3" Elevation="0">
+        <div class="dt-audit-timeline-heading">
+            <div>
+                <MudText Typo="Typo.subtitle2">关联操作时间线</MudText>
+                <MudText Typo="Typo.caption" Class="dt-muted">
+                    @_timelineTotal 条 · @_timelineCorrelationId
+                    @if (_timelineTotal > TimelineCap)
+                    {
+                        <span> · 仅显示最早 @TimelineCap 条</span>
+                    }
+                </MudText>
+            </div>
+            <MudSpacer />
+            <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
+                           aria-label="关闭关联操作时间线" OnClick="CloseTimeline" />
+        </div>
+        @if (_timelineLoading)
+        {
+            <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+        }
+        else if (_timelineItems.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Class="dt-muted py-2">没有找到该关联 ID 的日志。</MudText>
+        }
+        else
+        {
+            <ol class="dt-audit-timeline" aria-label="按时间排序的关联操作">
+                @foreach (var entry in _timelineItems)
+                {
+                    <li class="dt-audit-timeline-item">
+                        <div class="dt-audit-timeline-meta">
+                            <time>@entry.Time.ToString("yyyy-MM-dd HH:mm:ss")</time>
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="@ActionColor(entry.Action)">
+                                @DisplayLabels.AuditAction(entry.Action)
+                            </MudChip>
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@OutcomeColor(entry.Outcome)">
+                                @OutcomeLabel(entry.Outcome)
+                            </MudChip>
+                            <span>@entry.UserName</span>
+                            <span>@entry.Source</span>
+                        </div>
+                        <MudText Typo="Typo.body2">
+                            @DisplayLabels.EntityType(entry.EntityType) · @(entry.EntityKey ?? "无对象键")
+                        </MudText>
+                        @if (!string.IsNullOrEmpty(entry.OldValue) || !string.IsNullOrEmpty(entry.NewValue))
+                        {
+                            <details class="dt-audit-timeline-change">
+                                <summary>查看变更内容</summary>
+                                <div class="dt-audit-timeline-values">
+                                    <div><b>变更前</b><pre>@AuditValueFormatter.Format(entry.OldValue)</pre></div>
+                                    <div><b>变更后</b><pre>@AuditValueFormatter.Format(entry.NewValue)</pre></div>
+                                </div>
+                            </details>
+                        }
+                    </li>
+                }
+            </ol>
+        }
+    </MudPaper>
 }
 
 @* 键 = 这条记录指向谁（用户 / 型号编码 / 月库-记录号 / 导出区间）；变更 = 改了什么。
@@ -134,6 +238,7 @@
         <MudTh>动作</MudTh>
         <MudTh>对象</MudTh>
         <MudTh>键 <InfoHint Topic="HelpTexts.LogEntityKey" /></MudTh>
+        <MudTh>结果 / 来源</MudTh>
         <MudTh>变更 <InfoHint Topic="HelpTexts.LogChange" /></MudTh>
     </HeaderContent>
     <RowTemplate Context="item">
@@ -148,29 +253,77 @@
         </MudTd>
         <MudTd DataLabel="对象">@DisplayLabels.EntityType(item.EntityType)</MudTd>
         <MudTd DataLabel="键">@item.EntityKey</MudTd>
+        <MudTd DataLabel="结果 / 来源" Class="dt-audit-origin">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@OutcomeColor(item.Outcome)">
+                    @OutcomeLabel(item.Outcome)
+                </MudChip>
+                <MudText Typo="Typo.caption" Class="dt-muted">@item.Source</MudText>
+            </MudStack>
+        </MudTd>
         <MudTd DataLabel="变更">
-            <div class="dt-change-cell" @onclick="@(() => ToggleExpanded(item.Id))"
-                 role="button" tabindex="0"
-                 aria-expanded="@(_expanded.Contains(item.Id) ? "true" : "false")">
+            <button type="button" class="dt-change-cell"
+                    @onclick="@((MouseEventArgs args) => ToggleExpandedFromClick(item.Id, args))"
+                    @onkeydown="@((KeyboardEventArgs args) => ToggleExpandedFromKeyDown(item.Id, args))"
+                    @onkeyup="@((KeyboardEventArgs args) => ToggleExpandedFromKeyUp(item.Id, args))"
+                    aria-label="@($"展开或收起变更详情：{ChangeSummary(item)}")"
+                    aria-expanded="@(_expanded.Contains(item.Id) ? "true" : "false")"
+                    aria-controls="@($"dt-change-details-{item.Id}")">
                 <span class="dt-change-summary">@ChangeSummary(item)</span>
                 <MudIcon Icon="@(_expanded.Contains(item.Id) ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
                          Size="Size.Small" />
-            </div>
+            </button>
         </MudTd>
     </RowTemplate>
     <ChildRowContent Context="item">
         @if (_expanded.Contains(item.Id))
         {
+            var differences = AuditValueFormatter.GetDifferences(item.OldValue, item.NewValue);
             <MudTr>
-                <MudTd colspan="6">
-                    <div class="dt-change-detail">
+                <MudTd colspan="7">
+                    <div class="dt-change-detail" id="@($"dt-change-details-{item.Id}")">
+                        @if (differences.Count > 0)
+                        {
+                            <div class="dt-audit-diff">
+                                <MudText Typo="Typo.caption" Class="dt-change-pane-label">字段差异</MudText>
+                                @foreach (var difference in differences)
+                                {
+                                    <div class="dt-audit-diff-row">
+                                        <code>@difference.Path</code>
+                                        <span class="dt-audit-diff-old">@difference.OldValue</span>
+                                        <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small" />
+                                        <span class="dt-audit-diff-new">@difference.NewValue</span>
+                                    </div>
+                                }
+                            </div>
+                        }
+                        <div class="dt-audit-trace">
+                            <span><b>来源：</b>@item.Source</span>
+                            <span><b>结果：</b>@OutcomeLabel(item.Outcome)</span>
+                            <span><b>来源 IP：</b>@(item.SourceIp ?? "未提供")</span>
+                            <span class="dt-audit-trace-id">
+                                <b>关联 ID：</b>
+                                @if (!string.IsNullOrWhiteSpace(item.CorrelationId))
+                                {
+                                    <code>@item.CorrelationId</code>
+                                    <MudButton Size="Size.Small" Variant="Variant.Text" Class="dt-audit-timeline-link"
+                                               OnClick="@(() => LoadTimelineAsync(item.CorrelationId!))">
+                                        时间线
+                                    </MudButton>
+                                }
+                                else
+                                {
+                                    <span>未提供</span>
+                                }
+                            </span>
+                        </div>
                         <div class="dt-change-pane">
                             <span class="dt-change-pane-label">变更前</span>
-                            <div class="dt-change-pane-body old">@(item.OldValue ?? "（无）")</div>
+                            <div class="dt-change-pane-body old">@AuditValueFormatter.Format(item.OldValue)</div>
                         </div>
                         <div class="dt-change-pane">
                             <span class="dt-change-pane-label">变更后</span>
-                            <div class="dt-change-pane-body new">@(item.NewValue ?? "（无）")</div>
+                            <div class="dt-change-pane-body new">@AuditValueFormatter.Format(item.NewValue)</div>
                         </div>
                         <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="mt-4"
                                    StartIcon="@Icons.Material.Filled.ContentCopy"
@@ -191,16 +344,28 @@
     <MudPagination Count="_pages" Selected="_page" SelectedChanged="OnPage" BoundaryCount="1" MiddleCount="3" />
     <MudText Typo="Typo.caption" Class="dt-muted">
         第 @_page / @_pages 页，命中 @_total 条
-        @if (_total > ExportCap)
-        {
-            <text>（导出最多 @ExportCap 条）</text>
-        }
     </MudText>
 </MudStack>
 
 @code {
     private const int PageSize = 50;
-    private const int ExportCap = 5000;
+    private const int ExportBatchSize = 2000;
+    private const int TimelineCap = 5000;
+    private sealed record AuditExportRequest(
+        string? Keyword,
+        IReadOnlyList<string> MatchedActions,
+        IReadOnlyList<string> MatchedEntities,
+        string? Action,
+        DateTime? From,
+        DateTime? To,
+        string? User,
+        string? EntityType,
+        string? Outcome,
+        string? Source,
+        string? CorrelationId,
+        bool NewestFirst,
+        long IdAtMost);
+
     /// <summary>变更列摘要的截断长度。整段 JSON 铺在格子里会把列宽撑爆。</summary>
     private const int SummaryMax = 90;
 
@@ -213,6 +378,9 @@
     private string _action = "";
     private string _user = "";
     private string _entityType = "";
+    private string _outcome = "";
+    private string? _source;
+    private string? _correlationId;
     private DateTime? _from;
     private DateTime? _to;
     private bool _newestFirst = true;
@@ -222,8 +390,16 @@
     private int _total;
     private bool _loading;
     private bool _exporting;
+    private long _exportedRows;
+    private int _exportTotal;
     private bool _noticeOpen;
+    private bool _moreFiltersOpen;
     private readonly HashSet<long> _expanded = [];
+    private readonly Dictionary<long, DateTime> _keyboardToggleAt = [];
+    private string? _timelineCorrelationId;
+    private List<AuditLog> _timelineItems = [];
+    private int _timelineTotal;
+    private bool _timelineLoading;
 
     private CancellationTokenSource? _filterCts;
 
@@ -232,8 +408,18 @@
         || !string.IsNullOrWhiteSpace(_action)
         || !string.IsNullOrWhiteSpace(_user)
         || !string.IsNullOrWhiteSpace(_entityType)
+        || !string.IsNullOrWhiteSpace(_outcome)
+        || !string.IsNullOrWhiteSpace(_source)
+        || !string.IsNullOrWhiteSpace(_correlationId)
         || _from is not null
         || _to is not null;
+
+    private int AdvancedFilterCount =>
+        (!string.IsNullOrWhiteSpace(_user) ? 1 : 0)
+        + (!string.IsNullOrWhiteSpace(_entityType) ? 1 : 0)
+        + (!string.IsNullOrWhiteSpace(_outcome) ? 1 : 0)
+        + (!string.IsNullOrWhiteSpace(_source) ? 1 : 0)
+        + (!string.IsNullOrWhiteSpace(_correlationId) ? 1 : 0);
 
     protected override async Task OnInitializedAsync()
     {
@@ -300,6 +486,9 @@
     {
         if (DateRangeFilter.IsReversed(_from, _to))
         {
+            _pageItems = [];
+            _total = 0;
+            _pages = 1;
             Toast.Add(DateRangeFilter.ReversedRangeMessage, Severity.Warning);
             return;
         }
@@ -331,6 +520,9 @@
         _action = "";
         _user = "";
         _entityType = "";
+        _outcome = "";
+        _source = null;
+        _correlationId = null;
         _from = null;
         _to = null;
         await OnFilterChanged();
@@ -349,6 +541,78 @@
         {
             _expanded.Remove(id);
         }
+    }
+
+    private void ToggleExpandedFromKeyDown(long id, KeyboardEventArgs args)
+    {
+        if (args.Repeat || args.Key != "Enter")
+        {
+            return;
+        }
+
+        ToggleExpandedFromKeyboard(id);
+    }
+
+    private void ToggleExpandedFromKeyUp(long id, KeyboardEventArgs args)
+    {
+        if (args.Key is not (" " or "Space" or "Spacebar"))
+        {
+            return;
+        }
+
+        ToggleExpandedFromKeyboard(id);
+    }
+
+    private void ToggleExpandedFromKeyboard(long id)
+    {
+        _keyboardToggleAt[id] = DateTime.UtcNow;
+        ToggleExpanded(id);
+    }
+
+    private void ToggleExpandedFromClick(long id, MouseEventArgs args)
+    {
+        if (args.Detail == 0
+            && _keyboardToggleAt.Remove(id, out var toggledAt)
+            && DateTime.UtcNow - toggledAt < TimeSpan.FromSeconds(1))
+        {
+            return;
+        }
+
+        _keyboardToggleAt.Remove(id);
+        ToggleExpanded(id);
+    }
+
+    private async Task LoadTimelineAsync(string correlationId)
+    {
+        _timelineCorrelationId = correlationId;
+        _timelineLoading = true;
+        _timelineItems = [];
+        _timelineTotal = 0;
+        try
+        {
+            var (items, total) = await Audit.QueryAsync(
+                correlationId: correlationId,
+                skip: 0,
+                take: TimelineCap,
+                newestFirst: false);
+            _timelineItems = items.ToList();
+            _timelineTotal = total;
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"加载关联时间线失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _timelineLoading = false;
+        }
+    }
+
+    private void CloseTimeline()
+    {
+        _timelineCorrelationId = null;
+        _timelineItems = [];
+        _timelineTotal = 0;
     }
 
     private async Task ToggleNoticeAsync()
@@ -401,6 +665,9 @@
                 toInclusive: to,
                 user: string.IsNullOrWhiteSpace(_user) ? null : _user,
                 entityType: string.IsNullOrWhiteSpace(_entityType) ? null : _entityType,
+                outcome: string.IsNullOrWhiteSpace(_outcome) ? null : _outcome,
+                source: string.IsNullOrWhiteSpace(_source) ? null : _source,
+                correlationId: string.IsNullOrWhiteSpace(_correlationId) ? null : _correlationId,
                 newestFirst: _newestFirst,
                 cancellationToken: cancellationToken);
             _pageItems = items.ToList();
@@ -417,6 +684,9 @@
         }
         catch (Exception ex)
         {
+            _pageItems = [];
+            _total = 0;
+            _pages = 1;
             Toast.Add($"加载日志失败：{ex.Message}", Severity.Error);
         }
         finally
@@ -444,6 +714,7 @@
     {
         var text = string.Join('\n',
             $"{item.Time:yyyy-MM-dd HH:mm:ss}  {item.UserName}  {DisplayLabels.AuditAction(item.Action)}  {DisplayLabels.EntityType(item.EntityType)}  {item.EntityKey}",
+            $"结果：{OutcomeLabel(item.Outcome)}；来源：{item.Source}；来源 IP：{item.SourceIp ?? "未提供"}；关联 ID：{item.CorrelationId ?? "未提供"}",
             $"变更前：{item.OldValue ?? "（无）"}",
             $"变更后：{item.NewValue ?? "（无）"}");
 
@@ -476,6 +747,20 @@
         _ => Color.Default
     };
 
+    private static string OutcomeLabel(string outcome) => outcome switch
+    {
+        "Failure" => "失败",
+        "Success" => "成功",
+        _ => outcome
+    };
+
+    private static Color OutcomeColor(string outcome) => outcome switch
+    {
+        "Failure" => Color.Error,
+        "Success" => Color.Success,
+        _ => Color.Default
+    };
+
     private async Task OnPage(int page)
     {
         _page = page;
@@ -496,53 +781,167 @@
         }
 
         _exporting = true;
+        _exportedRows = 0;
+        _exportTotal = _total;
+        string? tempPath = null;
+        var exportSummary = "export initialization failed";
+        var exportId = Guid.NewGuid();
         try
         {
+            var idAtMost = await Audit.GetLatestIdAsync();
             var (keyword, matchedActions, matchedEntities) = KeywordArgs();
             var (from, to) = Range();
-            var (items, total) = await Audit.QueryAsync(
-                keyword: keyword,
-                action: string.IsNullOrWhiteSpace(_action) ? null : _action,
-                fromInclusive: from,
-                skip: 0,
-                take: ExportCap,
-                keywordMatchedActions: matchedActions,
-                keywordMatchedEntityTypes: matchedEntities,
-                toInclusive: to,
-                user: string.IsNullOrWhiteSpace(_user) ? null : _user,
-                entityType: string.IsNullOrWhiteSpace(_entityType) ? null : _entityType,
-                newestFirst: _newestFirst);
+            var request = new AuditExportRequest(
+                keyword,
+                matchedActions,
+                matchedEntities,
+                string.IsNullOrWhiteSpace(_action) ? null : _action,
+                from,
+                to,
+                string.IsNullOrWhiteSpace(_user) ? null : _user,
+                string.IsNullOrWhiteSpace(_entityType) ? null : _entityType,
+                string.IsNullOrWhiteSpace(_outcome) ? null : _outcome,
+                string.IsNullOrWhiteSpace(_source) ? null : _source,
+                string.IsNullOrWhiteSpace(_correlationId) ? null : _correlationId,
+                _newestFirst,
+                idAtMost);
+            exportSummary = ExportSummary(request, 0);
 
-            var csv = CsvExporter.Build(
-                ["时间", "用户", "动作", "对象", "键", "变更前", "变更后"],
-                items.Select(item => new[]
+            tempPath = Path.Combine(Path.GetTempPath(), $"datatrace_audit_{exportId:N}.csv");
+
+            await using var file = new FileStream(
+                tempPath,
+                FileMode.CreateNew,
+                FileAccess.ReadWrite,
+                FileShare.Read,
+                bufferSize: 64 * 1024,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+            var headers = new[]
+            {
+                "时间", "用户", "动作", "对象", "键", "结果", "来源", "来源 IP", "关联 ID", "变更前", "变更后"
+            };
+            var batch = await QueryExportBatchAsync(0, request);
+            _exportTotal = batch.Total;
+
+            await using (var writer = new StreamWriter(file, new System.Text.UTF8Encoding(true), 64 * 1024, leaveOpen: true))
+            {
+                await writer.WriteLineAsync(CsvExporter.BuildRow(headers));
+                var skip = 0;
+                while (batch.Items.Count > 0)
                 {
-                    item.Time.ToString("yyyy-MM-dd HH:mm:ss"),
-                    item.UserName,
-                    DisplayLabels.AuditAction(item.Action),
-                    DisplayLabels.EntityType(item.EntityType),
-                    item.EntityKey ?? "",
-                    item.OldValue ?? "",
-                    item.NewValue ?? ""
-                }));
+                    foreach (var item in batch.Items)
+                    {
+                        var row = new[]
+                        {
+                            item.Time.ToString("yyyy-MM-dd HH:mm:ss"),
+                            item.UserName,
+                            DisplayLabels.AuditAction(item.Action),
+                            DisplayLabels.EntityType(item.EntityType),
+                            item.EntityKey ?? "",
+                            OutcomeLabel(item.Outcome),
+                            item.Source,
+                            item.SourceIp ?? "",
+                            item.CorrelationId ?? "",
+                            item.OldValue ?? "",
+                            item.NewValue ?? ""
+                        };
+                        await writer.WriteLineAsync(CsvExporter.BuildRow(row));
+                    }
 
-            await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName("datatrace_audit"), CsvExporter.ToBase64(csv));
-            if (total > ExportCap)
-            {
-                Toast.Add($"已按当前筛选导出前 {items.Count} 条（共命中 {total}，上限 {ExportCap}）", Severity.Warning);
+                    _exportedRows += batch.Items.Count;
+                    skip += batch.Items.Count;
+                    await writer.FlushAsync();
+                    await InvokeAsync(StateHasChanged);
+
+                    if (batch.Items.Count < ExportBatchSize || skip >= batch.Total)
+                    {
+                        break;
+                    }
+
+                    batch = await QueryExportBatchAsync(skip, request);
+                }
             }
-            else
-            {
-                Toast.Add($"已导出 {items.Count} 条日志", Severity.Success);
-            }
+
+            await Js.InvokeVoidAsync(
+                "dtDownloadUrl",
+                CsvExporter.FileName("datatrace_audit"),
+                $"/audit-export/{exportId:D}");
+            exportSummary = ExportSummary(request, _exportedRows);
+            await TryWriteExportAuditAsync(exportId, "Success", exportSummary);
+            Toast.Add($"已完整导出 {_exportedRows:N0} 条日志", Severity.Success);
         }
         catch (Exception ex)
         {
+            await TryWriteExportAuditAsync(
+                exportId,
+                "Failure",
+                $"{exportSummary}; error={ex.Message}");
             Toast.Add($"导出失败：{ex.Message}", Severity.Error);
         }
         finally
         {
+            if (tempPath is not null)
+            {
+                try
+                {
+                    File.Delete(tempPath);
+                }
+                catch
+                {
+                    // 临时文件删除失败不覆盖实际导出结果。
+                }
+            }
             _exporting = false;
+            _exportedRows = 0;
+            _exportTotal = 0;
         }
     }
+
+    private static string ExportSummary(AuditExportRequest request, long rows)
+        => $"rows={rows}; from={request.From?.ToString("O") ?? "*"}; to={request.To?.ToString("O") ?? "*"}; " +
+           $"action={request.Action ?? "*"}; user={request.User ?? "*"}; entity={request.EntityType ?? "*"}; " +
+           $"outcome={request.Outcome ?? "*"}; source={request.Source ?? "*"}; " +
+           $"correlationId={request.CorrelationId ?? "*"}; keywordApplied={!string.IsNullOrWhiteSpace(request.Keyword)}; " +
+           $"order={(request.NewestFirst ? "newest-first" : "oldest-first")}; idAtMost={request.IdAtMost}";
+
+    private async Task TryWriteExportAuditAsync(Guid exportId, string outcome, string details)
+    {
+        try
+        {
+            var user = (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "unknown";
+            await Audit.WriteAsync(
+                user,
+                "Export",
+                "AuditLog",
+                null,
+                null,
+                details,
+                outcome: outcome,
+                source: "Audit log CSV download",
+                correlationId: exportId.ToString("N"));
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"导出行为已执行，但审计留痕失败：{ex.Message}", Severity.Warning);
+        }
+    }
+
+    private Task<(IReadOnlyList<AuditLog> Items, int Total)> QueryExportBatchAsync(int skip, AuditExportRequest request)
+        => Audit.QueryAsync(
+            keyword: request.Keyword,
+            action: request.Action,
+            fromInclusive: request.From,
+            skip: skip,
+            take: ExportBatchSize,
+            keywordMatchedActions: request.MatchedActions,
+            keywordMatchedEntityTypes: request.MatchedEntities,
+            toInclusive: request.To,
+            user: request.User,
+            entityType: request.EntityType,
+            outcome: request.Outcome,
+            source: request.Source,
+            correlationId: request.CorrelationId,
+            idAtMost: request.IdAtMost,
+            newestFirst: request.NewestFirst);
 }

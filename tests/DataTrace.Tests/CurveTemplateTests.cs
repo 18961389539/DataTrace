@@ -439,7 +439,8 @@ public class CurveTemplateTests
         var service = new CurveTemplateService(fake, harness.ConfigRepository);
 
         var report = await service.GetBaselineAsync(
-            curve.Id, "压力", DateTime.Today.AddDays(-2), DateTime.Today.AddDays(1));
+            curve.Id, "压力", DateTime.Today.AddDays(-2), DateTime.Today.AddDays(1),
+            recentCount: 5);
 
         Assert.NotNull(report);
         Assert.Equal(20, report!.BaselineSampleCount);
@@ -455,6 +456,62 @@ public class CurveTemplateTests
         Assert.True(report.Recent.Count <= 30);
         Assert.True(report.Recent.Zip(report.Recent.Skip(1)).All(p => p.First.Time <= p.Second.Time));
         Assert.Contains(report.Recent, s => s.IsNg);
+    }
+
+    [Fact]
+    public async Task Recent_validation_rows_are_not_used_to_train_and_unjudged_rows_are_excluded_from_shadow_stats()
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+        var curve = harness.Snapshot.Stations[0].Curves.First();
+        var fake = new FakeRuntimeStore();
+        var start = DateTime.Today.AddDays(-1).AddHours(8);
+
+        for (var i = 0; i < 20; i++)
+        {
+            var peak = 12 + (i % 5) * 0.1;
+            fake.Saved.Add(Sample(
+                curve.Id, "压力", SeriesRole.Y, start.AddMinutes(i), $"T{i:000}",
+                Judgement.Ok, "", f => f.Peak = peak));
+        }
+
+        for (var i = 0; i < 2; i++)
+        {
+            fake.Saved.Add(Sample(
+                curve.Id, "压力", SeriesRole.Y, start.AddMinutes(50 + i), $"UNJUDGED-OLD-{i}",
+                Judgement.None, "", f => f.Peak = 40));
+        }
+
+        fake.Saved.Add(Sample(
+            curve.Id, "压力", SeriesRole.Y, start.AddMinutes(100), "RECENT-OK",
+            Judgement.Ok, "", f => f.Peak = 12.2));
+        fake.Saved.Add(Sample(
+            curve.Id, "压力", SeriesRole.Y, start.AddMinutes(101), "RECENT-NG",
+            Judgement.Ng, "", f => f.Peak = 40));
+        fake.Saved.Add(Sample(
+            curve.Id, "压力", SeriesRole.Y, start.AddMinutes(102), "RECENT-NONE",
+            Judgement.None, "", f => f.Peak = 40));
+
+        var service = new CurveTemplateService(fake, harness.ConfigRepository);
+        var report = await service.GetBaselineAsync(
+            curve.Id,
+            "压力",
+            DateTime.Today.AddDays(-2),
+            DateTime.Today.AddDays(1),
+            recentCount: 3,
+            maxSamples: 22);
+
+        Assert.NotNull(report);
+        Assert.Equal(20, report!.BaselineSampleCount);
+        Assert.Equal(3, report.Recent.Count);
+        Assert.Equal(1, report.NgCount);
+        Assert.Equal(3, report.UnjudgedCount);
+        Assert.Equal(12.2, report.Template[CurveFeatureDimension.Peak]!.Center, 6);
+        Assert.Equal(
+            new[] { Judgement.Ok, Judgement.Ng, Judgement.None },
+            report.Recent.Select(x => x.ActualJudgement).ToArray());
+        Assert.Equal(2, report.Shadow.Checked);
+        Assert.Equal(1, report.Shadow.TruePositive);
+        Assert.Equal(1, report.Shadow.TrueNegative);
     }
 
     [Fact]
@@ -480,7 +537,8 @@ public class CurveTemplateTests
         var service = new CurveTemplateService(fake, harness.ConfigRepository);
 
         var report = await service.GetBaselineAsync(
-            curve.Id, "压力", DateTime.Today.AddDays(-2), DateTime.Today.AddDays(1));
+            curve.Id, "压力", DateTime.Today.AddDays(-2), DateTime.Today.AddDays(1),
+            recentCount: 0);
 
         Assert.Equal(10, report!.BaselineSampleCount);
         Assert.Equal(4, report.MismatchedRecipeCount);
@@ -500,10 +558,15 @@ public class CurveTemplateTests
         var fake = new FakeRuntimeStore();
         var start = DateTime.Today.AddDays(-1).AddHours(8);
 
-        // 本型号 20 条（较早），另一种型号 60 条（更近）：按 take 截断后本型号一条不剩。
-        for (var i = 0; i < 20; i++)
+        // 本型号 30 条建模样本 + 5 条评估样本；另一种型号 60 条更近。
+        for (var i = 0; i < 30; i++)
         {
             fake.Saved.Add(Sample(curve.Id, "压力", SeriesRole.Y, start.AddMinutes(i), $"P{i:000}", Judgement.Ok, "", f => f.Peak = 12));
+        }
+
+        for (var i = 0; i < 5; i++)
+        {
+            fake.Saved.Add(Sample(curve.Id, "压力", SeriesRole.Y, start.AddMinutes(100 + i), $"L{i:000}", Judgement.Ok, "", f => f.Peak = 12.2 + (i % 2) * 0.1));
         }
 
         for (var i = 0; i < 60; i++)
@@ -513,18 +576,18 @@ public class CurveTemplateTests
 
         var service = new CurveTemplateService(fake, harness.ConfigRepository);
 
-        // maxSamples 收窄到 30：截断窗口里全是 OTHER，只有"先过滤再取"才能拿到本型号样本。
+        // 评估集取 5 条、训练窗口取 30 条：型号筛选必须在两者合计的窗口截断前完成。
         var report = await service.GetBaselineAsync(
             curve.Id, "压力", DateTime.Today.AddDays(-2), DateTime.Today.AddDays(1),
-            recentCount: 30, maxSamples: 30);
+            recentCount: 5, maxSamples: 30);
 
         Assert.NotNull(report);
-        Assert.Equal(20, report!.BaselineSampleCount);
-        Assert.Equal(20, report.Recent.Count);
+        Assert.Equal(30, report!.BaselineSampleCount);
+        Assert.Equal(5, report.Recent.Count);
         Assert.DoesNotContain(report.Recent, s => s.PalletCode.StartsWith("B", StringComparison.Ordinal));
 
-        // "取到多少条样本"是区间真数（80），不受打分窗口上限影响。
-        Assert.Equal(80, report.TotalSampleCount);
+        // "取到多少条样本"是区间真数（95），不受建模与评估窗口上限影响。
+        Assert.Equal(95, report.TotalSampleCount);
         Assert.Equal(60, report.MismatchedRecipeCount);
         Assert.Equal(12d, report.Template[CurveFeatureDimension.Peak]!.Center, 6);
     }
@@ -560,13 +623,14 @@ public class CurveTemplateTests
         var service = new CurveTemplateService(fake, harness.ConfigRepository);
 
         var report = await service.GetBaselineAsync(
-            curve.Id, "压力", DateTime.Today.AddDays(-2), DateTime.Today.AddDays(1));
+            curve.Id, "压力", DateTime.Today.AddDays(-2), DateTime.Today.AddDays(1),
+            recentCount: 5);
 
         // 旧码算作本型号：基线建得起来，也不会被报成"型号不匹配"。
         Assert.Equal("B300", report!.RecipeCode);
-        Assert.Equal(25, report.BaselineSampleCount);
+        Assert.Equal(20, report.BaselineSampleCount);
         Assert.Equal(0, report.MismatchedRecipeCount);
-        Assert.Equal(25, report.Recent.Count);
+        Assert.Equal(5, report.Recent.Count);
         Assert.True(report.Template.IsReliable);
         Assert.Null(report.EmptyReason);
     }
@@ -591,7 +655,8 @@ public class CurveTemplateTests
 
         // 留空 → 落到主序列（Y 优先），与曲线判据的约定一致。
         var report = await service.GetBaselineAsync(
-            curve.Id, null, DateTime.Today.AddDays(-2), DateTime.Today.AddDays(1));
+            curve.Id, null, DateTime.Today.AddDays(-2), DateTime.Today.AddDays(1),
+            recentCount: 0);
 
         Assert.NotNull(report);
         Assert.Equal("压力", report!.SeriesName);

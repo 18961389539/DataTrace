@@ -30,6 +30,9 @@ public sealed class CurveBaselineReport
     /// <summary>区间内属于本型号但不合格的样本数，用于对照偏离分是否真的抓到了不良。</summary>
     public int NgCount { get; init; }
 
+    /// <summary>区间内属于本型号但没有判定结果的样本数；不参与建模与影子统计。</summary>
+    public int UnjudgedCount { get; init; }
+
     public required CurveTemplate Template { get; init; }
 
     /// <summary>最近若干条样本的打分，按时间升序。</summary>
@@ -80,8 +83,13 @@ public sealed class CurveShadowComparison
         ? (double)TruePositive / (TruePositive + FalseNegative)
         : null;
 
-    /// <summary>误报占全部已检查样本的比例。分母为 0 时返回 null。</summary>
-    public double? FalsePositiveRate => Checked > 0 ? (double)FalsePositive / Checked : null;
+    /// <summary>标准误报率：实际合格样本中被误报的比例。分母为 0 时返回 null。</summary>
+    public double? FalsePositiveRate => FalsePositive + TrueNegative > 0
+        ? (double)FalsePositive / (FalsePositive + TrueNegative)
+        : null;
+
+    /// <summary>全样本误报占比：误报数除以全部可比对样本数。分母为 0 时返回 null。</summary>
+    public double? FalseAlertShare => Checked > 0 ? (double)FalsePositive / Checked : null;
 }
 
 public interface ICurveTemplateService
@@ -92,7 +100,7 @@ public interface ICurveTemplateService
     /// </summary>
     /// <param name="seriesName">序列名；留空表示主序列（优先 Y 角色）。</param>
     /// <param name="recentCount">参与打分的最近样本条数。</param>
-    /// <param name="maxSamples">建立基线的样本上限（取区间内最新的这么多条）。</param>
+    /// <param name="maxSamples">独立评估窗口之前的建模样本窗口上限。</param>
     Task<CurveBaselineReport?> GetBaselineAsync(
         int curveDefinitionId,
         string? seriesName,

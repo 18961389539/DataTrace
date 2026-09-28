@@ -24,6 +24,8 @@ public static class SettingsLimits
 
     public const int MinRetentionYears = 1;
     public const int MaxRetentionYears = 30;
+    public const int MinAuditRetentionYears = 0;
+    public const int MaxAuditRetentionYears = 30;
 
     public const int MinMesTimeoutSeconds = 1;
     public const int MaxMesTimeoutSeconds = 300;
@@ -51,6 +53,9 @@ public static class SettingsLimits
     public static string? RetentionYearsError(int value)
         => Range(value, MinRetentionYears, MaxRetentionYears, "保留年数");
 
+    public static string? AuditRetentionYearsError(int value)
+        => Range(value, MinAuditRetentionYears, MaxAuditRetentionYears, "审计保留年数");
+
     public static string? MesTimeoutError(int value)
         => Range(value, MinMesTimeoutSeconds, MaxMesTimeoutSeconds, "MES 超时(秒)");
 
@@ -69,6 +74,7 @@ public static class SettingsLimits
            ?? WriteRetryCountError(settings.WriteRetryCount)
            ?? WriteRetryDelayError(settings.WriteRetryDelayMs)
            ?? RetentionYearsError(settings.RetentionYears)
+           ?? AuditRetentionYearsError(settings.AuditRetentionYears)
            ?? MesTimeoutError(settings.MesTimeoutSeconds)
            ?? SimulatorIntervalError(settings.SimulatorIntervalMs)
            ?? SimulatorNgPercentError(settings.SimulatorNgPercent)

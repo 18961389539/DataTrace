@@ -1,4 +1,5 @@
 using DataTrace.Domain.Entities;
+using DataTrace.Domain.Enums;
 
 namespace DataTrace.Domain.Evaluation;
 
@@ -21,7 +22,7 @@ public static class CurveTemplateMatcher
     public const double AbnormalMaxZ = 4.0;
 
     public static CurveTemplateScore Score(CurveTemplate template, CurveFeature feature)
-        => Score(template, feature, curveRecordId: 0, time: default, palletCode: "", isNg: false);
+        => Score(template, feature, curveRecordId: 0, time: default, palletCode: "", actualJudgement: Judgement.None);
 
     /// <summary>
     /// 对单条曲线特征打分。
@@ -35,9 +36,36 @@ public static class CurveTemplateMatcher
         DateTime time,
         string palletCode,
         bool isNg)
+        => Score(
+            template,
+            feature,
+            curveRecordId,
+            time,
+            palletCode,
+            isNg ? Judgement.Ng : Judgement.Ok);
+
+    public static CurveTemplateScore Score(
+        CurveTemplate template,
+        CurveFeature feature,
+        long curveRecordId,
+        DateTime time,
+        string palletCode,
+        Judgement actualJudgement)
     {
         ArgumentNullException.ThrowIfNull(template);
         ArgumentNullException.ThrowIfNull(feature);
+
+        if (!CurveFeatureDimensions.HasFiniteValues(feature))
+        {
+            return new CurveTemplateScore
+            {
+                CurveRecordId = curveRecordId,
+                Time = time,
+                PalletCode = palletCode,
+                ActualJudgement = actualJudgement,
+                Verdict = CurveTemplateVerdict.InvalidFeature
+            };
+        }
 
         var deviations = new List<CurveTemplateDeviation>();
         var constantBreaches = 0;
@@ -111,7 +139,7 @@ public static class CurveTemplateMatcher
             CurveRecordId = curveRecordId,
             Time = time,
             PalletCode = palletCode,
-            IsNg = isNg,
+            ActualJudgement = actualJudgement,
             RmsZ = rmsZ,
             MaxAbsZ = maxAbsZ,
             WorstDimension = worst,

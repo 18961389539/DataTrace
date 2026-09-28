@@ -1,0 +1,18 @@
+<MudTooltip Text="@TooltipText">
+    <MudIconButton Icon="@ThemeIcon" Color="Color.Inherit" OnClick="ToggleAsync"
+                   aria-label="@TooltipText" />
+</MudTooltip>
+
+@code {
+    [Parameter] public bool IsDarkMode { get; set; }
+
+    [Parameter] public EventCallback OnToggle { get; set; }
+
+    private string ThemeIcon => IsDarkMode
+        ? Icons.Material.Filled.LightMode
+        : Icons.Material.Filled.DarkMode;
+
+    private string TooltipText => IsDarkMode ? "切换到浅色主题" : "切换到深色主题";
+
+    private Task ToggleAsync() => OnToggle.InvokeAsync();
+}

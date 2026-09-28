@@ -1,0 +1,136 @@
+@using DataTrace.Web.Components.Shared
+@using DataTrace.Web.Services
+
+<MudDialog Class="dt-page-help-dialog">
+    <TitleContent>
+        <div class="dt-page-help-heading">
+            <MudText Typo="Typo.h6">本页说明</MudText>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@Entries.Count 条说明</MudChip>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        @if (Entries.Count >= SearchThreshold)
+        {
+            <MudTextField T="string" @bind-Value="_search" @bind-Value:after="RefreshSelection"
+                          Immediate="true" Placeholder="搜索主题或说明内容" Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search" Class="dt-page-help-search"
+                          aria-label="搜索说明主题" />
+        }
+
+        @if (VisibleEntries.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Class="dt-muted pa-4">没有匹配的主题</MudText>
+        }
+        else
+        {
+            <div class="dt-page-help-mobile d-sm-none">
+                <MudSelect T="int" Label="选择主题" Dense="true" FullWidth="true"
+                           Value="@_selectedIndex" ValueChanged="SelectEntryAsync">
+                    @foreach (var item in VisibleEntries)
+                    {
+                        <MudSelectItem T="int" Value="@item.Index">@item.Title</MudSelectItem>
+                    }
+                </MudSelect>
+            </div>
+
+            <div class="dt-page-help-layout">
+                <nav class="dt-page-help-nav d-none d-sm-flex" aria-label="本页说明目录">
+                    @foreach (var item in VisibleEntries)
+                    {
+                        <MudButton Variant="@(item.Index == _selectedIndex ? Variant.Filled : Variant.Text)"
+                                   Color="@(item.Index == _selectedIndex ? Color.Primary : Color.Default)"
+                                   Class="@TopicButtonClass(item.Index)"
+                                   aria-pressed="@(item.Index == _selectedIndex)"
+                                   OnClick="@(() => SelectEntry(item.Index))">
+                            <span class="dt-page-help-topic-index">@((item.Index + 1).ToString("00"))</span>
+                            <span>@item.Title</span>
+                        </MudButton>
+                    }
+                </nav>
+                <section class="dt-page-help-detail" aria-live="polite">
+                    @if (SelectedEntry is { } entry)
+                    {
+                        <div class="dt-page-help-eyebrow">说明项 @(_selectedIndex + 1) / @Entries.Count</div>
+                        @if (entry.Guide is { } guide)
+                        {
+                            <div class="dt-help">
+                                <div class="dt-help-title">@guide.Title</div>
+                                @foreach (var paragraph in guide.Paragraphs)
+                                {
+                                    <div class="dt-help-line">@paragraph</div>
+                                }
+                            </div>
+                        }
+                        else if (entry.Topic is { } topic)
+                        {
+                            <HelpContent Topic="topic" />
+                        }
+                    }
+                </section>
+            </div>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close">关闭</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    private const int SearchThreshold = 8;
+    private string _search = "";
+    private int _selectedIndex;
+
+    [CascadingParameter] private MudDialogInstance? MudDialog { get; set; }
+
+    [Parameter] public IReadOnlyList<HelpTopic> Topics { get; set; } = [];
+    [Parameter] public IReadOnlyList<PageHelpSection> GuideSections { get; set; } = [];
+
+    private sealed record HelpEntry(int Index, string Title, PageHelpSection? Guide, HelpTopic? Topic);
+
+    private IReadOnlyList<HelpEntry> Entries
+        => GuideSections.Select((section, index) =>
+                new HelpEntry(index, section.Title, section, null))
+            .Concat(Topics.Select((topic, index) =>
+                new HelpEntry(GuideSections.Count + index, topic.Title, null, topic)))
+            .ToList();
+
+    private IReadOnlyList<HelpEntry> VisibleEntries
+        => Entries
+            .Where(item => string.IsNullOrWhiteSpace(_search)
+                || SearchText(item).Contains(_search, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+    private HelpEntry? SelectedEntry
+        => Entries.FirstOrDefault(item => item.Index == _selectedIndex
+           && (string.IsNullOrWhiteSpace(_search)
+               || SearchText(item).Contains(_search, StringComparison.OrdinalIgnoreCase)));
+
+    private string TopicButtonClass(int index)
+        => index == _selectedIndex ? "dt-page-help-topic active" : "dt-page-help-topic";
+
+    private static string SearchText(HelpEntry item)
+        => item.Guide is { } guide
+            ? $"{guide.Title} {string.Join(' ', guide.Paragraphs)}"
+            : item.Topic is { } topic
+                ? $"{topic.Title} {topic.How} {topic.Impact}"
+                : item.Title;
+
+    private void RefreshSelection()
+    {
+        var visible = VisibleEntries;
+        if (visible.All(item => item.Index != _selectedIndex))
+        {
+            _selectedIndex = visible.Count > 0 ? visible[0].Index : -1;
+        }
+    }
+
+    private Task SelectEntryAsync(int index)
+    {
+        SelectEntry(index);
+        return Task.CompletedTask;
+    }
+
+    private void SelectEntry(int index) => _selectedIndex = index;
+
+    private void Close() => MudDialog?.Close();
+}

@@ -601,16 +601,20 @@ public sealed class ConfigRepository : IConfigRepository
     public async Task SaveRecipeAsync(Recipe recipe, CancellationToken cancellationToken = default)
     {
         recipe.Code = recipe.Code.Trim();
+        if (recipe.Id == 0 && recipe.Code.Length == 0)
+        {
+            recipe.Code = $"SYS-{Guid.NewGuid():N}".ToUpperInvariant();
+        }
+
         recipe.Name = recipe.Name.Trim();
 
-        // 界面也校验编码，但那只是 UI：从 MES 或脚本直接写库照样能落一条空编码/带逗号的型号。
-        // 空编码的型号被设为当前后，记录里的 RecipeCode 是空串，在报表里与"未选型号"再也分不开。
+        // 编码是运行记录和曲线基线使用的内部键；旧调用方可继续传自定义码，新建空码时由仓储生成。
         if (RecipeCodeRules.Error(recipe.Code) is { } codeError)
         {
             throw new InvalidOperationException(codeError);
         }
 
-        // 名称留空时回落为编码：列表与下拉里空名称就是一格空白，比编码还难认。
+        // 兼容旧调用方；用户界面要求填写名称。
         if (recipe.Name.Length == 0)
         {
             recipe.Name = recipe.Code;

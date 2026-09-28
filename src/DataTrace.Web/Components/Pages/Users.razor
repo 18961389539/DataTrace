@@ -10,12 +10,22 @@
 @inject IDialogService DialogService
 @inject AuthenticationStateProvider Auth
 @inject DtToast Toast
-@inject PasswordPolicy Passwords
 @inject IAuditLogger Audit
 
 <PageHeader Title="用户" HelpRoute="users">
     <Actions>
-        <MudText Typo="Typo.caption" Class="dt-muted">共 @_users.Count 个账号</MudText>
+        <MudText Typo="Typo.caption" Class="dt-muted">显示 @VisibleUsers.Count / @_users.Count 个账号</MudText>
+        <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
+                   StartIcon="@Icons.Material.Filled.PersonAdd" Disabled="_working"
+                   OnClick="OpenCreateDialog">新增用户</MudButton>
+        @* 锁定是"连续登录失败"的自动结果。有人在登不上来的时候，这个数得在页头就看得见，
+           而不是等扫到表格里那枚小 chip。 *@
+        @if (LockedCount > 0)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning">
+                @LockedCount 个已锁定
+            </MudChip>
+        }
     </Actions>
 </PageHeader>
 
@@ -23,10 +33,46 @@
 {
     <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3" Variant="Variant.Outlined">
         @_loadError
+        @* 表格里那句"请稍后重试"给不出可点的东西：整页清空之后必须留一个出口，
+           否则管理员只能刷新整个页面。 *@
+        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error" Class="ml-2"
+                   StartIcon="@Icons.Material.Filled.Refresh" Disabled="_loading" OnClick="Reload">
+            重试
+        </MudButton>
     </MudAlert>
 }
 
-<MudTable Items="_users" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading"
+<MudPaper Class="dt-filter-card mb-2">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
+        <MudTextField T="string" Value="_search" ValueChanged="OnSearchChanged"
+                      Label="搜索账号" Placeholder="用户名或显示名" Immediate="true" Clearable="true"
+                      Variant="Variant.Outlined" Margin="Margin.Dense" Adornment="Adornment.Start"
+                      AdornmentIcon="@Icons.Material.Filled.Search" Class="users-search" />
+        <MudSelect T="string" @bind-Value="_roleFilter" Label="角色" ShrinkLabel="true"
+                   Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Class="users-filter">
+            <MudSelectItem T="string" Value="@AllFilterValue">全部角色</MudSelectItem>
+            @foreach (var role in AppRoles.All)
+            {
+                <MudSelectItem T="string" Value="@role">@DisplayLabels.RoleText(role)</MudSelectItem>
+            }
+        </MudSelect>
+        <MudSelect T="string" @bind-Value="_lockFilter" Label="账号状态" ShrinkLabel="true"
+                   Variant="Variant.Outlined" Margin="Margin.Dense" Dense="true" Class="users-filter">
+            <MudSelectItem T="string" Value="@AllFilterValue">全部状态</MudSelectItem>
+            <MudSelectItem T="string" Value="@("locked")">已锁定</MudSelectItem>
+            <MudSelectItem T="string" Value="@("unlocked")">未锁定</MudSelectItem>
+        </MudSelect>
+        @if (HasFilters)
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.FilterAltOff"
+                       OnClick="ClearFilters">清除筛选</MudButton>
+        }
+        <MudSpacer />
+        <MudText Typo="Typo.caption" Class="dt-muted">@VisibleUsers.Count 条结果</MudText>
+    </MudStack>
+</MudPaper>
+
+<MudTable Items="VisibleUsers" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading"
           LoadingProgressColor="Color.Info">
     <HeaderContent>
         <MudTh>用户名</MudTh>
@@ -53,7 +99,7 @@
                 </MudTooltip>
             }
         </MudTd>
-        <MudTd DataLabel="显示名">@context.DisplayName</MudTd>
+        <MudTd DataLabel="显示名">@(string.IsNullOrWhiteSpace(context.DisplayName) ? "—" : context.DisplayName)</MudTd>
         <MudTd DataLabel="角色">
             @foreach (var role in context.RoleList)
             {
@@ -69,94 +115,115 @@
                 </MudTooltip>
             }
         </MudTd>
-        <MudTd Class="dt-right">
-            <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Edit"
-                       Disabled="_working" OnClick="@(() => EditUser(context))">编辑</MudButton>
-            @if (IsLocked(context.User))
-            {
-                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
-                           StartIcon="@Icons.Material.Filled.LockOpen"
-                           Disabled="_working" OnClick="@(() => UnlockUser(context))">解除锁定</MudButton>
-            }
-            <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.LockReset"
-                       Disabled="_working || (context.UserName == _currentUser && context.RoleList.Count == 1)"
-                       OnClick="@(() => ResetPassword(context))">重置密码</MudButton>
-            <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
-                       StartIcon="@Icons.Material.Filled.Delete" Disabled="_working || context.UserName == _currentUser"
-                       OnClick="@(() => DeleteUser(context))">删除</MudButton>
-            <InfoHint Topic="HelpTexts.DeleteUser" />
+        @* DataLabel 不能省：卡片模式（平板）下没有它，这一行前面就是空的，
+           看不出这几个按钮是在对谁操作。 *@
+        <MudTd DataLabel="操作" Class="dt-right">
+            <span class="dt-actions">
+                <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Edit"
+                           Disabled="_working" OnClick="@(() => EditUser(context))">编辑</MudButton>
+                @if (IsLocked(context.User))
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                               StartIcon="@Icons.Material.Filled.LockOpen"
+                               Disabled="_working" OnClick="@(() => UnlockUser(context))">解除锁定</MudButton>
+                }
+                @* 下面两个按钮的禁用跟"你正在用哪个账号"有关，不给一句话就只是一次"按不动"。
+                   禁用按钮收不到 hover，靠 app.css 里 .mud-tooltip .mud-button:disabled
+                   把指针事件让给外层包裹。 *@
+                <MudTooltip Text="@ResetHint(context)">
+                    <ChildContent>
+                        <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.LockReset"
+                                   Disabled="_working || SelfResetBlocked(context)"
+                                   OnClick="@(() => ResetPassword(context))">重置密码</MudButton>
+                    </ChildContent>
+                </MudTooltip>
+                <MudTooltip Text="@DeleteHint(context)">
+                    <ChildContent>
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                                   StartIcon="@Icons.Material.Filled.Delete" Disabled="_working || IsSelf(context)"
+                                   OnClick="@(() => DeleteUser(context))">删除</MudButton>
+                    </ChildContent>
+                </MudTooltip>
+                <InfoHint Topic="HelpTexts.DeleteUser" />
+            </span>
         </MudTd>
     </RowTemplate>
     <NoRecordsContent>
         <MudText Typo="Typo.body2" Class="dt-muted py-4">
-            @(_loading ? "正在加载…" : (_loadError is not null ? "用户列表加载失败，请稍后重试。" : "还没有用户账号。可用下方表单创建第一个。"))
+            @(_loading ? "正在加载…" :
+              _loadError is not null ? "用户列表加载失败，请稍后重试。" :
+              _users.Count == 0 ? "还没有用户账号。点击“新增用户”创建第一个。" :
+              HasFilters ? "没有符合当前筛选条件的账号。" : "用户列表为空。")
         </MudText>
     </NoRecordsContent>
 </MudTable>
 
-<MudPaper Class="pa-4 mt-4">
-    <MudText Typo="Typo.h6" Class="mb-2">新建用户</MudText>
-    <MudText Typo="Typo.caption" Class="dt-muted">
-        用户名创建后不可修改；角色决定可见菜单与可执行操作。<InfoHint Topic="HelpTexts.UserNameImmutable" />
-    </MudText>
-    <form @onsubmit="OnSubmit" @onsubmit:preventDefault="true">
-        <MudGrid Class="mt-2">
-            <MudItem xs="12" sm="6" md="3">
-                <MudTextField @bind-Value="_userName" @bind-Value:after="ValidateUserName" Label="用户名" Required="true"
-                              Placeholder="字母数字，3–20 位" HelperText="用于登录，不允许空格或中文"
-                              Error="@(!string.IsNullOrEmpty(_userError))" ErrorText="@_userError" Immediate="true" />
-            </MudItem>
-            <MudItem xs="12" sm="6" md="3">
-                <MudTextField @bind-Value="_display" @bind-Value:after="ValidateDisplay" Label="显示名" Required="true"
-                              Placeholder="如：张工（一号线）" Immediate="true"
-                              Error="@(_displayError is not null)" ErrorText="@_displayError" />
-            </MudItem>
-            <MudItem xs="12" sm="6" md="3">
-                <MudTextField @bind-Value="_password" @bind-Value:after="ValidatePassword" Label="初始密码" Required="true"
-                              Immediate="true"
-                              InputType="@(_showPassword ? InputType.Text : InputType.Password)"
-                              Adornment="Adornment.End"
-                              AdornmentIcon="@(_showPassword ? Icons.Material.Filled.VisibilityOff : Icons.Material.Filled.Visibility)"
-                              OnAdornmentClick="@(() => _showPassword = !_showPassword)"
-                              AdornmentAriaLabel="@(_showPassword ? "隐藏密码" : "显示密码")"
-                              HelperText="@($"必填。{Passwords.HelperText}")" Error="@(!string.IsNullOrEmpty(_passwordError))" ErrorText="@_passwordError" />
-            </MudItem>
-            <MudItem xs="12" sm="6" md="3">
-                <MudSelect T="string" @bind-Value="_role" Label="角色">
-                    @foreach (var r in AppRoles.All)
-                    {
-                        <MudSelectItem T="string" Value="@r">@DisplayLabels.RoleText(r)</MudSelectItem>
-                    }
-                </MudSelect>
-            </MudItem>
-        </MudGrid>
-        <MudText Typo="Typo.caption" Class="dt-muted">@DisplayLabels.RoleHint(_role)</MudText>
-        <MudStack Row="true" Class="mt-3" Spacing="2">
-            <MudButton ButtonType="ButtonType.Submit" Color="Color.Primary" Variant="Variant.Filled"
-                       StartIcon="@Icons.Material.Filled.PersonAdd" Disabled="_creating">
-                @(_creating ? "创建中…" : "创建")
-            </MudButton>
-            <MudButton Variant="Variant.Outlined" OnClick="ClearForm">清空</MudButton>
-        </MudStack>
-    </form>
-</MudPaper>
+@* 角色说明保留触屏可访问的完整文案，但默认收起，减少账号列表下方的纵向占用。 *@
+<MudExpansionPanels Class="mt-3" Dense="true" Elevation="0">
+    <MudExpansionPanel>
+        <TitleContent>
+            <MudText Typo="Typo.subtitle2">角色权限说明</MudText>
+        </TitleContent>
+        <ChildContent>
+            <MudText Typo="Typo.caption" Class="dt-muted mb-2">角色决定可见菜单与可执行操作。</MudText>
+            <MudStack Spacing="1">
+                @foreach (var role in AppRoles.All)
+                {
+                    <MudText Typo="Typo.body2">
+                        <strong>@DisplayLabels.RoleText(role)</strong>　@DisplayLabels.RoleHint(role)
+                    </MudText>
+                }
+            </MudStack>
+        </ChildContent>
+    </MudExpansionPanel>
+</MudExpansionPanels>
 
 @code {
+    private const string AllFilterValue = "__all__";
+
     private List<UserRow> _users = [];
     private bool _loading;
     private string? _loadError;
-    private string _userName = "";
-    private string _display = "";
-    // 不预填初始口令：预填等于让所有新账号共用同一句写在代码里、界面上还看不见的密码。
-    private string _password = "";
-    private string _role = AppRoles.Operator;
-    private string? _userError;
-    private string? _displayError;
-    private string? _passwordError;
     private string _currentUser = "";
-    private bool _creating;
     private bool _working;
-    private bool _showPassword;
+    private string _search = "";
+    private string _roleFilter = AllFilterValue;
+    private string _lockFilter = AllFilterValue;
+
+    private List<UserRow> VisibleUsers
+    {
+        get
+        {
+            IEnumerable<UserRow> query = _users;
+            var search = _search.Trim();
+            if (search.Length > 0)
+            {
+                query = query.Where(row =>
+                    row.UserName.Contains(search, StringComparison.OrdinalIgnoreCase)
+                    || row.DisplayName.Contains(search, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (_roleFilter != AllFilterValue)
+            {
+                query = query.Where(row => row.RoleList.Contains(_roleFilter));
+            }
+
+            if (_lockFilter == "locked")
+            {
+                query = query.Where(row => IsLocked(row.User));
+            }
+            else if (_lockFilter == "unlocked")
+            {
+                query = query.Where(row => !IsLocked(row.User));
+            }
+
+            return query.ToList();
+        }
+    }
+
+    private bool HasFilters => !string.IsNullOrWhiteSpace(_search)
+                               || _roleFilter != AllFilterValue
+                               || _lockFilter != AllFilterValue;
 
     protected override async Task OnInitializedAsync()
     {
@@ -177,6 +244,10 @@
                 var roles = await UserManager.GetRolesAsync(user);
                 _users.Add(new UserRow(user, user.UserName ?? "", user.DisplayName, [.. roles]));
             }
+
+            // 不排序时顺序取决于数据库返回：账号多了以后刷新一下位置就变，
+            // 看着像"账号被删掉又加回来"，照着名单核对权限时会怀疑自己记错了。
+            _users = _users.OrderBy(u => u.UserName, StringComparer.OrdinalIgnoreCase).ToList();
         }
         catch (Exception ex)
         {
@@ -192,90 +263,122 @@
         }
     }
 
-    private async Task OnSubmit() => await Create();
-
-    private async Task Create()
+    private Task OnSearchChanged(string? value)
     {
-        if (_creating)
+        _search = value ?? "";
+        return Task.CompletedTask;
+    }
+
+    private void ClearFilters()
+    {
+        _search = "";
+        _roleFilter = AllFilterValue;
+        _lockFilter = AllFilterValue;
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        if (_working)
         {
             return;
         }
 
-        // 三个字段一次全查出来再一起报：逐个 return 会让管理员"改一个、报一个"地试。
-        _userError = UserNameRules.Error(_userName);
-        _displayError = string.IsNullOrWhiteSpace(_display) ? "请填写显示名" : null;
-        _passwordError = string.IsNullOrEmpty(_password) ? "请填写初始密码" : Passwords.Validate(_password);
-        if (_userError is not null || _displayError is not null || _passwordError is not null)
+        var dialog = await DialogService.ShowAsync<UserCreateDialog>("新建用户",
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true });
+        var result = await dialog.Result;
+        if (result is null || result.Canceled || result.Data is not UserCreateDialog.UserCreateRequest request)
         {
             return;
         }
 
-        var userName = _userName.Trim();
-        _creating = true;
+        await Create(request);
+    }
+
+    private async Task Create(UserCreateDialog.UserCreateRequest request)
+    {
+        if (_working)
+        {
+            return;
+        }
+
+        _working = true;
         try
         {
-            if (await UserManager.FindByNameAsync(userName) is not null)
+            if (await UserManager.FindByNameAsync(request.UserName) is not null)
             {
-                _userError = "该用户名已存在";
+                Toast.Add("该用户名已存在", Severity.Error);
                 return;
             }
 
             var user = new ApplicationUser
             {
-                UserName = userName,
-                DisplayName = _display.Trim(),
-                Email = $"{userName}@datatrace.local"
+                UserName = request.UserName,
+                DisplayName = request.DisplayName,
+                Email = $"{request.UserName}@datatrace.local"
             };
-            var result = await UserManager.CreateAsync(user, _password);
+            var result = await UserManager.CreateAsync(user, request.Password);
             if (!result.Succeeded)
             {
+                await AuditSafe("Create", request.UserName, null,
+                    "create failed; " + PasswordPolicy.FormatIdentityErrors(result),
+                    "Failure");
                 Toast.Add(PasswordPolicy.FormatIdentityErrors(result), Severity.Error);
                 return;
             }
 
-            var roleResult = await UserManager.AddToRoleAsync(user, _role);
+            var roleResult = await UserManager.AddToRoleAsync(user, request.Role);
             if (!roleResult.Succeeded)
             {
+                await AuditSafe("Create", request.UserName, null,
+                    $"partial; account created; role={request.Role} failed; {PasswordPolicy.FormatIdentityErrors(roleResult)}",
+                    "Failure");
                 Toast.Add("用户已创建，但角色分配失败：" + string.Join("；", roleResult.Errors.Select(e => e.Description)),
                     Severity.Warning);
             }
             else
             {
-                Toast.Add($"已创建 {userName}（{DisplayLabels.RoleText(_role)}）", Severity.Success);
+                await AuditSafe("Create", request.UserName, null,
+                    $"display={request.DisplayName}; role={request.Role}");
+                Toast.Add($"已创建 {request.UserName}（{DisplayLabels.RoleText(request.Role)}）", Severity.Success);
             }
 
-            await AuditSafe("Create", userName, null, $"display={_display.Trim()}; role={_role}");
-            ClearForm();
             await Reload();
+        }
+        catch (Exception ex)
+        {
+            await AuditSafe("Create", request.UserName, null, $"create failed; {ex.Message}", "Failure");
+            Toast.Add($"创建用户失败：{ex.Message}", Severity.Error);
         }
         finally
         {
-            _creating = false;
+            _working = false;
         }
-    }
-
-    private void ValidateUserName() => _userError = UserNameRules.Error(_userName);
-
-    private void ValidateDisplay()
-        => _displayError = string.IsNullOrWhiteSpace(_display) ? "请填写显示名" : null;
-
-    private void ValidatePassword()
-        => _passwordError = string.IsNullOrEmpty(_password) ? "请填写初始密码" : Passwords.Validate(_password);
-
-    private void ClearForm()
-    {
-        _userName = "";
-        _display = "";
-        _password = "";
-        _role = AppRoles.Operator;
-        _userError = null;
-        _displayError = null;
-        _passwordError = null;
     }
 
     /// <summary>账号是否处于登录锁定状态。</summary>
     private static bool IsLocked(ApplicationUser user)
         => user.LockoutEnd is { } end && end > DateTimeOffset.UtcNow;
+
+    /// <summary>锁定账号数：连续登录失败的结果，有人正在登不上来时这是要在页头看见的数。</summary>
+    private int LockedCount => _users.Count(row => IsLocked(row.User));
+
+    private bool IsSelf(UserRow row) => row.UserName == _currentUser;
+
+    /// <summary>
+    /// 自己的账号只剩一个角色时不给重置。这条规则来自初始提交，既没有注释也没有用例说明原委，
+    /// 行为照原样保留，这里只把"为什么按不动"说出来。
+    /// </summary>
+    private bool SelfResetBlocked(UserRow row) => IsSelf(row) && row.RoleList.Count == 1;
+
+    private string ResetHint(UserRow row)
+        => SelfResetBlocked(row)
+            ? "当前登录账号只剩一个角色，不允许在这里重置密码"
+            : $"为 {row.UserName} 设置一个新密码";
+
+    private string DeleteHint(UserRow row)
+        => IsSelf(row)
+            ? "不能删除当前登录账号"
+            : $"删除 {row.UserName}：该账号将无法再登录，且操作不可恢复";
 
     private static string LockTooltip(ApplicationUser user)
     {
@@ -381,9 +484,18 @@
                 }
             }
 
+            var actualUser = await UserManager.FindByIdAsync(user.Id);
+            var actualRoles = actualUser is null
+                ? currentRoles
+                : (await UserManager.GetRolesAsync(actualUser)).ToList();
+            var actualDisplay = actualUser?.DisplayName ?? row.DisplayName;
+            var details = failures.Count == 0
+                ? $"display={actualDisplay}; roles={string.Join(',', actualRoles)}"
+                : $"partial; actual display={actualDisplay}; actual roles={string.Join(',', actualRoles)}; errors={string.Join(" | ", failures)}";
             await AuditSafe("Update", row.UserName,
                 $"display={row.DisplayName}; roles={string.Join(',', currentRoles)}",
-                $"display={request.DisplayName}; roles={string.Join(',', request.Roles)}");
+                details,
+                failures.Count == 0 ? "Success" : "Failure");
 
             Toast.Add(
                 failures.Count == 0 ? $"已更新 {row.UserName}" : "部分修改未生效：" + string.Join("；", failures),
@@ -392,6 +504,7 @@
         }
         catch (Exception ex)
         {
+            await AuditSafe("Update", row.UserName, null, $"update failed; {ex.Message}", "Failure");
             Toast.Add($"更新用户失败：{ex.Message}", Severity.Error);
         }
         finally
@@ -432,9 +545,16 @@
                 await AuditSafe("Unlock", row.UserName, $"failed={failedBefore}", "lockout cleared");
                 await Reload();
             }
+            else
+            {
+                await AuditSafe("Unlock", row.UserName, $"failed={failedBefore}",
+                    PasswordPolicy.FormatIdentityErrors(cleared.Succeeded ? counted : cleared),
+                    "Failure");
+            }
         }
         catch (Exception ex)
         {
+            await AuditSafe("Unlock", row.UserName, null, $"unlock failed; {ex.Message}", "Failure");
             Toast.Add($"解除锁定失败：{ex.Message}", Severity.Error);
         }
         finally
@@ -479,9 +599,16 @@
                 // 只记“已重置密码”，绝不写入明文口令。
                 await AuditSafe("ResetPassword", row.UserName, null, "password reset");
             }
+            else
+            {
+                await AuditSafe("ResetPassword", row.UserName, null,
+                    PasswordPolicy.FormatIdentityErrors(reset),
+                    "Failure");
+            }
         }
         catch (Exception ex)
         {
+            await AuditSafe("ResetPassword", row.UserName, null, $"password reset failed; {ex.Message}", "Failure");
             Toast.Add($"重置密码失败：{ex.Message}", Severity.Error);
         }
         finally
@@ -535,6 +662,8 @@
             var result = await UserManager.DeleteAsync(user);
             if (!result.Succeeded)
             {
+                await AuditSafe("Delete", row.UserName, $"roles={string.Join(',', row.RoleList)}",
+                    PasswordPolicy.FormatIdentityErrors(result), "Failure");
                 Toast.Add(PasswordPolicy.FormatIdentityErrors(result), Severity.Error);
                 return;
             }
@@ -545,6 +674,7 @@
         }
         catch (Exception ex)
         {
+            await AuditSafe("Delete", row.UserName, null, $"delete failed; {ex.Message}", "Failure");
             Toast.Add($"删除用户失败：{ex.Message}", Severity.Error);
         }
         finally
@@ -553,12 +683,17 @@
         }
     }
 
-    private async Task AuditSafe(string action, string key, string? oldValue, string? newValue)
+    private async Task AuditSafe(
+        string action,
+        string key,
+        string? oldValue,
+        string? newValue,
+        string outcome = "Success")
     {
         try
         {
             var actor = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
-            await Audit.WriteAsync(actor, action, "User", key, oldValue, newValue);
+            await Audit.WriteAsync(actor, action, "User", key, oldValue, newValue, outcome: outcome);
         }
         catch (Exception ex)
         {

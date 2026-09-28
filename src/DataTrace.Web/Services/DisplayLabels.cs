@@ -71,14 +71,15 @@ public static class DisplayLabels
     [
         "Create", "Update", "Save", "Delete", "Login", "LoginFailed", "Logout", "Toggle", "Switch", "Export",
         "Activate", "Deactivate", "Enable", "Disable", "Copy", "Recode", "SaveLimits",
-        "ResetPassword", "Unlock", "Backup"
+        "ResetPassword", "Unlock", "Backup", "DeleteRuntimeMonth", "ArchiveAndPurge"
     ];
 
     /// <summary>审计对象类型码全集。</summary>
     public static readonly string[] KnownEntityTypes =
     [
         "PlcConnection", "Station", "TagDefinition", "CurveDefinition", "CurveCriterion",
-        "Recipe", "RecipeLimit", "SystemSettings", "User", "Backup", "Query", "Record", "Report"
+        "Recipe", "RecipeLimit", "SystemSettings", "User", "Backup", "Query", "Record", "Report",
+        "AuditLog", "RuntimeData"
     ];
 
     public static string AuditAction(string? action) => action switch
@@ -103,6 +104,8 @@ public static class DisplayLabels
         "ResetPassword" => "重置密码",
         "Unlock" => "解除锁定",
         "Backup" => "备份",
+        "DeleteRuntimeMonth" => "清理运行数据",
+        "ArchiveAndPurge" => "归档并清理审计",
         _ => NullOr(action)
     };
 
@@ -118,6 +121,8 @@ public static class DisplayLabels
         "SystemSettings" => "系统设置",
         "User" => "用户",
         "Backup" => "数据库备份",
+        "AuditLog" => "审计日志",
+        "RuntimeData" => "运行数据",
         "Query" => "数据查询",
         "Record" => "采集记录",
         "Report" => "报表",
@@ -130,7 +135,9 @@ public static class DisplayLabels
     /// 会读成"新增了导出 20 条"；未知动作按变更处理，宁可多显示箭头也不要吞掉内容。
     /// </summary>
     public static bool IsChangeAction(string? action)
-        => action is not ("Login" or "LoginFailed" or "Logout" or "Unlock" or "Export");
+        => action is not (
+            "Login" or "LoginFailed" or "Logout" or "Unlock" or "Export"
+            or "Backup" or "DeleteRuntimeMonth" or "ArchiveAndPurge");
 
     /// <summary>关键字若匹配某动作的中文标签，返回这些动作码，供服务端 OR 查询。</summary>
     public static IReadOnlyList<string> ActionsMatchingKeyword(string? keyword)

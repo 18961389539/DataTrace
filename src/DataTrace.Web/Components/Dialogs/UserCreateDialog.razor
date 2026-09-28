@@ -1,0 +1,89 @@
+@using DataTrace.Domain.Constants
+@using DataTrace.Domain.Validation
+@using DataTrace.Web.Services
+@inject PasswordPolicy Passwords
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">新建用户</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.caption" Class="dt-muted mb-3">
+            用户名创建后不可修改；角色决定可见菜单与可执行操作。
+            <InfoHint Topic="HelpTexts.UserNameImmutable" />
+        </MudText>
+        <form @onsubmit="Submit" @onsubmit:preventDefault="true">
+            <MudTextField @bind-Value="_userName" @bind-Value:after="ValidateUserName"
+                          Label="用户名" Required="true" Immediate="true"
+                          Placeholder="字母数字，3–20 位" HelperText="用于登录，不允许空格或中文"
+                          Error="@(_userError is not null)" ErrorText="@_userError" />
+            <MudTextField @bind-Value="_displayName" @bind-Value:after="ValidateDisplayName"
+                          Label="显示名" Required="true" Immediate="true" Class="mt-3"
+                          Placeholder="如：张工（一号线）"
+                          Error="@(_displayError is not null)" ErrorText="@_displayError" />
+            <MudTextField @bind-Value="_password" @bind-Value:after="ValidatePassword"
+                          Label="初始密码" Required="true" Immediate="true" Class="mt-3"
+                          InputType="@(_showPassword ? InputType.Text : InputType.Password)"
+                          Adornment="Adornment.End"
+                          AdornmentIcon="@(_showPassword ? Icons.Material.Filled.VisibilityOff : Icons.Material.Filled.Visibility)"
+                          OnAdornmentClick="@(() => _showPassword = !_showPassword)"
+                          AdornmentAriaLabel="@(_showPassword ? "隐藏密码" : "显示密码")"
+                          HelperText="@($"必填。{Passwords.HelperText}")"
+                          Error="@(_passwordError is not null)" ErrorText="@_passwordError" />
+            <MudSelect T="string" @bind-Value="_role" Label="新用户角色" ShrinkLabel="true" Class="mt-3">
+                @foreach (var role in AppRoles.All)
+                {
+                    <MudSelectItem T="string" Value="@role">@DisplayLabels.RoleText(role)</MudSelectItem>
+                }
+            </MudSelect>
+            <MudText Typo="Typo.caption" Class="dt-muted mt-1">@DisplayLabels.RoleHint(_role)</MudText>
+        </form>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.PersonAdd"
+                   OnClick="Submit">创建</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance? MudDialog { get; set; }
+
+    private string _userName = "";
+    private string _displayName = "";
+    private string _password = "";
+    private string _role = AppRoles.Operator;
+    private string? _userError;
+    private string? _displayError;
+    private string? _passwordError;
+    private bool _showPassword;
+
+    private void Cancel() => MudDialog?.Cancel();
+
+    private void ValidateUserName() => _userError = UserNameRules.Error(_userName);
+
+    private void ValidateDisplayName()
+        => _displayError = string.IsNullOrWhiteSpace(_displayName) ? "请填写显示名" : null;
+
+    private void ValidatePassword()
+        => _passwordError = string.IsNullOrEmpty(_password) ? "请填写初始密码" : Passwords.Validate(_password);
+
+    private void Submit()
+    {
+        ValidateUserName();
+        ValidateDisplayName();
+        ValidatePassword();
+        if (_userError is not null || _displayError is not null || _passwordError is not null)
+        {
+            return;
+        }
+
+        MudDialog?.Close(DialogResult.Ok(new UserCreateRequest(
+            _userName.Trim(),
+            _displayName.Trim(),
+            _password,
+            _role)));
+    }
+
+    public sealed record UserCreateRequest(string UserName, string DisplayName, string Password, string Role);
+}

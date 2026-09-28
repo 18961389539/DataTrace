@@ -10,4 +10,8 @@ public class AuditLog
     public string? EntityKey { get; set; }
     public string? OldValue { get; set; }
     public string? NewValue { get; set; }
+    public string Outcome { get; set; } = "Success";
+    public string Source { get; set; } = "Blazor Server UI";
+    public string? SourceIp { get; set; }
+    public string? CorrelationId { get; set; }
 }

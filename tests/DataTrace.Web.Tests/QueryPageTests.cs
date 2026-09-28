@@ -93,6 +93,26 @@ public class QueryPageTests : WebTestBase
     }
 
     [Fact]
+    public void Trace_mode_keeps_record_search_separate_and_requests_an_exact_serial()
+    {
+        const string serial = "20260919-000001";
+        _store
+            .Setup(s => s.FindSessionTracesBySerialNoAsync(serial, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<CollectSessionTrace>());
+        var cut = Render();
+
+        ClickButton(cut, "产品追溯");
+        TypeInto(cut, "产品流水号", serial);
+        cut.Find("form").TriggerEvent("onsubmit", new EventArgs());
+
+        _store.Verify(
+            s => s.FindSessionTracesBySerialNoAsync(serial, It.IsAny<CancellationToken>()),
+            Times.Once);
+        Assert.Contains("没有找到完全匹配的流水号", cut.Markup);
+        Assert.DoesNotContain("托盘码", cut.Markup);
+    }
+
+    [Fact]
     public void Export_writes_an_audit_entry_naming_the_range_and_the_filters()
     {
         var cut = Render();

@@ -45,6 +45,29 @@ public sealed class InfoHintE2ETests : E2ETestBase
     }
 
     [Fact]
+    public async Task Page_help_uses_a_single_column_topic_picker_on_mobile()
+    {
+        await Page.SetViewportSizeAsync(430, 932);
+        await Page.GotoAsync($"{App.BaseUrl}/reports");
+        await WaitForAsync(".mud-layout");
+        await WaitForCircuitReadyAsync();
+
+        await Page.Locator("button[aria-label='本页说明']").ClickAsync();
+        var dialog = Page.Locator(".mud-dialog").Last;
+        await dialog.WaitForAsync();
+        Assert.Contains("dt-page-help-dialog", await dialog.GetAttributeAsync("class"));
+
+        Assert.True(await Page.Locator(".dt-page-help-mobile").IsVisibleAsync());
+        Assert.False(await Page.Locator(".dt-page-help-nav").IsVisibleAsync());
+        Assert.True(await Page.Locator("input[aria-label='搜索说明主题']").IsVisibleAsync());
+
+        var width = await dialog.EvaluateAsync<double>("element => parseFloat(getComputedStyle(element).width)");
+        var height = await dialog.EvaluateAsync<double>("element => parseFloat(getComputedStyle(element).height)");
+        Assert.Equal(430, width);
+        Assert.Equal(932, height);
+    }
+
+    [Fact]
     public async Task Every_hint_on_the_key_pages_opens_with_real_content()
     {
         // 单测只能保证文案库本身没问题；这条负责"界面上每一枚 ⓘ 真的挂着内容"——

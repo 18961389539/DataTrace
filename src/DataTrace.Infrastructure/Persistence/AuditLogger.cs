@@ -13,7 +13,18 @@ public sealed class AuditLogger : IAuditLogger
         _db = db;
     }
 
-    public async Task WriteAsync(string userName, string action, string entityType, string? entityKey, string? oldValue, string? newValue, CancellationToken cancellationToken = default)
+    public async Task WriteAsync(
+        string userName,
+        string action,
+        string entityType,
+        string? entityKey,
+        string? oldValue,
+        string? newValue,
+        CancellationToken cancellationToken = default,
+        string outcome = "Success",
+        string source = "Blazor Server UI",
+        string? sourceIp = null,
+        string? correlationId = null)
     {
         _db.AuditLogs.Add(new AuditLog
         {
@@ -23,7 +34,11 @@ public sealed class AuditLogger : IAuditLogger
             EntityType = entityType,
             EntityKey = entityKey,
             OldValue = oldValue,
-            NewValue = newValue
+            NewValue = newValue,
+            Outcome = outcome,
+            Source = source,
+            SourceIp = sourceIp,
+            CorrelationId = correlationId ?? Guid.NewGuid().ToString("N")
         });
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -39,6 +54,10 @@ public sealed class AuditLogger : IAuditLogger
         DateTime? toInclusive = null,
         string? user = null,
         string? entityType = null,
+        string? outcome = null,
+        string? source = null,
+        string? correlationId = null,
+        long? idAtMost = null,
         bool newestFirst = true,
         CancellationToken cancellationToken = default)
     {
@@ -53,6 +72,11 @@ public sealed class AuditLogger : IAuditLogger
         }
 
         var q = _db.AuditLogs.AsNoTracking().AsQueryable();
+
+        if (idAtMost is not null)
+        {
+            q = q.Where(x => x.Id <= idAtMost.Value);
+        }
 
         if (fromInclusive is not null)
         {
@@ -83,6 +107,24 @@ public sealed class AuditLogger : IAuditLogger
             q = q.Where(x => x.EntityType == entityFilter);
         }
 
+        if (!string.IsNullOrWhiteSpace(outcome))
+        {
+            var outcomeFilter = outcome.Trim();
+            q = q.Where(x => x.Outcome == outcomeFilter);
+        }
+
+        if (!string.IsNullOrWhiteSpace(source))
+        {
+            var sourceFilter = source.Trim();
+            q = q.Where(x => x.Source.Contains(sourceFilter));
+        }
+
+        if (!string.IsNullOrWhiteSpace(correlationId))
+        {
+            var correlationFilter = correlationId.Trim();
+            q = q.Where(x => x.CorrelationId == correlationFilter);
+        }
+
         if (!string.IsNullOrWhiteSpace(keyword))
         {
             var k = keyword.Trim();
@@ -100,6 +142,10 @@ public sealed class AuditLogger : IAuditLogger
                 || (x.EntityKey != null && x.EntityKey.Contains(k))
                 || (x.OldValue != null && x.OldValue.Contains(k))
                 || (x.NewValue != null && x.NewValue.Contains(k))
+                || x.Outcome.Contains(k)
+                || x.Source.Contains(k)
+                || (x.SourceIp != null && x.SourceIp.Contains(k))
+                || (x.CorrelationId != null && x.CorrelationId.Contains(k))
                 || matchedActions.Contains(x.Action)
                 || matchedEntities.Contains(x.EntityType));
         }
@@ -107,8 +153,8 @@ public sealed class AuditLogger : IAuditLogger
         var total = await q.CountAsync(cancellationToken).ConfigureAwait(false);
 
         var ordered = newestFirst
-            ? q.OrderByDescending(x => x.Time)
-            : q.OrderBy(x => x.Time);
+            ? q.OrderByDescending(x => x.Time).ThenByDescending(x => x.Id)
+            : q.OrderBy(x => x.Time).ThenBy(x => x.Id);
 
         var items = await ordered
             .Skip(skip)
@@ -116,6 +162,49 @@ public sealed class AuditLogger : IAuditLogger
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
         return (items, total);
+    }
+
+    public async Task<long> GetLatestIdAsync(CancellationToken cancellationToken = default)
+        => await _db.AuditLogs.AsNoTracking()
+            .Select(x => x.Id)
+            .OrderByDescending(id => id)
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    public async Task<DateTime?> GetOldestTimeAsync(CancellationToken cancellationToken = default)
+        => await _db.AuditLogs.AsNoTracking()
+            .Select(x => (DateTime?)x.Time)
+            .MinAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    public Task<int> DeleteRangeAsync(
+        DateTime fromInclusive,
+        DateTime toExclusive,
+        long idAtMost,
+        CancellationToken cancellationToken = default)
+        => _db.AuditLogs
+            .Where(x => x.Time >= fromInclusive && x.Time < toExclusive && x.Id <= idAtMost)
+            .ExecuteDeleteAsync(cancellationToken);
+
+    public async Task<(int Count, long? MinId, long? MaxId)> GetRangeStatsAsync(
+        DateTime fromInclusive,
+        DateTime toExclusive,
+        long idAtMost,
+        CancellationToken cancellationToken = default)
+    {
+        var query = _db.AuditLogs.AsNoTracking()
+            .Where(x => x.Time >= fromInclusive
+                     && x.Time < toExclusive
+                     && x.Id <= idAtMost);
+        var count = await query.CountAsync(cancellationToken).ConfigureAwait(false);
+        if (count == 0)
+        {
+            return (0, null, null);
+        }
+
+        var minId = await query.MinAsync(x => x.Id, cancellationToken).ConfigureAwait(false);
+        var maxId = await query.MaxAsync(x => x.Id, cancellationToken).ConfigureAwait(false);
+        return (count, minId, maxId);
     }
 
     public async Task<IReadOnlyList<string>> ListActionsAsync(CancellationToken cancellationToken = default)

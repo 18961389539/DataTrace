@@ -32,6 +32,20 @@ public class CurveFeatureTests
         Assert.Equal(0, features.Oscillations);
     }
 
+    [Theory]
+    [InlineData(float.NaN)]
+    [InlineData(float.PositiveInfinity)]
+    [InlineData(float.NegativeInfinity)]
+    public void Non_finite_series_is_invalid_and_cannot_become_an_entity(float value)
+    {
+        var features = CurveFeatureExtractor.Extract([1f, value, 2f]);
+
+        Assert.False(features.IsValid);
+        Assert.Equal(3, features.PointCount);
+        Assert.Throws<ArgumentException>(() =>
+            CurveFeatureExtractor.ToEntity("压力", SeriesRole.Y, features));
+    }
+
     [Fact]
     public void Single_point_has_no_slope_and_no_area()
     {

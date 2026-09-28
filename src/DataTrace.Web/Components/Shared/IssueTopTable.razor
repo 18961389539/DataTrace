@@ -1,3 +1,4 @@
+@using System.Globalization
 @* 不良 / 预警 Top N 共用表：两张表的列定义、密度、窄屏折叠方式完全一样，
    只有数据源、占比分母和空状态文案不同。分开写就会像之前那样一张有 Breakpoint 一张没有。 *@
 <MudTable Items="Items" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="Loading">
@@ -9,7 +10,16 @@
     <RowTemplate>
         <MudTd DataLabel="项目">@context.Name</MudTd>
         <MudTd DataLabel="次数" Class="dt-num">@context.Count</MudTd>
-        <MudTd DataLabel="占比" Class="dt-num">@Share(context.Count).ToString("P1")</MudTd>
+        <MudTd DataLabel="占比" Class="dt-num">
+            @* 百分比之外给一根条：两行之间差 3 个百分点，光看数字要逐行读，
+               条形让"哪几个是大头"在第一眼就分出来。条是装饰，读屏靠后面的百分数。 *@
+            <span class="dt-share">
+                <span class="dt-share-track">
+                    <span class="dt-share-fill @BarClass" style="width: @BarWidth(context.Count)"></span>
+                </span>
+                <span>@Share(context.Count).ToString("P1")</span>
+            </span>
+        </MudTd>
     </RowTemplate>
     <NoRecordsContent>
         <MudText Typo="Typo.body2" Class="dt-muted py-3">@EmptyText</MudText>
@@ -25,4 +35,14 @@
     [Parameter] public Func<int, double> Share { get; set; } = _ => 0;
 
     [Parameter] public string EmptyText { get; set; } = "";
+
+    /// <summary>
+    /// 条形填充色的附加类：不良用默认（红），预警传 "warn"（黄）。
+    /// 不按"第几名"变色 —— 名次本身已经能看出来了。
+    /// </summary>
+    [Parameter] public string BarClass { get; set; } = "";
+
+    /// <summary>条形宽度。占比本身是 0~1，换算成百分比宽度；按不变文化输出，小数点是 "." 而不是 ","。</summary>
+    private string BarWidth(int count)
+        => (Share(count) * 100).ToString("0.0", CultureInfo.InvariantCulture) + "%";
 }

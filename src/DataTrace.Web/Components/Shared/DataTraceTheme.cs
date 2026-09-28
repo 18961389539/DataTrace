@@ -3,7 +3,7 @@ using MudBlazor;
 namespace DataTrace.Web.Components.Shared;
 
 /// <summary>
-/// 全站唯一主题：浅色底 + 中文优先字体栈。MainLayout 与 EmptyLayout 共用同一实例。
+/// 全站唯一主题：浅色/深色调色板 + 中文优先字体栈。MainLayout 与 EmptyLayout 共用同一实例。
 /// 语义色定义在 <see cref="DtColors"/>。
 /// </summary>
 public static class DataTraceTheme
@@ -13,6 +13,7 @@ public static class DataTraceTheme
         PaletteLight = new PaletteLight
         {
             Primary = DtColors.Primary,
+            PrimaryContrastText = "#ffffff",
             Secondary = DtColors.Accent,
             Tertiary = DtColors.SeriesAmber,
             Info = DtColors.Info,
@@ -25,6 +26,32 @@ public static class DataTraceTheme
             LinesInputs = DtColors.Grid,
             TextPrimary = "#1f2933",
             TextSecondary = DtColors.Axis
+        },
+        PaletteDark = new PaletteDark
+        {
+            Primary = "#8ab4f8",
+            PrimaryContrastText = "#142333",
+            Secondary = "#80cbc4",
+            Tertiary = "#ffca80",
+            Info = "#90caf9",
+            Success = "#81c784",
+            Warning = "#ffcc80",
+            Error = "#ef9a9a",
+            Dark = "#0d151c",
+
+            Background = "#111820",
+            BackgroundGray = "#151e27",
+            Surface = "#1a252f",
+            DrawerBackground = "#18232d",
+            DrawerText = "#e5edf4",
+            DrawerIcon = "#aab8c5",
+            AppbarBackground = "#18232d",
+            AppbarText = "#e5edf4",
+            TextPrimary = "#e5edf4",
+            TextSecondary = "#aab8c5",
+            LinesDefault = "#33424f",
+            LinesInputs = "#465866",
+            Divider = "#33424f"
         },
         Typography = new Typography
         {

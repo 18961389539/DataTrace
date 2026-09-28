@@ -2,8 +2,9 @@
 @using Microsoft.AspNetCore.Components.Authorization
 @using DataTrace.Web.Services
 @inject CustomerBrandingStore Branding
+@inject IJSRuntime Js
 
-<MudThemeProvider Theme="DataTraceTheme.Current" />
+<MudThemeProvider Theme="DataTraceTheme.Current" @bind-IsDarkMode="_isDarkMode" />
 <MudPopoverProvider />
 <MudDialogProvider />
 <MudSnackbarProvider />
@@ -14,6 +15,7 @@
     <MudAppBar Elevation="1" Color="Color.Dark">
         <MudTooltip Text="展开/收起菜单">
             <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
+                           Class="dt-appbar-menu"
                            aria-label="展开或收起菜单" OnClick="@Toggle" />
         </MudTooltip>
         @* 顶栏品牌：客户厂名（customer.json / Customer:SiteName），可选 Logo *@
@@ -23,19 +25,25 @@
         }
         <MudText Typo="Typo.subtitle1">@_siteName</MudText>
         <MudSpacer />
+        <div class="dt-appbar-utilities">
+            <PwaInstallButton />
+            <ThemeModeSwitch IsDarkMode="_isDarkMode" OnToggle="ToggleThemeAsync" />
+        </div>
         <AuthorizeView>
             <Authorized>
-                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="mr-3 dt-appbar-chip">
-                    @RoleLabel(context.User)
-                </MudChip>
-                <MudIcon Icon="@Icons.Material.Filled.AccountCircle" Class="mr-1" aria-label="@context.User.Identity?.Name" />
-                <MudText Class="mr-4 d-none d-sm-flex">@context.User.Identity?.Name</MudText>
-                @* 退出走 POST 表单：GET 带副作用会被一张 <img src="/account/logout"> 或一次
-                   顶层导航点掉登录态。原生提交（data-enhance="false"）后由服务端 302 回看板。 *@
-                <form method="post" action="/account/logout" data-enhance="false" class="dt-logout-form">
-                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Text" Color="Color.Inherit"
-                               StartIcon="@Icons.Material.Filled.Logout">退出</MudButton>
-                </form>
+                <div class="dt-appbar-identity">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="mr-3 dt-appbar-chip">
+                        @RoleLabel(context.User)
+                    </MudChip>
+                    <MudIcon Icon="@Icons.Material.Filled.AccountCircle" Class="mr-1" aria-label="@context.User.Identity?.Name" />
+                    <MudText Class="mr-4 d-none d-sm-flex">@context.User.Identity?.Name</MudText>
+                    @* 退出走 POST 表单：GET 带副作用会被一张 <img src="/account/logout"> 或一次
+                       顶层导航点掉登录态。原生提交（data-enhance="false"）后由服务端 302 回看板。 *@
+                    <form method="post" action="/account/logout" data-enhance="false" class="dt-logout-form">
+                        <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Text" Color="Color.Inherit"
+                                   StartIcon="@Icons.Material.Filled.Logout">退出</MudButton>
+                    </form>
+                </div>
             </Authorized>
         </AuthorizeView>
     </MudAppBar>
@@ -50,6 +58,7 @@
 
 @code {
     private bool _open = true;
+    private bool _isDarkMode;
     private string _siteName = "DataTrace";
     private string? _logoUrl;
 
@@ -60,7 +69,38 @@
         _logoUrl = snap.ResolvedLogoUrl;
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        try
+        {
+            _isDarkMode = await Js.InvokeAsync<bool>("dtTheme.get");
+            StateHasChanged();
+        }
+        catch (JSException)
+        {
+            // Theme preference is optional; keep the light theme if browser storage is unavailable.
+        }
+    }
+
     private void Toggle() => _open = !_open;
+
+    private async Task ToggleThemeAsync()
+    {
+        _isDarkMode = !_isDarkMode;
+        try
+        {
+            await Js.InvokeVoidAsync("dtTheme.set", _isDarkMode);
+        }
+        catch (JSException)
+        {
+            // The Mud theme still changes for this circuit if persistence is unavailable.
+        }
+    }
 
     private static string RoleLabel(System.Security.Claims.ClaimsPrincipal user)
     {

@@ -15,13 +15,37 @@
 
 <PageHeader Title="数据查询" HelpRoute="query">
     <Actions>
-        <MudText Typo="Typo.caption" Class="dt-muted">
-            区间 @DateRangeFilter.Format(_from, _to)　共 @_total 条
-        </MudText>
-        <InfoHint Topic="HelpTexts.RangeScope" />
+        @if (_traceMode)
+        {
+            <MudText Typo="Typo.caption" Class="dt-muted">按完整流水号跨月追溯</MudText>
+        }
+        else
+        {
+            <MudText Typo="Typo.caption" Class="dt-muted">
+                区间 @DateRangeFilter.Format(_from, _to)　共 @_total 条
+            </MudText>
+            <InfoHint Topic="HelpTexts.RangeScope" />
+        }
     </Actions>
 </PageHeader>
 
+<MudStack Row="true" Spacing="1" Class="mb-3">
+    <MudButton Size="Size.Small" Variant="@(_traceMode ? Variant.Outlined : Variant.Filled)"
+               Color="Color.Primary" StartIcon="@Icons.Material.Filled.TableRows" OnClick="ShowRecords">
+        记录查询
+    </MudButton>
+    <MudButton Size="Size.Small" Variant="@(_traceMode ? Variant.Filled : Variant.Outlined)"
+               Color="Color.Primary" StartIcon="@Icons.Material.Filled.AccountTree" OnClick="ShowTraceability">
+        产品追溯
+    </MudButton>
+</MudStack>
+
+@if (_traceMode)
+{
+    <ProductTraceabilityPanel InitialSerialNo="@TraceQuery" OnSearchCompleted="OnTraceSearchCompleted" />
+}
+else
+{
 <MudPaper Class="dt-filter-card mb-3">
     <form @onsubmit="OnSubmit" @onsubmit:preventDefault="true">
         <DateRangeFilter @bind-From="_from" @bind-To="_to" OnRangeChanged="Search" />
@@ -51,8 +75,7 @@
                 </MudSelect>
             </MudItem>
 
-            @* 结果码与判定是两件事：判定说超没超限，结果码说这次采集成没成。
-               排查「PLC 读取失败」时只有这个下拉能筛出来。 *@
+            @* 结果码描述已落库采集记录的处理结果；PLC 通讯失败没有有效产品记录，单独留在审计日志。 *@
             <MudItem xs="12" sm="6" md="4" lg="3">
                 <MudSelect T="short?" Value="_resultCode" ValueChanged="OnResultCodeChanged" Label="结果码" Clearable="true">
                     @foreach (var code in ResultCodeOptions)
@@ -85,10 +108,16 @@
             </MudButton>
             @if (_canExport)
             {
-                <MudButton Variant="Variant.Outlined" OnClick="ExportCsv" Disabled="_exporting || _total == 0"
-                           StartIcon="@Icons.Material.Filled.FileDownload">
-                    @(_exporting ? "导出中…" : "导出 CSV")
-                </MudButton>
+                @* 按钮禁用时浏览器不派发 hover，tooltip 挂在外层也收不到 —— 见 app.css 里
+                   .mud-tooltip .mud-button:disabled 那条：让按钮不接指针事件，hover 落到包裹层。 *@
+                <MudTooltip Arrow="true" Text="@ExportTooltipText">
+                    <ChildContent>
+                        <MudButton Variant="Variant.Outlined" OnClick="ExportCsv" Disabled="_exporting || _total == 0"
+                                   StartIcon="@Icons.Material.Filled.FileDownload">
+                            @(_exporting ? "导出中…" : "导出 CSV")
+                        </MudButton>
+                    </ChildContent>
+                </MudTooltip>
                 <InfoHint Topic="HelpTexts.ExportLimit" Extra="@ExportHintExtra" />
             }
             <MudText Typo="Typo.caption" Class="dt-muted align-self-center">改任一条件即自动重查，也可点「查询」立刻执行</MudText>
@@ -96,6 +125,26 @@
         </MudStack>
     </form>
 </MudPaper>
+
+@* 「变更即查询」之后，六个条件散在各个控件里，筛完只剩一个命中数，回头看不出自己是按什么在筛。
+   这里把生效条件摊开，并且能只摘掉其中一个 —— 与日志页同一套 chips 写法。
+   区间只在不是默认值（今天）时列出：否则默认进页面就挂着一个删掉也没变化的 chip。 *@
+@if (ActiveFilters.Count > 0)
+{
+    <div class="dt-filter-chips mb-3">
+        <MudText Typo="Typo.caption" Class="dt-muted">当前条件</MudText>
+        @foreach (var filter in ActiveFilters)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
+                @filter.Label
+                <MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close"
+                               aria-label="@($"移除筛选条件：{filter.Label}")"
+                               OnClick="@(() => ClearOneAsync(filter.Clear))" />
+            </MudChip>
+        }
+        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ClearAllFiltersAsync">清空全部</MudButton>
+    </div>
+}
 
 @* 表头吸附：一页最多 100 行，滚下去就没有列名可对。高度用 --dt-grid-height 统一约定，
    不写在这里是因为它和页头/筛选卡/分页条的实际高度有关，只该有一处真相。 *@
@@ -115,7 +164,9 @@
         <MudTh Class="dt-right">操作</MudTh>
     </HeaderContent>
     <RowTemplate>
-        <MudTd DataLabel="时间" Class="dt-nowrap">@context.Record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+        @* 区间落在同一天时省掉日期：默认就是查今天，每行重复 "2026-09-27 " 这 11 个字符
+           只会把型号和结果码挤窄。日期本身页头的「区间」一直写着，不会丢信息。 *@
+        <MudTd DataLabel="时间" Class="dt-nowrap">@TriggerTimeText(context.Record.TriggerTime)</MudTd>
         <MudTd DataLabel="流水号" Class="dt-nowrap">@context.Record.SerialNo</MudTd>
         <MudTd DataLabel="托盘码" Class="dt-nowrap">@context.Record.PalletCode</MudTd>
         <MudTd DataLabel="工站">@context.Record.StationCode</MudTd>
@@ -131,7 +182,9 @@
                结果码与限值判定是两件事，否则现场会把读取失败当成工艺问题。 *@
             <MudTooltip Arrow="true" RootClass="dt-help-popover">
                 <ChildContent>
-                    <span>@ResultCodes.Describe(context.Record.ResultCode)</span>
+                    @* 九个码里只有「采集成功」是成功，其余都是这一件没采成。全是默认色时
+                       「PLC 读取失败」和「采集成功」长得一样，一屏扫下去找不出要处理的行。 *@
+                    <span class="@ResultCodeClass(context.Record.ResultCode)">@ResultCodes.Describe(context.Record.ResultCode)</span>
                 </ChildContent>
                 <TooltipContent>
                     <HelpContent Topic="HelpTexts.ResultCode" />
@@ -139,7 +192,7 @@
             </MudTooltip>
         </MudTd>
         <MudTd DataLabel="耗时" Class="dt-right dt-nowrap">@DurationFormat.Text(context.Record.DurationMs)</MudTd>
-        <MudTd Class="dt-right">
+        <MudTd DataLabel="操作" Class="dt-right">
             @* 复制放在操作列而不是托盘码单元格里：整行可点进明细时，
                行中间的任何小控件都会抢走"点行"这一下，尤其在小屏上。
                外面这层 span 负责掐断冒泡 —— 行点击绑在 tr 上，
@@ -163,14 +216,18 @@
         else
         {
             @* 默认区间是今天，最容易撞到空结果。只说一句「没有记录」等于把人晾在这，
-               所以直接给两个出口：放宽区间（保留其它条件）与清空条件。 *@
+               所以直接给出口：放宽区间（保留其它条件）与清空条件。
+               放宽目标跟着当前跨度走 —— 已经查了 7 天还空，再给「放宽到近 7 天」是句废话。 *@
             <div class="dt-empty-hint">
                 <MudText Typo="Typo.body2" Class="dt-muted">当前区间内没有符合条件的记录。</MudText>
                 <MudStack Row="true" Spacing="2" Class="mt-2" Wrap="Wrap.Wrap">
-                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
-                               StartIcon="@Icons.Material.Filled.DateRange" OnClick="WidenRangeAsync">
-                        放宽到近 7 天
-                    </MudButton>
+                    @if (WidenDays is { } days)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                   StartIcon="@Icons.Material.Filled.DateRange" OnClick="@(() => WidenRangeAsync(days))">
+                            放宽到近 @days 天
+                        </MudButton>
+                    }
                     <MudButton Size="Size.Small" Variant="Variant.Outlined"
                                StartIcon="@Icons.Material.Filled.RestartAlt" OnClick="Reset">
                         清空条件
@@ -192,10 +249,12 @@
             <MudSelectItem T="int" Value="size">@size 条/页</MudSelectItem>
         }
     </MudSelect>
+    @* 总数在页头已经写了一遍（"共 N 条"），这里只留页码，别把同一句话摆两次。 *@
     <MudText Typo="Typo.caption" Class="dt-muted">
-        第 @_page / @_pages 页，共 @_total 条
+        第 @_page / @_pages 页
     </MudText>
 </MudStack>
+}
 
 @code {
     private static readonly int[] PageSizes = [20, 50, 100];
@@ -208,12 +267,46 @@
     /// </summary>
     private static readonly short[] ResultCodeOptions =
     [
-        ResultCodes.Success, ResultCodes.PlcReadFailed, ResultCodes.InvalidPalletCode,
+        ResultCodes.Success, ResultCodes.InvalidPalletCode,
         ResultCodes.DataValidationFailed, ResultCodes.DatabaseWriteFailed, ResultCodes.InternalError,
         ResultCodes.ProcessAbnormal, ResultCodes.FileSourceFailed, ResultCodes.ArchiveFailed
     ];
 
     private static string ResultCodeLabel(short code) => $"{code} · {ResultCodes.Describe(code)}";
+
+    /// <summary>
+    /// 结果码着色：9 个码里只有「采集成功」算成功，其余都是这一件没采成；
+    /// Trigger 是「触发待采集」的中间态，用预警色与真失败区分开。
+    /// </summary>
+    private static string ResultCodeClass(short code) => code switch
+    {
+        ResultCodes.Success => "",
+        ResultCodes.Trigger => "dt-text-warning",
+        _ => "dt-text-error"
+    };
+
+    /// <summary>
+    /// 时间列文本：区间落在同一天时只给时刻。跨天时日期是唯一能分行的时间信息，必须留全。
+    /// </summary>
+    private string TriggerTimeText(DateTime time)
+        => SameDayRange ? time.ToString("HH:mm:ss") : time.ToString("yyyy-MM-dd HH:mm:ss");
+
+    private bool SameDayRange
+        => DateRangeFilter.StartOf(_from) == DateRangeFilter.StartOf(_to);
+
+    /// <summary>当前跨度是多少天（含首尾）。</summary>
+    private int RangeDays
+        => (int)(DateRangeFilter.StartOf(_to) - DateRangeFilter.StartOf(_from)).TotalDays + 1;
+
+    /// <summary>
+    /// 空结果时该往宽放几天：已经 7 天就给 30 天，已经 ≥30 天就没有可放宽的余地（null = 不给这个出口）。
+    /// </summary>
+    private int? WidenDays => RangeDays switch
+    {
+        >= 30 => null,
+        >= 7 => 30,
+        _ => 7
+    };
 
     private DateTime? _from = DateTime.Today;
     private DateTime? _to = DateTime.Today;
@@ -235,6 +328,8 @@
     private bool _loadPending;
     private bool _exporting;
     private bool _canExport;
+    private bool _traceMode;
+    private bool _recordsLoaded;
     private CancellationTokenSource? _debounceCts;
 
     /// <summary>
@@ -251,6 +346,12 @@
 
     [SupplyParameterFromQuery(Name = "serial")]
     public string? SerialQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "view")]
+    public string? ViewQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "trace")]
+    public string? TraceQuery { get; set; }
 
     [SupplyParameterFromQuery(Name = "days")]
     public int? DaysQuery { get; set; }
@@ -289,6 +390,7 @@
 
     protected override async Task OnInitializedAsync()
     {
+        _traceMode = string.Equals(ViewQuery, "trace", StringComparison.OrdinalIgnoreCase);
         var auth = await Auth.GetAuthenticationStateAsync();
         _canExport = auth.User.IsInRole(AppRoles.Administrator) || auth.User.IsInRole(AppRoles.Engineer);
 
@@ -356,7 +458,40 @@
         // 工站下拉与型号选项都取自同一份配置快照：它按版本号在本电路内缓存，
         // 分头读一次工站图、再读一次型号，等于把同一批表读两遍（与报表页同一套做法）。
         _stations = (await Config.GetSnapshotAsync()).Stations;
-        await Load();
+        if (!_traceMode)
+        {
+            await Load();
+            _recordsLoaded = true;
+        }
+    }
+
+    private void ShowTraceability()
+    {
+        _traceMode = true;
+        TraceQuery = null;
+        Nav.NavigateTo("query?view=trace", replace: true);
+    }
+
+    private async Task ShowRecords()
+    {
+        _traceMode = false;
+        TraceQuery = null;
+        Nav.NavigateTo(CurrentListUrl(), replace: true);
+        if (!_recordsLoaded)
+        {
+            await Load();
+            _recordsLoaded = true;
+        }
+    }
+
+    private Task OnTraceSearchCompleted(string? serialNo)
+    {
+        TraceQuery = string.IsNullOrWhiteSpace(serialNo) ? null : serialNo.Trim();
+        var target = TraceQuery is null
+            ? "query?view=trace"
+            : $"query?view=trace&trace={Uri.EscapeDataString(TraceQuery)}";
+        Nav.NavigateTo(target, replace: true);
+        return Task.CompletedTask;
     }
 
     private CollectQueryRequest BuildRequest(int skip, int take) => new()
@@ -423,10 +558,9 @@
         }
     }
 
-    /// <summary>空结果时的出口：只放宽区间，托盘码等其它条件保留。</summary>
-    private async Task WidenRangeAsync()
+    private async Task WidenRangeAsync(int days)
     {
-        _from = DateTime.Today.AddDays(-6);
+        _from = DateTime.Today.AddDays(-(days - 1));
         _to = DateTime.Today;
         await Search();
     }
@@ -435,6 +569,9 @@
     {
         if (DateRangeFilter.IsReversed(_from, _to))
         {
+            _items = [];
+            _total = 0;
+            _pages = 1;
             Toast.Add(DateRangeFilter.ReversedRangeMessage, Severity.Warning);
             return;
         }
@@ -509,6 +646,11 @@
     /// </summary>
     private void SyncUrl()
     {
+        if (_traceMode)
+        {
+            return;
+        }
+
         var target = CurrentListUrl();
         if (Nav.ToBaseRelativePath(Nav.Uri) == target)
         {
@@ -583,6 +725,15 @@
 
     private async Task Reset()
     {
+        ClearFilterState();
+        _pageSize = 20;
+        Toast.Add("筛选条件已重置", Severity.Info);
+        await Search();
+    }
+
+    /// <summary>把所有条件退回默认值。chips 的「清空全部」只清条件，不动每页条数。</summary>
+    private void ClearFilterState()
+    {
         _recipeFilter = null;
         _pallet = null;
         _serialNo = null;
@@ -591,10 +742,93 @@
         _resultCode = null;
         _from = DateTime.Today;
         _to = DateTime.Today;
-        _pageSize = 20;
-        Toast.Add("筛选条件已重置", Severity.Info);
+    }
+
+    private async Task ClearAllFiltersAsync()
+    {
+        ClearFilterState();
         await Search();
     }
+
+    private async Task ClearOneAsync(Action clear)
+    {
+        // 输入框上的防抖可能还在等那 400ms，放着不管会在这一下之后又按旧值查一遍。
+        _debounceCts?.Cancel();
+        clear();
+        await Search();
+    }
+
+    /// <summary>一个生效条件：显示文案 + 摘掉它的动作。</summary>
+    private sealed record ActiveFilter(string Label, Action Clear);
+
+    /// <summary>
+    /// chips 行的数据。只列真正生效的条件，区间在等于默认（今天）时不列 ——
+    /// 否则一进页面就挂着一个删掉也毫无变化的 chip。
+    /// </summary>
+    private IReadOnlyList<ActiveFilter> ActiveFilters
+    {
+        get
+        {
+            var list = new List<ActiveFilter>();
+
+            if (!IsDefaultRange)
+            {
+                list.Add(new($"区间 {DateRangeFilter.Format(_from, _to)}",
+                    () => { _from = DateTime.Today; _to = DateTime.Today; }));
+            }
+
+            if (!string.IsNullOrWhiteSpace(_pallet))
+            {
+                var pallet = _pallet!.Trim();
+                list.Add(new($"托盘码 {pallet}", () => _pallet = null));
+            }
+
+            if (!string.IsNullOrWhiteSpace(_serialNo))
+            {
+                var serial = _serialNo!.Trim();
+                list.Add(new($"流水号 {serial}", () => _serialNo = null));
+            }
+
+            if (_stationId is { } stationId)
+            {
+                list.Add(new($"工站 {StationCode(stationId)}", () => _stationId = null));
+            }
+
+            if (_judgement is { } judgement)
+            {
+                list.Add(new($"判定 {DisplayLabels.JudgementText(judgement)}", () => _judgement = null));
+            }
+
+            if (_resultCode is { } resultCode)
+            {
+                list.Add(new($"结果码 {ResultCodes.Describe(resultCode)}", () => _resultCode = null));
+            }
+
+            if (_recipeFilter is { } recipe)
+            {
+                list.Add(new($"型号 {RecipeLabel(recipe)}", () => _recipeFilter = null));
+            }
+
+            return list;
+        }
+    }
+
+    private bool IsDefaultRange
+        => DateRangeFilter.StartOf(_from) == DateTime.Today
+           && DateRangeFilter.StartOf(_to) == DateTime.Today;
+
+    /// <summary>工站 chip 上的编码；站被删掉时退成 Id，别显示一个空标签。</summary>
+    private string StationCode(int id)
+        => _stations.FirstOrDefault(s => s.Id == id)?.Code ?? id.ToString();
+
+    /// <summary>
+    /// 导出按钮的悬停说明。命中 0 条时按钮是禁用的，不写清楚就只是一次「点了没反应」。
+    /// </summary>
+    private string ExportTooltipText => _total == 0
+        ? "当前没有命中记录，没有可导出的内容"
+        : _total > SystemDefaults.ExportRowLimit
+            ? $"当前命中 {_total:N0} 条，单次最多导出前 {SystemDefaults.ExportRowLimit:N0} 条"
+            : $"导出当前命中的 {_total:N0} 条";
 
     private string DetailUrl(CollectRecordListItem item)
         => $"/query/{item.MonthKey}/{item.Record.Id}?back={Uri.EscapeDataString(CurrentListUrl())}";
@@ -744,8 +978,10 @@
                 return;
             }
 
+            @* 列与表格对齐：表格有耗时列，导出却没有 —— 刚修完 DurationMs 落库，
+               导出是唯一一个把节拍带不出去的出口。表头带单位，因为 CSV 里给的是毫秒整数。 *@
             var csv = CsvExporter.Build(
-                ["触发时间", "流水号", "托盘码", "工站", "型号", "判定", "结果码", "结果说明"],
+                ["触发时间", "流水号", "托盘码", "工站", "型号", "判定", "结果码", "结果说明", "耗时(ms)"],
                 result.Items.Select(item => new[]
                 {
                     item.Record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss"),
@@ -755,7 +991,8 @@
                     RecipeLabel(item.Record.RecipeCode),
                     DisplayLabels.JudgementTextLong(item.Record.Judgement),
                     item.Record.ResultCode.ToString(),
-                    ResultCodes.Describe(item.Record.ResultCode)
+                    ResultCodes.Describe(item.Record.ResultCode),
+                    DurationMsText(item.Record.DurationMs)
                 })
             );
 
@@ -783,6 +1020,13 @@
             _exporting = false;
         }
     }
+
+    /// <summary>
+    /// 导出里的耗时：给毫秒整数而不是表格里的 "412 ms"，进 Excel 才能直接求和、求均值、做透视。
+    /// 没采到耗时的老记录（DurationMs 落库之前的历史）留空而不是写 0 —— 0 会被算进均值里。
+    /// </summary>
+    private static string DurationMsText(int? durationMs)
+        => durationMs is > 0 ? durationMs.Value.ToString() : "";
 
     private async Task WriteExportAuditAsync(int exported, int total)
     {

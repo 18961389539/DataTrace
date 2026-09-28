@@ -166,12 +166,13 @@ public class RuntimeStoreTests
         };
     }
 
-    private static CollectSaveRequest FirstStation(string monthKey, string palletCode, string serialNo, DateTime triggerTime, Judgement judgement = Judgement.Ok, bool withCurve = false)
+    private static CollectSaveRequest FirstStation(string monthKey, string palletCode, string serialNo, DateTime triggerTime, Judgement judgement = Judgement.Ok, bool withCurve = false, bool removeActiveSession = false)
         => new()
         {
             MonthKey = monthKey,
             UpsertSession = new PalletSession { SerialNo = serialNo, PalletCode = palletCode, StartTime = triggerTime, Status = SessionStatus.Open },
             ActiveSession = new ActiveSessionIndex { PalletCode = palletCode, SerialNo = serialNo, MonthKey = monthKey, StartTime = triggerTime },
+            RemoveActiveSession = removeActiveSession,
             Record = BuildRecord(palletCode, serialNo, triggerTime, judgement),
             Curves = withCurve
                 ?
@@ -253,6 +254,22 @@ public class RuntimeStoreTests
         await env.Store.SaveAsync(FirstStation("202609", "P0001", "S1", Day1));
 
         Assert.Empty(Directory.GetFiles(env.CurveRoot, "*.curve", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task Post_commit_index_failure_keeps_curve_files_referenced_by_committed_record()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        var request = FirstStation("202609", "P0001", "S1", Day1, withCurve: true, removeActiveSession: true);
+        var store = new RuntimeStore(env.Factory, env.Curves, new ThrowOnRemoveActiveSessionStore());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => store.SaveAsync(request));
+
+        var relativePath = Assert.Single(request.Record.Curves).RelativePath;
+        Assert.True(File.Exists(Path.Combine(env.CurveRoot, relativePath.Replace('/', Path.DirectorySeparatorChar))));
+        var persisted = await env.Store.GetRecordAsync("202609", request.Record.Id);
+        Assert.NotNull(persisted);
+        Assert.Equal(relativePath, Assert.Single(persisted!.Curves).RelativePath);
     }
 
     [Fact]
@@ -342,6 +359,85 @@ public class RuntimeStoreTests
 
         Assert.Equal(2, result.Total);
         Assert.Equal(new[] { "202607", "202601" }, result.Items.Select(i => i.MonthKey).ToArray());
+    }
+
+    [Fact]
+    public async Task Date_queries_find_cross_month_session_records_and_sort_by_trigger_time()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        var first = FirstStation("202609", "P0001", "S1", new DateTime(2026, 9, 30, 23, 59, 0));
+        await env.Store.SaveAsync(first);
+
+        var octoberRecord = FollowingStation(
+            "202609", "P0001", "S1", new DateTime(2026, 10, 1, 8, 1, 0),
+            first.Record.PalletSessionId, stationId: 20, stationCode: "ST020");
+        await env.Store.SaveAsync(octoberRecord);
+        await env.Store.SaveAsync(FirstStation(
+            "202610", "P0002", "S2", new DateTime(2026, 10, 1, 8, 0, 0)));
+
+        var request = new CollectQueryRequest
+        {
+            From = new DateTime(2026, 10, 1),
+            To = new DateTime(2026, 10, 31, 23, 59, 59),
+            Skip = 0,
+            Take = 10
+        };
+        var result = await env.Store.QueryAsync(request);
+        var reportRows = await env.Store.QueryForReportAsync(request.From, request.To);
+        var judgementCounts = await env.Store.CountJudgementsAsync(request.From, request.To, stationId: null);
+
+        Assert.Equal(2, result.Total);
+        Assert.Equal(new[] { "P0001", "P0002" }, result.Items.Select(x => x.Record.PalletCode));
+        Assert.Equal(new[] { "202609", "202610" }, result.Items.Select(x => x.MonthKey));
+        Assert.Equal(2, reportRows.Count);
+        Assert.Equal(2, judgementCounts.Sum(x => x.Count));
+    }
+
+    private sealed class ThrowOnRemoveActiveSessionStore : IActiveSessionStore
+    {
+        public Task<ActiveSessionIndex?> FindByPalletAsync(string palletCode, CancellationToken cancellationToken = default)
+            => Task.FromResult<ActiveSessionIndex?>(null);
+
+        public Task UpsertAsync(ActiveSessionIndex session, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task RemoveByPalletAsync(string palletCode, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("Simulated post-commit index failure");
+
+        public Task<IReadOnlyList<ActiveSessionIndex>> ListAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<ActiveSessionIndex>>([]);
+    }
+
+    [Fact]
+    public async Task Serial_trace_uses_exact_match_and_keeps_month_session_keys_separate()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        const string serial = "20260919-000001";
+        var september = FirstStation("202609", "P0001", serial, Day1);
+        await env.Store.SaveAsync(september);
+        await env.Store.SaveAsync(FollowingStation(
+            "202609", "P0001", serial, Day1.AddMinutes(1), september.Record.PalletSessionId,
+            stationId: 20, stationCode: "ST020"));
+
+        // A serial can recur in another month library; the month key is part of the session identity.
+        await env.Store.SaveAsync(FirstStation(
+            "202610", "P0002", serial, new DateTime(2026, 10, 2, 8, 0, 0)));
+        // Similar identifiers must not be included by the trace search.
+        await env.Store.SaveAsync(FirstStation(
+            "202610", "P0003", $"{serial}-COPY", new DateTime(2026, 10, 2, 8, 1, 0)));
+
+        var traces = await env.Store.FindSessionTracesBySerialNoAsync(serial);
+
+        Assert.Equal(2, traces.Count);
+        Assert.Equal(new[] { "202610", "202609" }, traces.Select(x => x.MonthKey).ToArray());
+        Assert.All(traces, trace => Assert.NotNull(trace.Session));
+        var septemberTrace = traces.Single(x => x.MonthKey == "202609");
+        Assert.Equal(september.Record.PalletSessionId, septemberTrace.SessionId);
+        Assert.Equal(new[] { "ST010", "ST020" }, septemberTrace.Records.Select(x => x.StationCode).ToArray());
+        Assert.Single(traces.Single(x => x.MonthKey == "202610").Records);
+
+        Assert.Empty(await env.Store.FindSessionTracesBySerialNoAsync($"{serial}-COP"));
+        Assert.Empty(await env.Store.FindSessionTracesBySerialNoAsync(" "));
     }
 
     /// <summary>
@@ -458,6 +554,23 @@ public class RuntimeStoreTests
         Assert.All(session.Records, r => Assert.Single(r.Products));
         Assert.Null(await env.Store.GetSessionAsync("202608", sessionId));
         Assert.Null(await env.Store.GetSessionAsync("202609", 999_999));
+    }
+
+    [Fact]
+    public async Task Closed_session_judgement_keeps_any_station_ng()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        var first = FirstStation("202609", "P0001", "S1", Day1, Judgement.Ng);
+        await env.Store.SaveAsync(first);
+
+        await env.Store.SaveAsync(FollowingStation(
+            "202609", "P0001", "S1", Day1.AddMinutes(1), first.Record.PalletSessionId,
+            close: true, judgement: Judgement.Ok));
+
+        var session = await env.Store.GetSessionAsync("202609", first.Record.PalletSessionId);
+
+        Assert.NotNull(session);
+        Assert.Equal(Judgement.Ng, session!.Judgement);
     }
 
     [Fact]
@@ -724,6 +837,29 @@ public class RuntimeStoreTests
         Assert.Equal(5, (await env.Store.QueryCurveFeaturesAsync(curveId, null, from, to, 10)).Count);
     }
 
+    [Fact]
+    public async Task Curve_feature_projection_preserves_unjudged_status_and_can_filter_to_qualified_rows()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        await SaveCurveFeatureAsync(env, "202609", "OK", Day1, "", 11f, Judgement.Ok);
+        await SaveCurveFeatureAsync(env, "202609", "NG", Day1.AddMinutes(1), "", 12f, Judgement.Ng);
+        await SaveCurveFeatureAsync(env, "202609", "NONE", Day1.AddMinutes(2), "", 13f, Judgement.None);
+
+        var from = Day1;
+        var to = Day1.AddDays(1);
+        var all = await env.Store.QueryCurveFeaturesAsync(1, "压力", from, to, 10);
+        Assert.Equal(
+            new[] { Judgement.Ok, Judgement.Ng, Judgement.None },
+            all.Select(x => x.ActualJudgement).ToArray());
+        Assert.Single(await env.Store.QueryCurveFeaturesAsync(
+            1, "压力", from, to, 10, judgement: Judgement.Ok));
+
+        var counts = Assert.Single(await env.Store.CountCurveFeaturesByRecipeAsync(1, "压力", from, to));
+        Assert.Equal(3, counts.Total);
+        Assert.Equal(1, counts.Ng);
+        Assert.Equal(1, counts.Unjudged);
+    }
+
     /// <summary>
     /// 跨月取"最新 take 条"：从最新月库往回取、凑够即停，结果必须是全局最新那批。
     /// </summary>
@@ -747,9 +883,15 @@ public class RuntimeStoreTests
     }
 
     private static async Task SaveCurveFeatureAsync(
-        RuntimeEnv env, string monthKey, string pallet, DateTime time, string recipeCode, float peak)
+        RuntimeEnv env,
+        string monthKey,
+        string pallet,
+        DateTime time,
+        string recipeCode,
+        float peak,
+        Judgement judgement = Judgement.Ok)
     {
-        var request = FirstStation(monthKey, pallet, pallet, time, withCurve: true);
+        var request = FirstStation(monthKey, pallet, pallet, time, judgement, withCurve: true);
         request.Record.RecipeCode = recipeCode;
         request.Curves[0].Record.Features =
         [

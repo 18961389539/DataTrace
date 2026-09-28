@@ -22,6 +22,10 @@ public static class CsvExporter
         return builder.ToString();
     }
 
+    /// <summary>转义并输出单行 CSV，供大文件导出逐行写入流。</summary>
+    public static string BuildRow(IEnumerable<string?> values)
+        => string.Join(',', values.Select(Escape));
+
     /// <summary>把 CSV 文本转成带 BOM 的 Base64，交给前端 Blob 下载。</summary>
     public static string ToBase64(string csv)
     {

@@ -2,20 +2,27 @@
 
 <MudTooltip Arrow="true" RootClass="dt-help-popover">
     <ChildContent>
-        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@CadenceColor">
-            最近节拍 @CadenceText
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                 Color="@FreshnessColor" Icon="@FreshnessIcon" aria-label="@AccessibleText">
+            @FreshnessText
+            <span class="dt-live-cadence-secondary">· 节拍 @CadenceText</span>
         </MudChip>
     </ChildContent>
     <TooltipContent>
+        <HelpContent Topic="HelpTexts.StaleData" />
         <HelpContent Topic="HelpTexts.Cadence" />
     </TooltipContent>
 </MudTooltip>
 
 @code {
     [Parameter] public DateTime? LastBeat { get; set; }
+    [Parameter] public string FreshnessText { get; set; } = "";
+    [Parameter] public Color FreshnessColor { get; set; } = Color.Default;
+    [Parameter] public string FreshnessIcon { get; set; } = Icons.Material.Filled.Schedule;
 
     private DateTime _now = DateTime.Now;
     private Timer? _timer;
+    private string AccessibleText => $"{FreshnessText}；最近工站节拍 {CadenceText}";
 
     protected override void OnInitialized()
     {
@@ -36,17 +43,6 @@
             if (span.TotalSeconds < 60) return $"{(int)span.TotalSeconds} 秒前";
             if (span.TotalMinutes < 60) return $"{(int)span.TotalMinutes} 分前";
             return LastBeat.Value.ToString("HH:mm:ss");
-        }
-    }
-
-    private Color CadenceColor
-    {
-        get
-        {
-            if (LastBeat is not { } beat) return Color.Default;
-            var idle = _now - beat;
-            if (idle < TimeSpan.FromSeconds(SystemDefaults.CadenceWarnSeconds)) return Color.Success;
-            return idle < TimeSpan.FromSeconds(SystemDefaults.CadenceIdleSeconds) ? Color.Warning : Color.Default;
         }
     }
 

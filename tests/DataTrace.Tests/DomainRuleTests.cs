@@ -1,4 +1,4 @@
-﻿using DataTrace.Domain.Constants;
+using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
@@ -124,6 +124,16 @@ public class DomainRuleTests
     {
         var tag = new TagDefinition { LowerLimit = 5, UpperLimit = 10 };
         Assert.Equal(outOfLimit, LimitEvaluator.IsOutOfLimit(tag, value));
+    }
+
+    [Fact]
+    public void Limit_evaluator_rejects_non_finite_values_even_without_limits()
+    {
+        var tag = new TagDefinition();
+
+        Assert.True(LimitEvaluator.IsOutOfLimit(tag, double.NaN));
+        Assert.True(LimitEvaluator.IsOutOfLimit(tag, double.PositiveInfinity));
+        Assert.True(LimitEvaluator.IsOutOfLimit(tag, double.NegativeInfinity));
     }
 
     [Fact]
@@ -449,7 +459,11 @@ public class DomainRuleTests
     {
         Assert.Null(SettingsLimits.ScanIntervalError(SettingsLimits.MinScanIntervalMs));
         Assert.Null(SettingsLimits.RetentionYearsError(SettingsLimits.MaxRetentionYears));
+        Assert.Null(SettingsLimits.AuditRetentionYearsError(0));
+        Assert.Null(SettingsLimits.AuditRetentionYearsError(SettingsLimits.MaxAuditRetentionYears));
         Assert.Null(SettingsLimits.MesTimeoutError(SettingsLimits.MinMesTimeoutSeconds));
+        Assert.Contains("审计保留年数", SettingsLimits.AuditRetentionYearsError(-1));
+        Assert.Contains("审计保留年数", SettingsLimits.AuditRetentionYearsError(31));
 
         // 0 会被清理任务当成 1 年（删数据），必须点名是哪个字段。
         var retention = SettingsLimits.RetentionYearsError(0);

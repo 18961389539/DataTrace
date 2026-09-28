@@ -1,0 +1,60 @@
+@implements IAsyncDisposable
+@inject IJSRuntime Js
+
+@if (_canInstall)
+{
+    <MudTooltip Text="安装 DataTrace 桌面应用">
+        <MudIconButton Icon="@Icons.Material.Filled.GetApp"
+                       Color="Color.Inherit"
+                       OnClick="InstallAsync"
+                       aria-label="安装 DataTrace 应用" />
+    </MudTooltip>
+}
+
+@code {
+    private DotNetObjectReference<PwaInstallButton>? _dotNetReference;
+    private bool _canInstall;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        _dotNetReference = DotNetObjectReference.Create(this);
+        await Js.InvokeVoidAsync("dtPwa.initialize", _dotNetReference);
+    }
+
+    [JSInvokable]
+    public Task PwaInstallStateChanged(bool canInstall)
+        => InvokeAsync(() =>
+        {
+            _canInstall = canInstall;
+            StateHasChanged();
+        });
+
+    private async Task InstallAsync()
+        => await Js.InvokeAsync<string>("dtPwa.install");
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_dotNetReference is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await Js.InvokeVoidAsync("dtPwa.dispose", _dotNetReference);
+        }
+        catch (JSDisconnectedException)
+        {
+            // The browser circuit may already be gone during navigation or shutdown.
+        }
+        finally
+        {
+            _dotNetReference.Dispose();
+        }
+    }
+}

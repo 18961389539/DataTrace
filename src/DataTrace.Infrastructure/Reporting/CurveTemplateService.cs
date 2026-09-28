@@ -50,10 +50,11 @@ public sealed class CurveTemplateService : ICurveTemplateService
         var activeRecipeCode = snapshot.ActiveRecipe?.Code ?? "";
         var allowedRecipeCodes = CurveRecipeScope.AllowedCodes(activeRecipeCode, snapshot.ActiveRecipe?.PreviousCodes);
 
-        // 基线要反映"最近"的正常状态，而不是整段历史的平均，所以按样本量设上限。
-        // 型号过滤必须一起下推到 SQL（先过滤再取最新 N 条），否则另一种型号
-        // 最近产量大一点就会把本型号样本挤出去，模板直接建不起来。
-        var take = Math.Max(recentCount, maxSamples);
+        // 最近样本是独立验证集，必须从训练窗口中完全排除，避免用训练数据验证自身。
+        // 型号过滤一起下推到 SQL，确保截断前已排除其它型号。
+        var evaluationLimit = Math.Max(0, recentCount);
+        var baselineLimit = Math.Max(0, maxSamples);
+        var take = (int)Math.Min(int.MaxValue, (long)evaluationLimit + baselineLimit);
         var points = await _store
             .QueryCurveFeaturesAsync(
                 curve.Id,
@@ -78,19 +79,27 @@ public sealed class CurveTemplateService : ICurveTemplateService
         var totalSampleCount = byRecipe.Sum(x => x.Total);
         var inScope = byRecipe.Where(x => allowedRecipeCodes.Contains(x.RecipeCode, StringComparer.Ordinal)).ToList();
         var mismatched = totalSampleCount - inScope.Sum(x => x.Total);
+        var ngCount = inScope.Sum(x => x.Ng);
+        var unjudgedCount = inScope.Sum(x => x.Unjudged);
 
-        // 基线只用合格样本：历史里的不良波形正是我们要检出的东西，不能拿它当"正常"。
-        var goodSamples = points.Where(p => !p.IsNg).Select(p => p.Feature).ToList();
+        var orderedPoints = points
+            .OrderBy(p => p.Time)
+            .ThenBy(p => p.CurveRecordId)
+            .ToList();
+        var recentStart = Math.Max(0, orderedPoints.Count - evaluationLimit);
+        var recent = orderedPoints.Skip(recentStart).ToList();
+        var training = orderedPoints.Take(recentStart).ToList();
+
+        // 只用独立验证窗口之前的 OK 样本建模；NG 和未判定记录均不能代表正常状态。
+        var goodSamples = training
+            .Where(p => p.ActualJudgement == Judgement.Ok)
+            .Select(p => p.Feature)
+            .ToList();
         var template = CurveTemplateBuilder.Build(goodSamples);
 
-        var recent = points
-            .OrderByDescending(p => p.Time)
-            .Take(recentCount)
-            .OrderBy(p => p.Time)
-            .ToList();
-
         var scores = recent
-            .Select(p => CurveTemplateMatcher.Score(template, p.Feature, p.CurveRecordId, p.Time, p.PalletCode, p.IsNg))
+            .Select(p => CurveTemplateMatcher.Score(
+                template, p.Feature, p.CurveRecordId, p.Time, p.PalletCode, p.ActualJudgement))
             .ToList();
 
         return new CurveBaselineReport
@@ -105,11 +114,19 @@ public sealed class CurveTemplateService : ICurveTemplateService
             MismatchedRecipeCount = mismatched,
             BaselineSampleCount = goodSamples.Count,
             RecipeCode = activeRecipeCode,
-            NgCount = inScope.Sum(x => x.Ng),
+            NgCount = ngCount,
+            UnjudgedCount = unjudgedCount,
             Template = template,
             Recent = scores,
             Shadow = Compare(scores),
-            EmptyReason = BuildEmptyReason(mismatched, inScope.Sum(x => x.Total), goodSamples.Count, template, activeRecipeCode)
+            EmptyReason = BuildEmptyReason(
+                mismatched,
+                inScope.Sum(x => x.Total),
+                goodSamples.Count,
+                ngCount,
+                unjudgedCount,
+                template,
+                activeRecipeCode)
         };
     }
 
@@ -120,16 +137,21 @@ public sealed class CurveTemplateService : ICurveTemplateService
     private static CurveShadowComparison Compare(IReadOnlyList<CurveTemplateScore> scores)
     {
         var scored = scores
-            .Where(s => s.Verdict != CurveTemplateVerdict.InsufficientBaseline)
+            .Where(s => s.Verdict != CurveTemplateVerdict.InsufficientBaseline
+                        && (s.ActualJudgement is Judgement.Ok or Judgement.Ng))
             .ToList();
 
         return new CurveShadowComparison
         {
             Checked = scored.Count,
-            TruePositive = scored.Count(s => s.Verdict == CurveTemplateVerdict.Abnormal && s.IsNg),
-            FalsePositive = scored.Count(s => s.Verdict == CurveTemplateVerdict.Abnormal && !s.IsNg),
-            FalseNegative = scored.Count(s => s.Verdict != CurveTemplateVerdict.Abnormal && s.IsNg),
-            TrueNegative = scored.Count(s => s.Verdict != CurveTemplateVerdict.Abnormal && !s.IsNg)
+            TruePositive = scored.Count(s => s.Verdict == CurveTemplateVerdict.Abnormal
+                                             && s.ActualJudgement == Judgement.Ng),
+            FalsePositive = scored.Count(s => s.Verdict == CurveTemplateVerdict.Abnormal
+                                              && s.ActualJudgement == Judgement.Ok),
+            FalseNegative = scored.Count(s => s.Verdict != CurveTemplateVerdict.Abnormal
+                                              && s.ActualJudgement == Judgement.Ng),
+            TrueNegative = scored.Count(s => s.Verdict != CurveTemplateVerdict.Abnormal
+                                             && s.ActualJudgement == Judgement.Ok)
         };
     }
 
@@ -137,6 +159,8 @@ public sealed class CurveTemplateService : ICurveTemplateService
         int mismatched,
         int inScopeTotal,
         int goodSamples,
+        int ngCount,
+        int unjudgedCount,
         CurveTemplate template,
         string activeRecipeCode)
     {
@@ -156,7 +180,13 @@ public sealed class CurveTemplateService : ICurveTemplateService
 
         if (goodSamples == 0)
         {
-            return $"该区间内本型号的 {inScopeTotal} 条样本全部不合格，没有可用于建立基线的合格样本。";
+            if (ngCount + unjudgedCount == inScopeTotal)
+            {
+                return $"该区间内本型号的 {ngCount} 条 NG 和 {unjudgedCount} 条未判定样本均不参与建基线；" +
+                       "请检查近期样本，或扩大时间范围寻找更早的 OK 样本。";
+            }
+
+            return "最新样本保留作独立评估；其之前没有可用于建立基线的 OK 样本，请扩大时间范围。";
         }
 
         // 模板不可靠时把原因透出（样本不足 / 全部维度零波动），而不是让界面显示一个哑掉的分数。

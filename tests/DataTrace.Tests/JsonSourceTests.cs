@@ -221,6 +221,57 @@ public class JsonSourceTests
         Assert.All(tags, t => Assert.Equal(TagDataSource.Plc, t.Source));
     }
 
+    [Fact]
+    public async Task Old_audit_rows_are_preserved_when_trace_columns_are_added()
+    {
+        await using var ctx = await InfrastructureContext.CreateAsync();
+        var services = ctx.Scope.ServiceProvider;
+        var db = services.GetRequiredService<ConfigDbContext>();
+        var audit = new AuditLogger(db);
+        await audit.WriteAsync("admin", "Update", "SystemSettings", "1", "old", "new");
+        await audit.WriteAsync("admin", "LoginFailed", "User", "admin", null, "reason=invalid",
+            outcome: "Success");
+        var original = await db.AuditLogs.SingleAsync(x => x.Action == "Update");
+
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "AuditLogs" DROP COLUMN "Outcome" """);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "AuditLogs" DROP COLUMN "Source" """);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "AuditLogs" DROP COLUMN "SourceIp" """);
+        await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "AuditLogs" DROP COLUMN "CorrelationId" """);
+
+        await services.GetRequiredService<DatabaseSeeder>().SeedAsync();
+        db.ChangeTracker.Clear();
+
+        var migrated = await db.AuditLogs.SingleAsync(x => x.Action == "Update");
+        Assert.Equal(original.Id, migrated.Id);
+        Assert.Equal("old", migrated.OldValue);
+        Assert.Equal("new", migrated.NewValue);
+        Assert.Equal("Success", migrated.Outcome);
+        Assert.Equal("Legacy / unknown", migrated.Source);
+        Assert.Null(migrated.SourceIp);
+        Assert.Null(migrated.CorrelationId);
+        var migratedFailure = await db.AuditLogs.SingleAsync(x => x.Action == "LoginFailed");
+        Assert.Equal("Failure", migratedFailure.Outcome);
+        Assert.Contains("CorrelationId", await ColumnNamesAsync(db, "AuditLogs"));
+    }
+
+    [Fact]
+    public async Task Existing_config_database_without_audit_table_gets_one_on_startup()
+    {
+        await using var ctx = await InfrastructureContext.CreateAsync();
+        var services = ctx.Scope.ServiceProvider;
+        var db = services.GetRequiredService<ConfigDbContext>();
+
+        await db.Database.ExecuteSqlRawAsync("""DROP TABLE "AuditLogs" """);
+        await services.GetRequiredService<DatabaseSeeder>().SeedAsync();
+        var columns = await ColumnNamesAsync(db, "AuditLogs");
+
+        Assert.Contains("Outcome", columns);
+        Assert.Contains("CorrelationId", columns);
+        var audit = new AuditLogger(db);
+        await audit.WriteAsync("admin", "Login", "User", "admin", null, null);
+        Assert.Equal(1, await db.AuditLogs.CountAsync());
+    }
+
     /// <summary>老月库补归档列：每个进程第一次打开该月库时补齐，否则明细页与落库都会报缺列。</summary>
     [Fact]
     public async Task Old_month_database_gets_the_new_archive_columns_when_opened()
@@ -472,6 +523,24 @@ public class JsonSourceTests
         // 必填取空按超规格处理，与 PLC 侧一致（明细页按结果码与原因解释这一行）。
         Assert.True(force.IsOutOfLimit);
         Assert.Equal(Judgement.Ng, record.Judgement);
+    }
+
+    [Fact]
+    public async Task Missing_required_file_string_fails_validation()
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+        var station = PrepareFileStation(harness);
+        var textTag = station.Tags.Single(t => t.Name == "工站温度");
+        textTag.DataType = PlcDataType.String;
+        textTag.IsRequired = true;
+        WriteSource(station, """{"force": 12}""");
+        Trigger(harness, station, "P0089");
+
+        Assert.Equal(ResultCodes.DataValidationFailed, await harness.RunAsync(station));
+
+        var record = await FullRecordAsync(harness, "P0089");
+        Assert.Equal(Judgement.Ng, record.Judgement);
+        Assert.Null(record.TagValues.Single(v => v.TagName == "工站温度").TextValue);
     }
 
     [Fact]

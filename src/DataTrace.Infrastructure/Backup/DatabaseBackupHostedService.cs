@@ -3,6 +3,7 @@ using DataTrace.Application.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DataTrace.Infrastructure.Backup;
 
@@ -15,15 +16,18 @@ public sealed class DatabaseBackupHostedService : BackgroundService
     private readonly IDatabaseBackupService _backup;
     private readonly IOptionsMonitor<BackupOptions> _options;
     private readonly ILogger<DatabaseBackupHostedService> _logger;
+    private readonly IServiceScopeFactory _scopeFactory;
 
     public DatabaseBackupHostedService(
         IDatabaseBackupService backup,
         IOptionsMonitor<BackupOptions> options,
-        ILogger<DatabaseBackupHostedService> logger)
+        ILogger<DatabaseBackupHostedService> logger,
+        IServiceScopeFactory scopeFactory)
     {
         _backup = backup;
         _options = options;
         _logger = logger;
+        _scopeFactory = scopeFactory;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -43,7 +47,7 @@ public sealed class DatabaseBackupHostedService : BackgroundService
             _logger.LogInformation("启动补备份：距上次成功备份已超过 24 小时（或尚无成功记录）");
             try
             {
-                var result = await _backup.RunBackupAsync(stoppingToken).ConfigureAwait(false);
+                var result = await RunAuditedBackupAsync("startup-catch-up", stoppingToken).ConfigureAwait(false);
                 if (!result.Success)
                 {
                     _logger.LogWarning("启动补备份失败：{Error}", result.Error);
@@ -75,7 +79,7 @@ public sealed class DatabaseBackupHostedService : BackgroundService
                     continue;
                 }
 
-                var run = await _backup.RunBackupAsync(stoppingToken).ConfigureAwait(false);
+                var run = await RunAuditedBackupAsync("scheduled", stoppingToken).ConfigureAwait(false);
                 if (!run.Success)
                 {
                     _logger.LogWarning("定时数据库备份失败：{Error}", run.Error);
@@ -97,6 +101,60 @@ public sealed class DatabaseBackupHostedService : BackgroundService
                     break;
                 }
             }
+        }
+    }
+
+    private async Task<BackupRunResult> RunAuditedBackupAsync(string trigger, CancellationToken cancellationToken)
+    {
+        var correlationId = Guid.NewGuid().ToString("N");
+        try
+        {
+            var result = await _backup.RunBackupAsync(cancellationToken).ConfigureAwait(false);
+            await WriteBackupAuditAsync(
+                trigger,
+                result.Success ? "Success" : "Failure",
+                result.Success
+                    ? $"success; path={result.BackupPath}; bytes={result.TotalBytes}"
+                    : $"failure; {result.Error}",
+                correlationId,
+                cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            await WriteBackupAuditAsync(
+                trigger, "Failure", $"exception; {ex.Message}", correlationId, cancellationToken)
+                .ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async Task WriteBackupAuditAsync(
+        string trigger,
+        string outcome,
+        string details,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var audit = scope.ServiceProvider.GetRequiredService<IAuditLogger>();
+            await audit.WriteAsync(
+                "system",
+                "Backup",
+                "Backup",
+                trigger,
+                null,
+                details,
+                cancellationToken,
+                outcome,
+                "Automatic backup service",
+                correlationId: correlationId).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "自动备份已执行，但审计写入失败；trigger={Trigger}", trigger);
         }
     }
 

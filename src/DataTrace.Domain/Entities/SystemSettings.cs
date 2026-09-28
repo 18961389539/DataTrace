@@ -7,6 +7,8 @@ public class SystemSettings
     public int WriteRetryCount { get; set; } = 3;
     public int WriteRetryDelayMs { get; set; } = 50;
     public int RetentionYears { get; set; } = 3;
+    /// <summary>审计日志保留年数；0 表示永久在线保留，不执行自动归档或清理。</summary>
+    public int AuditRetentionYears { get; set; }
 
     /// <summary>
     /// 历史遗留列，<b>不生效</b>：曲线 / spool / 月库的实际路径来自安装目录的 customer.json

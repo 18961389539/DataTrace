@@ -22,6 +22,15 @@ public static class CurveFeatureExtractor
             return new CurveFeatureSet();
         }
 
+        if (values.Any(value => !float.IsFinite(value)))
+        {
+            return new CurveFeatureSet
+            {
+                PointCount = values.Count,
+                IsValid = false
+            };
+        }
+
         var n = values.Count;
         double min = values[0];
         double peak = values[0];
@@ -112,7 +121,14 @@ public static class CurveFeatureExtractor
 
     /// <summary>把特征集转成可落库的实体行。</summary>
     public static CurveFeature ToEntity(string seriesName, SeriesRole role, CurveFeatureSet set)
-        => new()
+    {
+        ArgumentNullException.ThrowIfNull(set);
+        if (!set.IsValid)
+        {
+            throw new ArgumentException("无效波形不能写入曲线特征表。", nameof(set));
+        }
+
+        return new CurveFeature
         {
             SeriesName = seriesName,
             Role = role,
@@ -132,6 +148,7 @@ public static class CurveFeatureExtractor
             MaxStep = set.MaxStep,
             Oscillations = set.Oscillations
         };
+    }
 
     /// <summary>
     /// 对闭区间 [from, to] 做最小二乘斜率，横轴为相对序号（以 from 为原点，

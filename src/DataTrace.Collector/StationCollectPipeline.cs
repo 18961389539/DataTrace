@@ -74,6 +74,7 @@ public sealed class StationCollectPipeline
             resultCode = ResultCodes.PlcReadFailed;
             error = ex.Message;
             _logger.LogError(ex, "工站 {Station} PLC 通讯失败", station.Code);
+            await WriteFailureAuditAsync(station, triggerTime, resultCode, error).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -249,6 +250,7 @@ public sealed class StationCollectPipeline
         var products = new List<ProductRecord>();
         var curveWrites = new List<CurvePayloadWrite>();
         var validationError = false;
+        string? validationMessage = null;
 
         for (var pos = 0; pos <= station.PositionCount; pos++)
         {
@@ -282,10 +284,6 @@ public sealed class StationCollectPipeline
                 else if (tag.DataType == PlcDataType.String)
                 {
                     text = ValueCodec.DecodeAscii(words, tag.Length, connection.StringHighByteFirst);
-                    if (tag.IsRequired && string.IsNullOrWhiteSpace(text))
-                    {
-                        validationError = true;
-                    }
                 }
                 else
                 {
@@ -294,6 +292,11 @@ public sealed class StationCollectPipeline
                     {
                         validationError = true;
                     }
+                }
+
+                if (tag.DataType == PlcDataType.String && tag.IsRequired && string.IsNullOrWhiteSpace(text))
+                {
+                    validationError = true;
                 }
 
                 // 字符串点位没有数值限值：它的必填校验已在上面按空文本处理。
@@ -369,29 +372,37 @@ public sealed class StationCollectPipeline
                     // 特征与 payload 共用同一份采样值，就地算完。
                     // 波形信息从此不再只存在于外置二进制文件里，可被 SQL 聚合与后续 SPC 复用。
                     var features = CurveFeatureExtractor.Extract(values);
-                    var featureRow = CurveFeatureExtractor.ToEntity(series.Name, series.Role, features);
-
-                    // 影子模式：用预先建好的基线给这条波形打分，只写偏离字段。
-                    ApplyBaselineDeviation(featureRow, curve.Id, config);
-                    featureRows.Add(featureRow);
-
-                    foreach (var criterion in curve.Criteria)
+                    if (!features.IsValid)
                     {
-                        if (!CurveCriterionEvaluator.AppliesTo(criterion, series, primarySeries))
-                        {
-                            continue;
-                        }
-
-                        var reasons = CurveCriterionEvaluator.Evaluate(criterion, features);
-                        if (reasons.Count == 0)
-                        {
-                            continue;
-                        }
-
-                        // 点位限值先于曲线判据处理，因此波形原因只在没有点位原因时才成为首因。
                         validationError = true;
-                        posJudgements.Add(Judgement.Ng);
-                        ngReason ??= $"{curve.Name}波形异常：{reasons[0]}";
+                        validationMessage ??= $"{curve.Name}波形序列 {series.Name} 包含 NaN 或 Infinity；已保留原始曲线，跳过特征与曲线判据";
+                    }
+                    else
+                    {
+                        var featureRow = CurveFeatureExtractor.ToEntity(series.Name, series.Role, features);
+
+                        // 影子模式：用预先建好的基线给这条波形打分，只写偏离字段。
+                        ApplyBaselineDeviation(featureRow, curve.Id, config);
+                        featureRows.Add(featureRow);
+
+                        foreach (var criterion in curve.Criteria)
+                        {
+                            if (!CurveCriterionEvaluator.AppliesTo(criterion, series, primarySeries))
+                            {
+                                continue;
+                            }
+
+                            var reasons = CurveCriterionEvaluator.Evaluate(criterion, features);
+                            if (reasons.Count == 0)
+                            {
+                                continue;
+                            }
+
+                            // 点位限值先于曲线判据处理，因此波形原因只在没有点位原因时才成为首因。
+                            validationError = true;
+                            posJudgements.Add(Judgement.Ng);
+                            ngReason ??= $"{curve.Name}波形异常：{reasons[0]}";
+                        }
                     }
 
                     seriesPayloads.Add(new CurveSeriesPayload
@@ -553,7 +564,7 @@ public sealed class StationCollectPipeline
             DurationMs = (int)sw.ElapsedMilliseconds,
             ResultCode = result,
             Judgement = recordJudgement,
-            ErrorMessage = processError,
+            ErrorMessage = validationMessage ?? processError,
             RecipeCode = RecipeCode(config),
             ArchivePath = source?.ArchivePath ?? "",
             ArchiveFileSize = source?.ArchiveSize ?? 0,
@@ -826,6 +837,32 @@ public sealed class StationCollectPipeline
         SetStatus(station, StationRuntimeState.Fault, null, null, resultCode, Judgement.None, "响应码写回失败", null);
     }
 
+    private async Task WriteFailureAuditAsync(Station station, DateTime triggerTime, short resultCode, string error)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var audit = scope.ServiceProvider.GetRequiredService<IAuditLogger>();
+            var correlationId = $"collect-{station.Id}-{triggerTime:yyyyMMddHHmmssfff}";
+            await audit.WriteAsync(
+                    "collector",
+                    "CollectFailure",
+                    "Station",
+                    station.Code,
+                    null,
+                    $"resultCode={resultCode}; error={error}",
+                    CancellationToken.None,
+                    outcome: "Failure",
+                    source: "Collector",
+                    correlationId: correlationId)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "工站 {Station} PLC 故障审计留痕失败", station.Code);
+        }
+    }
+
     private void SetStatus(
         Station station,
         StationRuntimeState state,
@@ -889,6 +926,11 @@ public sealed class StationCollectPipeline
             Name = v.TagName,
             Display = v.TextValue ?? v.NumericValue?.ToString("0.###") ?? "-",
             Unit = units.GetValueOrDefault(v.TagId),
+            NumericValue = v.NumericValue,
+            LowerLimit = v.LowerLimit,
+            UpperLimit = v.UpperLimit,
+            WarningLowerLimit = v.WarningLowerLimit,
+            WarningUpperLimit = v.WarningUpperLimit,
             OutOfLimit = v.IsOutOfLimit,
             Warning = v.IsWarning
         }).ToList();
@@ -908,7 +950,9 @@ public sealed class StationCollectPipeline
             return new StationLiveCurve
             {
                 Name = write.Record.CurveName,
-                Values = y?.Values.ToArray() ?? []
+                // 无效浮点保留在原始曲线文件用于追溯，但不能进入实时 JSON 状态，
+                // 否则 SignalR 序列化会失败且看板也无法绘制可信曲线。
+                Values = y is not null && y.Values.All(float.IsFinite) ? y.Values.ToArray() : []
             };
         }).ToList();
     }
@@ -958,6 +1002,11 @@ public sealed class StationCollectPipeline
     {
         var baseline = _baselines.Current;
         if (baseline is null)
+        {
+            return;
+        }
+
+        if (!baseline.IsFresh(DateTime.Now))
         {
             return;
         }

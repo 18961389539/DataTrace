@@ -47,6 +47,40 @@
     color: var(--mud-palette-warning);
 }
 
+/* 与上面两个同一族：能力达标这类"好"的结论也要有文本态，
+   否则一屏里只有红黄两色，看着像处处是问题。 */
+.dt-text-success {
+    color: var(--mud-palette-success);
+}
+
+/* Top N 的占比条：数字之外的一眼量级，条本身是装饰（读屏靠后面的百分数） */
+.dt-share {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.dt-share-track {
+    flex: 0 0 auto;
+    width: 72px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--mud-palette-action-default-hover);
+    overflow: hidden;
+}
+
+.dt-share-fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--mud-palette-error);
+}
+
+.dt-share-fill.warn {
+    background: var(--mud-palette-warning);
+}
+
 /* 数值列：右对齐 + 等宽数字，纵向扫读才能比大小 */
 .dt-num {
     text-align: right;
@@ -115,6 +149,11 @@ h5:focus,
     outline: none;
 }
 
+.dt-page-title {
+    font-size: clamp(1.125rem, 1.45vw, 1.25rem) !important;
+    line-height: 1.2;
+}
+
 /* 整行可点击进入明细 */
 .dt-clickable tbody tr {
     cursor: pointer;
@@ -140,6 +179,25 @@ h5:focus,
 
 .dt-filter-card {
     padding: 12px 16px 4px;
+}
+
+.users-search {
+    flex: 1 1 240px;
+    max-width: 360px;
+}
+
+.users-filter {
+    flex: 0 1 170px;
+    min-width: 150px;
+}
+
+.dt-log-advanced-filters {
+    margin-top: 4px;
+}
+
+.dt-log-filter-actions {
+    align-items: center;
+    flex-wrap: wrap;
 }
 
 /* ---------- 审计日志 ---------- */
@@ -174,6 +232,17 @@ h5:focus,
     gap: 4px;
     max-width: 340px;
     cursor: pointer;
+    padding: 2px 4px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+}
+
+.dt-change-cell:hover {
+    background: var(--mud-palette-action-hover);
 }
 
 .dt-change-summary {
@@ -223,11 +292,172 @@ h5:focus,
 .dt-change-pane-body.old {
     border-color: var(--mud-palette-error);
     color: var(--mud-palette-error);
-    text-decoration: line-through;
 }
 
 .dt-change-pane-body.new {
     border-color: var(--mud-palette-success);
+}
+
+.dt-audit-trace {
+    display: flex;
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.75rem;
+}
+
+.dt-audit-diff {
+    flex: 1 0 100%;
+    min-width: 0;
+}
+
+.dt-audit-diff-row {
+    display: grid;
+    grid-template-columns: minmax(100px, 1fr) minmax(100px, 2fr) auto minmax(100px, 2fr);
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--mud-palette-divider);
+    font-size: 0.8125rem;
+}
+
+.dt-audit-diff-old,
+.dt-audit-diff-new {
+    overflow-wrap: anywhere;
+}
+
+.dt-audit-diff-old {
+    color: var(--mud-palette-error);
+}
+
+.dt-audit-diff-new {
+    color: var(--mud-palette-success);
+}
+
+@media (max-width: 600px) {
+    .dt-audit-diff-row {
+        grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    }
+
+    .dt-audit-diff-row code {
+        grid-column: 1 / -1;
+    }
+}
+
+.dt-audit-trace-id {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 2px;
+}
+
+.dt-audit-trace-id code {
+    overflow-wrap: anywhere;
+}
+
+.dt-audit-timeline-link {
+    min-width: 0;
+    padding: 0 4px;
+}
+
+.dt-audit-timeline-panel {
+    padding: 12px 16px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--dt-radius);
+}
+
+.dt-audit-timeline-heading {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.dt-audit-timeline {
+    list-style: none;
+    margin: 0;
+    padding: 4px 0 0 12px;
+}
+
+.dt-audit-timeline-item {
+    position: relative;
+    margin-left: 4px;
+    padding: 0 0 16px 18px;
+    border-left: 1px solid var(--mud-palette-divider);
+}
+
+.dt-audit-timeline-item:last-child {
+    border-left-color: transparent;
+    padding-bottom: 0;
+}
+
+.dt-audit-timeline-item::before {
+    position: absolute;
+    top: 4px;
+    left: -5px;
+    width: 9px;
+    height: 9px;
+    border: 2px solid var(--mud-palette-primary);
+    border-radius: 50%;
+    background: var(--mud-palette-surface);
+    content: "";
+}
+
+.dt-audit-timeline-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+    margin-bottom: 2px;
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.8rem;
+}
+
+.dt-audit-timeline-meta time {
+    color: var(--mud-palette-text-primary);
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.dt-audit-timeline-change {
+    margin-top: 4px;
+    font-size: 0.8125rem;
+}
+
+.dt-audit-timeline-change summary {
+    width: fit-content;
+    color: var(--mud-palette-primary);
+    cursor: pointer;
+}
+
+.dt-audit-timeline-values {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.dt-audit-timeline-values > div {
+    min-width: 0;
+}
+
+.dt-audit-timeline-values pre {
+    max-height: 140px;
+    overflow: auto;
+    margin: 4px 0 0;
+    padding: 6px 8px;
+    border-radius: 4px;
+    background: var(--mud-palette-background);
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+    .dt-audit-timeline-values {
+        grid-template-columns: minmax(0, 1fr);
+    }
 }
 
 /* ---------- 时间区间筛选（DateRangeFilter） ---------- */
@@ -279,6 +509,25 @@ h5:focus,
     font-size: 1.25rem;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
+}
+
+.dt-sim-metrics .dt-metric-label {
+    display: flex;
+    align-items: center;
+    min-height: 18px;
+}
+
+.dt-sim-metrics .dt-metric-label .dt-help-popover {
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+}
+
+.dt-sim-metrics .dt-info-hint {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    flex: 0 0 18px;
 }
 
 /* ---------- 图表 ---------- */
@@ -335,14 +584,27 @@ h5:focus,
 .dt-kpi-bar {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px;
-    margin-bottom: 16px;
+    gap: 10px;
+    margin-bottom: 12px;
 }
 
 .dt-kpi {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
     background: var(--mud-palette-action-default-hover);
     border-radius: var(--dt-radius);
-    padding: 10px 14px 12px;
+    padding: 8px 12px;
+}
+
+.dt-kpi-main {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 8px;
 }
 
 .dt-kpi-label {
@@ -351,15 +613,18 @@ h5:focus,
     gap: 2px;
     font-size: 0.8125rem;
     color: var(--mud-palette-text-secondary);
-    margin-bottom: 2px;
+    margin-bottom: 0;
+    white-space: nowrap;
 }
 
 .dt-kpi-value {
     display: block;
-    font-size: 1.5rem;
+    flex: 0 0 auto;
+    font-size: 1.375rem;
     font-weight: 500;
-    line-height: 1.25;
+    line-height: 1.1;
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
 
 .dt-kpi-value-alert {
@@ -367,21 +632,88 @@ h5:focus,
 }
 
 .dt-kpi-hint {
-    display: block;
+    flex: 0 0 auto;
     font-size: 0.75rem;
     color: var(--mud-palette-text-secondary);
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
 
-/* 卡片上的节拍：现场进车间第一个看的数，单独一块并给足字重 */
-.dt-station-meta {
+.dt-live-cadence-secondary {
+    margin-left: 4px;
+    font-size: 0.875em;
+}
+
+.dt-simulation-detail {
+    padding-block: 4px !important;
+}
+
+.dt-simulation-detail-content {
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
+}
+
+.dt-simulation-detail-text {
+    flex: 1 1 24rem;
+    margin: 0;
+}
+
+/* 节拍与托盘信息同行，保留强调但不再单独占整行。 */
+.dt-station-header {
+    width: 100%;
+    gap: 8px;
+}
+
+.dt-station-heading {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.dt-station-title {
+    display: block;
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.dt-station-status {
+    flex: 0 0 auto;
+    margin-left: auto;
+}
+
+.dt-station-detail-link {
+    flex: 0 0 30px;
+    width: 30px;
+    height: 30px;
+    margin-top: -3px;
+}
+
+.dt-station-subline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px 8px;
+    min-width: 0;
+}
+
+.dt-station-ident {
+    flex: 1 1 150px;
+    min-width: 0;
+}
+
+.dt-station-meta {
+    display: inline-flex;
     align-items: baseline;
-    gap: 6px;
-    margin-top: 12px;
-    padding: 6px 10px;
+    flex: 0 0 auto;
+    gap: 4px;
+    margin-top: 0;
+    padding: 1px 6px;
     border-radius: var(--dt-radius);
     background: var(--mud-palette-action-default-hover);
+    white-space: nowrap;
 }
 
 .dt-station-meta-label {
@@ -397,10 +729,9 @@ h5:focus,
 
 /* 左边框标状态：车间一眼扫过哪台不对 */
 .dash-station {
-    padding: 16px;
+    padding: 12px;
     border-left: 4px solid var(--mud-palette-lines-default);
     height: 100%;
-    min-height: 280px;
 }
 
     .dash-station.ok {
@@ -421,16 +752,48 @@ h5:focus,
     }
 
 .dash-tags {
-    margin-top: 14px;
+    margin-top: 6px;
+}
+
+.dt-station-curve {
+    position: relative;
+    min-width: 0;
+    margin-top: 2px;
+}
+
+.dt-station-curve-label {
+    position: absolute;
+    z-index: 1;
+    top: 1px;
+    left: 5px;
+    max-width: calc(100% - 10px);
+    overflow: hidden;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: var(--dt-chart-bg);
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.625rem;
+    line-height: 13px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    pointer-events: none;
 }
 
 .dash-tag {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 6px 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0;
     border-bottom: 1px solid var(--mud-palette-lines-default);
     font-size: 0.95rem;
+}
+
+.dash-tag .dt-limit-scale,
+.dash-tag .dt-limit-labels,
+.dash-tag .dt-tag-exceedance {
+    grid-column: 1 / -1;
+    width: 100%;
 }
 
 /* 名称列可能挂「超限/预警」芯片，要能换行且不许把卡片撑开 */
@@ -459,11 +822,122 @@ h5:focus,
     color: var(--mud-palette-error);
 }
 
+.dt-limit-scale {
+    margin: 0 0 2px;
+    padding: 0 1px;
+}
+
+.dt-limit-track {
+    position: relative;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--mud-palette-action-default-hover);
+}
+
+.dt-limit-spec-band,
+.dt-limit-band {
+    position: absolute;
+    inset-block: 0;
+    border-radius: inherit;
+}
+
+.dt-limit-spec-band {
+    inset-inline: 0;
+    background: var(--mud-palette-success);
+    opacity: .2;
+}
+
+.dt-limit-band {
+    background: var(--mud-palette-warning);
+    opacity: .68;
+}
+
+.dt-limit-marker {
+    position: absolute;
+    top: -3px;
+    width: 3px;
+    height: 14px;
+    border-radius: 2px;
+    transform: translateX(-50%);
+    background: var(--mud-palette-success);
+    box-shadow: 0 0 0 2px var(--mud-palette-surface);
+}
+
+.dt-limit-marker.warn {
+    background: var(--mud-palette-warning);
+}
+
+.dt-limit-marker.out {
+    background: var(--mud-palette-error);
+}
+
+.dt-limit-labels {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 1px;
+    color: var(--mud-palette-text-secondary);
+    font-size: .6875rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.dt-tag-exceedance {
+    margin: -2px 0 3px;
+    color: var(--mud-palette-error);
+    font-size: .75rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
 /* 看板点位状态说明：平板没有 hover，这句话必须直接读得到 */
 .dt-tag-state {
     font-size: 0.75rem;
     font-weight: 400;
     margin-left: 6px;
+}
+
+/* 多点位工站只紧凑呈现关键行；异常行保留限值刻度，普通行明确标注正常。 */
+.dt-point-summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    margin-top: 6px;
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.75rem;
+}
+
+.dt-point-summary-label {
+    min-width: 0;
+}
+
+.dash-tags.dense {
+    margin-top: 3px;
+}
+
+.dash-tags.dense .dash-tag {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0;
+}
+
+.dash-tags.dense .dash-tag-label {
+    overflow-wrap: anywhere;
+}
+
+.dash-tags.dense .dash-tag-value {
+    font-size: 0.875rem;
+}
+
+.dt-point-expand {
+    margin-top: 4px;
+}
+
+.dash-tags.dense .dt-limit-scale {
+    margin: 1px 0 3px;
 }
 
 /* ---------- 工站配置：左设备列表 ---------- */
@@ -473,17 +947,52 @@ h5:focus,
 }
 
 .station-list-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     padding: 10px 12px;
     margin-bottom: 8px;
     border: 1px solid var(--mud-palette-lines-default);
     border-radius: var(--dt-radius);
+}
+
+.station-list-item.active {
+    background: var(--mud-palette-action-default-hover);
+    border-color: var(--mud-palette-primary);
+}
+
+.station-list-item-select {
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
     cursor: pointer;
 }
 
-    .station-list-item.active {
-        background: var(--mud-palette-action-default-hover);
-        border-color: var(--mud-palette-primary);
-    }
+.station-list-item-select:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 3px;
+    border-radius: 2px;
+}
+
+.station-list-item-code,
+.station-list-item-name,
+.station-list-item-meta {
+    display: block;
+}
+
+.station-list-item-code {
+    font-weight: 600;
+}
+
+.station-list-item-meta {
+    color: var(--mud-palette-text-secondary);
+    font-size: .75rem;
+}
 
 /* ---------- 登录 ---------- */
 /* 走原生 POST 表单（登录发生在 SignalR 建立之前），所以控件不能用 Mud 组件，
@@ -524,7 +1033,7 @@ h5:focus,
     border: 0;
     border-radius: var(--dt-radius);
     background: var(--mud-palette-primary);
-    color: #fff;
+    color: var(--mud-palette-primary-text);
     font: inherit;
     cursor: pointer;
 }
@@ -573,12 +1082,33 @@ h5:focus,
     }
 }
 
+@media (max-width: 600px) {
+    .dt-kpi:first-child {
+        grid-column: 1 / -1;
+    }
+}
+
 /* ---------- 交互反馈 ---------- */
 
 /* MudBlazor 7 的 Snackbar 没有关闭按钮：整条可点收起，错误类靠 RequireInteraction 停住等点。
    光标提示让这个行为可见，否则用户以为只能干等它消失。 */
 .mud-snackbar {
     cursor: pointer;
+}
+
+/* 操作列：小屏上四个按钮挤在一行会互相压扁，允许换行但保持右对齐 */
+.dt-actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 2px;
+}
+
+/* 禁用按钮上的 tooltip：浏览器不给禁用控件派发鼠标事件，也不冒泡给祖先，
+   于是包在外层的 MudTooltip 永远收不到 hover —— 按钮灰着、提示也不出，用户只看到"点了没反应"。
+   让按钮本身不接指针事件，hover 就落在 tooltip 的包裹层上（按钮禁用时本来也不需要点击）。 */
+.mud-tooltip .mud-button:disabled {
+    pointer-events: none;
 }
 
 /* 表格里的图标按钮视觉只有 28px：工控平板戴手套、手指带油污时很难点中。
@@ -983,6 +1513,9 @@ button.dt-settings-nav-btn.active {
 body.dt-shopfloor .mud-drawer {
     display: none !important;
 }
+body.dt-shopfloor .mud-appbar {
+    display: none !important;
+}
 body.dt-shopfloor .mud-main-content {
     margin-left: 0 !important;
     padding: 12px 16px 24px !important;
@@ -992,14 +1525,15 @@ body.dt-shopfloor .mud-main-content {
     display: inline-flex;
     align-items: center;
 }
-body.dt-shopfloor .mud-appbar .dt-logout-form,
-body.dt-shopfloor .dt-appbar-chip {
-    /* 保留身份与退出，避免大屏锁死 */
+.dt-appbar-utilities,
+.dt-appbar-identity {
+    display: inline-flex;
+    align-items: center;
 }
 /* 大屏离操作工一米远：字号跟着视口走，不再固定 1.05rem */
 body.dt-shopfloor .dash-station {
     font-size: clamp(1rem, 1.35vw, 1.5rem);
-    padding: 18px !important;
+    padding: 14px !important;
     min-height: 180px;
 }
 body.dt-shopfloor .dt-kpi-value {
@@ -1009,10 +1543,10 @@ body.dt-shopfloor .dt-kpi-label {
     font-size: clamp(0.8125rem, 1vw, 1.125rem);
 }
 body.dt-shopfloor .dt-station-meta-value {
-    font-size: clamp(1rem, 1.6vw, 1.75rem);
+    font-size: clamp(0.875rem, 1.2vw, 1.125rem);
 }
 body.dt-shopfloor .dt-station-meta-label {
-    font-size: clamp(0.75rem, 0.9vw, 1rem);
+    font-size: clamp(0.6875rem, 0.75vw, 0.8125rem);
 }
 /* 固定 3 列在 1080p 上会剩半屏空白，改按屏宽自动分列。
    MudItem 的 xs/md/lg 会写死 grid-column: span N，必须一起解掉。 */
@@ -1024,12 +1558,6 @@ body.dt-shopfloor .mud-grid-item {
 }
 body.dt-shopfloor .mud-chip {
     font-size: 0.95rem;
-}
-.dt-shopfloor-exit {
-    position: fixed;
-    right: 16px;
-    bottom: 16px;
-    z-index: 2000;
 }
 .dt-clock-stale {
     color: var(--mud-palette-error) !important;
@@ -1057,6 +1585,14 @@ body.dt-shopfloor .dt-recent-panels .mud-expand-panel-header {
 }
 body.dt-shopfloor .dt-recent-panels .mud-expand-panel-content {
     display: none !important;
+}
+
+@media (max-width: 600px) {
+    .dt-recent-panels .mud-table-container {
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+    }
 }
 
 
@@ -1095,6 +1631,137 @@ body.dt-shopfloor .dt-recent-panels .mud-expand-panel-content {
 .dt-help-impact {
     color: var(--mud-palette-text-secondary);
     margin-top: 2px;
+}
+
+/* 本页说明：主题目录与单条详情并列，避免多条解释堆成超长菜单。 */
+.mud-dialog.dt-page-help-dialog {
+    width: min(900px, calc(100vw - 32px)) !important;
+}
+
+.dt-page-help-dialog .mud-dialog-content {
+    padding-top: 8px;
+}
+
+.dt-page-help-heading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.dt-page-help-search {
+    max-width: 420px;
+    margin-bottom: 12px;
+}
+
+.dt-page-help-layout {
+    display: grid;
+    grid-template-columns: minmax(180px, 230px) minmax(0, 1fr);
+    gap: 22px;
+    min-height: 300px;
+    max-height: min(62vh, 580px);
+}
+
+.dt-page-help-nav {
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+    padding-right: 12px;
+    border-right: 1px solid var(--mud-palette-lines-default);
+}
+
+.dt-page-help-topic {
+    width: 100%;
+    min-height: 42px;
+    justify-content: flex-start;
+    text-align: left;
+}
+
+.dt-page-help-topic .mud-button-label {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    width: 100%;
+}
+
+.dt-page-help-topic-index {
+    flex: 0 0 24px;
+    color: var(--mud-palette-text-secondary);
+    font-size: .7rem;
+    font-variant-numeric: tabular-nums;
+    opacity: .8;
+}
+
+.dt-page-help-topic.active .dt-page-help-topic-index {
+    color: inherit;
+    opacity: .9;
+}
+
+.dt-page-help-detail {
+    min-width: 0;
+    overflow-y: auto;
+    padding: 4px 8px 12px 2px;
+}
+
+.dt-page-help-detail .dt-help {
+    max-width: none;
+    font-size: .95rem;
+    line-height: 1.65;
+}
+
+.dt-page-help-detail .dt-help-title {
+    margin: 0 0 14px;
+    font-size: 1.2rem;
+}
+
+.dt-page-help-detail .dt-help-line {
+    margin-top: 8px;
+    font-size: .9rem;
+}
+
+.dt-page-help-eyebrow {
+    margin-bottom: 8px;
+    color: var(--mud-palette-text-secondary);
+    font-size: .7rem;
+    letter-spacing: .08em;
+}
+
+@media (max-width: 600px) {
+    .mud-dialog.dt-page-help-dialog {
+        width: 100vw !important;
+        max-width: 100vw !important;
+        height: 100dvh !important;
+        max-height: 100dvh !important;
+        margin: 0 !important;
+        border-radius: 0;
+    }
+
+    .dt-page-help-dialog .mud-dialog-content {
+        display: flex;
+        flex: 1 1 auto;
+        flex-direction: column;
+        overflow-y: auto;
+    }
+
+    .dt-page-help-search {
+        max-width: none;
+    }
+
+    .dt-page-help-layout {
+        display: block;
+        min-height: 0;
+        max-height: none;
+        overflow: visible;
+    }
+
+    .dt-page-help-mobile {
+        margin-bottom: 16px;
+    }
+
+    .dt-page-help-detail {
+        overflow: visible;
+        padding: 4px 2px 16px;
+    }
 }
 
 /* 路径框右侧的「选择」嵌在描边里，避免单独一个按钮和说明文字抢垂直位置。 */
@@ -1159,3 +1826,324 @@ body.dt-shopfloor .dt-recent-panels .mud-expand-panel-content {
     border: 0;
 }
 
+/* MudThemeProvider controls component palettes; these overrides cover local CSS surfaces. */
+html.dt-theme-dark {
+    color-scheme: dark;
+    --dt-chart-bg: #151e27;
+}
+
+html.dt-theme-dark .dt-row-error td {
+    background: rgba(239, 83, 80, .14);
+}
+
+html.dt-theme-dark .dt-src-badge {
+    background: #202c36;
+}
+
+html.dt-theme-dark .dt-src-badge.edit {
+    background: rgba(129, 199, 132, .14);
+    color: #a5d6a7;
+    border-color: #426b48;
+}
+
+html.dt-theme-dark .dt-src-badge.ro {
+    background: rgba(144, 202, 249, .14);
+    color: #90caf9;
+    border-color: #3e617c;
+}
+
+html.dt-theme-dark .dt-src-badge.rt {
+    background: rgba(206, 147, 216, .14);
+    color: #ce93d8;
+    border-color: #684c70;
+}
+
+html.dt-theme-dark .dt-settings-readonly,
+html.dt-theme-dark .dt-settings-readonly.rounded {
+    background: #1d2933;
+}
+
+html.dt-theme-dark .dt-danger-zone {
+    border-color: rgba(239, 154, 154, .5);
+    background: rgba(239, 83, 80, .1);
+}
+
+html.dt-theme-dark .dt-settings-savebar {
+    background: #1a252f;
+}
+
+html.dt-theme-dark .dt-settings-nav button.dt-settings-nav-btn:hover,
+html.dt-theme-dark button.dt-settings-nav-btn:hover {
+    background: rgba(138, 180, 248, .08);
+}
+
+html.dt-theme-dark .dt-settings-nav button.dt-settings-nav-btn.active,
+html.dt-theme-dark button.dt-settings-nav-btn.active {
+    background: rgba(138, 180, 248, .14);
+}
+
+/* ---------- 产品追溯 ---------- */
+.dt-trace-search-field {
+    flex: 1 1 320px;
+    max-width: 640px;
+}
+
+.dt-trace-serial {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-weight: 600;
+}
+
+.dt-trace-summary {
+    gap: 4px 20px;
+}
+
+.dt-trace-timeline {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+}
+
+.dt-trace-timeline-item {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    gap: 6px;
+    min-width: 0;
+}
+
+.dt-trace-rail {
+    position: relative;
+    display: flex;
+    justify-content: center;
+}
+
+.dt-trace-rail::after {
+    position: absolute;
+    top: 24px;
+    bottom: -8px;
+    left: 50%;
+    border-left: 1px solid var(--mud-palette-lines-default);
+    content: "";
+}
+
+.dt-trace-timeline-item:last-child .dt-trace-rail::after {
+    display: none;
+}
+
+.dt-trace-marker {
+    z-index: 1;
+    display: inline-flex;
+    width: 20px;
+    height: 20px;
+    align-items: center;
+    justify-content: center;
+    margin-top: 10px;
+    border-radius: 50%;
+    background: var(--mud-palette-success);
+    color: var(--mud-palette-success-text);
+    font-size: .75rem;
+    font-weight: 700;
+}
+
+.dt-trace-station-card {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    padding: 7px 9px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--dt-radius);
+    background: var(--mud-palette-surface);
+}
+
+.dt-trace-station-head,
+.dt-trace-station-identity,
+.dt-trace-station-status,
+.dt-trace-station-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px 8px;
+    min-width: 0;
+}
+
+.dt-trace-station-head {
+    justify-content: space-between;
+}
+
+.dt-trace-station-identity {
+    column-gap: 8px;
+}
+
+.dt-trace-station-code {
+    color: var(--mud-palette-text-secondary);
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: .8125rem;
+    font-weight: 600;
+}
+
+.dt-trace-station-name {
+    font-size: .8125rem;
+    font-weight: 600;
+}
+
+.dt-trace-step-time {
+    color: var(--mud-palette-text-secondary);
+    font-size: .75rem;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+}
+
+.dt-trace-station-meta {
+    color: var(--mud-palette-text-secondary);
+    font-size: .75rem;
+}
+
+.dt-trace-over-limit,
+.dt-trace-record-error {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    color: var(--mud-palette-error);
+}
+
+.dt-trace-record-error {
+    color: var(--mud-palette-warning);
+}
+
+.dt-trace-missing .dt-trace-station-card {
+    border-style: dashed;
+    background: var(--mud-palette-action-default-hover);
+}
+
+.dt-trace-missing .dt-trace-marker {
+    background: var(--mud-palette-warning);
+    color: var(--mud-palette-warning-text);
+}
+
+.dt-trace-fault .dt-trace-station-card {
+    border-color: var(--mud-palette-error);
+}
+
+.dt-trace-fault .dt-trace-marker {
+    background: var(--mud-palette-error);
+    color: var(--mud-palette-error-text);
+}
+
+.dt-trace-unjudged .dt-trace-marker {
+    border: 1px dashed var(--mud-palette-lines-default);
+    background: var(--mud-palette-surface);
+    color: var(--mud-palette-text-secondary);
+}
+
+.dt-trace-unconfigured {
+    border-style: dashed;
+    opacity: .78;
+}
+
+@media (max-width: 600px) {
+    .dt-trace-station-head {
+        align-items: flex-start;
+    }
+
+    .dt-trace-summary {
+        gap: 2px 12px;
+    }
+}
+
+/* ---------- 波形基线分析 ---------- */
+.dt-baseline-filter-card {
+    padding-bottom: 12px;
+}
+
+.dt-baseline-range .dt-range {
+    gap: 8px 12px;
+    margin-bottom: 8px;
+}
+
+.dt-baseline-range .dt-range-buttons {
+    gap: 4px;
+}
+
+.dt-baseline-range .dt-range-buttons .mud-button-root {
+    min-width: 0;
+    padding-right: 8px;
+    padding-left: 8px;
+}
+
+.dt-baseline-selectors {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(150px, 1fr)) auto;
+    align-items: end;
+    gap: 8px 10px;
+}
+
+.dt-baseline-select {
+    min-width: 0;
+}
+
+.dt-baseline-select .mud-input-control {
+    margin-top: 0;
+}
+
+.dt-baseline-run {
+    min-height: 40px;
+    margin-bottom: 4px;
+}
+
+.dt-baseline-summary-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 18px;
+    margin: 10px 0 12px;
+    padding: 8px 0;
+    border-top: 1px solid var(--mud-palette-lines-default);
+    border-bottom: 1px solid var(--mud-palette-lines-default);
+}
+
+.dt-baseline-summary-item {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+    color: var(--mud-palette-text-secondary);
+    font-size: .8125rem;
+    white-space: nowrap;
+}
+
+.dt-baseline-summary-item strong {
+    color: var(--mud-palette-text-primary);
+    font-size: .9375rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.dt-baseline-summary-error,
+.dt-baseline-summary-error strong {
+    color: var(--mud-palette-error);
+}
+
+.dt-baseline-summary-warning,
+.dt-baseline-summary-warning strong {
+    color: var(--mud-palette-warning);
+}
+
+.dt-baseline-dimension-details {
+    margin-top: 4px;
+    border-top: 1px solid var(--mud-palette-lines-default);
+}
+
+@media (max-width: 760px) {
+    .dt-baseline-selectors {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .dt-baseline-run {
+        justify-self: start;
+    }
+}
+
+@media (max-width: 480px) {
+    .dt-baseline-selectors {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}

@@ -24,6 +24,10 @@ public static class LimitEvaluator
         }
 
         var value = numeric.Value;
+        if (!double.IsFinite(value))
+        {
+            return LimitStatus.OutOfSpec;
+        }
 
         // 规格限优先：一旦越界直接判废，不再看预警带。
         if (limits.Lower is { } lower && value < lower)

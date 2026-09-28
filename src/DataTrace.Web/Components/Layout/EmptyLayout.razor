@@ -1,8 +1,49 @@
 @inherits LayoutComponentBase
-<MudThemeProvider Theme="DataTraceTheme.Current" />
+@inject IJSRuntime Js
+
+<MudThemeProvider Theme="DataTraceTheme.Current" @bind-IsDarkMode="_isDarkMode" />
 <MudPopoverProvider />
 <MudDialogProvider />
 <MudSnackbarProvider />
 <MudContainer MaxWidth="MaxWidth.ExtraSmall" Class="mt-16">
+    <div class="d-flex justify-end">
+        <PwaInstallButton />
+        <ThemeModeSwitch IsDarkMode="_isDarkMode" OnToggle="ToggleThemeAsync" />
+    </div>
     @Body
 </MudContainer>
+
+@code {
+    private bool _isDarkMode;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        try
+        {
+            _isDarkMode = await Js.InvokeAsync<bool>("dtTheme.get");
+            StateHasChanged();
+        }
+        catch (JSException)
+        {
+            // Theme preference is optional; keep the light theme if browser storage is unavailable.
+        }
+    }
+
+    private async Task ToggleThemeAsync()
+    {
+        _isDarkMode = !_isDarkMode;
+        try
+        {
+            await Js.InvokeVoidAsync("dtTheme.set", _isDarkMode);
+        }
+        catch (JSException)
+        {
+            // The Mud theme still changes for this circuit if persistence is unavailable.
+        }
+    }
+}

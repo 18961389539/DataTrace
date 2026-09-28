@@ -67,7 +67,7 @@
                 </MudText>
             </MudStack>
 
-            <MudGrid Spacing="2">
+            <MudGrid Spacing="2" Class="dt-sim-metrics">
                 <MudItem xs="6" sm="3">
                     <div class="dt-metric">
                         <div class="dt-metric-label">当前托盘</div>
@@ -242,12 +242,17 @@
     /// 写审计日志。失败时单独提示一次，而不是吞掉 —— 仿真会往运行库写记录，
     /// "谁开的仿真器、什么时候改的参数"必须留得下痕。
     /// </summary>
-    private async Task AuditSafe(string action, string key, string? oldValue, string? newValue)
+    private async Task AuditSafe(
+        string action,
+        string key,
+        string? oldValue,
+        string? newValue,
+        string outcome = "Success")
     {
         try
         {
             var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
-            await Audit.WriteAsync(user, action, "LineSimulator", key, oldValue, newValue);
+            await Audit.WriteAsync(user, action, "LineSimulator", key, oldValue, newValue, outcome: outcome);
         }
         catch (Exception ex)
         {
@@ -324,6 +329,7 @@
         catch (Exception ex)
         {
             // 配置库写入失败如果抛给 Blazor，整条 circuit 会断掉，现场只看到页面卡死。
+            await AuditSafe(auditAction, "simulator", null, $"save failed; {ex.Message}", "Failure");
             Toast.Add($"保存仿真参数失败：{ex.Message}", Severity.Error);
         }
         finally
@@ -380,11 +386,13 @@
             // 按真实结果提示：中途超时只走了半条线，不能报成"已走线"。
             var result = await Simulator.RunOnePalletAsync(_pallet.Trim());
             await AuditSafe("RunPallet", _pallet.Trim(), null,
-                result.Completed ? "completed" : $"stopped; station={result.StoppedAtStation}");
+                result.Completed ? "completed" : $"stopped; station={result.StoppedAtStation}",
+                result.Completed ? "Success" : "Failure");
             Toast.Add(result.Message, result.Completed ? Severity.Success : Severity.Warning);
         }
         catch (Exception ex)
         {
+            await AuditSafe("RunPallet", _pallet.Trim(), null, $"failed; {ex.Message}", "Failure");
             Toast.Add(ex.Message, Severity.Error);
         }
         finally
@@ -435,6 +443,8 @@
         }
         catch (Exception ex)
         {
+            await AuditSafe("TriggerStation", $"{station.Code}/{_pallet.Trim()}", null,
+                $"trigger failed; {ex.Message}", "Failure");
             Toast.Add($"触发 {station.Code} 失败：{ex.Message}", Severity.Error);
         }
         finally

@@ -27,12 +27,63 @@ public class SmokeE2ETests : E2ETestBase
     {
         await Page.GotoAsync(App.BaseUrl);
 
-        // 「3 台设备」这个计数只有 SignalR circuit 建好、拿到运行时状态后才会出现。
+        // 工站计数只有 SignalR circuit 建好、拿到运行时状态后才会出现。
         await WaitForAsync("text=实时看板");
-        await WaitForAsync("text=ST010");
+        await WaitForAsync("text=6 台工站");
 
         Assert.Contains("上料工站", await Page.InnerTextAsync("body"));
-        Assert.Contains("ST030", await Page.InnerTextAsync("body"));
+        Assert.Contains("ST060", await Page.InnerTextAsync("body"));
+    }
+
+    [Fact]
+    public async Task StationCardsUseContentHeightAndEllipsizeLongTitles()
+    {
+        await Page.GotoAsync(App.BaseUrl);
+        var card = await WaitForAsync(".dash-station");
+
+        var styles = await card.EvaluateAsync<string[]>("""
+            element => {
+                const title = element.querySelector(".dt-station-title");
+                const cardStyle = getComputedStyle(element);
+                const titleStyle = getComputedStyle(title);
+                return [
+                    cardStyle.minHeight,
+                    titleStyle.whiteSpace,
+                    titleStyle.textOverflow,
+                    titleStyle.overflow
+                ];
+            }
+            """);
+
+        Assert.Equal("0px", styles[0]);
+        Assert.Equal("nowrap", styles[1]);
+        Assert.Equal("ellipsis", styles[2]);
+        Assert.Equal("hidden", styles[3]);
+    }
+
+    [Fact]
+    public async Task StationCardDetailsAndCurveNameUseCompactRegions()
+    {
+        await Page.GotoAsync(App.BaseUrl);
+        await WaitForAsync(".dash-station");
+        await WaitForAsync(".dt-station-detail-link");
+        await WaitForAsync(".dt-station-curve-label");
+
+        var detailsLink = Page.Locator(".dt-station-detail-link").First;
+        Assert.Equal("查看本站明细", await detailsLink.GetAttributeAsync("aria-label"));
+        Assert.True(await detailsLink.EvaluateAsync<bool>(
+            "element => !!element.closest('.dt-station-header')"));
+
+        var curveLabel = Page.Locator(".dt-station-curve-label").First;
+        var curveLayout = await curveLabel.EvaluateAsync<bool[]>("""
+            element => [
+                getComputedStyle(element.parentElement).position === 'relative',
+                getComputedStyle(element).position === 'absolute',
+                element.title === element.textContent
+            ]
+            """);
+
+        Assert.All(curveLayout, condition => Assert.True(condition));
     }
 
     [Fact]

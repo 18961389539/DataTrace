@@ -10,6 +10,9 @@ namespace DataTrace.Domain.Evaluation;
 /// </remarks>
 public sealed record CurveFeatureSet
 {
+    /// <summary>所有原始采样值均为有限数值；无效波形不得参与判定或写入特征表。</summary>
+    public bool IsValid { get; init; } = true;
+
     /// <summary>采样点数。</summary>
     public int PointCount { get; init; }
 

@@ -272,14 +272,30 @@ else
 
                     <div class="dt-settings-row">
                         <div>
-                            <div class="dt-settings-row-name">保留年数<InfoHint Topic="HelpTexts.Retention" /></div>
-                            <div class="dt-settings-row-hint">仅清理超过年限的运行时整月记录库和曲线文件（RetentionHostedService，约每 @SystemDefaults.RetentionCheckHours 小时检查一次）。配置库中的审计日志（AuditLogs）不受此项影响，不会被按年数自动清除。</div>
+                            <div class="dt-settings-row-name">运行数据保留年数<InfoHint Topic="HelpTexts.Retention" /></div>
+                            <div class="dt-settings-row-hint">仅清理超过年限的运行时整月记录库和曲线文件；不影响审计日志。</div>
                         </div>
                         <MudNumericField @bind-Value="_edit.RetentionYears" @bind-Value:after="() => _retentionError = null"
                                          Min="@SettingsLimits.MinRetentionYears" Max="@SettingsLimits.MaxRetentionYears"
                                          Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true"
                                          Error="@(_retentionError is not null)" ErrorText="@_retentionError"
                                          aria-label="保留年数" />
+                        <span class="dt-src-badge edit">可在此修改·配置库</span>
+                    </div>
+                    <div class="dt-settings-row">
+                        <div>
+                            <div class="dt-settings-row-name">审计日志保留年数</div>
+                            <div class="dt-settings-row-hint">
+                                0 表示永久在线保留；设置为 1–30 年后，后台按月生成 gzip CSV 和 SHA-256 清单，归档校验成功才清理旧在线记录。
+                                归档存放于独立的 audit-archive 目录，不受运行数据清理影响。
+                            </div>
+                        </div>
+                        <MudNumericField @bind-Value="_edit.AuditRetentionYears"
+                                         @bind-Value:after="() => _auditRetentionError = null"
+                                         Min="@SettingsLimits.MinAuditRetentionYears" Max="@SettingsLimits.MaxAuditRetentionYears"
+                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true"
+                                         Error="@(_auditRetentionError is not null)" ErrorText="@_auditRetentionError"
+                                         aria-label="审计日志保留年数" />
                         <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
                     <div class="dt-settings-row">
@@ -561,6 +577,7 @@ else
     private string? _retryError;
     private string? _retryDelayError;
     private string? _retentionError;
+    private string? _auditRetentionError;
     private string? _mesTimeoutError;
     private string _activeSection = "sec-basic";
 
@@ -578,6 +595,7 @@ else
         public int? WriteRetryCount { get; set; }
         public int? WriteRetryDelayMs { get; set; }
         public int? RetentionYears { get; set; }
+        public int? AuditRetentionYears { get; set; }
         public int? MesTimeoutSeconds { get; set; }
         public bool CollectEnabled { get; set; }
         public bool MesEnabled { get; set; }
@@ -591,6 +609,7 @@ else
                || WriteRetryCount != other.WriteRetryCount
                || WriteRetryDelayMs != other.WriteRetryDelayMs
                || RetentionYears != other.RetentionYears
+               || AuditRetentionYears != other.AuditRetentionYears
                || MesTimeoutSeconds != other.MesTimeoutSeconds
                || CollectEnabled != other.CollectEnabled
                || MesEnabled != other.MesEnabled
@@ -602,6 +621,7 @@ else
             WriteRetryCount = s.WriteRetryCount,
             WriteRetryDelayMs = s.WriteRetryDelayMs,
             RetentionYears = s.RetentionYears,
+            AuditRetentionYears = s.AuditRetentionYears,
             MesTimeoutSeconds = s.MesTimeoutSeconds,
             CollectEnabled = s.CollectEnabled,
             MesEnabled = s.MesEnabled,
@@ -698,7 +718,8 @@ else
 
         private static string SummarizeSettings(SystemSettings s)
         => $"scan={s.ScanIntervalMs}ms; retry={s.WriteRetryCount}×{s.WriteRetryDelayMs}ms; retentionYears={s.RetentionYears}; " +
-           $"collect={s.CollectEnabled}; mes={s.MesEnabled}; mesTimeout={s.MesTimeoutSeconds}s; endpoint={s.MesEndpoint}";
+           $"auditRetentionYears={s.AuditRetentionYears}; collect={s.CollectEnabled}; mes={s.MesEnabled}; " +
+           $"mesTimeout={s.MesTimeoutSeconds}s; endpoint={s.MesEndpoint}";
 
     /// <summary>
     /// 写审计日志，失败时单独提示一次。
@@ -707,12 +728,22 @@ else
     /// 这里吞掉异常只是"不阻断主操作"，不等于可以不告诉人：停用采集、改 MES 地址、手动备份
     /// 都是需要留痕的动作，审计写失败却没提示时，"谁改的"就永久缺了一条而没人知道。
     /// </remarks>
-    private async Task AuditSafe(string action, string entityType, string key, string? oldValue, string? newValue)
+    private async Task AuditSafe(
+        string action,
+        string entityType,
+        string key,
+        string? oldValue,
+        string? newValue,
+        string outcome = "Success",
+        string? correlationId = null)
     {
         try
         {
             var user = (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
-            await Audit.WriteAsync(user, action, entityType, key, oldValue, newValue);
+            await Audit.WriteAsync(
+                user, action, entityType, key, oldValue, newValue,
+                outcome: outcome,
+                correlationId: correlationId);
         }
         catch (Exception ex)
         {
@@ -793,6 +824,7 @@ else
             _edit = EditFields.From(_settings);
             _loaded = _edit.Clone();
             _scanError = _retryError = _retryDelayError = _retentionError = _mesTimeoutError = null;
+            _auditRetentionError = null;
             _productionSimWarning = Branding.EnvironmentName.Equals("Production", StringComparison.OrdinalIgnoreCase)
                 && _settings is { SimulatorAutoRun: true };
             RefreshBackupStatus();
@@ -857,6 +889,11 @@ else
         {
             return;
         }
+        if (needSettings && _edit.AuditRetentionYears != _loaded.AuditRetentionYears
+            && !await ConfirmAuditRetentionChange())
+        {
+            return;
+        }
 
         _saving = true;
         string? settingsErr = null;
@@ -880,6 +917,7 @@ else
                     if (_edit.WriteRetryCount != _loaded.WriteRetryCount) target.WriteRetryCount = _edit.WriteRetryCount!.Value;
                     if (_edit.WriteRetryDelayMs != _loaded.WriteRetryDelayMs) target.WriteRetryDelayMs = _edit.WriteRetryDelayMs!.Value;
                     if (_edit.RetentionYears != _loaded.RetentionYears) target.RetentionYears = _edit.RetentionYears!.Value;
+                    if (_edit.AuditRetentionYears != _loaded.AuditRetentionYears) target.AuditRetentionYears = _edit.AuditRetentionYears!.Value;
                     if (_edit.MesTimeoutSeconds != _loaded.MesTimeoutSeconds) target.MesTimeoutSeconds = _edit.MesTimeoutSeconds!.Value;
                     if (_edit.CollectEnabled != _loaded.CollectEnabled) target.CollectEnabled = _edit.CollectEnabled;
                     // 地址统一去掉首尾空白：带空格的 URL 能过校验、也会被原样存进库与审计里。
@@ -909,12 +947,19 @@ else
             {
                 try
                 {
+                    var oldBrand = $"site={_savedSiteName}; logo={_savedLogoPath}";
                     Branding.SaveBranding(_editSiteName, _editLogoPath);
                     _identity = Branding.GetSnapshot();
                     _savedSiteName = _identity.EffectiveSiteName;
                     _savedLogoPath = _identity.LogoPath;
                     _editSiteName = _savedSiteName;
                     _editLogoPath = _savedLogoPath;
+                    await AuditSafe(
+                        "Save",
+                        "Branding",
+                        "customer.json",
+                        oldBrand,
+                        $"site={_savedSiteName}; logo={_savedLogoPath}");
                     brandSaved = true;
                 }
                 catch (Exception ex)
@@ -991,10 +1036,12 @@ else
             : SettingsLimits.WriteRetryDelayError(delay);
         _retentionError = _edit.RetentionYears is not { } years ? "保留年数不能为空"
             : SettingsLimits.RetentionYearsError(years);
+        _auditRetentionError = _edit.AuditRetentionYears is not { } auditYears ? "审计保留年数不能为空"
+            : SettingsLimits.AuditRetentionYearsError(auditYears);
         _mesTimeoutError = _edit.MesTimeoutSeconds is not { } timeout ? "MES 超时不能为空"
             : SettingsLimits.MesTimeoutError(timeout);
 
-        var bad = new[] { _scanError, _retryError, _retryDelayError, _retentionError, _mesTimeoutError }
+        var bad = new[] { _scanError, _retryError, _retryDelayError, _retentionError, _auditRetentionError, _mesTimeoutError }
             .Count(x => x is not null);
         if (bad == 0)
         {
@@ -1015,6 +1062,23 @@ else
             $"保留年数 {_loaded.RetentionYears?.ToString() ?? "默认"} → {years} 年。\n\n"
             + $"清理任务（约每 {SystemDefaults.RetentionCheckHours} 小时一次）会删除 {newestDeleted:yyyy-MM} 及更早月份的整月记录库与曲线文件，"
             + "删除后不可恢复（配置库里的审计日志不受影响）。",
+            yesText: "确认修改", cancelText: "取消");
+        return confirmed == true;
+    }
+
+    private async Task<bool> ConfirmAuditRetentionChange()
+    {
+        var years = _edit.AuditRetentionYears!.Value;
+        var newestArchivedMonth = years == 0
+            ? (DateTime?)null
+            : new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1).AddYears(-years).AddMonths(-1);
+        var effect = years == 0
+            ? "停止后续自动归档和清理；已生成的归档不删除。"
+            : $"后台约每 {SystemDefaults.RetentionCheckHours} 小时处理一次：先将 {newestArchivedMonth:yyyy-MM} 及更早的整月审计记录归档为 gzip CSV，并校验 SHA-256，再删除在线记录。归档失败时保留数据库原记录。";
+        var confirmed = await DialogService.ShowMessageBox(
+            "确认审计日志保留策略",
+            $"审计日志保留年数 {_loaded.AuditRetentionYears?.ToString() ?? "0"} → {years} 年。\n\n{effect}\n\n"
+            + "此设置独立于运行数据保留；审计归档位于 audit-archive 目录。请确认已配置该目录的备份和访问权限。",
             yesText: "确认修改", cancelText: "取消");
         return confirmed == true;
     }
@@ -1045,26 +1109,30 @@ else
     {
         if (_backingUp) return;
         _backingUp = true;
+        var correlationId = Guid.NewGuid().ToString("N");
         try
         {
-            await AuditSafe("Backup", "Backup", "manual", null, "start");
+            await AuditSafe("Backup", "Backup", "manual", null, "started", correlationId: correlationId);
             var result = await BackupService.RunBackupAsync();
             RefreshBackupStatus();
             if (result.Success)
             {
                 await AuditSafe("Backup", "Backup", "manual", "start",
-                    $"success; path={result.BackupPath}; bytes={result.TotalBytes}");
+                    $"success; path={result.BackupPath}; bytes={result.TotalBytes}",
+                    correlationId: correlationId);
                 Toast.Add($"备份完成：{result.BackupPath}", Severity.Success);
             }
             else
             {
-                await AuditSafe("Backup", "Backup", "manual", "start", $"fail; {result.Error}");
+                await AuditSafe("Backup", "Backup", "manual", "started", $"fail; {result.Error}",
+                    outcome: "Failure", correlationId: correlationId);
                 Toast.Add($"备份失败：{result.Error}", Severity.Error);
             }
         }
         catch (Exception ex)
         {
-            await AuditSafe("Backup", "Backup", "manual", "start", $"fail; {ex.Message}");
+            await AuditSafe("Backup", "Backup", "manual", "started", $"fail; {ex.Message}",
+                outcome: "Failure", correlationId: correlationId);
             Toast.Add($"备份异常：{ex.Message}", Severity.Error);
             RefreshBackupStatus();
         }

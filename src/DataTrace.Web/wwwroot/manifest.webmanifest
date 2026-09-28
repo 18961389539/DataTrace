@@ -1,0 +1,39 @@
+{
+  "id": "/",
+  "name": "DataTrace 产线数据追溯系统",
+  "short_name": "DataTrace",
+  "description": "产线实时数据监控与质量追溯",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#1b6ec2",
+  "background_color": "#111820",
+  "icons": [
+    {
+      "src": "/icons/datatrace-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/datatrace-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/datatrace-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/datatrace.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

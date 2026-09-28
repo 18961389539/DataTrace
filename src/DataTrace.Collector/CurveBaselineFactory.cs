@@ -1,6 +1,7 @@
 using DataTrace.Application.Configuration;
 using DataTrace.Application.Evaluation;
 using DataTrace.Application.Runtime;
+using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
 
 namespace DataTrace.Collector;
@@ -58,12 +59,20 @@ public sealed class CurveBaselineFactory
                 // 型号过滤在 SQL 侧完成：先把"最新 500 条"截断再按型号筛，
                 // 另一种型号最近产量大一点就会把本型号的样本整段挤出去，基线直接空掉。
                 var points = await _store
-                    .QueryCurveFeaturesAsync(curve.Id, series.Name, from, to, MaxSamplesPerSeries, allowedRecipeCodes, cancellationToken)
+                    .QueryCurveFeaturesAsync(
+                        curve.Id,
+                        series.Name,
+                        from,
+                        to,
+                        MaxSamplesPerSeries,
+                        allowedRecipeCodes,
+                        cancellationToken,
+                        judgement: Judgement.Ok)
                     .ConfigureAwait(false);
 
                 // 只有合格样本能当"正常"：历史里的不良波形正是要检出的东西。
                 var good = points
-                    .Where(p => !p.IsNg)
+                    .Where(p => p.ActualJudgement == Judgement.Ok)
                     .Select(p => p.Feature)
                     .ToList();
 

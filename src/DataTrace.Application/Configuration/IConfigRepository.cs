@@ -114,12 +114,26 @@ public interface IConfigRepository
 
 public interface IAuditLogger
 {
-    Task WriteAsync(string userName, string action, string entityType, string? entityKey, string? oldValue, string? newValue, CancellationToken cancellationToken = default);
+    Task WriteAsync(
+        string userName,
+        string action,
+        string entityType,
+        string? entityKey,
+        string? oldValue,
+        string? newValue,
+        CancellationToken cancellationToken = default,
+        string outcome = "Success",
+        string source = "Blazor Server UI",
+        string? sourceIp = null,
+        string? correlationId = null);
 
     /// <summary>
-    /// 服务端筛选 + 分页。keyword 在用户/动作码/对象码/键/变更内容上做 Contains；
+    /// 服务端筛选 + 分页。keyword 在用户/动作码/对象码/键/变更内容及追溯元数据上做 Contains；
     /// 中文标签匹配请由调用方把命中的动作码/对象码传入 keywordMatched*。
     /// </summary>
+    /// <param name="toInclusive">截止时刻（含），用于准确圈定某一天或某个班次。</param>
+    /// <param name="newestFirst">true 为最新在前；审计溯源也可按最早在前查看。</param>
+    /// <param name="idAtMost">仅查询此 ID 及更早的日志，用于固定长时间导出的数据边界。</param>
     Task<(IReadOnlyList<AuditLog> Items, int Total)> QueryAsync(
         string? keyword = null,
         string? action = null,
@@ -128,12 +142,34 @@ public interface IAuditLogger
         int take = 50,
         IReadOnlyList<string>? keywordMatchedActions = null,
         IReadOnlyList<string>? keywordMatchedEntityTypes = null,
-        /// <summary>截止时刻（含）。审计要能圈定「某一天」「某个班次」，只有下界做不到。</summary>
         DateTime? toInclusive = null,
         string? user = null,
         string? entityType = null,
-        /// <summary>true 为最新在前。审计溯源常常要从最早看起，所以方向要可切。</summary>
+        string? outcome = null,
+        string? source = null,
+        string? correlationId = null,
+        long? idAtMost = null,
         bool newestFirst = true,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>当前审计日志最大 ID，供分页导出固定快照边界。</summary>
+    Task<long> GetLatestIdAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>读取最早一条审计记录的时间；空库返回 null。</summary>
+    Task<DateTime?> GetOldestTimeAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>删除指定时间范围内的审计记录，结束时间不包含在内。</summary>
+    Task<int> DeleteRangeAsync(
+        DateTime fromInclusive,
+        DateTime toExclusive,
+        long idAtMost,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>读取时间范围及 ID 上界内记录的数量和 ID 边界，用于验证待恢复的归档批次。</summary>
+    Task<(int Count, long? MinId, long? MaxId)> GetRangeStatsAsync(
+        DateTime fromInclusive,
+        DateTime toExclusive,
+        long idAtMost,
         CancellationToken cancellationToken = default);
 
     /// <summary>库中已出现过的动作码（下拉用），按字母序。</summary>

@@ -97,7 +97,7 @@ public class JourneyE2ETests : E2ETestBase
     }
 
     [Fact]
-    public async Task SimulatePageKeepsThreeStationTriggerButtons()
+    public async Task SimulatePageShowsSixStationTriggerButtons()
     {
         await Page.GotoAsync($"{App.BaseUrl}/simulate");
         await WaitForAsync("text=PLC 仿真");
@@ -105,7 +105,7 @@ public class JourneyE2ETests : E2ETestBase
         var labels = await Page.Locator("button").Filter(new() { HasText = "触发" }).AllInnerTextsAsync();
 
         Assert.Equal(
-            new[] { "触发 ST010", "触发 ST020", "触发 ST030" },
+            new[] { "触发 ST010", "触发 ST020", "触发 ST030", "触发 ST040", "触发 ST050", "触发 ST060" },
             labels.Select(x => x.Trim()).OrderBy(x => x, StringComparer.Ordinal).ToArray());
     }
 

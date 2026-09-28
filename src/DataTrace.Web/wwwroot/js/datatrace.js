@@ -18,6 +18,25 @@ window.dtDownload = function (fileName, contentBase64) {
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
 };
 
+// Download large exports over HTTP, keeping the CSV out of Blazor's SignalR payloads.
+window.dtDownloadUrl = async function (fileName, url) {
+    var response = await fetch(url, { credentials: 'same-origin' });
+    if (!response.ok || !response.headers.get('content-type')?.includes('text/csv')) {
+        throw new Error('下载请求失败 (' + response.status + ')');
+    }
+
+    var blob = await response.blob();
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+};
+
 // 导航后把焦点移到页标题，读屏与键盘用户才知道页面换了。
 // 标题本身不可聚焦，必须补 tabindex="-1" —— 框架的 FocusOnNavigate 就是这么做的，
 // 少了这一步 el.focus() 是空操作，焦点会留在 body 上。

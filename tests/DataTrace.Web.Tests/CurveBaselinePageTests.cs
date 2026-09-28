@@ -90,4 +90,103 @@ public class CurveBaselinePageTests : WebTestBase
         Assert.Equal(DateTime.Today.AddDays(-29), ranges[1]);
         Assert.DoesNotContain("FIRST", cut.Markup);
     }
+
+    [Fact]
+    public async Task Failed_reanalysis_does_not_leave_the_previous_report_visible()
+    {
+        var calls = 0;
+        _templates
+            .Setup(s => s.GetBaselineAsync(
+                It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(),
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns<int, string?, DateTime, DateTime, int, int, CancellationToken>(
+                (_, _, _, _, _, _, _) => Interlocked.Increment(ref calls) == 1
+                    ? Task.FromResult<CurveBaselineReport?>(Report("FIRST"))
+                    : Task.FromException<CurveBaselineReport?>(new InvalidOperationException("query failed")));
+
+        var cut = Render();
+        cut.WaitForState(() => cut.Markup.Contains("FIRST"));
+
+        var filter = cut.FindComponent<DateRangeFilter>();
+        await cut.InvokeAsync(() => filter.Instance.FromChanged.InvokeAsync(DateTime.Today.AddDays(-29)));
+        await cut.InvokeAsync(() => filter.Instance.OnRangeChanged.InvokeAsync());
+
+        Assert.DoesNotContain("FIRST", cut.Markup);
+        Assert.Contains("分析未完成", cut.Markup);
+    }
+
+    [Fact]
+    public async Task Reversed_range_clears_the_previous_report()
+    {
+        _templates
+            .Setup(s => s.GetBaselineAsync(
+                It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(),
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.FromResult<CurveBaselineReport?>(Report("FIRST")));
+
+        var cut = Render();
+        cut.WaitForState(() => cut.Markup.Contains("FIRST"));
+
+        var filter = cut.FindComponent<DateRangeFilter>();
+        await cut.InvokeAsync(() => filter.Instance.FromChanged.InvokeAsync(DateTime.Today.AddDays(1)));
+        await cut.InvokeAsync(() => filter.Instance.OnRangeChanged.InvokeAsync());
+
+        Assert.DoesNotContain("FIRST", cut.Markup);
+        Assert.Contains(DateRangeFilter.ReversedRangeMessage, cut.Markup);
+    }
+
+    [Fact]
+    public void Cache_from_a_different_recipe_is_not_shown_as_ready()
+    {
+        Config.Snapshot = new AppConfigurationSnapshot
+        {
+            ActiveRecipe = new Recipe { Code = "CURRENT" },
+            Stations =
+            [
+                new Station
+                {
+                    Id = 10,
+                    Code = "ST010",
+                    Name = "压装",
+                    Curves = [new CurveDefinition { Id = 3, StationId = 10, Code = "ST010_PD", Name = "位移压力曲线" }]
+                }
+            ]
+        };
+        _cache.SetupGet(c => c.Current).Returns(new CurveBaselineSnapshot
+        {
+            RecipeCode = "PREVIOUS",
+            RefreshedAt = DateTime.Today,
+            Templates = new Dictionary<CurveBaselineKey, CurveTemplate>()
+        });
+        _templates
+            .Setup(s => s.GetBaselineAsync(
+                It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(),
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.FromResult<CurveBaselineReport?>(null));
+
+        var cut = Render();
+
+        Assert.Contains("型号切换中", cut.Markup);
+        Assert.Contains("缓存为 PREVIOUS", cut.Markup);
+    }
+
+    [Fact]
+    public void Expired_cache_is_shown_with_a_warning()
+    {
+        _cache.SetupGet(c => c.Current).Returns(new CurveBaselineSnapshot
+        {
+            RecipeCode = "",
+            RefreshedAt = DateTime.Now - CurveBaselineSnapshot.MaxAge - TimeSpan.FromSeconds(1),
+            Templates = new Dictionary<CurveBaselineKey, CurveTemplate>()
+        });
+        _templates
+            .Setup(s => s.GetBaselineAsync(
+                It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(),
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.FromResult<CurveBaselineReport?>(null));
+
+        var cut = Render();
+
+        Assert.Contains("已过期", cut.Markup);
+    }
 }
