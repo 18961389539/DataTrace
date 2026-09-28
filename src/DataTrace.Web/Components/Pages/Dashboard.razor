@@ -95,7 +95,7 @@
 @* KPI 独立成条：跟页头的状态芯片平铺在一起时它们权重相同，扫一眼分不出主次。
    本班完成的口径与三态判定的说明跟着各自的 ⓘ 走。 *@
 <div class="dt-kpi-bar">
-    <div class="dt-kpi">
+    <div class="dt-kpi-card">
         <div class="dt-kpi-main">
             <span class="dt-kpi-label">本班完成<InfoHint Topic="HelpTexts.TodayScope" /></span>
             <span class="dt-kpi-value">@_shiftTotal</span>
@@ -103,21 +103,21 @@
         <span class="dt-kpi-hint">@_shiftWindowText · OK @_shiftOk · 未判定 @_shiftNone</span>
         <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftStopText <InfoHint Topic="HelpTexts.ShiftShortfall" /></span>
     </div>
-    <div class="dt-kpi">
+    <div class="dt-kpi-card">
         <div class="dt-kpi-main">
             <span class="dt-kpi-label">直通率<InfoHint Topic="HelpTexts.YieldRate" /></span>
             <span class="dt-kpi-value">@_shiftYieldText</span>
         </div>
         <span class="dt-kpi-hint">@_shiftDragText</span>
     </div>
-    <div class="dt-kpi">
+    <div class="dt-kpi-card">
         <div class="dt-kpi-main">
             <span class="dt-kpi-label">本班 NG<InfoHint Topic="HelpTexts.JudgementThreeState" /></span>
             <span class="dt-kpi-value dt-kpi-value-alert">@_shiftNg</span>
         </div>
         <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftNgSourceText <InfoHint Topic="HelpTexts.NgSource" /></span>
     </div>
-    <div class="dt-kpi">
+    <div class="dt-kpi-card">
         <div class="dt-kpi-main">
             <span class="dt-kpi-label">当前间隔<InfoHint Topic="HelpTexts.PieceGap" /></span>
             <span class="dt-kpi-value">@PaceText</span>
@@ -192,7 +192,7 @@
 }
 else
 {
-    <MudGrid>
+    <MudGrid Class="dt-station-grid">
         @foreach (var station in _orderedStations)
         {
             <MudItem xs="12" md="6" lg="4">

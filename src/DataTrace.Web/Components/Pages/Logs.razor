@@ -334,9 +334,24 @@
         }
     </ChildRowContent>
     <NoRecordsContent>
-        <MudText Class="dt-muted py-4">
-            @(_loading ? "正在加载…" : "没有符合条件的日志，可清空关键字或放宽时间范围。")
-        </MudText>
+        @if (_loadFailed)
+        {
+            @* 失败时结果已在 catch 里清空，沿用「没有符合条件的日志」会把故障说成空数据。 *@
+            <div class="dt-empty-hint">
+                <MudText Class="dt-text-error">加载日志失败，结果已清空。</MudText>
+                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Refresh" Class="mt-2"
+                           OnClick="@(() => Reload())">
+                    重试
+                </MudButton>
+            </div>
+        }
+        else
+        {
+            <MudText Class="dt-muted py-4">
+                @(_loading ? "正在加载…" : "没有符合条件的日志，可清空关键字或放宽时间范围。")
+            </MudText>
+        }
     </NoRecordsContent>
 </MudTable>
 
@@ -389,6 +404,8 @@
     private int _pages = 1;
     private int _total;
     private bool _loading;
+    /// <summary>查询本身失败（不是"查到 0 条"）：结果已被清空，不能再落回空态文案。</summary>
+    private bool _loadFailed;
     private bool _exporting;
     private long _exportedRows;
     private int _exportTotal;
@@ -672,6 +689,7 @@
                 cancellationToken: cancellationToken);
             _pageItems = items.ToList();
             _total = total;
+            _loadFailed = false;
             _pages = Math.Max(1, (int)Math.Ceiling(_total / (double)PageSize));
             if (_page > _pages)
             {
@@ -687,6 +705,7 @@
             _pageItems = [];
             _total = 0;
             _pages = 1;
+            _loadFailed = true;
             Toast.Add($"加载日志失败：{ex.Message}", Severity.Error);
         }
         finally

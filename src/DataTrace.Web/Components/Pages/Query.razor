@@ -209,7 +209,23 @@ else
         </MudTd>
     </RowTemplate>
     <NoRecordsContent>
-        @if (_loading)
+        @if (_loadFailed)
+        {
+            @* 结果已经被 catch 清空，这里再说「没有符合条件的记录」就是把故障说成空数据。
+               给重试按钮：查询失败多数是月库被占用，重试一次往往就过。 *@
+            <div class="dt-empty-hint">
+                <MudText Typo="Typo.body2" Class="dt-text-error">查询失败，结果已清空。</MudText>
+                <MudText Typo="Typo.caption" Class="dt-muted mt-1">
+                    若持续失败，请检查月库是否被占用或采集端连接是否断开。
+                </MudText>
+                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Refresh" Class="mt-2"
+                           OnClick="@(() => Load())">
+                    重试
+                </MudButton>
+            </div>
+        }
+        else if (_loading)
         {
             <MudText Typo="Typo.body2" Class="dt-muted py-3">正在查询…</MudText>
         }
@@ -326,6 +342,11 @@ else
     private int _pageSize = 20;
     private bool _loading;
     private bool _loadPending;
+    /// <summary>
+    /// 查询本身失败（不是"查到了 0 条"）。清空结果后若仍走空态文案，
+    /// 现场会以为区间里真没数据，转头去放宽一个本来正确的区间。
+    /// </summary>
+    private bool _loadFailed;
     private bool _exporting;
     private bool _canExport;
     private bool _traceMode;
@@ -572,6 +593,7 @@ else
             _items = [];
             _total = 0;
             _pages = 1;
+            _loadFailed = false;
             Toast.Add(DateRangeFilter.ReversedRangeMessage, Severity.Warning);
             return;
         }
@@ -617,6 +639,7 @@ else
                 var result = await Store.QueryAsync(BuildRequest((_page - 1) * _pageSize, _pageSize));
                 _items = result.Items;
                 _total = result.Total;
+                _loadFailed = false;
                 _pages = Math.Max(1, (int)Math.Ceiling(_total / (double)_pageSize));
                 if (_page > _pages)
                 {
@@ -632,6 +655,7 @@ else
             Toast.Add($"查询失败：{ex.Message}", Severity.Error);
             _items = [];
             _total = 0;
+            _loadFailed = true;
         }
         finally
         {

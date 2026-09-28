@@ -27,13 +27,22 @@ public readonly record struct ChartBox(
     }
 }
 
-/// <summary>折线图序列配色：取值统一由 <see cref="DtColors"/> 提供，与主题同一色系。</summary>
+/// <summary>
+/// 折线图序列配色：指向 app.css 的 --dt-series-* 变量，由主题在明暗两档之间切换，
+/// 浅色档与 <see cref="DtColors"/> 同值、暗色档由 html.dt-theme-dark 覆盖。
+/// </summary>
+/// <remarks>
+/// 这里曾经直接取 <see cref="DtColors"/> 的十六进制：暗色主题只把绘图底色换成 #151e27，
+/// 线条却仍是浅色档的深蓝深红，#c62828 落在深底上只有约 2.5:1，低于图形元素 3:1 的下限，
+/// 而这两条正是过程能力页判定上下控制限用的线。
+/// SVG 的 stroke="" 这类呈现属性不解析 var()，所以取值一律走 style="stroke:…"（见 LineChart）。
+/// </remarks>
 public static class ChartColors
 {
-    public const string Primary = DtColors.Primary;
-    public const string Secondary = DtColors.SeriesAmber;
-    public const string Third = DtColors.SeriesGreen;
-    public const string Alert = DtColors.Danger;
+    public const string Primary = "var(--dt-series-primary)";
+    public const string Secondary = "var(--dt-series-amber)";
+    public const string Third = "var(--dt-series-green)";
+    public const string Alert = "var(--dt-series-alert)";
 
     public static string ByIndex(int index) => (index % 3) switch
     {

@@ -405,7 +405,7 @@ public class UiRegressionE2ETests : E2ETestBase
         await Page.GetByRole(AriaRole.Button, new() { Name = "大屏模式" }).ClickAsync();
         await Page.WaitForFunctionAsync("() => document.body.classList.contains('dt-shopfloor')");
 
-        var firstKpi = Page.Locator(".dt-kpi").First;
+        var firstKpi = Page.Locator(".dt-kpi-card").First;
         var desktopLayout = await firstKpi.EvaluateAsync<bool[]>("""
             element => {
                 const main = element.querySelector('.dt-kpi-main').getBoundingClientRect();
@@ -423,7 +423,7 @@ public class UiRegressionE2ETests : E2ETestBase
         Assert.True(desktopLayout[2], "KPI 内容不应横向溢出");
 
         await Page.SetViewportSizeAsync(390, 844);
-        var mobileWidths = await Page.Locator(".dt-kpi").EvaluateAllAsync<double[]>(
+        var mobileWidths = await Page.Locator(".dt-kpi-card").EvaluateAllAsync<double[]>(
             "elements => elements.map(element => element.getBoundingClientRect().width)");
 
         Assert.True(mobileWidths[0] > mobileWidths[1] * 1.6, "窄屏首张 KPI 应跨两列以容纳完整单行内容");

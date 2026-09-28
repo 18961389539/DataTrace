@@ -83,7 +83,10 @@
                 }
             </MudTd>
             <MudTd DataLabel="备注">@context.Remark</MudTd>
-            <MudTd Class="dt-nowrap">
+            @* 操作列一律右对齐 + 可换行（.dt-actions）：五个按钮加一条说明，
+               dt-nowrap 会把列宽硬性撑开，窄屏上整张表变得只能横向滚。 *@
+            <MudTd DataLabel="操作" Class="dt-right">
+                <span class="dt-actions">
                 @if (context.Id == _active?.Id)
                 {
                     <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_saving" OnClick="ClearActive">取消选择</MudButton>
@@ -102,6 +105,7 @@
                 <InfoHint Topic="HelpTexts.RecipeCopy" />
                 <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error" Disabled="_saving"
                            OnClick="@(() => DeleteRecipe(context))">删除</MudButton>
+                </span>
             </MudTd>
         </RowTemplate>
         <NoRecordsContent>
@@ -111,6 +115,17 @@
 </MudPaper>
 
 @code {
+    /// <summary>
+    /// 型号编辑对话框的尺寸：新增/编辑/复制三个入口共用同一份，
+    /// 之前只有新增传了 Small，同一个两字段表单在三种操作下宽度不同。
+    /// </summary>
+    private static readonly DialogOptions FormOptions = new()
+    {
+        MaxWidth = MaxWidth.Small,
+        FullWidth = true,
+        CloseOnEscapeKey = true
+    };
+
     private IReadOnlyList<Recipe> _recipes = [];
     private IReadOnlyList<Station> _stations = [];
     private Recipe? _active;
@@ -192,10 +207,7 @@
             { x => x.Name, "" },
             { x => x.ExtraHint, "系统会自动分配固定的内部编码；新增后可在列表中设置型号限值。" }
         };
-        var dialog = await DialogService.ShowAsync<RecipeEditDialog>(
-            "新增型号",
-            parameters,
-            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true });
+        var dialog = await DialogService.ShowAsync<RecipeEditDialog>("新增型号", parameters, FormOptions);
         var result = await dialog.Result;
         if (result is null || result.Canceled || result.Data is not RecipeEditDialog.RecipeEditResult created)
         {
@@ -224,7 +236,7 @@
             { x => x.Name, recipe.Name },
             { x => x.Remark, recipe.Remark }
         };
-        var dialog = await DialogService.ShowAsync<RecipeEditDialog>("编辑型号", parameters);
+        var dialog = await DialogService.ShowAsync<RecipeEditDialog>("编辑型号", parameters, FormOptions);
         var result = await dialog.Result;
         if (result is null || result.Canceled || result.Data is not RecipeEditDialog.RecipeEditResult edited)
             return;
@@ -252,7 +264,7 @@
             { x => x.Remark, source.Remark },
             { x => x.ExtraHint, $"将复制源型号「{source.Name}」的全部限值覆盖（{Overrides(source)} 项）；新型号会分配独立系统编码，不会自动设为当前。" }
         };
-        var dialog = await DialogService.ShowAsync<RecipeEditDialog>("复制型号", parameters);
+        var dialog = await DialogService.ShowAsync<RecipeEditDialog>("复制型号", parameters, FormOptions);
         var result = await dialog.Result;
         if (result is null || result.Canceled || result.Data is not RecipeEditDialog.RecipeEditResult edited)
             return;

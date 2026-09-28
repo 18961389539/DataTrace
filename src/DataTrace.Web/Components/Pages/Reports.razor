@@ -293,10 +293,10 @@
             else
             {
                 <MudStack Row="true" Spacing="3" Class="mb-2 flex-wrap">
-                    <MudText Typo="Typo.caption" Class="dt-muted dt-kpi">采样点 @_trend.Count<InfoHint Topic="HelpTexts.TrendSampleLimit" /></MudText>
-                    <MudText Typo="Typo.caption" Class="dt-muted dt-kpi">均值 @_trendAverage</MudText>
-                    <MudText Typo="Typo.caption" Class="dt-muted dt-kpi">最小 @_trendMin</MudText>
-                    <MudText Typo="Typo.caption" Class="dt-muted dt-kpi">最大 @_trendMax</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted dt-nums">采样点 @_trend.Count<InfoHint Topic="HelpTexts.TrendSampleLimit" /></MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted dt-nums">均值 @_trendAverage</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted dt-nums">最小 @_trendMin</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted dt-nums">最大 @_trendMax</MudText>
                     <MudText Typo="Typo.caption" Class="dt-muted">@_trendRangeText</MudText>
                 </MudStack>
                 <LineChart Series="_trendSeries" Height="280" SeriesAxisName="时间"
@@ -453,7 +453,7 @@
                         </MudItem>
                     </MudGrid>
 
-                    <MudText Typo="Typo.caption" Class="dt-muted dt-kpi mb-3">
+                    <MudText Typo="Typo.caption" Class="dt-muted dt-nums mb-3">
                         规格限 @LimitPair(segment.LowerLimit, segment.UpperLimit) @_spc.Unit
                         @if (segment.LimitsFromConfig)
                         {

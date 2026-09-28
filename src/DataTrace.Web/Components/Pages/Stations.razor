@@ -13,6 +13,12 @@
 @inject DtToast Toast
 @inject IDialogService DialogService
 @inject IJsonFileDialog FileDialog
+@using System.Text.Json
+@using System.Text.Json.Serialization
+
+@* 表单直接绑在活实体上，改完不保存就切走（点别的工站、点别的菜单）会无声丢改动，
+   与系统设置页同一套拦法。 *@
+<NavigationLock ConfirmExternalNavigation="@Dirty" OnBeforeInternalNavigation="OnBeforeInternalNavigation" />
 
 <PageHeader Title="工站配置" Description="先选工站，再按页签改握手、点位和曲线。改动保存后立即下发给采集器。" HelpRoute="config/stations" />
 
@@ -70,6 +76,12 @@
             <MudPaper Class="pa-4 station-pane">
                 <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3">
                     <MudText Typo="Typo.h6">@_current.Code @_current.Name</MudText>
+                    @if (Dirty)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
+                            有未保存的改动
+                        </MudChip>
+                    }
                     <MudSpacer />
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveStation" Disabled="_busy"
                                StartIcon="@(_busy ? Icons.Material.Filled.Sync : Icons.Material.Filled.Save)">
@@ -414,8 +426,42 @@
     private IReadOnlyList<Station> _stations = [];
     private IReadOnlyList<PlcConnection> _plcs = [];
     private Station? _current;
+    /// <summary>上次读库（或保存）时的整站指纹，用于判断有没有未保存改动。</summary>
+    private string? _loadedSnapshot;
     private int _tab;
     private string _occupiedAddress = "";
+
+    /// <summary>
+    /// 表单字段是 @bind-Value 到活实体的，没有别的钩子能知道改了什么，
+    /// 只能用序列化后的指纹跟读库时那一份比。点位与曲线的增删改同样落在 _current 上，一并覆盖。
+    /// </summary>
+    private bool Dirty => _current is not null
+        && _loadedSnapshot is not null
+        && Snapshot(_current) != _loadedSnapshot;
+
+    /// <summary>
+    /// 点位/曲线/产品位实体上都带着回指 Station 的导航属性，默认选项会直接抛「检测到对象循环」，
+    /// 写进渲染路径就是整页崩掉。IgnoreCycles 把回环写成 null，指纹依旧稳定可比。
+    /// </summary>
+    private static readonly JsonSerializerOptions SnapshotOptions = new()
+    {
+        ReferenceHandler = ReferenceHandler.IgnoreCycles
+    };
+
+    private static string Snapshot(Station station) => JsonSerializer.Serialize(station, SnapshotOptions);
+
+    private async Task OnBeforeInternalNavigation(LocationChangingContext context)
+    {
+        if (!Dirty) return;
+        var ok = await DialogService.ShowMessageBox(
+            "未保存的改动",
+            $"工站 {_current?.Code} 有未保存的改动，离开本页会丢弃它们。确定离开？",
+            yesText: "离开", cancelText: "留下");
+        if (ok != true)
+        {
+            context.PreventNavigation();
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -783,7 +829,7 @@
                 isNew ? "Create" : "Save", "TagDefinition", $"{station.Code}/{edited.Name}", oldSnap,
                 $"source={edited.Source}; {edited.Address}; {edited.DataType}; limits={DisplayLabels.LimitRange(edited.LowerLimit, edited.UpperLimit)}")));
             var tab = _tab;
-            await Select(station);
+            await Select(station, reload: true);
             _tab = tab;
             Toast.Add(isNew ? $"点位 {edited.Name} 已添加" : $"点位 {edited.Name} 已保存", Severity.Success);
         });
@@ -816,7 +862,7 @@
         {
             var station = _current;
             var tab = _tab;
-            await Select(station);
+            await Select(station, reload: true);
             _tab = tab;
         }
     });
@@ -892,7 +938,7 @@
                 isNew ? "Create" : "Save", "CurveDefinition", $"{station.Code}/{code}",
                 isNew ? null : summary, summary)));
             var tab = _tab;
-            await Select(station);
+            await Select(station, reload: true);
             _tab = tab;
             Toast.Add(isNew ? $"曲线 {code} 已添加" : $"曲线 {code} 已保存并下发采集器", Severity.Success);
         });
@@ -926,7 +972,7 @@
         {
             var station = _current;
             var tab = _tab;
-            await Select(station);
+            await Select(station, reload: true);
             _tab = tab;
         }
     });
@@ -1007,21 +1053,40 @@
     private static string XStart(CurveDefinition curve)
         => curve.Series.FirstOrDefault(s => s.Role == SeriesRole.X)?.StartAddress ?? "-";
 
-    private Task Select(Station? station)
+    /// <param name="reload">
+    /// true 表示调用方刚刚写库、就是要拿库里的新副本（保存点位、保存曲线、保存工站后的重读），
+    /// 这时不该再弹一次"放弃改动"。
+    /// </param>
+    private async Task Select(Station? station, bool reload = false)
     {
         if (station is null)
         {
-            return Task.CompletedTask;
+            return;
+        }
+
+        // 换工站会用库里的数据整体覆盖 _current：改了一半的编码/地址、
+        // 以及对话框里刚加的点位与曲线都会无声消失，所以先问一次。
+        if (!reload && Dirty)
+        {
+            var confirmed = await DialogService.ShowMessageBox(
+                "未保存的改动",
+                $"工站 {_current?.Code} 有未保存的改动，切换到 {station.Code} 会丢弃它们。确定切换？",
+                yesText: "放弃并切换", cancelText: "留在本站");
+            if (confirmed != true)
+            {
+                return;
+            }
         }
 
         ClearErrors();
         var id = station.Id;
-        return Guard("读取工站", async () =>
+        await Guard("读取工站", async () =>
         {
             _current = await Config.GetStationAsync(id);
             // 历史配置里可能已经存着采集读不到的地址（例如按别的品牌写的、或是位地址）。
             // 进页面就算一遍，别让用户非要去动一下那个输入框才看到红字。
             _occupiedAddress = _current?.Positions.FirstOrDefault()?.OccupiedAddress ?? "";
+            _loadedSnapshot = _current is null ? null : Snapshot(_current);
             ValidateStation();
         });
     }
@@ -1071,7 +1136,7 @@
         ReportAudit(await Changes.SaveStationAsync(station, await AuditOf(
             "Create", "Station", station.Code, null, $"{station.Name}; plc={station.PlcConnectionId}; seq={station.Sequence}")));
         await ReloadList();
-        await Select(station);
+        await Select(station, reload: true);
         _tab = 0;
         Toast.Add("已新增工站", Severity.Success);
     });
@@ -1100,7 +1165,7 @@
         await ReloadList();
         if (_current is null && _stations.Count > 0)
         {
-            await Select(_stations[0]);
+            await Select(_stations[0], reload: true);
         }
 
         Toast.Add($"已删除 {station.Code}", Severity.Success);
@@ -1149,7 +1214,7 @@
         var id = _current.Id;
         var tab = _tab;
         await ReloadList();
-        await Select(_stations.First(s => s.Id == id));
+        await Select(_stations.First(s => s.Id == id), reload: true);
         _tab = tab;
     });
 
@@ -1168,7 +1233,7 @@
         ReportAudit(await Changes.DeleteTagAsync(tag.Id, await AuditOf(
             "Delete", "TagDefinition", $"{_current.Code}/{tag.Name}", tag.Address, null)));
         var tab = _tab;
-        await Select(_current);
+        await Select(_current, reload: true);
         _tab = tab;
         Toast.Add($"点位 {tag.Name} 已删除", Severity.Success);
     });
@@ -1211,7 +1276,7 @@
                 "Save", "CurveCriterion", $"{station.Code}/{curve.Code}",
                 $"count={beforeCount}", $"count={criteria.Count}")));
             var tab = _tab;
-            await Select(station);
+            await Select(station, reload: true);
             _tab = tab;
             Toast.Add(
                 criteria.Count == 0
@@ -1237,7 +1302,7 @@
         ReportAudit(await Changes.DeleteCurveAsync(curve.Id, await AuditOf(
             "Delete", "CurveDefinition", $"{_current.Code}/{curve.Code}", curve.Name, null)));
         var tab = _tab;
-        await Select(_current);
+        await Select(_current, reload: true);
         _tab = tab;
         Toast.Add($"曲线 {curve.Code} 已删除", Severity.Success);
     });

@@ -7,16 +7,17 @@
 @inject IDialogService DialogService
 @inject DtToast Toast
 
+@* 主操作按钮进页头 Actions，与型号/用户页一致：落在页头右端，
+   而不是在标题和表格之间另起一行、把「共 N 台」挤成唯一的操作位。 *@
 <PageHeader Title="PLC 连接" HelpRoute="config/plc">
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">共 @_items.Count 台，被工站引用的连接不能删除</MudText>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="NewItem" Disabled="_saving"
+                   StartIcon="@(_saving ? Icons.Material.Filled.Sync : Icons.Material.Filled.Add)">
+            @(_saving ? "处理中…" : "新增连接")
+        </MudButton>
     </Actions>
 </PageHeader>
-
-<MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="NewItem" Disabled="_saving"
-           StartIcon="@(_saving ? Icons.Material.Filled.Sync : Icons.Material.Filled.Add)">
-    @(_saving ? "处理中…" : "新增连接")
-</MudButton>
 
 @if (_items.Count == 0)
 {
@@ -63,12 +64,14 @@
             </MudChip>
         </MudTd>
         <MudTd DataLabel="工站">@StationCount(context.Id)</MudTd>
-        <MudTd Class="dt-right">
-            <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Edit"
-                       Disabled="_saving" OnClick="@(() => Edit(context))">编辑</MudButton>
-            <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
-                       StartIcon="@Icons.Material.Filled.Delete" Disabled="_saving"
-                       OnClick="@(() => Delete(context))">删除</MudButton>
+        <MudTd DataLabel="操作" Class="dt-right">
+            <span class="dt-actions">
+                <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Edit"
+                           Disabled="_saving" OnClick="@(() => Edit(context))">编辑</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                           StartIcon="@Icons.Material.Filled.Delete" Disabled="_saving"
+                           OnClick="@(() => Delete(context))">删除</MudButton>
+            </span>
         </MudTd>
     </RowTemplate>
     <NoRecordsContent>

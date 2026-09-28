@@ -23,8 +23,12 @@ else
     }
 
     <div class="dt-chart-box">
-        <svg class="dt-chart" viewBox="@($"0 0 {ViewWidth} {Height}")" style="height:auto"
-             preserveAspectRatio="xMidYMid meet">
+        @* 带轴的图必须等比（meet）：preserveAspectRatio="none" 会把轴标签一起拉扁。
+           迷你曲线没有文字，可以横向铺满并锁死高度——否则 240×48 的 viewBox 在 3 列卡片里
+           渲染成 60px、大屏 2 列时变成 128px，同一条曲线在两种布局下差一倍多。 *@
+        <svg class="dt-chart" viewBox="@($"0 0 {ViewWidth} {Height}")"
+             style="@(ShowAxis ? "height:auto" : $"height:{Height}px")"
+             preserveAspectRatio="@(ShowAxis ? "xMidYMid meet" : "none")">
             @((MarkupString)_axisMarkup)
             @((MarkupString)_seriesMarkup)
         </svg>
@@ -37,6 +41,10 @@ else
     /// <summary>SVG 逻辑宽度；实际宽度由 CSS 100% 决定，等比缩放不变形。</summary>
     [Parameter] public int ViewWidth { get; set; } = 900;
 
+    /// <summary>
+    /// 绘图区逻辑高度。ShowAxis=false 时同时是渲染高度（px）；
+    /// 带轴的图走等比缩放，实际高度仍由容器宽度决定，以免轴标签被拉变形。
+    /// </summary>
     [Parameter] public int Height { get; set; } = 260;
 
     [Parameter] public bool ShowAxis { get; set; } = true;
@@ -119,33 +127,33 @@ else
             {
                 var y = F(MapY(tick));
                 axis.Append($"<line x1=\"{F(_box.Left)}\" y1=\"{y}\" x2=\"{F(_box.Left + _box.PlotWidth)}\" ")
-                    .Append($"y2=\"{y}\" stroke=\"var(--dt-chart-grid)\" stroke-width=\"1\" />");
+                    .Append($"y2=\"{y}\" style=\"stroke:var(--dt-chart-grid)\" stroke-width=\"1\" />");
                 axis.Append($"<text x=\"{F(_box.Left - 6)}\" y=\"{F(MapY(tick) + 4)}\" text-anchor=\"end\" ")
-                    .Append($"font-size=\"12\" fill=\"var(--dt-chart-axis)\">{Esc(ChartUtil.Label(tick))}</text>");
+                    .Append($"font-size=\"12\" style=\"fill:var(--dt-chart-axis)\">{Esc(ChartUtil.Label(tick))}</text>");
             }
 
             foreach (var tick in _xTicks)
             {
                 var x = F(MapX(tick));
                 axis.Append($"<line x1=\"{x}\" y1=\"{F(_box.Top)}\" x2=\"{x}\" ")
-                    .Append($"y2=\"{F(_box.Top + _box.PlotHeight)}\" stroke=\"var(--dt-chart-grid)\" stroke-width=\"1\" />");
+                    .Append($"y2=\"{F(_box.Top + _box.PlotHeight)}\" style=\"stroke:var(--dt-chart-grid)\" stroke-width=\"1\" />");
                 // 最左刻度居中会与 Y 轴末位标签撞在一起，改成从轴角起排
                 var anchor = tick <= _xMin + 1e-9 ? "start" : "middle";
                 axis.Append($"<text x=\"{x}\" y=\"{F(_box.Top + _box.PlotHeight + 17)}\" text-anchor=\"{anchor}\" ")
-                    .Append($"font-size=\"12\" fill=\"var(--dt-chart-axis)\">{Esc(ChartUtil.Label(tick))}</text>");
+                    .Append($"font-size=\"12\" style=\"fill:var(--dt-chart-axis)\">{Esc(ChartUtil.Label(tick))}</text>");
             }
 
             var baseline = F(_box.Top + _box.PlotHeight);
             axis.Append($"<line x1=\"{F(_box.Left)}\" y1=\"{baseline}\" x2=\"{F(_box.Left + _box.PlotWidth)}\" ")
-                .Append($"y2=\"{baseline}\" stroke=\"var(--dt-chart-axis)\" stroke-width=\"1\" />");
+                .Append($"y2=\"{baseline}\" style=\"stroke:var(--dt-chart-axis)\" stroke-width=\"1\" />");
 
             if (!string.IsNullOrEmpty(XStartText) || !string.IsNullOrEmpty(XEndText))
             {
                 var textY = F(Height - 4);
                 axis.Append($"<text x=\"{F(_box.Left)}\" y=\"{textY}\" font-size=\"12\" ")
-                    .Append($"fill=\"var(--dt-chart-axis)\">{Esc(XStartText)}</text>");
+                    .Append($"style=\"fill:var(--dt-chart-axis)\">{Esc(XStartText)}</text>");
                 axis.Append($"<text x=\"{F(_box.Left + _box.PlotWidth)}\" y=\"{textY}\" text-anchor=\"end\" ")
-                    .Append($"font-size=\"12\" fill=\"var(--dt-chart-axis)\">{Esc(XEndText)}</text>");
+                    .Append($"font-size=\"12\" style=\"fill:var(--dt-chart-axis)\">{Esc(XEndText)}</text>");
             }
         }
 
@@ -154,8 +162,9 @@ else
         var body = new StringBuilder();
         foreach (var plot in _plots)
         {
-            body.Append($"<polyline fill=\"none\" stroke=\"{plot.Color}\" stroke-width=\"2\" ")
-                .Append($"stroke-linejoin=\"round\" points=\"{Polyline(plot)}\" />");
+            // stroke 走 style：呈现属性不解析 var()，写 stroke="var(--dt-series-*)" 会整条变黑。
+            body.Append($"<polyline fill=\"none\" style=\"stroke:{plot.Color}\" stroke-width=\"2\" ")
+                .Append($"vector-effect=\"non-scaling-stroke\" stroke-linejoin=\"round\" points=\"{Polyline(plot)}\" />");
 
             if (!ShowPoints || plot.X.Length > 120)
             {
