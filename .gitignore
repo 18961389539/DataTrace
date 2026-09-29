@@ -412,6 +412,9 @@ FodyWeavers.xsd
 *.sln.iml
 .idea/
 
+# Trae（AI 编辑器）的工作区配置，与 .vscode/、.idea/ 同理只属本机
+.trae/
+
 ##
 ## Visual studio for Mac
 ##
