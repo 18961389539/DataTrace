@@ -19,7 +19,7 @@
 @inject IJSRuntime JS
 @inject AuthenticationStateProvider AuthState
 
-<PageHeader Title="系统设置" HelpRoute="config/settings">
+<PageHeader Title="系统设置" HelpRoute="config/settings" Busy="@(_loading || _saving)">
     <ChildContent>
         @if (Dirty)
         {

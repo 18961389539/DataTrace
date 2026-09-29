@@ -14,7 +14,8 @@
 
 <PageHeader Title="产品型号"
             Description="同一批生产数据，换型号就换一套限值。已经在制的件仍用进首站时的型号，新型号从下一件起。"
-            HelpRoute="config/recipes">
+            HelpRoute="config/recipes"
+            Busy="@(_loading || _saving)">
     <ChildContent>
         @if (_active is null)
         {

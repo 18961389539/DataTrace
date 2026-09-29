@@ -20,7 +20,7 @@
 @inject ISpoolStore Spool
 @inject IJSRuntime Js
 
-<PageHeader Title="实时看板" HelpRoute="/">
+<PageHeader Title="实时看板" HelpRoute="/" Busy="@_shiftBusy">
     <ChildContent>
         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_stations.Count 台工站</MudChip>
         @if (_productionSimWarning)
@@ -66,6 +66,13 @@
 {
     <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
         @_inProcessNote
+    </MudAlert>
+}
+
+@if (_configNote is not null)
+{
+    <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3" Variant="Variant.Outlined">
+        @_configNote
     </MudAlert>
 }
 
@@ -339,6 +346,9 @@ else
     private string _shiftYieldText = "—";
     private DateTime _shiftFetchedAt = DateTime.MinValue;
     private bool _shiftBusy;
+
+    /// <summary>系统配置读取失败时的一句话提示；null 表示读取正常，不显示提示条。</summary>
+    private string? _configNote;
     private int _configVersion = -1;
     private Timer? _uiTimer;
 
@@ -369,7 +379,9 @@ else
         }
         catch
         {
-            // best-effort
+            // 配置读不出来不能静默：采集开关、仿真提示、备份陈旧提示都会停在默认值，
+            // 用户会把「默认值」当成「真实状态」。说出来，他才知道该刷新重试。
+            _configNote = "系统配置读取失败，页面上的采集开关与仿真提示可能不是最新状态。请刷新页面重试。";
         }
 
         Refresh();

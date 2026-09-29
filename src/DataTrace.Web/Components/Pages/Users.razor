@@ -7,7 +7,7 @@
 @inject AuthenticationStateProvider Auth
 @inject DtToast Toast
 
-<PageHeader Title="用户" HelpRoute="users">
+<PageHeader Title="用户" HelpRoute="users" Busy="@_loading">
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">显示 @VisibleUsers.Count / @_users.Count 个账号</MudText>
         <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"

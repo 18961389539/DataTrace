@@ -9,7 +9,7 @@
 
 @* 主操作按钮进页头 Actions，与型号/用户页一致：落在页头右端，
    而不是在标题和表格之间另起一行、把「共 N 台」挤成唯一的操作位。 *@
-<PageHeader Title="PLC 连接" HelpRoute="config/plc">
+<PageHeader Title="PLC 连接" HelpRoute="config/plc" Busy="@(_loading || _saving)">
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">共 @_items.Count 台，被工站引用的连接不能删除</MudText>
         <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="NewItem" Disabled="_saving"

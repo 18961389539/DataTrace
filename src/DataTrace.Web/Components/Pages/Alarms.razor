@@ -9,7 +9,7 @@
 @inject AuthenticationStateProvider Auth
 @inject DtToast Toast
 
-<PageHeader Title="报警" HelpRoute="alarms" Description="还没人接手的会一直留在这里，并在所有页面顶部响铃。静音只关本机声音。" />
+<PageHeader Title="报警" HelpRoute="alarms" Busy="@_refreshing" Description="还没人接手的会一直留在这里，并在所有页面顶部响铃。静音只关本机声音。" />
 
 @if (_loadError is not null)
 {

@@ -307,6 +307,16 @@ h5:focus,
     white-space: nowrap;
 }
 
+/* 焦点兜底：focus-visible 原先是逐类写的，新增自定义可交互元素忘了补就没有焦点环。
+   这里给所有带 dt- 类的可聚焦元素一个默认焦点环——非交互元素不可聚焦，不会误命中。
+   用 :where() 把自身特异性压到 0（整条只剩 :focus-visible 的 0,1,0），于是下面已有的
+   .dt-xxx:focus-visible、以及 .dt-page-title:focus{outline:none} 这类刻意抑制焦点环的规则，
+   不论先后顺序都比特异性更高而胜出。本条只做兜底，不抢任何已有样式。 */
+:where([class*="dt-"]):focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 2px;
+}
+
 .dt-change-cell:focus-visible {
     outline: 2px solid var(--mud-palette-primary);
     outline-offset: 2px;

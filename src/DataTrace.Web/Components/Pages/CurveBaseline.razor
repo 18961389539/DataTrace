@@ -13,7 +13,7 @@
 @inject ICurveBaselineCache BaselineCache
 @inject DtToast Toast
 
-<PageHeader Title="波形基线" Description="用较早的 OK 波形建基线，最近样本独立评估" HelpRoute="curve-baseline">
+<PageHeader Title="波形基线" Description="用较早的 OK 波形建基线，最近样本独立评估" HelpRoute="curve-baseline" Busy="@_loading">
     <ChildContent>
         <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Info">
             @(_recipeCode == "" ? "未选型号（默认限值）" : $"型号 {_recipeCode}")

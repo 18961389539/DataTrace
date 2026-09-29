@@ -20,7 +20,7 @@
    与系统设置页同一套拦法。 *@
 <NavigationLock ConfirmExternalNavigation="@Dirty" OnBeforeInternalNavigation="OnBeforeInternalNavigation" />
 
-<PageHeader Title="工站配置" Description="先选工站，再按页签改握手、点位和曲线。改动保存后立即下发给采集器。" HelpRoute="config/stations" />
+<PageHeader Title="工站配置" Description="先选工站，再按页签改握手、点位和曲线。改动保存后立即下发给采集器。" HelpRoute="config/stations" Busy="@_busy" />
 
 @if (_plcs.Count == 0)
 {
