@@ -6,6 +6,7 @@ using DataTrace.Application.Runtime;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
+using DataTrace.Domain.Evaluation;
 using DataTrace.Web.Components.Pages;
 using DataTrace.Web.Components.Shared;
 using Microsoft.AspNetCore.Components;
@@ -284,7 +285,7 @@ public class ReportsPageTests : WebTestBase
 
         // 产量与 OK/NG 都按合并后的口径累加。
         var cells = row.QuerySelectorAll("td").Select(td => td.TextContent.Trim()).ToList();
-        Assert.Equal(new[] { "产量", "OK", "NG", "未判定" }, table.QuerySelectorAll("th").Skip(1).Take(4).Select(th => th.TextContent.Trim()));
+        Assert.Equal(new[] { "产量（件）", "OK", "NG", "未判定" }, table.QuerySelectorAll("th").Skip(1).Take(4).Select(th => th.TextContent.Trim()));
         Assert.Equal(new[] { "8", "7", "1", "0" }, cells.Skip(1).Take(4));
     }
 
@@ -330,6 +331,80 @@ public class ReportsPageTests : WebTestBase
     /// <summary>MudTabs 只渲染当前页签的面板，要断言别的页签得先切过去。</summary>
     private static void ActivateTab(IRenderedComponent<Reports> cut, string tabText)
         => cut.FindAll(".mud-tab").First(t => t.TextContent.Contains(tabText)).Click();
+
+    /// <summary>一段样本充足的过程能力结果，供冻结用例当数据源。</summary>
+    private static ProcessCapabilityReport CapabilityReport(int sampleCount)
+        => new()
+        {
+            TagId = 1,
+            TagName = "压力",
+            Samples = [],
+            Segments =
+            [
+                new ProcessCapabilitySegment
+                {
+                    Number = 1,
+                    Count = sampleCount,
+                    Summary = new SpcSummary
+                    {
+                        Count = sampleCount,
+                        Mean = 10,
+                        CenterLine = 10,
+                        UpperControlLimit = 10.3,
+                        LowerControlLimit = 9.7
+                    }
+                }
+            ]
+        };
+
+    private void StubCapability(int sampleCount)
+        => _spc
+            .Setup(s => s.AnalyzeAsync(It.IsAny<int>(), It.IsAny<IReadOnlyList<TrendPoint>>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CapabilityReport(sampleCount));
+
+    /// <summary>
+    /// 「冻结为基线」把当前段的控制限写进点位配置，并留痕是谁在什么时候定的。
+    /// </summary>
+    /// <remarks>
+    /// 冻结是质量工程师的日常动作：判据要固定，不能跟着最近的数据漂。
+    /// 所以它必须走配置变更服务 —— 写失败要报失败，审计里也要查得到这套限的来历。
+    /// </remarks>
+    [Fact]
+    public void Freezing_control_limits_writes_the_baseline_onto_the_tag_and_audits_it()
+    {
+        StubCapability(sampleCount: 40);
+        var cut = Render();
+        ActivateTab(cut, "过程能力");
+        cut.WaitForAssertion(() => Assert.Contains(cut.FindAll("button"), b => b.TextContent.Contains("冻结为基线")));
+
+        ClickButton(cut, "冻结为基线");
+
+        Assert.True(Config.SavedTags.Count == 1, $"没有写回点位；提示信息：{string.Join(" | ", Toast.Messages)}");
+        var saved = Config.SavedTags[0];
+        Assert.Equal(10d, saved.ControlCenterLine);
+        Assert.Equal(10.3d, saved.ControlUpperLimit);
+        Assert.Equal(9.7d, saved.ControlLowerLimit);
+        Assert.Equal(40, saved.ControlSampleCount);
+        Assert.Equal("admin", saved.ControlCapturedBy);
+        Assert.NotNull(saved.ControlCapturedAt);
+        _audit.Verify(
+            a => a.WriteAsync("admin", "SaveSpcSettings", "TagDefinition", It.IsAny<string?>(), "未冻结", It.IsAny<string?>())!,
+            Times.Once);
+    }
+
+    /// <summary>
+    /// 样本不足 30 条时不给冻结入口：那份"基线"只会把噪声固化成判据。
+    /// </summary>
+    [Fact]
+    public void Freeze_is_not_offered_when_there_are_too_few_samples()
+    {
+        StubCapability(sampleCount: 12);
+        var cut = Render();
+        ActivateTab(cut, "过程能力");
+        cut.WaitForAssertion(() => Assert.Contains("暂不能冻结为基线", cut.Markup));
+
+        Assert.DoesNotContain(cut.FindAll("button"), b => b.TextContent.Contains("冻结为基线"));
+    }
 
     [Theory]
     [InlineData(AppRoles.Administrator, true)]

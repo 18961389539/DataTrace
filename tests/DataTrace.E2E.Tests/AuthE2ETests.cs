@@ -174,6 +174,48 @@ public sealed class AuthE2ETests : AuthE2ETestBase
     }
 
     [Fact]
+    public async Task RememberMeIssuesAPersistentCookie()
+    {
+        await SubmitLoginAsync("viewer", "Viewer@123", rememberMe: true);
+        Assert.Equal("/", CurrentPath());
+
+        // 持久 Cookie 才有过期时间：浏览器关掉再打开仍带着它，"记住我"的全部含义就在这一条属性上。
+        var cookie = await SignInCookieAsync();
+        Assert.True(
+            cookie.Expires > DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            $"勾了记住我，Cookie 却没有过期时间（Expires={cookie.Expires}），关掉浏览器就丢了");
+    }
+
+    [Fact]
+    public async Task WithoutRememberMeTheCookieDiesWithTheBrowser()
+    {
+        await SubmitLoginAsync("viewer", "Viewer@123");
+        Assert.Equal("/", CurrentPath());
+
+        // 会话 Cookie（Expires = -1）：共享终端上下一位打开浏览器不会直接进到前一个人的账号。
+        var cookie = await SignInCookieAsync();
+        Assert.True(
+            cookie.Expires < 0,
+            $"没勾记住我，Cookie 却带了过期时间（Expires={cookie.Expires}），公共终端会被下一位接着用");
+    }
+
+    [Fact]
+    public async Task FailedSignInKeepsTheDeepLinkAndTheRememberMeTick()
+    {
+        await Page.GotoAsync($"{App.BaseUrl}/login");
+
+        await PostLoginFormAsync("viewer", "wrong-password", rememberMe: true);
+
+        Assert.Equal("/login?error=1&remember=1", CurrentPath());
+        Assert.True(await Page.IsCheckedAsync("input[name=RememberMe]"));
+    }
+
+    /// <summary>Identity 的登录 Cookie（默认名 .AspNetCore.Identity.Application）。</summary>
+    private async Task<BrowserContextCookiesResult> SignInCookieAsync()
+        => (await Context.CookiesAsync())
+            .Single(c => c.Name.Contains("Identity.Application", StringComparison.Ordinal));
+
+    [Fact]
     public async Task ForeignReturnUrlIsIgnoredAndLandsOnTheDashboard()
     {
         await Page.GotoAsync($"{App.BaseUrl}/login?ReturnUrl={Uri.EscapeDataString("//evil.example/steal")}");

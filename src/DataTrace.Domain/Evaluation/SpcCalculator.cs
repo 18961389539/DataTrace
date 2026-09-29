@@ -28,19 +28,28 @@ public static class SpcCalculator
     private const double D4 = 3.267;
     private const double Epsilon = 1e-12;
 
+    /// <param name="frozenControlLimits">
+    /// 点位冻结的控制限；传 null 表示按本段数据现算。
+    /// </param>
     public static SpcSummary Compute(
         IReadOnlyList<double> values,
         double? lowerSpec = null,
         double? upperSpec = null,
-        double? targetValue = null)
+        double? targetValue = null,
+        FrozenControlLimits? frozenControlLimits = null)
     {
         var hasSpec = lowerSpec is not null || upperSpec is not null;
+        var frozenSource = frozenControlLimits is { } frozenInfo
+            ? $"{frozenInfo.CapturedBy} 于 {frozenInfo.CapturedAt:yyyy-MM-dd} 用 {frozenInfo.SampleCount} 个样本冻结"
+            : null;
 
         if (values is null || values.Count == 0)
         {
             return new SpcSummary
             {
                 HasSpecLimits = hasSpec,
+                ControlLimitsFrozen = frozenControlLimits is { },
+                FrozenSource = frozenSource,
                 Verdict = SpcVerdict.InsufficientData,
                 Note = "区间内没有采样数据"
             };
@@ -70,6 +79,23 @@ public static class SpcCalculator
         var centerLine = mean;
         var upperControlLimit = mean + E2 * movingRangeMean;
         var lowerControlLimit = mean - E2 * movingRangeMean;
+        var ruleSigma = withinStdDev;
+
+        // 冻结基线：控制限与判异用的 σ 都取自基线，能力指数仍用本段数据的 σ（那是"当前过程怎么样"）。
+        if (frozenControlLimits is { } frozen)
+        {
+            centerLine = frozen.CenterLine;
+            upperControlLimit = frozen.UpperControlLimit;
+            lowerControlLimit = frozen.LowerControlLimit;
+
+            // 由冻结的 UCL/CL 反推组内 σ：UCL - CL = E2·MR̄ 且 σ = MR̄/d2，而 E2 = 3/d2，故为 (UCL-CL)/3。
+            // 反推而不是另存一列：冻结的控制限与判异用的 σ 必须来自同一次基线，分开存迟早对不上。
+            var derived = (frozen.UpperControlLimit - frozen.CenterLine) / 3.0;
+            if (derived > Epsilon)
+            {
+                ruleSigma = derived;
+            }
+        }
 
         var withinUsable = withinStdDev > Epsilon;
         var overallUsable = overallStdDev > Epsilon;
@@ -138,6 +164,9 @@ public static class SpcCalculator
             Pp = pp,
             Ppk = ppk,
             HasSpecLimits = hasSpec,
+            RuleSigma = ruleSigma,
+            ControlLimitsFrozen = frozenControlLimits is { },
+            FrozenSource = frozenSource,
             Verdict = verdict,
             Note = note,
             MeanOffsetInSigma = meanOffset

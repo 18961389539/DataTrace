@@ -1,4 +1,4 @@
-﻿@using DataTrace.Domain.Evaluation
+@using DataTrace.Domain.Evaluation
 @inject IDialogService Dialogs
 <MudDialog>
     <TitleContent>
@@ -137,9 +137,10 @@
     /// <summary>删掉一条判据会连带丢掉十几个阈值，所以先确认。</summary>
     private async Task RemoveAsync(CurveCriterion item)
     {
-        var confirmed = await Dialogs.ShowMessageBox(
+        var confirmed = await Dialogs.ConfirmDangerAsync(
             "删除判据",
             $"确定删除作用序列「{(string.IsNullOrWhiteSpace(item.SeriesName) ? "主序列" : item.SeriesName)}」的这条判据？已填写的阈值会一并丢失。",
+            acknowledge: "我了解这条判据已填写的阈值会一并丢失",
             yesText: "删除", cancelText: "取消");
         if (confirmed == true)
         {

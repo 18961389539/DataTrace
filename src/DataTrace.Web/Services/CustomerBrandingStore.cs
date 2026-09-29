@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using DataTrace.Web.Options;
@@ -41,22 +40,14 @@ public sealed class CustomerBrandingStore
 
     public string CustomerJsonPath => Path.Combine(_env.ContentRootPath, "customer.json");
 
-    /// <summary>Assembly InformationalVersion (Directory.Build.props Version), e.g. 1.1.0.</summary>
-    public string AppVersion
-    {
-        get
-        {
-            var asm = typeof(CustomerBrandingStore).Assembly;
-            var info = asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
-            if (!string.IsNullOrWhiteSpace(info))
-            {
-                var plus = info.IndexOf('+');
-                return plus > 0 ? info[..plus] : info;
-            }
+    /// <summary>Assembly InformationalVersion（Directory.Build.props Version），例如 1.1.0；构建标识由 <see cref="BuildInfo"/> 管。</summary>
+    public string AppVersion => BuildInfo.Version;
 
-            return asm.GetName().Version?.ToString(3) ?? "0.0.0";
-        }
-    }
+    /// <summary>产物对应的提交号（见 <see cref="BuildInfo"/>）：现场核对"跑的是哪次提交"用。</summary>
+    public string BuildCommit => BuildInfo.Commit;
+
+    /// <summary>构建标识在界面上的文案；取不到提交号时给出原因而不是空白。</summary>
+    public string BuildCommitLabel => BuildInfo.CommitLabel;
 
     public CustomerOptions GetSnapshot()
     {
@@ -102,6 +93,8 @@ public sealed class CustomerBrandingStore
 
             // Keep version stamp visible in customer.json for ops (upgrade.ps1 also writes it)
             root["AppVersion"] = AppVersion;
+            // 提交号也一并写：事后拿这个文件与产物对不上时，能立刻看出被换过。
+            root["BuildCommit"] = BuildCommit;
             root["UpdatedAt"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
             File.WriteAllText(path, root.ToJsonString(JsonOpts) + Environment.NewLine);
 

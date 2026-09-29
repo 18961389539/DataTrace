@@ -87,6 +87,23 @@ public sealed class DatabaseSeeder
             "ALTER TABLE Stations ADD COLUMN DataFileFormat INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
         SqliteSchema.DropColumnIfPresent(_db, "Stations", "ScriptPath");
 
+        // 判异规则开关（NULL = 全套规则）与按点位冻结的控制限。
+        // 老配置库缺这些列时，报表读点位会直接报 no such column。
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "SpcRuleMask",
+            "ALTER TABLE Tags ADD COLUMN SpcRuleMask INTEGER NULL", cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlCenterLine",
+            "ALTER TABLE Tags ADD COLUMN ControlCenterLine REAL NULL", cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlUpperLimit",
+            "ALTER TABLE Tags ADD COLUMN ControlUpperLimit REAL NULL", cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlLowerLimit",
+            "ALTER TABLE Tags ADD COLUMN ControlLowerLimit REAL NULL", cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlSampleCount",
+            "ALTER TABLE Tags ADD COLUMN ControlSampleCount INTEGER NULL", cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlCapturedAt",
+            "ALTER TABLE Tags ADD COLUMN ControlCapturedAt TEXT NULL", cancellationToken).ConfigureAwait(false);
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlCapturedBy",
+            "ALTER TABLE Tags ADD COLUMN ControlCapturedBy TEXT NULL", cancellationToken).ConfigureAwait(false);
+
         await RemoveTagCodesAsync(cancellationToken).ConfigureAwait(false);
 
         await CleanupOrphanRecipeLimitsAsync(cancellationToken).ConfigureAwait(false);

@@ -1,3 +1,4 @@
+using DataTrace.Application.Configuration;
 using DataTrace.Application.Reporting;
 using DataTrace.Collector;
 using DataTrace.Domain.Constants;
@@ -69,6 +70,65 @@ public class SpcServiceTests
         Assert.NotNull(report.TimeAt(report.Samples.Count - 1));
         Assert.Null(report.TimeAt(report.Samples.Count));
         Assert.Null(report.TimeAt(-1));
+    }
+
+    /// <summary>
+    /// 冻结的控制限接管整条报表链路：控制图与判异用基线，能力指数仍按本段数据。
+    /// </summary>
+    /// <remarks>
+    /// 验的是"存的基线真的被用了"：SpcService 若没把 tag.FrozenControlLimits 传进计算，
+    /// 控制限就会回落到按当前数据现算的值，这条就会断。
+    /// </remarks>
+    [Fact]
+    public async Task Frozen_control_limits_drive_the_report_but_not_the_capability()
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+        var station = harness.Station(0);
+        var tag = station.Tags.Single(t => t.Name == "压力");
+
+        for (var i = 0; i < 6; i++)
+        {
+            SimulatorScenario.LoadStationCycle(harness.Simulator, harness.Plc, station, $"P04{i:00}",
+                new SimulatedCycleOptions { Random = new Random(i + 1) });
+            Assert.Equal(ResultCodes.Success, await harness.RunAsync(station));
+        }
+
+        // 用真实采集的现算结果当冻结基线，再存回点位 —— 模拟"质量工程师点了冻结"。
+        var repo = harness.ConfigRepository;
+        var liveReport = await harness.Scope.ServiceProvider.GetRequiredService<ISpcService>()
+            .GetProcessCapabilityAsync(tag.Id, DateTime.Today.AddDays(-1), DateTime.Today.AddDays(1));
+        var live = Assert.Single(liveReport!.Segments).Summary;
+
+        var snapshot = await repo.GetSnapshotAsync();
+        var persisted = snapshot.Stations.SelectMany(s => s.Tags).Single(t => t.Id == tag.Id);
+        var frozen = persisted.Clone();
+        frozen.ControlCenterLine = live.CenterLine;
+        frozen.ControlUpperLimit = live.UpperControlLimit;
+        frozen.ControlLowerLimit = live.LowerControlLimit;
+        frozen.ControlSampleCount = live.Count;
+        frozen.ControlCapturedAt = DateTime.Now;
+        frozen.ControlCapturedBy = "qe";
+        await repo.SaveTagAsync(SaveTagCommand.From(frozen));
+
+        // 再采一批新样本：若控制限没真冻结，报表会按新数据算出另一条限，与基线对不上。
+        for (var i = 0; i < 6; i++)
+        {
+            SimulatorScenario.LoadStationCycle(harness.Simulator, harness.Plc, station, $"P05{i:00}",
+                new SimulatedCycleOptions { Random = new Random(i + 100) });
+            Assert.Equal(ResultCodes.Success, await harness.RunAsync(station));
+        }
+
+        var pinnedReport = await harness.Scope.ServiceProvider.GetRequiredService<ISpcService>()
+            .GetProcessCapabilityAsync(tag.Id, DateTime.Today.AddDays(-1), DateTime.Today.AddDays(1));
+        var pinned = Assert.Single(pinnedReport!.Segments).Summary;
+
+        Assert.True(pinned.ControlLimitsFrozen);
+        Assert.Equal(live.CenterLine, pinned.CenterLine);
+        Assert.Equal(live.UpperControlLimit, pinned.UpperControlLimit);
+        Assert.Equal(live.LowerControlLimit, pinned.LowerControlLimit);
+        Assert.Contains("qe", pinned.FrozenSource);
+        // 能力结论仍来自当前这批数据（样本仍然不足），没有被基线顶替。
+        Assert.Equal(SpcVerdict.InsufficientData, pinned.Verdict);
     }
 
     [Fact]

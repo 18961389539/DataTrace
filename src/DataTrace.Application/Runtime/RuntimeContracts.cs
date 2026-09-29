@@ -60,6 +60,27 @@ public sealed class CollectQueryRequest
     public string? RecipeCode { get; init; }
     public int Skip { get; init; }
     public int Take { get; init; } = 50;
+
+    /// <summary>排序列，默认触发时间（页面的默认视图）。</summary>
+    public CollectSortField SortBy { get; init; } = CollectSortField.TriggerTime;
+
+    /// <summary>是否降序。时间列默认 true（最近在前）；点击其余列表头时默认升序。</summary>
+    public bool SortDescending { get; init; } = true;
+}
+
+/// <summary>
+/// 记录列表可排序的列。排序必须在存储侧完成：分页跨月份库，只排当前页等于没排。
+/// </summary>
+public enum CollectSortField
+{
+    TriggerTime,
+    SerialNo,
+    PalletCode,
+    StationCode,
+    RecipeCode,
+    Judgement,
+    ResultCode,
+    DurationMs
 }
 
 public sealed class CollectRecordListItem

@@ -8,6 +8,41 @@ namespace DataTrace.Tests;
 /// </summary>
 public class SpcCalculatorTests
 {
+    /// <summary>
+    /// 冻结的控制限接管控制图与判异 σ，能力指数仍按本段数据算。
+    /// </summary>
+    /// <remarks>
+    /// 现算的控制限会跟着最近的数据漂移：过程跑偏 → 限跟着放宽 → 判异漏报。
+    /// 冻结之后"同一条判据"才成立。Cp/Cpk 讲的是当前过程怎么样，不能被基线值顶替。
+    /// </remarks>
+    [Fact]
+    public void Frozen_control_limits_override_the_computed_ones_but_not_capability()
+    {
+        var values = new double[] { 10.0, 10.1, 9.9, 10.2, 9.8, 10.05 };
+        var live = SpcCalculator.Compute(values, lowerSpec: 9, upperSpec: 11);
+        var baseline = new FrozenControlLimits(
+            CenterLine: 10,
+            UpperControlLimit: 10.3,
+            LowerControlLimit: 9.7,
+            SampleCount: 40,
+            CapturedAt: new DateTime(2026, 9, 1),
+            CapturedBy: "qe");
+
+        var pinned = SpcCalculator.Compute(values, lowerSpec: 9, upperSpec: 11, targetValue: null, frozenControlLimits: baseline);
+
+        Assert.True(pinned.ControlLimitsFrozen);
+        Assert.Equal(10d, pinned.CenterLine);
+        Assert.Equal(10.3d, pinned.UpperControlLimit);
+        Assert.Equal(9.7d, pinned.LowerControlLimit);
+        Assert.Contains("qe", pinned.FrozenSource);
+        // 判异 σ 与基线同源：(UCL - CL) / 3。
+        Assert.Equal(0.1d, pinned.RuleSigma, 6);
+
+        Assert.False(live.ControlLimitsFrozen);
+        Assert.NotEqual(live.UpperControlLimit, pinned.UpperControlLimit);
+        Assert.Equal(live.Cpk, pinned.Cpk);
+    }
+
     private const double Tolerance = 1e-9;
 
     private static double D2 => 1.128;

@@ -144,12 +144,36 @@
         </MudTd>
     </RowTemplate>
     <NoRecordsContent>
-        <MudText Typo="Typo.body2" Class="dt-muted py-4">
-            @(_loading ? "正在加载…" :
-              _loadError is not null ? "用户列表加载失败，请稍后重试。" :
-              _users.Count == 0 ? "还没有用户账号。点击“新增用户”创建第一个。" :
-              HasFilters ? "没有符合当前筛选条件的账号。" : "用户列表为空。")
-        </MudText>
+        @* 空态也给出口，与查询页、日志页同一套：只留一句"没有结果"，管理员还得自己找按钮。 *@
+        @if (_loading)
+        {
+            <MudText Typo="Typo.body2" Class="dt-muted py-4">正在加载…</MudText>
+        }
+        else if (_loadError is not null)
+        {
+            <MudText Typo="Typo.body2" Class="dt-muted py-4">用户列表加载失败，请稍后重试。</MudText>
+        }
+        else if (_users.Count == 0)
+        {
+            <div class="dt-empty-hint">
+                <MudText Typo="Typo.body2" Class="dt-muted">还没有用户账号。</MudText>
+                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" Class="mt-2"
+                           StartIcon="@Icons.Material.Filled.PersonAdd" Disabled="_working"
+                           OnClick="OpenCreateDialog">
+                    新增用户
+                </MudButton>
+            </div>
+        }
+        else
+        {
+            <div class="dt-empty-hint">
+                <MudText Typo="Typo.body2" Class="dt-muted">没有符合当前筛选条件的账号。</MudText>
+                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" Class="mt-2"
+                           StartIcon="@Icons.Material.Filled.FilterAltOff" OnClick="ClearFilters">
+                    清除筛选
+                </MudButton>
+            </div>
+        }
     </NoRecordsContent>
 </MudTable>
 
@@ -386,9 +410,10 @@
 
         if (row.UserName == _currentUser && !request.Roles.Contains(AppRoles.Administrator))
         {
-            var confirmed = await DialogService.ShowMessageBox(
+            var confirmed = await DialogService.ConfirmDangerAsync(
                 "撤销自己的管理员角色",
                 $"确定把当前登录账号「{row.UserName}」的管理员角色撤掉？保存后你将立即失去用户管理与系统配置的访问权。",
+                acknowledge: "我了解保存后将立即失去用户管理与系统配置的访问权",
                 yesText: "仍要保存", cancelText: "取消");
             if (confirmed != true)
             {
@@ -494,9 +519,10 @@
             return;
         }
 
-        var confirmed = await DialogService.ShowMessageBox(
+        var confirmed = await DialogService.ConfirmDangerAsync(
             "删除用户",
             $"确定删除用户「{row.UserName}」？该账号将无法再登录，且操作不可恢复。",
+            acknowledge: "我了解该账号将无法再登录，且无法恢复",
             yesText: "删除", cancelText: "取消");
         if (confirmed != true)
         {

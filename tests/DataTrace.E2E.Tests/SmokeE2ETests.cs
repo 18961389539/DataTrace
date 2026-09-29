@@ -25,7 +25,7 @@ public class SmokeE2ETests : E2ETestBase
     [Fact]
     public async Task DashboardRendersSeededLineOverRealCircuit()
     {
-        await Page.GotoAsync(App.BaseUrl);
+        await OpenAsync("");
 
         // 工站计数只有 SignalR circuit 建好、拿到运行时状态后才会出现。
         await WaitForAsync("text=实时看板");
@@ -38,7 +38,7 @@ public class SmokeE2ETests : E2ETestBase
     [Fact]
     public async Task StationCardsUseContentHeightAndEllipsizeLongTitles()
     {
-        await Page.GotoAsync(App.BaseUrl);
+        await OpenAsync("");
         var card = await WaitForAsync(".dash-station");
 
         var styles = await card.EvaluateAsync<string[]>("""
@@ -64,7 +64,7 @@ public class SmokeE2ETests : E2ETestBase
     [Fact]
     public async Task StationCardDetailsAndCurveNameUseCompactRegions()
     {
-        await Page.GotoAsync(App.BaseUrl);
+        await OpenAsync("");
         await WaitForAsync(".dash-station");
         await WaitForAsync(".dt-station-detail-link");
         await WaitForAsync(".dt-station-curve-label");
@@ -89,7 +89,7 @@ public class SmokeE2ETests : E2ETestBase
     [Fact]
     public async Task NavExposesConfigSectionForAdmin()
     {
-        await Page.GotoAsync(App.BaseUrl);
+        await OpenAsync("");
         await WaitForAsync("text=实时看板");
 
         var nav = await Page.InnerTextAsync("nav");

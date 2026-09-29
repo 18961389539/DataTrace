@@ -7,6 +7,7 @@ using DataTrace.Application.Runtime;
 using DataTrace.Collector;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Enums;
+using DataTrace.Domain.Evaluation;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -105,7 +106,10 @@ public sealed class LineAlarmHostedService : BackgroundService
             spool.Count,
             spool.OldestAt,
             _status.WarningStreaks,
-            _status.DriftNotices,
+            TagWatchRules.ForEnabledRules(
+                _status.DriftNotices,
+                snapshot.Stations.SelectMany(station => station.Tags)
+                    .ToDictionary(tag => (tag.StationId, tag.Id), tag => tag.SpcRuleMask)),
             openSessions);
         var incidents = scope.ServiceProvider.GetRequiredService<IAlarmIncidents>();
         var attention = await incidents.ApplyAsync(active.Alarms, now, cancellationToken).ConfigureAwait(false);

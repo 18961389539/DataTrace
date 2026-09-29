@@ -26,7 +26,7 @@ public class AccessibleNameE2ETests : E2ETestBase
     [MemberData(nameof(RouteCases))]
     public async Task EveryVisibleControlIsNamed(string path)
     {
-        await Page.GotoAsync($"{App.BaseUrl}{path}");
+        await OpenAsync(path);
         await WaitForAsync(".mud-layout");
 
         // 等 SignalR circuit 真的接管：本应用的"导航后把焦点移到页标题"只在接管之后才会发生，
@@ -70,7 +70,7 @@ public class AccessibleNameE2ETests : E2ETestBase
         // 只有图标、没有可见文字的按钮必须靠 aria-label 拿到名字。
         // 这条专门用来抓 "AriaLabel 渲染成惰性 arialabel" 那一类问题。
         // 用 GetByRole(Name=…) 而不是读属性：role + name 的匹配过程就是浏览器在算可访问名。
-        await Page.GotoAsync($"{App.BaseUrl}/query");
+        await OpenAsync("/query");
         await WaitForAsync(".mud-layout");
 
         Assert.True(
@@ -92,7 +92,7 @@ public class AccessibleNameE2ETests : E2ETestBase
         // 它只能通过 AdornmentAriaLabel 命名 —— 漏掉时读屏只会念"按钮"。
         // 密码框只存在于「新增用户」「重置密码」两个对话框里，用户列表页本身没有密码输入框，
         // 所以必须先打开对话框再找，否则这条用例会因为找不到元素而失去意义。
-        await Page.GotoAsync($"{App.BaseUrl}/users");
+        await OpenAsync("/users");
         await WaitForAsync(".mud-layout");
         await WaitForCircuitReadyAsync();
 

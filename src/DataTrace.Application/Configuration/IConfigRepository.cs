@@ -110,6 +110,15 @@ public interface IConfigRepository
     Task SetActiveRecipeAsync(int? recipeId, CancellationToken cancellationToken = default);
 
     Task BumpVersionAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 在同一个事务里执行一段配置库写入（配置变更 + 它的审计记录）。
+    /// </summary>
+    /// <remarks>
+    /// 配置与审计必须同生共死：分两次提交时，审计写失败只会留下一条界面提示，
+    /// 库里已经有了一次"改过但查不到是谁改的"变更。工作块内抛异常即整笔回滚。
+    /// </remarks>
+    Task<T> InTransactionAsync<T>(Func<CancellationToken, Task<T>> work, CancellationToken cancellationToken = default);
 }
 
 public interface IAuditLogger

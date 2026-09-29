@@ -1,0 +1,38 @@
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@Title</MudText>
+    </TitleContent>
+    <DialogContent>
+        @* 消息里带 \n\n 分段（例如「后果 + 影响范围」两段），用 pre-line 保留换行。 *@
+        <MudText Typo="Typo.body2" Class="dt-muted dt-confirm-message">@Message</MudText>
+        @* 第二道门：不可撤销的操作必须显式勾选，未勾选时确认按钮不可点，
+           避免"一路回车"就把删除/切换确认掉。 *@
+        <MudCheckBox T="bool" @bind-Value="_acknowledged" Label="@Acknowledge" Class="mt-3" Color="Color.Primary" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">@CancelText</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled"
+                   Disabled="@(!_acknowledged)" OnClick="Confirm">@YesText</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance? MudDialog { get; set; }
+
+    [Parameter] public string Title { get; set; } = "";
+
+    [Parameter] public string Message { get; set; } = "";
+
+    /// <summary>确认前必须勾选的那句话，直接说明"我了解什么后果"。</summary>
+    [Parameter] public string Acknowledge { get; set; } = "我了解此操作不可撤销";
+
+    [Parameter] public string YesText { get; set; } = "确认删除";
+
+    [Parameter] public string CancelText { get; set; } = "取消";
+
+    private bool _acknowledged;
+
+    private void Cancel() => MudDialog?.Cancel();
+
+    private void Confirm() => MudDialog?.Close(DialogResult.Ok(true));
+}

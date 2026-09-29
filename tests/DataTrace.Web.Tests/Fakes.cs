@@ -183,6 +183,16 @@ public sealed class FakeConfigRepository : IConfigRepository
     public Task BumpVersionAsync(CancellationToken cancellationToken = default)
         => Recorded(nameof(BumpVersionAsync));
 
+    /// <summary>
+    /// 替身不建真事务，直接执行工作块。
+    /// </summary>
+    /// <remarks>
+    /// 这里只做"配置写入 + 审计写入都会被调用到"的接线验证；真正的回滚语义
+    /// （审计写失败后配置也没落库）由 DataTrace.Tests 用真 SQLite 配置库验证。
+    /// </remarks>
+    public Task<T> InTransactionAsync<T>(Func<CancellationToken, Task<T>> work, CancellationToken cancellationToken = default)
+        => work(cancellationToken);
+
     private Task Recorded(string call)
     {
         Calls.Add(call);
@@ -263,14 +273,16 @@ public sealed class ToastSpy
     }
 }
 
-/// <summary>确认框替身：记录弹了几次、什么文案，并按脚本返回是/否；同时记录编辑类对话框的下发参数。</summary>
+/// <summary>确认框替身：记录弹了几次、什么文案（含第二道门的勾选语），并按脚本返回是/否；同时记录编辑类对话框的下发参数。</summary>
 public sealed class DialogSpy
 {
-    public List<(string Title, string Message)> MessageBoxes { get; } = [];
+    /// <summary>打开过的确认框：(标题, 正文, 勾选语)。用来断言问了什么，以及"我了解…"是怎么写的。</summary>
+    public List<(string Title, string Message, string Acknowledge)> MessageBoxes { get; } = [];
 
     /// <summary>打开过的编辑对话框：(标题, 参数)。用来断言页面下发了什么默认值。</summary>
     public List<(string Title, DialogParameters Parameters)> Shown { get; } = [];
 
+    /// <summary>确认框的返回值；不设按"用户点了确认"算，设成 false 模拟用户取消。</summary>
     public bool? MessageBoxResult { get; set; } = true;
 
     /// <summary>对话框的返回结果；不设则视为用户取消（页面据此不做任何写入）。</summary>
@@ -280,28 +292,27 @@ public sealed class DialogSpy
 
     public DialogSpy()
     {
-        // IDialogService 有 string 与 MarkupString 两个同形重载，页面传字面量时绑定到前者，
-        // 只桩一个会让 Moq 落到默认返回值上，确认框看起来就像"没弹"。
-        Mock.Setup(d => d.ShowMessageBox(
-                It.IsAny<string?>(),
+        // 危险操作确认：页面统一走 ConfirmDangerAsync → ShowAsync<ConfirmDangerDialog>。
+        // 不桩的话 ShowAsync 返回 null，页面解引用 Result 时会 NRE。
+        Mock.Setup(d => d.ShowAsync<ConfirmDangerDialog>(
                 It.IsAny<string>(),
-                It.IsAny<string>(),
-                It.IsAny<string?>(),
-                It.IsAny<string?>(),
-                It.IsAny<DialogOptions?>()))
-            .Callback<string?, string, string, string?, string?, DialogOptions?>(Record)
-            .Returns(() => Task.FromResult(MessageBoxResult));
+                It.IsAny<DialogParameters>(),
+                It.IsAny<DialogOptions>()))
+            .Returns((string title, DialogParameters parameters, DialogOptions _) =>
+            {
+                lock (MessageBoxes)
+                {
+                    MessageBoxes.Add((
+                        title,
+                        parameters.Get<string>("Message") ?? "",
+                        parameters.Get<string>("Acknowledge") ?? ""));
+                }
 
-        Mock.Setup(d => d.ShowMessageBox(
-                It.IsAny<string?>(),
-                It.IsAny<MarkupString>(),
-                It.IsAny<string>(),
-                It.IsAny<string?>(),
-                It.IsAny<string?>(),
-                It.IsAny<DialogOptions?>()))
-            .Callback<string?, MarkupString, string, string?, string?, DialogOptions?>(
-                (title, message, yes, cancel, secondary, options) => Record(title, message.ToString(), yes, cancel, secondary, options))
-            .Returns(() => Task.FromResult(MessageBoxResult));
+                var reference = new Mock<IDialogReference>();
+                reference.SetupGet(r => r.Result).Returns(() => Task.FromResult<DialogResult?>(
+                    MessageBoxResult == true ? DialogResult.Ok(true) : DialogResult.Cancel()));
+                return Task.FromResult(reference.Object);
+            });
 
         Mock.Setup(d => d.ShowAsync<PlcEditDialog>(
                 It.IsAny<string>(),
@@ -370,9 +381,6 @@ public sealed class DialogSpy
                 return Task.FromResult(reference.Object);
             });
     }
-
-    private void Record(string? title, string message, string? yesText = null, string? cancelText = null, string? secondaryText = null, DialogOptions? options = null)
-        => MessageBoxes.Add((title ?? "", message));
 }
 
 /// <summary>系统文件框替身：不弹真正的对话框，按用例给定的路径回填。</summary>

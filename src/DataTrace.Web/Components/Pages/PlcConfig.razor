@@ -160,10 +160,10 @@
 
         await Write(isNew ? "新增" : "保存", async () =>
         {
-            ReportAudit(await Changes.SavePlcConnectionAsync(saved, await AuditOf(
+            await Changes.SavePlcConnectionAsync(saved, await AuditOf(
                 isNew ? "Create" : "Save", "PlcConnection", saved.Name,
                 isNew ? null : oldValue,
-                SummarizePlc(saved))));
+                SummarizePlc(saved)));
             await Reload();
             Toast.Add(isNew ? $"已新增 {saved.Name}" : $"已保存 {saved.Name}", Severity.Success);
         });
@@ -173,14 +173,6 @@
     {
         var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
         return new ConfigAudit(user, action, entityType, key, oldValue, newValue);
-    }
-
-    private void ReportAudit(ConfigurationChangeResult result)
-    {
-        if (result.AuditError is { } error)
-        {
-            Toast.Add($"操作已完成，但审计记录失败：{error}", Severity.Warning);
-        }
     }
 
     /// <summary>审计用摘要：不含密码/密钥/令牌（当前实体无这些字段，Extra 也可能含敏感配置故不写入）。</summary>
@@ -202,9 +194,10 @@
             return;
         }
 
-        var confirmed = await DialogService.ShowMessageBox(
+        var confirmed = await DialogService.ConfirmDangerAsync(
             "删除 PLC 连接",
             $"确定删除「{item.Name}」({item.Host}:{item.Port})？删除后采集器将不再连接该 PLC。",
+            acknowledge: "我了解删除后采集器将不再连接该 PLC",
             yesText: "删除", cancelText: "取消");
         if (confirmed != true)
         {
@@ -213,8 +206,8 @@
 
         await Write("删除", async () =>
         {
-            ReportAudit(await Changes.DeletePlcConnectionAsync(item.Id, await AuditOf(
-                "Delete", "PlcConnection", item.Name, $"{item.Host}:{item.Port}", null)));
+            await Changes.DeletePlcConnectionAsync(item.Id, await AuditOf(
+                "Delete", "PlcConnection", item.Name, $"{item.Host}:{item.Port}", null));
             await Reload();
             Toast.Add($"已删除 {item.Name}", Severity.Success);
         });

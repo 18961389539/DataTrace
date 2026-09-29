@@ -1,4 +1,4 @@
-﻿/* 字体、配色、圆角都来自 DataTraceTheme（Mud 主题）注入的 CSS 变量。
+/* 字体、配色、圆角都来自 DataTraceTheme（Mud 主题）注入的 CSS 变量。
    本文件只放主题表达不了的局部样式；新增颜色请引 palette 变量，不要再写十六进制。 */
 
 :root {
@@ -49,6 +49,12 @@
 
 .dt-muted {
     color: var(--mud-palette-text-secondary);
+}
+
+/* 确认框正文里的 \n\n 分段要真的换行：消息常写成"后果 + 影响范围"两段，
+   不保留换行会挤成一坨，用户读不到重点。 */
+.dt-confirm-message {
+    white-space: pre-line;
 }
 
 /* 状态色文本：超限红、预警黄。取值跟随主题，供各页面替代内联 style。 */
@@ -169,6 +175,14 @@
     margin-top: 4px;
     font-size: 0.85rem;
     opacity: 0.9;
+}
+
+/* 被折叠掉的条数：这一行是"后面还有"的唯一线索，比普通说明重一档，
+   否则读起来像又一条异常，顺手就被扫过去了。 */
+.dt-alarm-bar-more {
+    margin-top: 4px;
+    font-size: 0.85rem;
+    font-weight: 600;
 }
 
 .dt-alarm-bar-actions {
@@ -610,6 +624,36 @@ h5:focus,
     fill-opacity: .85;
 }
 
+/* 悬停读数选中的那个点：所有点被一起点亮时，它靠加粗描边与实心填充区分出来 */
+.dt-point.is-active {
+    fill: currentColor;
+    fill-opacity: 1;
+    stroke-width: 2.5;
+}
+
+/* 悬停读数面板：位置由 js/datatrace.js 跟着光标摆（近边缘自动翻边），
+   这里只管外观。fixed 而不是绝对定位：面板在 SVG 里定位要处理 viewBox 缩放，
+   而它是纯展示层，跟随视口反而不会跑偏。 */
+.dt-chart-readout {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1300;
+    max-width: 320px;
+    padding: 4px 8px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--dt-radius);
+    background: var(--mud-palette-surface);
+    color: var(--mud-palette-text-primary);
+    box-shadow: 0 4px 14px rgba(15, 32, 51, .18);
+    font-size: .8125rem;
+    line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    /* 压在图上但不能截走 hover：否则面板自己会把 mousemove 吃掉，读数一出现就卡住 */
+    pointer-events: none;
+}
+
 .dt-legend {
     display: flex;
     flex-wrap: wrap;
@@ -648,7 +692,9 @@ h5:focus,
 .dt-kpi-card {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
+    /* 底对齐而非基线对齐：主指标是「标签在上、数值在下」两行，
+       基线对齐会把辅助统计吊到标签那一行的基线上，读起来像标题的注解。 */
+    align-items: flex-end;
     gap: 8px;
     min-width: 0;
     background: var(--mud-palette-action-default-hover);
@@ -656,13 +702,15 @@ h5:focus,
     padding: 8px 12px;
 }
 
+/* 标签在上、数值在下。数值靠左而不是跟着标签往右漂：
+   四格的数值起跑线一致，竖着扫一列能直接比大小。 */
 .dt-kpi-main {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
+    flex-direction: column;
+    align-items: flex-start;
     flex: 1 1 auto;
     min-width: 0;
-    gap: 8px;
+    gap: 2px;
 }
 
 .dt-kpi-label {
@@ -687,6 +735,24 @@ h5:focus,
 
 .dt-kpi-value-alert {
     color: var(--mud-palette-error);
+}
+
+/* 单位比数值小一号：同字号会被读成数字的一部分，「120件」就当一个词扫过去了。
+   计数用「件」；时长类指标（当前间隔、节拍）由各自的格式化函数带 ms/秒。 */
+.dt-kpi-unit {
+    margin-left: 2px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--mud-palette-text-secondary);
+}
+
+/* 百分比的依据件数，紧贴在数值下方：
+   放进右侧那排辅助统计里会被一起截断，而这几个数恰恰是判断百分比可信度的前提。 */
+.dt-kpi-sub {
+    font-size: 0.75rem;
+    color: var(--mud-palette-text-secondary);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
 
 /* 提示行与主指标同一行：写成整块换行会把「本班完成 120」和它的辅助统计拆成两行，
@@ -1087,9 +1153,88 @@ h5:focus,
 /* 走原生 POST 表单（登录发生在 SignalR 建立之前），所以控件不能用 Mud 组件，
    但尺寸、圆角、配色与主题里的 Mud 控件对齐。 */
 
-.login-card {
+/* 全屏壳（EmptyLayout）：登录页面对的是整个视口，不是页面里的一列内容。
+   背景层次画在壳自己身上 —— 不用 fixed 的装饰层，就不涉及 z-index 负值与
+   祖先背景谁先谁后的那套规则，层次坏没坏一眼能看出来（空壳铺满视口，背景自然铺满）。
+   颜色全部走通道值配 rgba：暗色档换的是 --dt-primary-rgb，这里跟着换，
+   不需要再写一套 html.dt-theme-dark 覆盖。没有这层时，登录页就是一张纯色白纸。 */
+.dt-empty-shell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100dvh;
+    padding: 56px 16px 32px;
+    background:
+        radial-gradient(1100px 480px at 50% -12%, rgba(var(--dt-primary-rgb), .18), transparent 70%),
+        repeating-linear-gradient(0deg, rgba(var(--dt-primary-rgb), .05) 0 1px, transparent 1px 28px),
+        repeating-linear-gradient(90deg, rgba(var(--dt-primary-rgb), .05) 0 1px, transparent 1px 28px),
+        var(--mud-palette-background);
+}
+
+/* 主题切换与 PWA 安装钉在视口角上：跟着内容列走时，它俩会停在屏幕中间偏右，
+   看着像没对齐的浮块。 */
+.dt-empty-utilities {
+    position: fixed;
+    top: 12px;
+    right: 16px;
+    z-index: 3;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.login-page {
+    width: 100%;
     max-width: 380px;
-    margin: 0 auto;
+}
+
+/* 卡片：桌面端与工控平板上都要一眼看出"这是个系统入口"。
+   顶部 3px 主色细条由 ::before 画，卡片自己 overflow: hidden 裁住圆角。 */
+.login-card {
+    position: relative;
+    width: 100%;
+    padding: 30px 28px 24px;
+    overflow: hidden;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--dt-radius);
+    background: var(--mud-palette-surface);
+    box-shadow: 0 18px 44px rgba(15, 32, 51, .14);
+}
+
+.login-card::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 3px;
+    background: linear-gradient(90deg, var(--mud-palette-primary), rgba(var(--dt-primary-rgb), .15));
+}
+
+.login-brand {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 14px;
+}
+
+/* 未配客户 Logo 时的产品标记：采集波形。底色用主色低透明度，暗色下自动换档。 */
+.login-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 46px;
+    height: 46px;
+    border-radius: var(--dt-radius);
+    background: rgba(var(--dt-primary-rgb), .12);
+    color: var(--mud-palette-primary);
+}
+
+/* 卡片下方一句收尾。字号压到 caption 档，不与卡内正文抢注意力。 */
+.login-foot {
+    margin: 16px 0 0;
+    text-align: center;
+    font-size: .75rem;
+    line-height: 1.5;
+    color: var(--mud-palette-text-secondary);
 }
 
 .login-label {
@@ -1115,6 +1260,78 @@ h5:focus,
         outline-offset: 1px;
     }
 
+/* 密码框右侧的显隐开关：与 Mud 密码框的 adornment 同一语义（可访问名「显示密码 / 隐藏密码」），
+   但这里是原生控件，图标用内联 SVG，显示哪只眼睛由按钮的 aria-pressed 决定，JS 只改这一个属性。 */
+.login-pass {
+    position: relative;
+}
+
+    .login-pass .login-input {
+        padding-right: 42px;
+    }
+
+.login-pass-toggle {
+    position: absolute;
+    top: 50%;
+    right: 4px;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--dt-radius);
+    background: none;
+    color: var(--mud-palette-text-secondary);
+    cursor: pointer;
+}
+
+    .login-pass-toggle:hover {
+        color: var(--mud-palette-text-primary);
+    }
+
+    .login-pass-toggle:focus-visible {
+        outline: 2px solid var(--mud-palette-primary);
+        outline-offset: 1px;
+    }
+
+    .login-pass-toggle .dt-eye-hide {
+        display: none;
+    }
+
+    .login-pass-toggle[aria-pressed="true"] .dt-eye-show {
+        display: none;
+    }
+
+    .login-pass-toggle[aria-pressed="true"] .dt-eye-hide {
+        display: block;
+    }
+
+/* 记住我：勾选框与文字同在一个 label 里，点文字也能勾。
+   行高抬到 32px：工控平板戴手套时，18px 的方框命中区太小（与表格图标按钮同一取舍）。
+   accent-color 只有不支持时才会退回浏览器默认蓝，勾选态本身不依赖它。 */
+.login-remember {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+    margin-top: 10px;
+    font-size: .875rem;
+    color: var(--mud-palette-text-primary);
+    cursor: pointer;
+    user-select: none;
+}
+
+.login-remember input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    accent-color: var(--mud-palette-primary);
+    cursor: pointer;
+}
+
 .login-btn {
     width: 100%;
     margin-top: 20px;
@@ -1136,10 +1353,13 @@ h5:focus,
         outline-offset: 2px;
     }
 
+/* 标题与副标题居中，与上面的产品标记成一组；表单字段仍左对齐，
+   标签在上、输入在下的读序不变。 */
 .login-title {
     font-size: 1.25rem;
     font-weight: 500;
     margin: 0 0 4px;
+    text-align: center;
 }
 
 /* 副标题：登录页不解释自己是干什么的，第一次打开的人只能靠猜 */
@@ -1147,6 +1367,7 @@ h5:focus,
     margin: 0;
     font-size: .875rem;
     color: var(--mud-palette-text-secondary);
+    text-align: center;
 }
 
 .login-error {
@@ -1155,7 +1376,8 @@ h5:focus,
 }
 
 /* 首次部署的安全提醒：原来和上面那句普通说明同形同色，整页最该被看见的一句最不显眼。
-   警告色 + 左侧粗边 + 浅底，与正文说明区分开；底色用通道值配 rgba，暗色下自动换档。 */
+   警告色 + 左侧粗边 + 浅底，与正文说明区分开；底色用通道值配 rgba，暗色下自动换档。
+   整句长，跟正文一起居中会断得难看，这里单独退回左对齐。 */
 .login-security {
     margin-top: 10px;
     padding: 8px 10px;
@@ -1164,6 +1386,15 @@ h5:focus,
     border-radius: var(--dt-radius);
     background: rgba(var(--dt-warning-rgb), .1);
     color: var(--mud-palette-warning);
+    text-align: left;
+}
+
+/* 手机（含手持终端）：卡片左右留白收紧，别让输入框只剩一条。
+   宽度与内边距一起收，避免出现"卡片占满屏、边框贴着机身"的观感。 */
+@media (max-width: 480px) {
+    .login-card {
+        padding: 24px 18px 20px;
+    }
 }
 
 /* ---------- 窄屏：卡片与主内容留白收紧 ---------- */
@@ -1186,6 +1417,12 @@ h5:focus,
 @media (max-width: 600px) {
     .dt-kpi-card:first-child {
         grid-column: 1 / -1;
+    }
+
+    /* 窄屏顶栏塞不下「大屏」两个字（用户名本来就在这一档收掉了），
+       文字收起退回纯图标，tooltip 与 aria-label 都还在。 */
+    .dt-shopfloor-toggle .mud-button-label {
+        display: none;
     }
 }
 
@@ -1382,7 +1619,8 @@ h5:focus,
     height: 48px;
     max-width: 200px;
     display: block;
-    margin: 0 auto 12px;
+    /* 居中交给 .login-brand：它与无 Logo 时的产品标记共用同一个位置，不再各写一份外边距。 */
+    margin: 0;
 }
 
 
@@ -1682,6 +1920,19 @@ body.dt-shopfloor .dt-station-grid .mud-grid-item {
 body.dt-shopfloor .mud-chip {
     font-size: 0.95rem;
 }
+/* 大屏模式下顶栏被整条隐藏，退出入口要另留一个：固定在右下角，
+   任何页面都能退出，且压不到顶部报警条下面。 */
+.dt-shopfloor-exit {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 1300;
+    opacity: 0.85;
+}
+.dt-shopfloor-exit:hover,
+.dt-shopfloor-exit:focus-visible {
+    opacity: 1;
+}
 .dt-clock-stale {
     color: var(--mud-palette-error) !important;
     text-decoration: line-through;
@@ -1968,6 +2219,21 @@ html.dt-theme-dark {
 
 html.dt-theme-dark .dt-row-error td {
     background: rgba(239, 83, 80, .14);
+}
+
+/* 暗色档的告警横幅：filled 变体的底色取 --mud-palette-error，而暗色调色板的 Error 是
+   #ef9a9a 亮红 —— 整条横幅成了夜班屏幕上最亮的块（实测 rgb(239,154,154)），眩光，
+   还把视线从工站卡上拽走。这里只换底色与左侧色条：警示语义交给红底红边，
+   文字沿用 filled 自带的 error-text（白），亮度让给数据。 */
+html.dt-theme-dark .dt-alarm-alert {
+    background-color: rgba(var(--dt-danger-rgb), .18);
+    border-left: 3px solid var(--mud-palette-error);
+}
+
+/* 横幅里的「去接手 / 静音」：Mud 给 filled 变体的按钮改成 currentColor（白，配亮底用的），
+   底变暗之后按钮要回到亮红，才认得出是操作入口。 */
+html.dt-theme-dark .dt-alarm-alert .mud-button-root {
+    color: var(--mud-palette-error);
 }
 
 html.dt-theme-dark .dt-src-badge {

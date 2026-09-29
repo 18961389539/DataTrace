@@ -192,6 +192,7 @@ public class SimulatePageTests : WebTestBase
         var box = Assert.Single(Dialogs.MessageBoxes);
         Assert.Contains("不是首站", box.Message);
         Assert.Contains("跳站", box.Message);
+        Assert.Contains("跳站", box.Acknowledge);
 
         Dialogs.MessageBoxResult = false;
         ClickButton(cut, "触发 ST020");

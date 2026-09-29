@@ -1110,4 +1110,20 @@ public sealed class ConfigRepository : IConfigRepository
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// 把一段配置库写入包进一个事务。
+    /// </summary>
+    /// <remarks>
+    /// 必须落在 scoped 的 <see cref="_db"/> 上：审计写入用的 <c>AuditLogger</c> 注入的是同一个实例，
+    /// 只有同一个上下文/连接上的操作才会跟着一起回滚（读路径走工厂，与这里无关）。
+    /// 工作块抛异常时事务在 Dispose 时回滚，库里不会留下半笔改动。
+    /// </remarks>
+    public async Task<T> InTransactionAsync<T>(Func<CancellationToken, Task<T>> work, CancellationToken cancellationToken = default)
+    {
+        await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        var result = await work(cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        return result;
+    }
 }

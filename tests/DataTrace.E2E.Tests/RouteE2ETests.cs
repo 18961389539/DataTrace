@@ -23,7 +23,7 @@ public class RouteE2ETests : E2ETestBase
     [InlineData("/users", "用户")]
     public async Task RouteRendersWithoutErrorBanner(string path, string expectedText)
     {
-        await Page.GotoAsync($"{App.BaseUrl}{path}");
+        await OpenAsync(path);
         await WaitForAsync($".mud-layout, .dt-page");
 
         var body = await Page.InnerTextAsync("body");

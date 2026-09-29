@@ -109,7 +109,14 @@
             </MudTd>
         </RowTemplate>
         <NoRecordsContent>
-            <MudText Typo="Typo.body2" Class="dt-muted py-3">还没有型号。填写型号名称添加第一个型号，再点「限值」设定它的覆盖值。</MudText>
+            @* 空态也给出口：只留一句引导，新用户还得自己抬头找「新增型号」按钮。 *@
+            <div class="dt-empty-hint">
+                <MudText Typo="Typo.body2" Class="dt-muted py-3">还没有型号。填写型号名称添加第一个型号，再点「限值」设定它的覆盖值。</MudText>
+                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" Class="mt-1"
+                           StartIcon="@Icons.Material.Filled.Add" Disabled="_saving" OnClick="AddRecipe">
+                    新增型号
+                </MudButton>
+            </div>
         </NoRecordsContent>
     </MudTable>
 </MudPaper>
@@ -164,14 +171,6 @@
         return new ConfigAudit(user, action, "Recipe", key, oldValue, newValue);
     }
 
-    private void ReportAudit(ConfigurationChangeResult result)
-    {
-        if (result.AuditError is { } error)
-        {
-            Toast.Add($"操作已完成，但审计记录失败：{error}", Severity.Warning);
-        }
-    }
-
     private async Task Write(string what, Func<Task> action)
     {
         if (_saving) return;
@@ -217,8 +216,8 @@
         await Write("新增型号", async () =>
         {
             var recipe = new Recipe { Name = created.Name, Remark = created.Remark };
-            ReportAudit(await Changes.SaveRecipeAsync(recipe, await AuditOf(
-                "Create", recipe.Code, null, $"{created.Name} / {created.Remark}")));
+            await Changes.SaveRecipeAsync(recipe, await AuditOf(
+                "Create", recipe.Code, null, $"{created.Name} / {created.Remark}"));
             await Reload();
             Toast.Add($"型号「{created.Name}」已新增（尚未激活，先用「限值」设定覆盖值）", Severity.Success);
         });
@@ -246,10 +245,10 @@
             recipe.Code = edited.Code;
             recipe.Name = edited.Name;
             recipe.Remark = edited.Remark;
-            ReportAudit(await Changes.SaveRecipeAsync(recipe, await AuditOf(
+            await Changes.SaveRecipeAsync(recipe, await AuditOf(
                 "Save", oldCode,
                 $"{oldCode}/{oldName}/{oldRemark}",
-                $"{edited.Code}/{edited.Name}/{edited.Remark}")));
+                $"{edited.Code}/{edited.Name}/{edited.Remark}"));
             await Reload();
             Toast.Add($"已保存型号「{edited.Name}」", Severity.Success);
         });
@@ -286,8 +285,8 @@
                     TargetValue = l.TargetValue
                 }).ToList()
             };
-            ReportAudit(await Changes.SaveRecipeAsync(clone, await AuditOf(
-                "Copy", clone.Code, source.Code, $"{edited.Name}; limits={clone.Limits.Count}")));
+            await Changes.SaveRecipeAsync(clone, await AuditOf(
+                "Copy", clone.Code, source.Code, $"{edited.Name}; limits={clone.Limits.Count}"));
             await Reload();
             Toast.Add($"已复制为「{edited.Name}」", Severity.Success);
         });
@@ -311,8 +310,8 @@
         {
             // 只写覆盖行：对话框里的型号信息是打开页面时的快照，
             // 整份写回去会把期间别人的改名/停用一起盖掉。
-            ReportAudit(await Changes.SaveRecipeLimitsAsync(recipe.Id, limits, await AuditOf(
-                "SaveLimits", recipe.Code, $"overrides={before}", $"overrides={limits.Count}")));
+            await Changes.SaveRecipeLimitsAsync(recipe.Id, limits, await AuditOf(
+                "SaveLimits", recipe.Code, $"overrides={before}", $"overrides={limits.Count}"));
             await Reload();
             Toast.Add(
                 limits.Count == 0
@@ -326,9 +325,10 @@
     {
         if (!enabled && recipe.Id == _active?.Id)
         {
-            var confirmed = await DialogService.ShowMessageBox(
+            var confirmed = await DialogService.ConfirmDangerAsync(
                 "停用当前型号",
                 $"「{recipe.Code} {recipe.Name}」是当前型号。停用后新件按点位默认限值判定，已经在制的件仍用这个型号。确认停用？",
+                acknowledge: "我了解新件将改用点位默认限值判定",
                 yesText: "确认停用", cancelText: "取消");
             if (confirmed != true)
             {
@@ -341,10 +341,10 @@
         {
             var wasActive = recipe.Id == _active?.Id;
             recipe.Enabled = enabled;
-            ReportAudit(await Changes.SaveRecipeAsync(recipe, await AuditOf(
+            await Changes.SaveRecipeAsync(recipe, await AuditOf(
                 enabled ? "Enable" : "Disable", recipe.Code,
                 enabled ? "disabled" : "enabled",
-                enabled ? "enabled" : (wasActive ? "disabled; cleared active → 点位默认限值" : "disabled"))));
+                enabled ? "enabled" : (wasActive ? "disabled; cleared active → 点位默认限值" : "disabled")));
             await Reload();
             Toast.Add(
                 enabled ? $"型号 {recipe.Code} 已启用" : $"型号 {recipe.Code} 已停用（若为当前型号会自动取消选择）",
@@ -356,9 +356,10 @@
     {
         var from = _active is null ? "未选择（点位默认限值）" : $"{_active.Code}（{_active.Name}）";
         var to = $"{recipe.Code}（{recipe.Name}）";
-        var confirmed = await DialogService.ShowMessageBox(
+        var confirmed = await DialogService.ConfirmDangerAsync(
             "确认切换当前型号",
             $"将当前型号从「{from}」切换到「{to}」。\n\n目标型号限值覆盖：{Overrides(recipe)} 个点位。\n说明：已经在制的件仍用进首站时的型号，走到末站为止。新型号从下一件起。",
+            acknowledge: "我了解新型号从下一件起生效，在制件仍用旧型号",
             yesText: "确认切换", cancelText: "取消");
         if (confirmed != true) return;
 
@@ -366,10 +367,10 @@
         {
             var oldCode = _active?.Code;
             var oldName = _active?.Name;
-            ReportAudit(await Changes.SetActiveRecipeAsync(recipe.Id, await AuditOf(
+            await Changes.SetActiveRecipeAsync(recipe.Id, await AuditOf(
                 "Activate", recipe.Code,
                 oldCode is null ? "(none)" : $"{oldCode}/{oldName}",
-                $"{recipe.Code}/{recipe.Name}")));
+                $"{recipe.Code}/{recipe.Name}"));
             Status.SetActiveRecipe(recipe.Code, recipe.Name);
             await Reload();
             Toast.Add($"当前型号已切换为 {recipe.Code}。在制件仍用旧型号，下一件起用新限值", Severity.Success);
@@ -380,9 +381,10 @@
     {
         if (_active is null) return;
         var from = $"{_active.Code}（{_active.Name}）";
-        var confirmed = await DialogService.ShowMessageBox(
+        var confirmed = await DialogService.ConfirmDangerAsync(
             "确认取消选择",
             $"取消当前型号「{from}」后，新件按点位默认限值判定。\n说明：已经在制的件仍用进首站时的型号，走到末站为止。",
+            acknowledge: "我了解新件将改用点位默认限值判定",
             yesText: "确认取消", cancelText: "返回");
         if (confirmed != true) return;
 
@@ -390,8 +392,8 @@
         {
             var old = $"{_active.Code}/{_active.Name}";
             var code = _active.Code;
-            ReportAudit(await Changes.SetActiveRecipeAsync(null, await AuditOf(
-                "Deactivate", code, old, "(none)/点位默认限值")));
+            await Changes.SetActiveRecipeAsync(null, await AuditOf(
+                "Deactivate", code, old, "(none)/点位默认限值"));
             Status.SetActiveRecipe(null, null);
             await Reload();
             Toast.Add("已取消型号选择。在制件仍用旧型号，下一件起按点位默认限值", Severity.Success);
@@ -401,18 +403,19 @@
     private async Task DeleteRecipe(Recipe recipe)
     {
         var isActive = recipe.Id == _active?.Id;
-        var confirmed = await DialogService.ShowMessageBox(
+        var confirmed = await DialogService.ConfirmDangerAsync(
             "删除型号",
             isActive
                 ? $"「{recipe.Code} {recipe.Name}」是当前型号。删除后新件按点位默认限值判定，已经在制的件仍用进首站时的型号；其 {Overrides(recipe)} 条限值覆盖会一并删除，历史记录不受影响。确认删除？"
                 : $"确定删除「{recipe.Code} {recipe.Name}」？它的 {Overrides(recipe)} 条限值覆盖会一并删除，历史记录不受影响。",
+            acknowledge: "我了解该型号及其限值覆盖会被删除，且无法恢复",
             yesText: "删除", cancelText: "取消");
         if (confirmed != true) return;
 
         await Write("删除型号", async () =>
         {
-            ReportAudit(await Changes.DeleteRecipeAsync(recipe.Id, await AuditOf(
-                "Delete", recipe.Code, $"{recipe.Code}/{recipe.Name}; active={isActive}", null)));
+            await Changes.DeleteRecipeAsync(recipe.Id, await AuditOf(
+                "Delete", recipe.Code, $"{recipe.Code}/{recipe.Name}; active={isActive}", null));
             if (isActive) Status.SetActiveRecipe(null, null);
             await Reload();
             Toast.Add($"型号 {recipe.Code} 已删除", Severity.Success);

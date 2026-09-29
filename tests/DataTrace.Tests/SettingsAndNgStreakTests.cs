@@ -3,8 +3,73 @@ using DataTrace.Application.Configuration;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
+using DataTrace.Infrastructure.Evaluation;
+using DataTrace.Infrastructure.Persistence;
+using DataTrace.Infrastructure.Realtime;
+using Microsoft.EntityFrameworkCore;
 
 namespace DataTrace.Tests;
+
+/// <summary>
+/// 保存系统设置的授权边界：保留年数是"删除历史数据"的开关，不是普通配置项。
+/// </summary>
+public class SettingsSaveServiceTests
+{
+    private static ConfigRepository Repo(ConfigDbContext db)
+        => new(db, TestDatabase.FactoryFor(db), new CurveBaselineCache(), new RuntimeStatusHub());
+
+    [Fact]
+    public async Task Retention_changes_need_the_deletion_authorization()
+    {
+        using var workspace = new TempWorkspace();
+        await using var db = await TestDatabase.CreateConfigAsync(workspace.Path("config.db"));
+        db.SystemSettings.Add(new SystemSettings { RetentionYears = 3, AuditRetentionYears = 2 });
+        await db.SaveChangesAsync();
+
+        var repo = Repo(db);
+        var settings = new SettingsSaveService(repo, new ConfigurationChangeService(repo, new AuditLogger(db)));
+        var loaded = SettingsEdit.From((await repo.GetSnapshotAsync()).Settings);
+
+        // 改小保留年数 = 后台清理任务会去删更近的历史，这句授权只给管理员。
+        var edit = loaded.Clone();
+        edit.RetentionYears = 1;
+
+        var blocked = await settings.SaveAsync(edit, loaded, "engineer", canChangeRetention: false);
+
+        Assert.NotNull(blocked.ValidationMessage);
+        Assert.Null(blocked.Saved);
+        Assert.Equal(3, (await repo.GetSnapshotAsync()).Settings.RetentionYears);
+
+        var allowed = await settings.SaveAsync(edit, loaded, "admin", canChangeRetention: true);
+
+        Assert.NotNull(allowed.Saved);
+        Assert.Equal(1, (await repo.GetSnapshotAsync()).Settings.RetentionYears);
+    }
+
+    /// <summary>
+    /// 非保留字段不受这道门影响：改扫描间隔与删除授权无关，工程角色照常能存。
+    /// </summary>
+    [Fact]
+    public async Task Other_settings_still_save_without_the_deletion_authorization()
+    {
+        using var workspace = new TempWorkspace();
+        await using var db = await TestDatabase.CreateConfigAsync(workspace.Path("config.db"));
+        db.SystemSettings.Add(new SystemSettings { ScanIntervalMs = 200, RetentionYears = 3 });
+        await db.SaveChangesAsync();
+
+        var repo = Repo(db);
+        var settings = new SettingsSaveService(repo, new ConfigurationChangeService(repo, new AuditLogger(db)));
+        var loaded = SettingsEdit.From((await repo.GetSnapshotAsync()).Settings);
+
+        var edit = loaded.Clone();
+        edit.ScanIntervalMs = 500;
+
+        var saved = await settings.SaveAsync(edit, loaded, "engineer", canChangeRetention: false);
+
+        Assert.NotNull(saved.Saved);
+        Assert.Equal(500, (await repo.GetSnapshotAsync()).Settings.ScanIntervalMs);
+    }
+}
 
 public class SettingsEditRulesTests
 {

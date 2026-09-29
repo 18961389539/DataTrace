@@ -1,13 +1,15 @@
 namespace DataTrace.Application.Configuration;
 
 /// <summary>设置已写入，或被地址/取值规则拦住。</summary>
+/// <remarks>
+/// 这里没有"审计失败"这一项：配置写入与审计在同一个事务里，审计写不进去时整笔回滚，
+/// 由 <see cref="ConfigurationChangeFailedException"/> 从 <c>Failure</c> 出来。
+/// </remarks>
 public sealed class SettingsSaveResult
 {
     public SystemSettingsSnapshot? Saved { get; init; }
 
     public string? ValidationMessage { get; init; }
-
-    public string? AuditError { get; init; }
 
     public string? Failure { get; init; }
 }
@@ -55,12 +57,20 @@ public sealed class SystemSettingsSnapshot
     };
 }
 
-/// <summary>保存系统设置：补丁打在库里的最新一行上，审计失败不回滚配置。</summary>
+/// <summary>
+/// 保存系统设置：补丁打在库里的最新一行上。
+/// </summary>
+/// <remarks>
+/// 保留年数是"删除历史数据"的授权开关，与改限值/工站这类配置变更不是一回事，
+/// 所以单独由 <c>canChangeRetention</c> 把关：非管理员即使绕过界面（直接调服务）也改不动，
+/// 界面上的只读只是第一道。
+/// </remarks>
 public interface ISettingsSave
 {
     Task<SettingsSaveResult> SaveAsync(
         SettingsEdit edit,
         SettingsEdit loaded,
         string userName,
+        bool canChangeRetention,
         CancellationToken cancellationToken = default);
 }

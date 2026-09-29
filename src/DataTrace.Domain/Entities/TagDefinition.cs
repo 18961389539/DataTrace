@@ -1,4 +1,6 @@
+using System.ComponentModel.DataAnnotations.Schema;
 using DataTrace.Domain.Enums;
+using DataTrace.Domain.Evaluation;
 
 namespace DataTrace.Domain.Entities;
 
@@ -52,4 +54,58 @@ public class TagDefinition
     /// <see cref="Address"/> 按文件里的字段名解释。
     /// </remarks>
     public TagDataSource Source { get; set; } = TagDataSource.Plc;
+
+    /// <summary>
+    /// 该点位的判异规则开关（按位，见 <see cref="Evaluation.SpcRuleMask"/>）。null = 全套规则。
+    /// </summary>
+    /// <remarks>
+    /// 有些点位天然带周期性（往复动作的位移之类），交替/趋势规则会长期误报；
+    /// 按点位关掉误报的那一条，比整个点位停用更精确 —— 停用会把超限这类真问题一起丢掉。
+    /// </remarks>
+    public int? SpcRuleMask { get; set; }
+
+    /// <summary>冻结控制限的中心线；与上下限一起构成一套冻结基线。</summary>
+    public double? ControlCenterLine { get; set; }
+
+    /// <summary>冻结控制限的上限（UCL）。</summary>
+    public double? ControlUpperLimit { get; set; }
+
+    /// <summary>冻结控制限的下限（LCL）。</summary>
+    public double? ControlLowerLimit { get; set; }
+
+    /// <summary>冻结这套控制限时用到的样本数。</summary>
+    public int? ControlSampleCount { get; set; }
+
+    /// <summary>冻结时间。</summary>
+    public DateTime? ControlCapturedAt { get; set; }
+
+    /// <summary>冻结人（登录名）。体系审核问"这条控制限是谁定的"时得有答案。</summary>
+    public string? ControlCapturedBy { get; set; }
+
+    /// <summary>
+    /// 点位冻结的控制限；三个关键值缺一即视为没冻结（老库补列后就是全空）。
+    /// </summary>
+    /// <remarks>计算属性，不进库：库里存的是上面三个数值列与来源信息。</remarks>
+    [NotMapped]
+    public FrozenControlLimits? FrozenControlLimits
+        => ControlCenterLine is { } centerLine
+           && ControlUpperLimit is { } upper
+           && ControlLowerLimit is { } lower
+            ? new FrozenControlLimits(
+                centerLine,
+                upper,
+                lower,
+                ControlSampleCount ?? 0,
+                ControlCapturedAt ?? default,
+                ControlCapturedBy ?? "")
+            : null;
+
+    /// <summary>
+    /// 逐字段浅拷贝（含 <c>Id</c>）。配置快照是共享只读实例，改前必须克隆。
+    /// </summary>
+    /// <remarks>
+    /// 用 MemberwiseClone 而不是手写字段清单：手写版本每加一个字段就要记得补一行，
+    /// 漏掉的那次会在保存（整行 SetValues）时把新字段无声清空 —— 已经栽过一次。
+    /// </remarks>
+    public TagDefinition Clone() => (TagDefinition)MemberwiseClone();
 }

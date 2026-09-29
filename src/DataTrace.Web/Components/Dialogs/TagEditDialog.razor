@@ -1,4 +1,4 @@
-﻿@using DataTrace.Domain.Evaluation
+@using DataTrace.Domain.Evaluation
 @using DataTrace.Domain.Validation
 @using DataTrace.Plc.Addresses
 @using DataTrace.Plc.Codec
@@ -138,6 +138,28 @@
                     <MudText Typo="Typo.body2" Color="Color.Error">@_limitError</MudText>
                 }
             </MudItem>
+            @if (TagUsesNumericLimits)
+            {
+                @* 按点位开关判异规则：有些点位天然带周期性，交替/趋势规则会长期误报。
+                   以前唯一的出路是停用整个点位，那会把超限这类真问题一起丢掉。 *@
+                <MudItem xs="12">
+                    <MudText Typo="Typo.subtitle2" Class="mb-1">判异规则</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted d-block mb-2">
+                        只影响趋势与过程能力里的判异，以及由它派生的漂移告警；关掉的规则不再产生判异记录。
+                        全部勾选等于"没特别配置"（新点位默认全部启用）。
+                    </MudText>
+                    <MudStack Row="true" Spacing="2" Class="flex-wrap">
+                        @foreach (var rule in SpcRuleMask.AllRules)
+                        {
+                            var captured = rule;
+                            <MudCheckBox T="bool" Dense="true" Color="Color.Primary"
+                                         Value="@SpcRuleMask.IsEnabled(Tag.SpcRuleMask, captured)"
+                                         ValueChanged="@(on => ToggleRule(captured, on))"
+                                         Label="@DisplayLabels.SpcRuleText(captured)" />
+                        }
+                    </MudStack>
+                </MudItem>
+            }
         </MudGrid>
     </DialogContent>
     <DialogActions>
@@ -248,6 +270,16 @@
         }
 
         Validate();
+    }
+
+    /// <summary>
+    /// 勾选/取消一条判异规则。全勾时把掩码存回 null（= 没特别配置）：
+    /// 少一列需要维护的"全选"状态，界面上也就不会出现"6 条规则全开但掩码写的是 62"这种假差异。
+    /// </summary>
+    private void ToggleRule(SpcRule rule, bool enabled)
+    {
+        var mask = SpcRuleMask.Set(Tag.SpcRuleMask, rule, enabled);
+        Tag.SpcRuleMask = mask == SpcRuleMask.All ? null : mask;
     }
 
     private void Validate()

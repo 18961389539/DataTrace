@@ -160,24 +160,65 @@ public sealed class RuntimeStore : IRuntimeStore
 
             // Records can be stored in their session's start-month database even when their
             // trigger time is later. Fetch each database's local top N, then merge globally.
-            var page = await filtered
-                .OrderByDescending(x => x.TriggerTime)
-                .ThenByDescending(x => x.Id)
+            // 局部前 N 必须按"和全局同一个次序"取：按耗时升序时某个月库若仍按时间取前 N，
+            // 会先把全局真正靠前的记录裁掉，合并结果就错了。
+            var page = await ApplySort(filtered, request)
                 .Take(perMonthTake)
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
             candidates.AddRange(page.Select(r => new CollectRecordListItem { MonthKey = month, Record = r }));
         }
 
-        var items = candidates
-            .OrderByDescending(x => x.Record.TriggerTime)
-            .ThenByDescending(x => x.MonthKey, StringComparer.Ordinal)
-            .ThenByDescending(x => x.Record.Id)
+        var items = ApplySort(candidates, request)
             .Skip(Math.Max(0, request.Skip))
             .Take(Math.Max(0, request.Take))
             .ToList();
 
         return new CollectQueryResult { Total = total, Items = items };
+    }
+
+    /// <summary>
+    /// 按请求的列排序（库侧）。末位永远用 Id 兜底：并列值之间没有稳定次序，
+    /// 翻页会出现重复行与漏行。
+    /// </summary>
+    private static IOrderedQueryable<CollectRecord> ApplySort(IQueryable<CollectRecord> query, CollectQueryRequest request)
+    {
+        var desc = request.SortDescending;
+        var ordered = request.SortBy switch
+        {
+            CollectSortField.SerialNo => desc ? query.OrderByDescending(x => x.SerialNo) : query.OrderBy(x => x.SerialNo),
+            CollectSortField.PalletCode => desc ? query.OrderByDescending(x => x.PalletCode) : query.OrderBy(x => x.PalletCode),
+            CollectSortField.StationCode => desc ? query.OrderByDescending(x => x.StationCode) : query.OrderBy(x => x.StationCode),
+            CollectSortField.RecipeCode => desc ? query.OrderByDescending(x => x.RecipeCode) : query.OrderBy(x => x.RecipeCode),
+            CollectSortField.Judgement => desc ? query.OrderByDescending(x => x.Judgement) : query.OrderBy(x => x.Judgement),
+            CollectSortField.ResultCode => desc ? query.OrderByDescending(x => x.ResultCode) : query.OrderBy(x => x.ResultCode),
+            CollectSortField.DurationMs => desc ? query.OrderByDescending(x => x.DurationMs) : query.OrderBy(x => x.DurationMs),
+            _ => desc ? query.OrderByDescending(x => x.TriggerTime) : query.OrderBy(x => x.TriggerTime)
+        };
+        return desc ? ordered.ThenByDescending(x => x.Id) : ordered.ThenBy(x => x.Id);
+    }
+
+    /// <summary>
+    /// 内存里的合并排序。必须与上面那个库侧 ApplySort 同一套次序 ——
+    /// 两侧不一致时，局部裁剪与最终排序会各按一套标准，分页结果自相矛盾。
+    /// 末尾补 MonthKey：Id 只在单个月库内唯一，跨库并列时它排不出全序。
+    /// </summary>
+    private static IOrderedEnumerable<CollectRecordListItem> ApplySort(IEnumerable<CollectRecordListItem> items, CollectQueryRequest request)
+    {
+        var desc = request.SortDescending;
+        var ordered = request.SortBy switch
+        {
+            CollectSortField.SerialNo => desc ? items.OrderByDescending(x => x.Record.SerialNo) : items.OrderBy(x => x.Record.SerialNo),
+            CollectSortField.PalletCode => desc ? items.OrderByDescending(x => x.Record.PalletCode) : items.OrderBy(x => x.Record.PalletCode),
+            CollectSortField.StationCode => desc ? items.OrderByDescending(x => x.Record.StationCode) : items.OrderBy(x => x.Record.StationCode),
+            CollectSortField.RecipeCode => desc ? items.OrderByDescending(x => x.Record.RecipeCode) : items.OrderBy(x => x.Record.RecipeCode),
+            CollectSortField.Judgement => desc ? items.OrderByDescending(x => x.Record.Judgement) : items.OrderBy(x => x.Record.Judgement),
+            CollectSortField.ResultCode => desc ? items.OrderByDescending(x => x.Record.ResultCode) : items.OrderBy(x => x.Record.ResultCode),
+            CollectSortField.DurationMs => desc ? items.OrderByDescending(x => x.Record.DurationMs) : items.OrderBy(x => x.Record.DurationMs),
+            _ => desc ? items.OrderByDescending(x => x.Record.TriggerTime) : items.OrderBy(x => x.Record.TriggerTime)
+        };
+        return (desc ? ordered.ThenByDescending(x => x.Record.Id) : ordered.ThenBy(x => x.Record.Id))
+            .ThenBy(x => x.MonthKey, StringComparer.Ordinal);
     }
 
     public async Task<CollectRecord?> GetRecordAsync(string monthKey, long recordId, CancellationToken cancellationToken = default)

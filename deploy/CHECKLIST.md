@@ -74,7 +74,7 @@
 |---|---|
 | 数据备份 | 拷贝整个 `data\`（至少 `config.db`、`runtime\`、`curves\`、`archive\`）；升级脚本也会自动备份到 `backups\upgrade-*` |
 | 升级命令 | `.\upgrade.ps1 -InstallDir D:\Apps\DataTrace\<客户>`（先 `publish.ps1`；勿 `-ForceData`） |
-| 版本可见 | 系统设置「应用版本」+ `version.json` / `customer.json` 的 AppVersion |
+| 版本可见 | 系统设置「应用版本」+「构建标识」；`version.json` 的 AppVersion / BuildStamp；`customer.json` 的 AppVersion / BuildCommit |
 | 库结构 | 随应用启动补列（EnsureCreated + AddColumnIfMissing）；可用 `migrate.ps1` 仅重启触发 |
 | 回滚程序 | `.\rollback.ps1 -InstallDir ... -BackupDir ...\backups\upgrade-...` |
 | 回滚数据 | 同上加 `-RestoreData`（先把坏 data 改名另存） |

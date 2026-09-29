@@ -2,6 +2,7 @@ using DataTrace.Application.Alarms;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
+using DataTrace.Domain.Evaluation;
 using DataTrace.Infrastructure.Realtime;
 
 namespace DataTrace.Tests;
@@ -9,6 +10,37 @@ namespace DataTrace.Tests;
 public class LineAlarmTests
 {
     private static readonly DateTime Now = new(2026, 9, 28, 15, 0, 0);
+
+    /// <summary>
+    /// 关掉规则 1/2 的点位不再报过程漂移。
+    /// </summary>
+    /// <remarks>
+    /// 漂移通知只由这两条规则派生。不过滤的话，界面上把规则关了、红条还在叫，
+    /// 现场唯一的出路又变回"把整个点位停用"—— 那正是按点位开关要解决的问题。
+    /// </remarks>
+    [Fact]
+    public void Drift_notices_are_filtered_by_the_point_rule_mask()
+    {
+        var drift = new TagDriftNotice(10, "ST010", 11, "压力", "最新一点超出控制限");
+        var masks = new Dictionary<(int, int), int?>
+        {
+            // 规则 1、2 都关掉：这条不再报。
+            [(10, 11)] = SpcRuleMask.Set(SpcRuleMask.Set(null, SpcRule.BeyondControlLimit, false), SpcRule.NineOnOneSide, false),
+            // 只关交替规则：与漂移无关，照报。
+            [(10, 12)] = SpcRuleMask.Set(null, SpcRule.FourteenAlternating, false)
+        };
+        var drifts = new List<TagDriftNotice>
+        {
+            drift,
+            drift with { TagId = 12 },
+            // 配置里没有的点位（已删除）照旧保留，不静默吞掉。
+            drift with { TagId = 99 }
+        };
+
+        var kept = TagWatchRules.ForEnabledRules(drifts, masks);
+
+        Assert.Equal(new[] { 12, 99 }, kept.Select(item => item.TagId).ToArray());
+    }
 
     [Fact]
     public void Fresh_collector_does_not_call()

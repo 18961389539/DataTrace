@@ -8,6 +8,9 @@ public static class ReturnUrl
     /// <summary>查询串与表单里都用这个名字，避免 Cookie 认证发 ReturnUrl、组件发 returnUrl 两套拼写。</summary>
     public const string QueryKey = "ReturnUrl";
 
+    /// <summary>登录页"记住我"的查询串名。登录失败回跳时把勾选状态带回去，见 <see cref="AfterSignInFailed"/>。</summary>
+    public const string RememberKey = "remember";
+
     /// <summary>用户名或密码不对。登录页上的 error 参数沿用 "1"，旧书签不会因为改常量而失配。</summary>
     public const string BadCredentialsError = "1";
 
@@ -37,8 +40,14 @@ public static class ReturnUrl
     /// </summary>
     /// <param name="error">错误码：登录页据此给出不同说法（口令错 / 被锁定 / 来源不对）。
     /// 一律笼统说"用户名或密码错误"会让被锁定的操作员反复重试，把锁定时间越推越长。</param>
-    public static string AfterSignInFailed(string? url, string error = BadCredentialsError)
-        => IsLocal(url)
-            ? $"/login?error={error}&{QueryKey}={Uri.EscapeDataString(url!)}"
-            : $"/login?error={error}";
+    /// <param name="rememberMe">"记住我"是否勾着。失败重来一次就得重新勾选的话，
+    /// 用户多半不会再勾——下一次开浏览器被登出时，他不知道是自己漏勾了。</param>
+    public static string AfterSignInFailed(string? url, string error = BadCredentialsError, bool rememberMe = false)
+    {
+        var remember = rememberMe ? $"&{RememberKey}=1" : "";
+
+        return IsLocal(url)
+            ? $"/login?error={error}&{QueryKey}={Uri.EscapeDataString(url!)}{remember}"
+            : $"/login?error={error}{remember}";
+    }
 }

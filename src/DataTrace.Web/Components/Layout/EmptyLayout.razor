@@ -1,20 +1,36 @@
 @inherits LayoutComponentBase
+@using Microsoft.AspNetCore.Http
 @inject IJSRuntime Js
 
 <MudThemeProvider Theme="DataTraceTheme.Current" @bind-IsDarkMode="_isDarkMode" />
 <MudPopoverProvider />
 <MudDialogProvider />
 <MudSnackbarProvider />
-<MudContainer MaxWidth="MaxWidth.ExtraSmall" Class="mt-16">
-    <div class="d-flex justify-end">
+@* 登录页是全屏场景：背景要铺满视口、工具区要贴在视口角上。
+   原来套的 MudContainer 只有 444px 宽，背景与右下角的按钮会被一起裁成中间一列窄条，
+   宽屏上看着像没做完。宽度与层次交给页面自己的 .login-page。 *@
+<div class="dt-empty-shell">
+    <div class="dt-empty-utilities">
         <PwaInstallButton />
         <ThemeModeSwitch IsDarkMode="_isDarkMode" OnToggle="ToggleThemeAsync" />
     </div>
     @Body
-</MudContainer>
+</div>
 
 @code {
     private bool _isDarkMode;
+
+    /// <summary>只在预渲染阶段有值；交互渲染时拿不到，那也没关系——那时主题已经定了。</summary>
+    [CascadingParameter] private HttpContext? HttpContext { get; set; }
+
+    protected override void OnInitialized()
+    {
+        // 与 MainLayout 同一套：主题偏好存在 Cookie 里，服务端首帧就定调色板。
+        // 只靠下面 OnAfterRender 读 localStorage 的话，暗色用户每次打开登录页
+        // 都先闪一帧白底——登录页恰恰是每天第一眼看到的那个页面。
+        _isDarkMode = string.Equals(
+            HttpContext?.Request.Cookies[ThemeCookieName], "dark", StringComparison.OrdinalIgnoreCase);
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -46,4 +62,7 @@
             // The Mud theme still changes for this circuit if persistence is unavailable.
         }
     }
+
+    /// <summary>与 wwwroot/js/theme.js 的 storageKey / cookie 名保持一致。</summary>
+    private const string ThemeCookieName = "dt-theme-mode";
 }

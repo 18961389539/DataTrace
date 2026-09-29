@@ -23,7 +23,11 @@ public static class SpcRuleEvaluator
     /// <summary>规则 5 的窗口长度。</summary>
     public const int TwoOfThreeWindowLength = 3;
 
-    public static IReadOnlyList<SpcViolation> Evaluate(IReadOnlyList<double> values, SpcSummary summary)
+    /// <param name="ruleMask">
+/// 点位上的规则开关（见 <see cref="SpcRuleMask"/>）；null = 全套规则。
+/// 关掉的规则连判异都不跑：既不出判异记录，也不会派生出对应的漂移告警。
+/// </param>
+    public static IReadOnlyList<SpcViolation> Evaluate(IReadOnlyList<double> values, SpcSummary summary, int? ruleMask = null)
     {
         var violations = new List<SpcViolation>();
         if (values is null || values.Count == 0)
@@ -33,13 +37,33 @@ public static class SpcRuleEvaluator
 
         var n = values.Count;
         var centerLine = summary.CenterLine;
-        var sigma = summary.WithinStdDev;
+        // 判异用的 σ 走 RuleSigma：控制限冻结时它与冻结基线同源（见 SpcCalculator）。
+        var sigma = summary.RuleSigma;
 
-        DetectBeyondControlLimit(values, summary, violations);
-        DetectSameSideRun(values, centerLine, violations);
-        DetectMonotonicRun(values, violations);
-        DetectAlternatingRun(values, violations);
-        DetectTwoOfThreeBeyondTwoSigma(values, centerLine, sigma, violations);
+        if (SpcRuleMask.IsEnabled(ruleMask, SpcRule.BeyondControlLimit))
+        {
+            DetectBeyondControlLimit(values, summary, violations);
+        }
+
+        if (SpcRuleMask.IsEnabled(ruleMask, SpcRule.NineOnOneSide))
+        {
+            DetectSameSideRun(values, centerLine, violations);
+        }
+
+        if (SpcRuleMask.IsEnabled(ruleMask, SpcRule.SixMonotonic))
+        {
+            DetectMonotonicRun(values, violations);
+        }
+
+        if (SpcRuleMask.IsEnabled(ruleMask, SpcRule.FourteenAlternating))
+        {
+            DetectAlternatingRun(values, violations);
+        }
+
+        if (SpcRuleMask.IsEnabled(ruleMask, SpcRule.TwoOfThreeBeyondTwoSigma))
+        {
+            DetectTwoOfThreeBeyondTwoSigma(values, centerLine, sigma, violations);
+        }
 
         return violations;
     }

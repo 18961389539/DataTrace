@@ -91,6 +91,37 @@ public static class TagWatchRules
         return new TagDriftNotice(stationId, code, tagId, name, detail);
     }
 
+    /// <summary>
+    /// 按点位上的判异开关过滤漂移通知。
+    /// </summary>
+    /// <remarks>
+    /// 漂移通知只由规则 1（超出控制限）与规则 2（同侧连续）派生，所以这两条都被关掉时就不再报。
+    /// 放在这里而不是报警宿主里：这是"哪条规则算数"的规则，采集与界面两侧都得一致；
+    /// 配置里找不到这个点位（已删除）时照旧保留 —— 宁可见到旧告警，也不要静默吞掉。
+    /// </remarks>
+    public static IReadOnlyList<TagDriftNotice> ForEnabledRules(
+        IReadOnlyList<TagDriftNotice> drifts,
+        IReadOnlyDictionary<(int StationId, int TagId), int?> ruleMasks)
+    {
+        if (drifts.Count == 0)
+        {
+            return drifts;
+        }
+
+        var kept = new List<TagDriftNotice>(drifts.Count);
+        foreach (var drift in drifts)
+        {
+            if (!ruleMasks.TryGetValue((drift.StationId, drift.TagId), out var mask)
+                || SpcRuleMask.IsEnabled(mask, SpcRule.BeyondControlLimit)
+                || SpcRuleMask.IsEnabled(mask, SpcRule.NineOnOneSide))
+            {
+                kept.Add(drift);
+            }
+        }
+
+        return kept;
+    }
+
     public static void Append(List<double> series, double value)
     {
         series.Add(value);

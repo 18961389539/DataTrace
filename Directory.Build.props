@@ -3,11 +3,15 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- 本项目要求 0 警告：门禁就在编译期，而不是"看一眼 CI 日志里有没有多出来"。
+         确有需要临时放行的分析器告警时，用 WarningsNotAsErrors 逐条列出，不要整体放宽。 -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <!-- Unified product version for upgrade path; visible in Settings + customer.json / version.json. Bump here. -->
     <Version>1.1.0</Version>
     <AssemblyVersion>1.1.0.0</AssemblyVersion>
     <FileVersion>1.1.0.0</FileVersion>
+    <!-- InformationalVersion 正式值由 DataTrace.Web 的构建盖章目标填成 "1.1.0+<提交>-<时间>"；
+         这里保留不带 + 的基础值，供只做静态分析的场合使用。 -->
     <InformationalVersion>1.1.0</InformationalVersion>
     <Product>DataTrace</Product>
     <Company>DataTrace</Company>

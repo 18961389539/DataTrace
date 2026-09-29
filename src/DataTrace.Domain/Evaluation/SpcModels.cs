@@ -89,6 +89,21 @@ public sealed record SpcSummary
     /// <summary>是否至少配置了一侧规格限。</summary>
     public bool HasSpecLimits { get; init; }
 
+    /// <summary>
+    /// 判异用的组内 σ：控制限冻结时与冻结基线同源，否则等于 <see cref="WithinStdDev"/>。
+    /// </summary>
+    /// <remarks>
+    /// 能力指数用本段数据的 σ，判异用基线的 σ —— 混用会让"2/3 超 2σ"这条规则与冻结的控制限对不上：
+    /// 限冻住了，±2σ 还跟着最近的数据走，等于同一条判据里有两个基准。
+    /// </remarks>
+    public double RuleSigma { get; init; }
+
+    /// <summary>控制限是否取自点位冻结的基线（false = 用本段数据现算）。</summary>
+    public bool ControlLimitsFrozen { get; init; }
+
+    /// <summary>冻结基线的来源说明（谁、何时、多少样本）；未冻结时为 null。</summary>
+    public string? FrozenSource { get; init; }
+
     public SpcVerdict Verdict { get; init; }
 
     /// <summary>结论依据的说明；<see cref="SpcVerdict.InsufficientData"/> 时必填。</summary>
@@ -97,6 +112,21 @@ public sealed record SpcSummary
     /// <summary>均值相对规格中心/目标值的偏移量（无量纲，单位是组内 σ 的倍数）。</summary>
     public double? MeanOffsetInSigma { get; init; }
 }
+
+/// <summary>
+/// 点位上冻结下来的一套控制限（取自某段受控期数据），确认后固化使用。
+/// </summary>
+/// <remarks>
+/// 控制限本该来自受控期基线并冻结，而不是每次用当前区间现算：现算的限会跟着最近的数据漂移，
+/// 过程一旦跑偏，限跟着放宽，判异反而更容易漏报 —— 这正是"过程失控却一路绿灯"的由来。
+/// </remarks>
+public readonly record struct FrozenControlLimits(
+    double CenterLine,
+    double UpperControlLimit,
+    double LowerControlLimit,
+    int SampleCount,
+    DateTime CapturedAt,
+    string CapturedBy);
 
 /// <summary>一条被触发的判异记录，覆盖连续的一段采样点。</summary>
 public sealed record SpcViolation

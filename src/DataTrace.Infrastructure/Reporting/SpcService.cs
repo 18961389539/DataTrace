@@ -94,14 +94,14 @@ public sealed class SpcService : ISpcService
         var start = 0;
         foreach (var run in runs)
         {
-            segments.Add(BuildSegment(segments.Count + 1, start, run, configLimits));
+            segments.Add(BuildSegment(segments.Count + 1, start, run, configLimits, tag.SpcRuleMask, tag.FrozenControlLimits));
             start += run.Points.Count;
         }
 
         if (segments.Count == 0)
         {
             // 空区间也要有一段，界面才能照旧显示"区间内没有采样数据"而不是空白。
-            segments.Add(BuildEmptySegment(configLimits, from, to));
+            segments.Add(BuildEmptySegment(configLimits, from, to, tag.FrozenControlLimits));
         }
 
         return new ProcessCapabilityReport
@@ -134,10 +134,12 @@ public sealed class SpcService : ISpcService
         int number,
         int startIndex,
         (double? Lower, double? Upper, bool FromConfig, List<TrendPoint> Points) run,
-        TagLimits configLimits)
+        TagLimits configLimits,
+        int? ruleMask,
+        FrozenControlLimits? frozenControlLimits)
     {
         var values = run.Points.Select(p => p.Value).ToList();
-        var summary = SpcCalculator.Compute(values, run.Lower, run.Upper, configLimits.Target);
+        var summary = SpcCalculator.Compute(values, run.Lower, run.Upper, configLimits.Target, frozenControlLimits);
 
         return new ProcessCapabilitySegment
         {
@@ -151,7 +153,7 @@ public sealed class SpcService : ISpcService
             LimitsFromConfig = run.FromConfig,
             Summary = summary,
             // 判异序号是段内 0 起的，必须换算成全窗口序号，否则界面点托盘会点到别的段上。
-            Violations = SpcRuleEvaluator.Evaluate(values, summary)
+            Violations = SpcRuleEvaluator.Evaluate(values, summary, ruleMask)
                 .Select(v => v with
                 {
                     StartIndex = v.StartIndex + startIndex,
@@ -161,9 +163,13 @@ public sealed class SpcService : ISpcService
         };
     }
 
-    private static ProcessCapabilitySegment BuildEmptySegment(TagLimits configLimits, DateTime from, DateTime to)
+    private static ProcessCapabilitySegment BuildEmptySegment(
+        TagLimits configLimits,
+        DateTime from,
+        DateTime to,
+        FrozenControlLimits? frozenControlLimits)
     {
-        var summary = SpcCalculator.Compute([], configLimits.Lower, configLimits.Upper, configLimits.Target);
+        var summary = SpcCalculator.Compute([], configLimits.Lower, configLimits.Upper, configLimits.Target, frozenControlLimits);
         return new ProcessCapabilitySegment
         {
             Number = 1,

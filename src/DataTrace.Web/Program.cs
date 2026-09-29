@@ -197,6 +197,9 @@ app.MapPost("/account/login", async (
     var userName = form["UserName"].ToString();
     var password = form["Password"].ToString();
     var returnUrl = form[ReturnUrl.QueryKey].ToString();
+    // "记住我"：勾选框只在勾上时随表单提交（value="true"），没勾到就是空串。
+    // 这里定的是"关掉浏览器还要不要认这个会话"——勾上才发带过期时间的持久 Cookie。
+    var rememberMe = form["RememberMe"].ToString() is "true" or "on";
 
     if (!SameSitePost(http))
     {
@@ -207,7 +210,8 @@ app.MapPost("/account/login", async (
 
     // lockoutOnFailure: true 才会累计失败次数（阈值与时长见 AddDataTraceInfrastructure 的 Lockout 配置）。
     // 传 false 等于把 Identity 的锁定关掉：口令可以被无限次猜，且审计里只留成功登录。
-    var result = await signIn.PasswordSignInAsync(userName, password, isPersistent: true, lockoutOnFailure: true);
+    // isPersistent 跟着"记住我"走：不勾就是会话 Cookie，浏览器一关就断，公共终端不会被下一个人接着用。
+    var result = await signIn.PasswordSignInAsync(userName, password, isPersistent: rememberMe, lockoutOnFailure: true);
     if (result.Succeeded)
     {
         try
@@ -246,7 +250,7 @@ app.MapPost("/account/login", async (
         }
     }
 
-    return Results.Redirect(ReturnUrl.AfterSignInFailed(returnUrl, error));
+    return Results.Redirect(ReturnUrl.AfterSignInFailed(returnUrl, error, rememberMe));
 }).AllowAnonymous().DisableAntiforgery();
 
 // 登出必须是 POST：GET 带副作用时，一张 <img src="/account/logout"> 或一次顶层导航

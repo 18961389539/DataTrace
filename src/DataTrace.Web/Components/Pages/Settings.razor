@@ -1,4 +1,4 @@
-﻿@page "/config/settings"
+@page "/config/settings"
 @attribute [Authorize(Roles = "Administrator,Engineer")]
 @using DataTrace.Application.Backup
 @using DataTrace.Application.Configuration
@@ -299,30 +299,32 @@ else
                     <div class="dt-settings-row">
                         <div>
                             <div class="dt-settings-row-name">运行数据保留年数<InfoHint Topic="HelpTexts.Retention" /></div>
-                            <div class="dt-settings-row-hint">仅清理超过年限的运行时整月记录库和曲线文件；不影响审计日志。</div>
+                            <div class="dt-settings-row-hint">仅清理超过年限的运行时整月记录库和曲线文件；不影响审计日志。改小会删除历史记录，仅管理员可改。</div>
                         </div>
                         <MudNumericField @bind-Value="_edit.RetentionYears" @bind-Value:after="() => _retentionError = null"
                                          Min="@SettingsLimits.MinRetentionYears" Max="@SettingsLimits.MaxRetentionYears"
                                          Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true"
+                                         Disabled="@(!_canEditBrand)"
                                          Error="@(_retentionError is not null)" ErrorText="@_retentionError"
                                          aria-label="保留年数" />
-                        <span class="dt-src-badge edit">可在此修改·配置库</span>
+                        <span class="dt-src-badge edit">@(_canEditBrand ? "可在此修改·仅管理员" : "仅管理员可修改")</span>
                     </div>
                     <div class="dt-settings-row">
                         <div>
                             <div class="dt-settings-row-name">审计日志保留年数</div>
                             <div class="dt-settings-row-hint">
                                 0 表示永久在线保留；设置为 1–30 年后，后台按月生成 gzip CSV 和 SHA-256 清单，归档校验成功才清理旧在线记录。
-                                归档存放于独立的 audit-archive 目录，不受运行数据清理影响。
+                                归档存放于独立的 audit-archive 目录，不受运行数据清理影响。仅管理员可改。
                             </div>
                         </div>
                         <MudNumericField @bind-Value="_edit.AuditRetentionYears"
                                          @bind-Value:after="() => _auditRetentionError = null"
                                          Min="@SettingsLimits.MinAuditRetentionYears" Max="@SettingsLimits.MaxAuditRetentionYears"
                                          Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true"
+                                         Disabled="@(!_canEditBrand)"
                                          Error="@(_auditRetentionError is not null)" ErrorText="@_auditRetentionError"
                                          aria-label="审计日志保留年数" />
-                        <span class="dt-src-badge edit">可在此修改·配置库</span>
+                        <span class="dt-src-badge edit">@(_canEditBrand ? "可在此修改·仅管理员" : "仅管理员可修改")</span>
                     </div>
                     <div class="dt-settings-row">
                         <div>
@@ -330,11 +332,13 @@ else
                                 <div class="dt-settings-row-hint">SHA-256 文件清单 + SQLite quick_check；恢复前会再次校验。</div>
                         </div>
                         <MudText Typo="Typo.body2">
-                                @if (_backupStatus.LastBackupFormatVersion >= 2)
+                                @* 状态为 null（还没读到备份健康信息）时走 else 分支：直接解引用会在编译期留一条 CS8602，
+                                   而项目要求 0 警告。 *@
+                                @if (_backupStatus is { LastBackupFormatVersion: >= 2 } backup)
                                 {
-                                    <text>v2 · @_backupStatus.LastDatabaseCount 个数据库 · @_backupStatus.LastVerifiedFileCount / @_backupStatus.LastFileCount 个文件通过</text>
+                                    <text>v2 · @backup.LastDatabaseCount 个数据库 · @backup.LastVerifiedFileCount / @backup.LastFileCount 个文件通过</text>
                                 }
-                                else if (_backupStatus.LastSuccessAt is not null)
+                                else if (_backupStatus?.LastSuccessAt is not null)
                                 {
                                     <text>旧版仅数据库 · 请重新生成全量备份</text>
                                 }
@@ -566,6 +570,11 @@ else
                             <div class="dt-metric-label">应用版本 <span class="dt-src-badge rt">运行时</span></div>
                             <div class="dt-metric-value">@_appVersion</div>
                         </div>
+                        @* 现场核对"这台机器跑的是哪次提交"：以前只有版本号，同版本号下的不同提交分不出来。 *@
+                        <div class="dt-metric">
+                            <div class="dt-metric-label">构建标识 <span class="dt-src-badge rt">构建时写入</span></div>
+                            <div class="dt-metric-value dt-metric-sm">@_buildCommit</div>
+                        </div>
                         <div class="dt-metric">
                             <div class="dt-metric-label">客户标识 <span class="dt-src-badge ro">客户配置·只读</span></div>
                             <div class="dt-metric-value">@(_identity.CustomerId is { Length: > 0 } ? _identity.CustomerId : "—")</div>
@@ -633,6 +642,8 @@ else
     private string _dataRoot = "";
     private string? _bindUrl;
     private string _appVersion = "";
+    /// <summary>产物对应的提交号；构建时取不到 git 信息时是一句说明，不显示空白。</summary>
+    private string _buildCommit = "";
     private string? _softCapWarning;
     private bool _productionSimWarning;
     private BackupStatusSnapshot? _backupStatus;
@@ -808,9 +819,10 @@ else
     private async Task OnBeforeInternalNavigation(LocationChangingContext context)
     {
         if (!Dirty) return;
-        var ok = await DialogService.ShowMessageBox(
+        var ok = await DialogService.ConfirmDangerAsync(
             "未保存的更改",
             "离开本页将丢失未保存的更改。确定离开？",
+            acknowledge: "我了解离开将丢失未保存的更改",
             yesText: "离开", cancelText: "留下");
         if (ok != true)
         {
@@ -832,6 +844,7 @@ else
             _dataRoot = Branding.ResolvedDataRoot;
             _bindUrl = Branding.BindUrl;
             _appVersion = Branding.AppVersion;
+            _buildCommit = Branding.BuildCommitLabel;
 
             // 只读一次快照：软上限提示与页面数据用的是同一份，之前分两次读同一个库。
             var snap = await Config.GetSnapshotAsync();
@@ -870,10 +883,11 @@ else
     private async Task DisableCollect()
     {
         if (_settings is null) return;
-        var confirmed = await DialogService.ShowMessageBox(
+        var confirmed = await DialogService.ConfirmDangerAsync(
             "停用采集",
             "停用后采集端不再读取任何工站；实时看板与查询仍可看历史数据。"
             + "这一步只改页面上的开关，要点「保存」才会真正下发并确认停用。",
+            acknowledge: "我了解停用后采集端不再读取任何工站，需保存后才生效",
             yesText: "停用采集", cancelText: "取消");
         if (confirmed == true)
         {
@@ -935,7 +949,7 @@ else
                 try
                 {
                     var user = (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
-                    var saved = await SettingsSave.SaveAsync(_edit, _loaded, user);
+                    var saved = await SettingsSave.SaveAsync(_edit, _loaded, user, _canEditBrand);
                     if (saved.ValidationMessage is { } invalid)
                     {
                         Toast.Add(invalid, Severity.Warning);
@@ -947,11 +961,6 @@ else
                     }
                     else if (saved.Saved is { } snapshot)
                     {
-                        if (saved.AuditError is { } auditError)
-                        {
-                            Toast.Add($"审计记录失败：{auditError}", Severity.Warning);
-                        }
-
                         var shown = _settings.Clone();
                         shown.ScanIntervalMs = snapshot.ScanIntervalMs;
                         shown.WriteRetryCount = snapshot.WriteRetryCount;
@@ -1101,11 +1110,12 @@ else
     {
         var years = _edit.RetentionYears!.Value;
         var newestDeleted = SettingsLimits.NewestDeletedMonth(DateTime.Today, years);
-        var confirmed = await DialogService.ShowMessageBox(
+        var confirmed = await DialogService.ConfirmDangerAsync(
             "确认保留年数",
             $"保留年数 {_loaded.RetentionYears?.ToString() ?? "默认"} → {years} 年。\n\n"
             + $"清理任务（约每 {SystemDefaults.RetentionCheckHours} 小时一次）会删除 {newestDeleted:yyyy-MM} 及更早月份的整月记录库与曲线文件，"
             + "删除后不可恢复（配置库里的审计日志不受影响）。",
+            acknowledge: $"我了解将删除 {newestDeleted:yyyy-MM} 及更早月份的整月记录库与曲线文件，且无法恢复",
             yesText: "确认修改", cancelText: "取消");
         return confirmed == true;
     }
@@ -1119,10 +1129,11 @@ else
         var effect = years == 0
             ? "停止后续自动归档和清理；已生成的归档不删除。"
             : $"后台约每 {SystemDefaults.RetentionCheckHours} 小时处理一次：先将 {newestArchivedMonth:yyyy-MM} 及更早的整月审计记录归档为 gzip CSV，并校验 SHA-256，再删除在线记录。归档失败时保留数据库原记录。";
-        var confirmed = await DialogService.ShowMessageBox(
+        var confirmed = await DialogService.ConfirmDangerAsync(
             "确认审计日志保留策略",
             $"审计日志保留年数 {_loaded.AuditRetentionYears?.ToString() ?? "0"} → {years} 年。\n\n{effect}\n\n"
             + "此设置独立于运行数据保留；审计归档位于 audit-archive 目录。请确认已配置该目录的备份和访问权限。",
+            acknowledge: "我了解该策略会影响审计记录的归档与清理",
             yesText: "确认修改", cancelText: "取消");
         return confirmed == true;
     }

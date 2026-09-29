@@ -1,3 +1,4 @@
+using System.Text.Json;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
@@ -9,6 +10,53 @@ namespace DataTrace.Tests;
 public class DomainRuleTests
 {
     // ---------- 配置快照的只读副本 ----------
+
+    /// <summary>
+    /// 点位克隆必须逐字段搬运（含后加的判异开关与冻结控制限）。
+    /// </summary>
+    /// <remarks>
+    /// 之前这里是手写字段清单，加字段时漏抄一行，编辑一次点位就会把那一列静默清空
+    /// （保存走整行 SetValues）。现在改用 MemberwiseClone，这条用 JSON 全字段比对兜底：
+    /// 将来再加字段也不会漏。
+    /// </remarks>
+    [Fact]
+    public void Tag_clone_is_a_separate_instance_with_every_field()
+    {
+        var source = new TagDefinition
+        {
+            Id = 11,
+            StationId = 10,
+            Name = "压力",
+            Address = "D1100",
+            DataType = PlcDataType.Float,
+            Length = 2,
+            Scale = 0.1,
+            Offset = 1,
+            Unit = "kN",
+            LowerLimit = 5,
+            UpperLimit = 20,
+            WarningLowerLimit = 6,
+            WarningUpperLimit = 18,
+            TargetValue = 12,
+            IsRequired = true,
+            PositionIndex = 1,
+            Enabled = true,
+            Source = TagDataSource.JsonFile,
+            SpcRuleMask = SpcRuleMask.Set(null, SpcRule.FourteenAlternating, false),
+            ControlCenterLine = 10,
+            ControlUpperLimit = 10.3,
+            ControlLowerLimit = 9.7,
+            ControlSampleCount = 40,
+            ControlCapturedAt = new DateTime(2026, 9, 20, 10, 30, 0),
+            ControlCapturedBy = "qe"
+        };
+
+        var clone = source.Clone();
+
+        Assert.NotSame(source, clone);
+        Assert.Equal(JsonSerializer.Serialize(source), JsonSerializer.Serialize(clone));
+        Assert.NotNull(clone.FrozenControlLimits);
+    }
 
     /// <summary>
     /// 配置快照是全局共享的只读实例，页面上"取库里那一行、改几个字段、再保存"必须先克隆：

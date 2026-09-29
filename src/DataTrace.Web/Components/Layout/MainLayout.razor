@@ -30,6 +30,20 @@
         <MudSpacer />
         <div class="dt-appbar-utilities">
             <PwaInstallButton />
+            @* 大屏开关放顶栏：原来只挂看板页头，不在看板上就找不到，换班的人更是无从下手。
+               大屏开启后顶栏整条隐藏，这里就不再渲染——退出改走右下角那个按钮。 *@
+            @if (!_shopFloor)
+            {
+                @* 只挂一个 Fullscreen 图标时，第一次用的人认不出来，车间问得最多的就是
+                   「大屏怎么开」。补上文字，窄屏再由 CSS 收成纯图标。 *@
+                <MudTooltip Text="大屏模式：隐藏菜单与顶栏、放大看板字号，适合车间常亮屏">
+                    <MudButton Variant="Variant.Text" Color="Color.Inherit" Class="dt-shopfloor-toggle"
+                               StartIcon="@Icons.Material.Filled.Fullscreen"
+                               OnClick="ToggleShopFloorAsync" aria-label="大屏模式">
+                        大屏
+                    </MudButton>
+                </MudTooltip>
+            }
             <ThemeModeSwitch IsDarkMode="_isDarkMode" OnToggle="ToggleThemeAsync" />
         </div>
         <AuthorizeView>
@@ -60,13 +74,25 @@
                 <LineAlarmBar />
             </Authorized>
         </AuthorizeView>
-        @Body
+        @* 大屏开关由布局持有并往下发：看板要据此决定最近采集面板的展开行为。 *@
+        <CascadingValue Name="ShopFloor" Value="_shopFloor">
+            @Body
+        </CascadingValue>
     </MudMainContent>
+    @if (_shopFloor)
+    {
+        @* 大屏模式下顶栏整条被隐藏，退出入口不能跟着消失：否则停在非看板页面就无路可退。 *@
+        <MudButton Class="dt-shopfloor-exit" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                   StartIcon="@Icons.Material.Filled.FullscreenExit" OnClick="ToggleShopFloorAsync">
+            退出大屏
+        </MudButton>
+    }
 </MudLayout>
 
 @code {
     private bool _open = true;
     private bool _isDarkMode;
+    private bool _shopFloor;
     private string _siteName = "DataTrace";
     private string? _logoUrl;
 
@@ -101,9 +127,36 @@
         {
             // Theme preference is optional; keep the light theme if browser storage is unavailable.
         }
+
+        try
+        {
+            // 大屏开关同样存在浏览器里：首帧后回读一次，刷新页面后按钮文案与右下角退出入口才对得上。
+            _shopFloor = await Js.InvokeAsync<bool>("dtShopFloor.get");
+            StateHasChanged();
+        }
+        catch (JSException)
+        {
+            // 读不到就按关闭处理；body class 仍由 datatrace.js 里的内联脚本负责。
+        }
     }
 
     private void Toggle() => _open = !_open;
+
+    /// <summary>
+    /// 车间大屏开关。由布局统一持有：顶栏按钮在每一页都能看到，看板再通过级联参数消费它。
+    /// </summary>
+    private async Task ToggleShopFloorAsync()
+    {
+        _shopFloor = !_shopFloor;
+        try
+        {
+            await Js.InvokeVoidAsync("dtShopFloor.set", _shopFloor);
+        }
+        catch (JSException)
+        {
+            // 无 JS 时仍切换本地标记；样式依赖 body class，失败时只是顶部样式与退出入口变一下。
+        }
+    }
 
     /// <summary>与 wwwroot/js/theme.js 的 storageKey / cookie 名保持一致。</summary>
     private const string ThemeCookieName = "dt-theme-mode";

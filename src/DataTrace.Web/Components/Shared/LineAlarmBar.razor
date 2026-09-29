@@ -6,12 +6,20 @@
 @if (_alarms.Count > 0)
 {
     <div class="dt-alarm-bar" role="alert" aria-live="assertive">
-        <MudAlert Severity="Severity.Error" Variant="Variant.Filled" Dense="true" Class="mb-0" NoIcon="false">
+        @* dt-alarm-alert 只是个钩子：暗色档下 filled 的 Error 底色取的是暗色调色板的 #ef9a9a，
+           整条横幅会成为夜班屏幕上最亮的块（见 app.css 里 html.dt-theme-dark 的那条覆盖）。 *@
+        <MudAlert Severity="Severity.Error" Variant="Variant.Filled" Dense="true" Class="mb-0 dt-alarm-alert" NoIcon="false">
             <div class="dt-alarm-bar-row">
                 <div>
-                    @foreach (var alarm in _alarms)
+                    @foreach (var alarm in _visibleAlarms)
                     {
                         <div>@alarm.Message</div>
+                    }
+                    @if (_hiddenCount > 0)
+                    {
+                        @* 折叠掉的条数必须自己报出来：只剩前几条时，看不出"后面还有"，
+                           容易被当成异常只有这几条，接手完前几条就以为处理完了。 *@
+                        <div class="dt-alarm-bar-more">另有 @_hiddenCount 条异常未逐条铺开，进「去接手」查看并逐条处理。</div>
                     }
                     @if (_muted)
                     {
@@ -33,9 +41,21 @@
 }
 
 @code {
+    /// <summary>
+    /// 横幅最多逐条铺开的条数。异常成串时（换型、停线、批量超限）全铺出来能占到半屏，
+    /// 把 KPI 与工站卡整块挤到折叠线以下，而横幅本身还滚动不到 —— 车间看到的反而更少。
+    /// </summary>
+    private const int MaxLines = 4;
+
     private IReadOnlyList<LineAlarm> _alarms = [];
     private string? _mutedSignature;
     private bool _sounding;
+
+    /// <summary>报警页按「最久没人接手」排序，取前几条就是等得最久的，正是横幅该叫人看的。</summary>
+    private IReadOnlyList<LineAlarm> _visibleAlarms =>
+        _alarms.Count <= MaxLines ? _alarms : _alarms.Take(MaxLines).ToList();
+
+    private int _hiddenCount => Math.Max(0, _alarms.Count - MaxLines);
 
     private bool _muted => _alarms.Count > 0 && Signature == _mutedSignature;
 

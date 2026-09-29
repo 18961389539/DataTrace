@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace DataTrace.E2E.Tests;
 
 /// <summary>
@@ -50,7 +52,7 @@ public class JourneyE2ETests : E2ETestBase
     [Fact]
     public async Task AutoCollectedDataIsQueryableFilterableExportableAndHasDetail()
     {
-        await Page.GotoAsync($"{App.BaseUrl}/query");
+        await OpenAsync("/query");
         await WaitForAsync("text=数据查询");
         await WaitForResultRowsAsync();
         var rows = Page.Locator("table tbody tr");
@@ -81,8 +83,13 @@ public class JourneyE2ETests : E2ETestBase
         Assert.EndsWith(".csv", download.SuggestedFilename);
         await download.DeleteAsync();
 
-        await rows.First.ClickAsync();
-        await WaitForAsync("text=返回查询");
+        // 点行同样走服务端事件：circuit 接手前发出的点击会被丢掉（什么都没发生）。
+        // 用重试兜住那个窗口 —— 与上面提交查询同一套做法。
+        await ActUntilAsync(() => rows.First.ClickAsync(), "返回查询", "点开明细");
+
+        // 明细是 Blazor 的增强导航（History API 改地址），DOM 换新与地址栏更新不是同一拍：
+        // 刚看到「返回查询」就读 Page.Url，可能还停在列表页的地址上。等路径真落到明细页再断言。
+        await Page.WaitForURLAsync(new Regex("/query/\\d{6}/\\d+"));
 
         Assert.Matches("/query/\\d{6}/\\d+", new Uri(Page.Url).PathAndQuery);
         // 详情是异步取数的：骨架屏上就有"返回查询"链接，等它出现就立刻读 body
@@ -99,7 +106,7 @@ public class JourneyE2ETests : E2ETestBase
     [Fact]
     public async Task SimulatePageShowsSixStationTriggerButtons()
     {
-        await Page.GotoAsync($"{App.BaseUrl}/simulate");
+        await OpenAsync("/simulate");
         await WaitForAsync("text=PLC 仿真");
 
         var labels = await Page.Locator("button").Filter(new() { HasText = "触发" }).AllInnerTextsAsync();
@@ -112,7 +119,7 @@ public class JourneyE2ETests : E2ETestBase
     [Fact]
     public async Task SimulatorReportsProgressWhileRunning()
     {
-        await Page.GotoAsync($"{App.BaseUrl}/simulate");
+        await OpenAsync("/simulate");
         await WaitForAsync("text=PLC 仿真");
 
         // 自动跑线在跑时，状态卡要随 SignalR 推送刷新出累计计数，这是 circuit 活着的直接证据。

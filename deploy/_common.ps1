@@ -232,6 +232,29 @@ function Get-DtAppVersion {
     return $null
 }
 
+<#
+.SYNOPSIS
+  产物里烘焙的提交号（ProductVersion 的 "+<短 sha>" 段），形如 d279acf；取不到时返回 $null。
+.DESCRIPTION
+  与 Get-DtAppVersion 的区别：后者刻意剥掉 "+" 段（客户看到的是干净的版本号），
+  这个函数专门取那一段 —— 它回答"这台机器跑的是哪次提交"。
+#>
+function Get-DtBuildStamp {
+    param([string]$ExePath = '')
+    if ($ExePath -and (Test-Path -LiteralPath $ExePath)) {
+        $vi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($ExePath)
+        if ($vi.ProductVersion) {
+            $pv = [string]$vi.ProductVersion
+            $plus = $pv.IndexOf('+')
+            if ($plus -gt 0 -and $plus -lt $pv.Length - 1) {
+                $stamp = $pv.Substring($plus + 1).Trim()
+                if ($stamp) { return $stamp }
+            }
+        }
+    }
+    return $null
+}
+
 function Get-VersionMetaPath {
     param([Parameter(Mandatory)][string]$InstallDir)
     return (Join-Path $InstallDir 'version.json')
@@ -253,7 +276,8 @@ function Write-VersionMeta {
         [Parameter(Mandatory)][string]$InstallDir,
         [Parameter(Mandatory)][string]$AppVersion,
         [string]$PreviousVersion = $null,
-        [string]$Note = 'Schema applied on app startup (EnsureCreated + AddColumnIfMissing)'
+        [string]$Note = 'Schema applied on app startup (EnsureCreated + AddColumnIfMissing)',
+        [string]$BuildStamp = $null
     )
     $path = Get-VersionMetaPath -InstallDir $InstallDir
     $obj = [ordered]@{
@@ -262,6 +286,8 @@ function Write-VersionMeta {
         UpgradedAt      = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         SchemaNote      = $Note
     }
+    # 记录这次装上去的产物的提交号：verify.ps1 拿它与 exe 里烘焙的比对，防止"装错包/换错文件"。
+    if ($BuildStamp) { $obj['BuildStamp'] = $BuildStamp }
     $json = $obj | ConvertTo-Json -Depth 5
     [System.IO.File]::WriteAllText($path, $json, [System.Text.UTF8Encoding]::new($false))
 }

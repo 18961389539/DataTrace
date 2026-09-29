@@ -1,7 +1,9 @@
 using DataTrace.Application.Backup;
 using DataTrace.Application.Configuration;
+using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Web.Components.Pages;
+using DataTrace.Web.Services;
 using Moq;
 
 namespace DataTrace.Web.Tests;
@@ -173,6 +175,8 @@ public class SettingsPageTests : WebTestBase
         var box = Assert.Single(Dialogs.MessageBoxes);
         Assert.Equal("停用采集", box.Title);
         Assert.Contains("实时看板与查询仍可看历史数据", box.Message);
+        // 第二道门的勾选语要和后果对得上，否则用户勾的是一句看不懂的话。
+        Assert.Contains("采集端不再读取任何工站", box.Acknowledge);
         Assert.Contains("采集已停用", cut.Markup);
     }
 
@@ -186,6 +190,36 @@ public class SettingsPageTests : WebTestBase
 
         Assert.Single(Dialogs.MessageBoxes);
         Assert.Contains("采集已启用", cut.Markup);
+    }
+
+    /// <summary>
+    /// 「关于」里要显示构建标识：现场核对"这台机器跑的是哪次提交"只有这一个入口。
+    /// </summary>
+    [Fact]
+    public void About_section_shows_the_build_marker()
+    {
+        var cut = Render();
+
+        Assert.Contains("构建标识", cut.Markup);
+        Assert.Contains(BuildInfo.CommitLabel, cut.Markup);
+    }
+
+    /// <summary>
+    /// 保留年数决定"什么时候删历史"，是删除授权而不是普通配置项：非管理员只能看。
+    /// </summary>
+    /// <remarks>
+    /// 界面只读是第一道；绕过界面直接调服务的路径由 SettingsSaveService 的守卫拦住
+    /// （见 DataTrace.Tests 的 SettingsSaveServiceTests）。
+    /// </remarks>
+    [Fact]
+    public void RetentionYears_are_read_only_for_non_admins()
+    {
+        UseRole(AppRoles.Engineer);
+        var cut = Render(s => s.RetentionYears = 3);
+
+        Assert.True(InputForAriaLabel(cut, "保留年数").HasAttribute("disabled"));
+        Assert.True(InputForAriaLabel(cut, "审计日志保留年数").HasAttribute("disabled"));
+        Assert.Contains("仅管理员可修改", cut.Markup);
     }
 
     [Fact]
@@ -246,6 +280,8 @@ public class SettingsPageTests : WebTestBase
         Assert.Equal("确认保留年数", box.Title);
         Assert.Contains("3 → 1", box.Message);
         Assert.Contains("不可恢复", box.Message);
+        // 勾选语要把"删到哪个月"重复一遍：这是全局唯一的不可逆删除。
+        Assert.Contains("无法恢复", box.Acknowledge);
         Assert.Empty(Config.SavedSettings);
 
         // 确认之后再点一次：按新年限保存。
@@ -277,8 +313,15 @@ public class SettingsPageTests : WebTestBase
         Assert.Equal(5, saved.RetentionYears);
     }
 
+    /// <summary>
+    /// 审计写不进去时整笔回滚：不许出现"设置改了但查不到是谁改的"，也不许报成保存成功。
+    /// </summary>
+    /// <remarks>
+    /// 这里断言的是页面行为（失败提示 + 没有成功提示）。真的"库里也没改"由
+    /// DataTrace.Tests 用真 SQLite 配置库验证（替身不建真事务）。
+    /// </remarks>
     [Fact]
-    public void AuditFailureIsReportedWithoutHidingTheSuccessfulSave()
+    public void AuditFailureRollsTheSettingsBackInsteadOfSavingWithoutATrace()
     {
         Audit
             .Setup(a => a.WriteAsync(
@@ -295,10 +338,9 @@ public class SettingsPageTests : WebTestBase
         TypeIntoAriaLabel(cut, "扫描间隔(ms)", "120");
         ClickButton(cut, "保存");
 
-        // 设置已经落库下发，不能报成"保存失败"让人反复保存；但也不能一声不响。
-        Assert.Single(Config.SavedSettings);
-        Assert.Contains(Toast.Messages, m => m.Contains("审计记录失败") && m.Contains("审计库只读"));
-        Assert.Contains(Toast.Messages, m => m.Contains("配置已保存并下发采集端"));
+        Assert.Contains(Toast.Messages, m => m.Contains("审计库只读"));
+        // 报"已保存并下发"的话，用户会以为新参数生效了，实际库里没变。
+        Assert.DoesNotContain(Toast.Messages, m => m.Contains("配置已保存并下发采集端"));
     }
 
     [Fact]

@@ -94,6 +94,29 @@
                 <span>当前条件暂无基线报告。</span>
             }
         </MudText>
+        @* 三种空态各给一条出路：只报「没有」等于把人晾在这，
+           用户得自己猜是区间太窄、曲线没配、还是刚才那下白点了。 *@
+        @if (!_loading)
+        {
+            <MudStack Row="true" Spacing="2" Class="mt-3" Wrap="Wrap.Wrap">
+                @if (!string.IsNullOrWhiteSpace(_loadError))
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Refresh" OnClick="Load">重试</MudButton>
+                }
+                else if (_curveId == 0)
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Add" Href="/config/stations">去工站配置加曲线</MudButton>
+                }
+                else
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.DateRange"
+                               OnClick="@(() => WidenRangeAsync(30))">放宽到近 30 天</MudButton>
+                }
+            </MudStack>
+        }
     </MudPaper>
 }
 else
@@ -398,6 +421,14 @@ else
     /// 用计算属性而不是静态字段，免得服务长跑后停在启动那天。
     /// </summary>
     private static DateTime DefaultFrom => DateTime.Today.AddDays(-6);
+
+    /// <summary>空态出口：默认区间只有 7 天，基线样本常常落在更早的时间里。</summary>
+    private async Task WidenRangeAsync(int days)
+    {
+        _from = DateTime.Today.AddDays(-(days - 1));
+        _to = DateTime.Today;
+        await Load();
+    }
 
     private DateTime? _from = DefaultFrom;
     private DateTime? _to = DateTime.Today;

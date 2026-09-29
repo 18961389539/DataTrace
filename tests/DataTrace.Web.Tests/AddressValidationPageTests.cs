@@ -1,4 +1,4 @@
-﻿using DataTrace.Application.Configuration;
+using DataTrace.Application.Configuration;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Web.Components.Pages;
@@ -246,11 +246,17 @@ public class AddressValidationPageTests : WebTestBase
         Assert.Contains("新增点位", cut.Markup);
     }
 
+    /// <summary>
+    /// 审计写不进去时整笔回滚：配置与审计同事务，不存在"工站改了但没留痕"这种中间态。
+    /// </summary>
+    /// <remarks>
+    /// 页面行为在这里断言（失败提示 + 没有成功提示）；真的回滚由 DataTrace.Tests
+    /// 用真 SQLite 配置库验证（替身不建真事务）。
+    /// </remarks>
     [Fact]
-    public void Audit_failure_is_reported_separately_from_a_successful_save()
+    public void Audit_failure_rolls_the_save_back_instead_of_keeping_an_untraced_change()
     {
         SeedStationPage();
-        // 审计写库失败：配置其实已经保存并下发，提示必须把两件事分开说。
         Audit
             .Setup(a => a.WriteAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
@@ -260,9 +266,9 @@ public class AddressValidationPageTests : WebTestBase
         var cut = RenderStations();
         ClickButton(cut, "保存");
 
-        Assert.Contains(nameof(IConfigRepository.SaveStationAsync), Config.Calls);
-        Assert.Contains(Toast.Messages, m => m.Contains("审计记录失败") && m.Contains("审计库不可用"));
-        Assert.Contains(Toast.Messages, m => m.Contains("已保存并下发采集器"));
+        Assert.Contains(Toast.Messages, m => m.Contains("审计库不可用"));
+        // 报成功的话，现场会以为工站改动生效了，实际整笔回滚了。
+        Assert.DoesNotContain(Toast.Messages, m => m.Contains("已保存并下发采集器"));
     }
 
     [Fact]

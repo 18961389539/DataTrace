@@ -2,6 +2,7 @@ using System.Globalization;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
+using DataTrace.Domain.Evaluation;
 
 namespace DataTrace.Web.Services;
 
@@ -229,4 +230,18 @@ public static class DisplayLabels
     };
 
     private static string NullOr(string? value) => string.IsNullOrWhiteSpace(value) ? "-" : value;
+
+    /// <summary>
+    /// 判异规则的中文名称。编号沿用 Nelson / Western Electric 的顺序，
+    /// 报表的判异表与点位上的规则开关共用同一套文案。
+    /// </summary>
+    public static string SpcRuleText(SpcRule rule) => rule switch
+    {
+        SpcRule.BeyondControlLimit => "规则 1 · 超 3σ",
+        SpcRule.NineOnOneSide => "规则 2 · 同侧连续",
+        SpcRule.SixMonotonic => "规则 3 · 持续趋势",
+        SpcRule.FourteenAlternating => "规则 4 · 系统性振荡",
+        SpcRule.TwoOfThreeBeyondTwoSigma => "规则 5 · 2/3 超 2σ",
+        _ => rule.ToString()
+    };
 }

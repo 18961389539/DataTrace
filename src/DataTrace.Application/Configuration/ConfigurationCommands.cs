@@ -180,7 +180,14 @@ public sealed record SaveTagCommand(
     bool IsRequired,
     int PositionIndex,
     bool Enabled,
-    TagDataSource Source)
+    TagDataSource Source,
+    int? SpcRuleMask,
+    double? ControlCenterLine,
+    double? ControlUpperLimit,
+    double? ControlLowerLimit,
+    int? ControlSampleCount,
+    DateTime? ControlCapturedAt,
+    string? ControlCapturedBy)
 {
     public static SaveTagCommand From(TagDefinition tag) => new(
         tag.Id,
@@ -200,7 +207,14 @@ public sealed record SaveTagCommand(
         tag.IsRequired,
         tag.PositionIndex,
         tag.Enabled,
-        tag.Source);
+        tag.Source,
+        tag.SpcRuleMask,
+        tag.ControlCenterLine,
+        tag.ControlUpperLimit,
+        tag.ControlLowerLimit,
+        tag.ControlSampleCount,
+        tag.ControlCapturedAt,
+        tag.ControlCapturedBy);
 
     public TagDefinition ToEntity() => new()
     {
@@ -221,7 +235,14 @@ public sealed record SaveTagCommand(
         IsRequired = IsRequired,
         PositionIndex = PositionIndex,
         Enabled = Enabled,
-        Source = Source
+        Source = Source,
+        SpcRuleMask = SpcRuleMask,
+        ControlCenterLine = ControlCenterLine,
+        ControlUpperLimit = ControlUpperLimit,
+        ControlLowerLimit = ControlLowerLimit,
+        ControlSampleCount = ControlSampleCount,
+        ControlCapturedAt = ControlCapturedAt,
+        ControlCapturedBy = ControlCapturedBy
     };
 }
 

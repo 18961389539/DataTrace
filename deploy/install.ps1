@@ -128,9 +128,10 @@ Write-CustomerMeta -InstallDir $InstallDir -CustomerId $CustomerId -Port $Port -
 $installedExe = Join-Path $InstallDir 'DataTrace.Web.exe'
 $installedVer = Get-DtAppVersion -ExePath $installedExe
 if ($installedVer) {
-    Write-VersionMeta -InstallDir $InstallDir -AppVersion $installedVer -PreviousVersion $null
+    Write-VersionMeta -InstallDir $InstallDir -AppVersion $installedVer -PreviousVersion $null `
+        -BuildStamp (Get-DtBuildStamp -ExePath $installedExe)
     Update-CustomerMetaVersion -InstallDir $InstallDir -AppVersion $installedVer -PreviousVersion $null
-    Write-DtInfo "AppVersion=$installedVer"
+    Write-DtInfo "AppVersion=$installedVer (build $(Get-DtBuildStamp -ExePath $installedExe))"
 }
 
 $probe = Join-Path $dataDir '.write-probe'

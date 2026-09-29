@@ -519,6 +519,18 @@ public class ReturnUrlTests
     }
 
     [Fact]
+    public void Remember_me_survives_the_failed_round_trip_so_the_tick_does_not_reset()
+    {
+        // 重输一次就得重新勾选的话，用户多半不会再勾——下一次开浏览器被登出时还以为自己勾过。
+        Assert.Equal("/login?error=1&remember=1",
+            ReturnUrl.AfterSignInFailed(null, ReturnUrl.BadCredentialsError, rememberMe: true));
+
+        // 带深链接时也要一起带上，否则从 MES 拷进来的那条记录地址上重输一次就白勾了。
+        Assert.Equal("/login?error=locked&ReturnUrl=%2Fusers&remember=1",
+            ReturnUrl.AfterSignInFailed("/users", ReturnUrl.LockedError, rememberMe: true));
+    }
+
+    [Fact]
     public void Failure_reason_travels_with_the_target_so_the_login_page_can_explain_itself()
     {
         Assert.Equal("/login?error=locked&ReturnUrl=%2Fquery",

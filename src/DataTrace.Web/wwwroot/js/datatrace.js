@@ -103,6 +103,25 @@ window.dtCopy = async function (text) {
     }
 })();
 
+// 登录页密码显隐。登录走原生 POST（发生在 SignalR 建立之前），circuit 起来之前按钮也必须能用；
+// 而首次交互渲染会把这段表单节点重建一遍，直接挂在按钮上的监听会丢。
+// 所以监听委托在 document 上，按钮只认 data-dt-pass-toggle，状态只落在 aria-pressed（样式按它换眼睛图标）。
+(function () {
+    document.addEventListener('click', function (e) {
+        var btn = e.target && e.target.closest && e.target.closest('[data-dt-pass-toggle]');
+        if (!btn) { return; }
+
+        var wrap = btn.closest('[data-dt-pass]');
+        var input = wrap ? wrap.querySelector('input') : null;
+        if (!input || (input.type !== 'password' && input.type !== 'text')) { return; }
+
+        var show = input.type === 'password';
+        input.type = show ? 'text' : 'password';
+        btn.setAttribute('aria-pressed', show ? 'true' : 'false');
+        btn.setAttribute('aria-label', show ? '隐藏密码' : '显示密码');
+    });
+})();
+
 
 // 系统设置分区锚点滚动（平滑；缺失元素时静默）。
 window.dtScrollIntoView = function (id) {
@@ -112,6 +131,114 @@ window.dtScrollIntoView = function (id) {
     el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     return true;
 };
+
+// 折线图悬停读数：面板锚在光标旁，显示离光标最近的那个采样点的数值
+// （近右/下边缘时自动翻到另一侧）。数值与点位都由服务端渲染，这里只做
+// "找最近的点 + 挪面板"，不发任何回服务端的消息。
+//
+// 用 document 委托而不是各图表各自 bind：读数只认 DOM 里已有的点位与 data-tip，
+// 不需要 circuit 参与 —— 页面是预渲染直出、或 SignalR 断线时，读数照样能用。
+(function () {
+    var READOUT = '.dt-chart-readout';
+    var active = null;
+    var activePoint = null;
+    var pending = null;
+
+    function hide(el) {
+        if (el) { el.hidden = true; }
+    }
+
+    function clearPoint() {
+        if (activePoint) {
+            activePoint.classList.remove('is-active');
+            activePoint = null;
+        }
+    }
+
+    function move(el, x, y) {
+        var box = el.getBoundingClientRect();
+        var left = x + 14;
+        var top = y - 8;
+        if (left + box.width > window.innerWidth - 8) {
+            left = x - box.width - 14;
+        }
+        if (top + box.height > window.innerHeight - 8) {
+            top = y - box.height - 8;
+        }
+        el.style.left = Math.max(8, left) + 'px';
+        el.style.top = Math.max(8, top) + 'px';
+    }
+
+    function nearest(box, svg, ev) {
+        // 点在 SVG 自己的坐标系里；鼠标是 CSS 像素，乘上 viewBox 缩放比再比距离。
+        var view = svg.getAttribute('viewBox').split(' ');
+        var rect = svg.getBoundingClientRect();
+        var scale = rect.width ? parseFloat(view[2]) / rect.width : 0;
+        var lx = (ev.clientX - rect.left) * scale;
+        var ly = (ev.clientY - rect.top) * scale;
+
+        var found = null;
+        var best = Infinity;
+        var circles = box.querySelectorAll('circle.dt-point');
+        for (var j = 0; j < circles.length; j++) {
+            var dx = circles[j].getAttribute('cx') - lx;
+            var dy = circles[j].getAttribute('cy') - ly;
+            var d = dx * dx + dy * dy;
+            if (d < best) {
+                best = d;
+                found = circles[j];
+            }
+        }
+
+        return found;
+    }
+
+    function update(ev) {
+        var box = ev.target && ev.target.closest ? ev.target.closest('.dt-chart-box') : null;
+        var readout = box ? box.querySelector(READOUT) : null;
+
+        if (!readout) {
+            // 移出图表（或进了迷你曲线）：收起面板，指针不用悬在图上也能清干净。
+            hide(active);
+            clearPoint();
+            active = null;
+            return;
+        }
+
+        var svg = box.querySelector('svg.dt-chart');
+        var point = svg ? nearest(box, svg, ev) : null;
+        var tip = point ? point.getAttribute('data-tip') : null;
+        if (!tip) {
+            return;
+        }
+
+        if (active && active !== readout) { hide(active); }
+        active = readout;
+        if (activePoint !== point) {
+            clearPoint();
+            point.classList.add('is-active');
+            activePoint = point;
+        }
+        readout.textContent = tip;
+        readout.hidden = false;
+        move(readout, ev.clientX, ev.clientY);
+    }
+
+    // 鼠标事件比屏幕刷新密，几何计算按帧做一次就够（每帧遍历几十个点是这里的开销）。
+    document.addEventListener('mousemove', function (ev) {
+        if (pending) {
+            pending.ev = ev;
+            return;
+        }
+
+        pending = { ev: ev };
+        window.requestAnimationFrame(function () {
+            var frame = pending;
+            pending = null;
+            update(frame.ev);
+        });
+    }, { passive: true });
+})();
 
 // 大屏/车间模式：给 body 挂 class，偏好写入 localStorage；退出按钮始终由页面提供。
 

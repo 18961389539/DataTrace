@@ -1,5 +1,6 @@
-﻿using DataTrace.Domain.Entities;
+using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
+using DataTrace.Domain.Evaluation;
 using DataTrace.Web.Components.Dialogs;
 using Microsoft.Extensions.DependencyInjection;
 using MudBlazor;
@@ -236,6 +237,31 @@ public class TagEditDialogTests : WebTestBase
         var edited = Assert.IsType<TagDefinition>(result!.Data);
         Assert.Equal("force", edited.Address);
         Assert.Equal("压力", edited.Name);
+    }
+
+    /// <summary>
+    /// 判异规则开关写回点位：关掉一条只少那一位，其余规则照旧。
+    /// </summary>
+    /// <remarks>
+    /// 按文案定位勾选框而不是按顺序取：对话框里 必填/启用 两个 MudSwitch 同样是
+    /// input[type=checkbox]，按下标取会在布局一变时点错。
+    /// </remarks>
+    [Fact]
+    public async Task Unchecking_a_rule_stores_the_mask()
+    {
+        var (provider, reference) = await OpenAsync(Tag());
+
+        var label = provider.FindAll("label").First(l => l.TextContent.Contains("规则 4"));
+        var box = label.QuerySelector("input[type=checkbox]");
+        Assert.NotNull(box);
+        box.Change(false);
+
+        ClickDialogButton(provider, "保存并下发");
+
+        var edited = Assert.IsType<TagDefinition>((await reference.Result)!.Data);
+        Assert.NotNull(edited.SpcRuleMask);
+        Assert.False(SpcRuleMask.IsEnabled(edited.SpcRuleMask, SpcRule.FourteenAlternating));
+        Assert.True(SpcRuleMask.IsEnabled(edited.SpcRuleMask, SpcRule.BeyondControlLimit));
     }
 
     [Fact]

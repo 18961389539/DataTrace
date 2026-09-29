@@ -61,18 +61,29 @@ Assert-Check (Test-Path $prodSettings) "appsettings.Production.json" $prodSettin
 $brandingDir = Join-Path $InstallDir 'branding'
 Assert-Check (Test-Path -LiteralPath $brandingDir) "branding directory" $brandingDir
 
-# AppVersion check (升得了)
+# AppVersion check (升得了) + 构建标识（哪次提交）
 $exeForVer = Join-Path $InstallDir 'DataTrace.Web.exe'
 $verFromExe = if (Test-Path $exeForVer) { Get-DtAppVersion -ExePath $exeForVer } else { $null }
+$stampFromExe = if (Test-Path $exeForVer) { Get-DtBuildStamp -ExePath $exeForVer } else { $null }
 $verMetaPath = Get-VersionMetaPath -InstallDir $InstallDir
 $verFromFile = $null
+$stampFromFile = $null
 if (Test-Path -LiteralPath $verMetaPath) {
-    try { $verFromFile = [string](Read-VersionMeta -InstallDir $InstallDir).AppVersion } catch {}
+    try {
+        $vm = Read-VersionMeta -InstallDir $InstallDir
+        $verFromFile = [string]$vm.AppVersion
+        if ($vm.PSObject.Properties['BuildStamp']) { $stampFromFile = [string]$vm.BuildStamp }
+    } catch {}
 }
 if ($verFromExe) {
     Write-DtOk "AppVersion (exe) = $verFromExe"
 } else {
     Write-DtWarn "AppVersion not readable from exe ProductVersion"
+}
+if ($stampFromExe) {
+    Write-DtOk "构建标识 (exe) = $stampFromExe"
+} else {
+    Write-DtWarn "构建标识不可读（exe 的 ProductVersion 没有 + 提交号段；这批产物可能来自未盖章的构建）"
 }
 if ($verFromFile) {
     Write-DtOk "version.json AppVersion = $verFromFile"
@@ -80,6 +91,14 @@ if ($verFromFile) {
     Write-DtOk "customer.json AppVersion = $([string]$meta.AppVersion)"
 } else {
     Write-DtWarn "version.json / customer.json AppVersion not set yet (run upgrade.ps1 or re-install)"
+}
+
+# 产物与安装记录是否一致：不一致说明这台机器上的程序文件被换过（手工拷过 exe / 装错包 / 回滚没走脚本）。
+if ($stampFromExe -and $stampFromFile) {
+    Assert-Check ($stampFromExe -eq $stampFromFile) "构建标识与安装记录一致" `
+        "exe=$stampFromExe version.json=$stampFromFile"
+} elseif ($stampFromExe -and -not $stampFromFile) {
+    Write-DtWarn "version.json 没有 BuildStamp（旧记录）；下次 install/upgrade 会写入，届时可对比"
 }
 
 if ($metaOk -and $meta) {

@@ -74,7 +74,7 @@ public class UiRegressionE2ETests : E2ETestBase
     {
         // 曾经每个筛选项按 12 栏切成 168px，而日期控件至少需要 180px，
         // "2026/9/21" 就被裁成 "2026/9/2" —— 用户看不到自己正在按哪天过滤。
-        await Page.GotoAsync($"{App.BaseUrl}/query");
+        await OpenAsync("/query");
         await WaitForAsync(".dt-range input");
 
         var clipped = await Page.EvaluateAsync<bool>("""
@@ -108,7 +108,7 @@ public class UiRegressionE2ETests : E2ETestBase
         // 而那是程序性聚焦，不该在标题周围画出橙色焦点环。
         // 逐路由都测是因为这条只靠约定、没有编译期检查 —— 新页面若用裸 Typo.h5
         // 而不是 PageHeader，焦点环就会悄悄回来。
-        await Page.GotoAsync($"{App.BaseUrl}{path}");
+        await OpenAsync(path);
 
         // 标题在静态预渲染的 HTML 里就有了，而移动焦点要等 SignalR circuit 起来之后，
         // 所以等"焦点真的落上去了"而不是等元素存在 —— 后者会读到还没接管的页面。
@@ -130,7 +130,7 @@ public class UiRegressionE2ETests : E2ETestBase
     [Fact]
     public async Task QueryFiltersRoundTripThroughTheAddressBar()
     {
-        await Page.GotoAsync($"{App.BaseUrl}/query");
+        await OpenAsync("/query");
         await WaitForAsync(".dt-range button");
         // 预设按钮在预渲染 HTML 里就有，但 circuit 没接管前点它不会写回地址栏。
         await WaitForCircuitReadyAsync();
@@ -157,7 +157,7 @@ public class UiRegressionE2ETests : E2ETestBase
     [Fact]
     public async Task LongResultTablesKeepTheirHeaderPinned()
     {
-        await Page.GotoAsync($"{App.BaseUrl}/query?size=100");
+        await OpenAsync("/query?size=100");
         await WaitForResultRowsAsync();
 
         // 断言契约而不是模拟滚动：滚动是否真的生效取决于当次有多少行，
@@ -179,7 +179,7 @@ public class UiRegressionE2ETests : E2ETestBase
     [Fact]
     public async Task DetailPageShowsTheLimitsTheJudgementActuallyUsed()
     {
-        await Page.GotoAsync($"{App.BaseUrl}/query");
+        await OpenAsync("/query");
         await WaitForResultRowsAsync();
 
         // 点的这一下同样可能落在 circuit 接手的窗口里被丢掉（什么都没发生），
@@ -227,9 +227,9 @@ public class UiRegressionE2ETests : E2ETestBase
         await WaitBodyContainsAsync("过程能力");
 
         // MudTabs 只渲染当前页签的面板，过程能力必须点过去才在 DOM 里。
-        await ClickTabUntilAsync("过程能力", "I-MR 单值移动极差控制图");
-
-        // 首屏那次统计可能早于模拟器产出数据，此时面板是"区间内没有采样数据"、不画图。
+        // 等的文案取面板自己的「Cpk（组内）」而不是图标题：图标题要有采样点才出现，
+        // 而这个实例的数据目录是每轮新建的，开局还没采到样本，等图标题会先超时。
+        await ClickTabUntilAsync("过程能力", "Cpk（组内）");
         await RefreshUntilCapabilityHasSamplesAsync();
 
         // LineChart 的 svg 自己带 dt-chart 类，不是 .dt-chart 的子元素。
@@ -238,6 +238,70 @@ public class UiRegressionE2ETests : E2ETestBase
         var body = await Page.InnerTextAsync("body");
         Assert.DoesNotContain("区间内规格限变更", body);
         Assert.Equal(0, await Page.Locator("th", new() { HasText = "时间范围" }).CountAsync());
+    }
+
+    /// <summary>
+    /// 悬停读数：鼠标进入曲线后，读数面板要真的显形并带上那一点的数值。
+    /// 读数由 js/datatrace.js 绑（点位 → 找最近的点 → 挪面板），这条用例守住整条链路：
+    /// 服务端得渲染出点位与 data-tip，脚本得绑上，面板得从 hidden 变可见。
+    /// 不校验具体数值（那是 LineChartTests 的事）。
+    /// </summary>
+    [Fact]
+    public async Task HoveringAChartShowsThePointReadout()
+    {
+        await OpenAsync("/reports");
+        await WaitBodyContainsAsync("过程能力");
+
+        await ClickTabUntilAsync("过程能力", "Cpk（组内）");
+        await RefreshUntilCapabilityHasSamplesAsync();
+
+        var chart = Page.Locator("svg.dt-chart").First;
+        await chart.WaitForAsync();
+        await chart.ScrollIntoViewIfNeededAsync();
+
+        // 悬停读数由 JS 在图表渲完后绑定（见 dtChartReadout.bind：读数值取自点位自带的 data-tip）。
+        // 得等点位真的带上 data-tip 再悬停 —— 早悬停的话那一刻既没有可读点数、绑定也可能还没跑，
+        // "等面板可见"就会一直等不到（表现为 20s 超时）。
+        await Page.WaitForFunctionAsync(
+            "() => document.querySelector('.dt-chart-box circle.dt-point[data-tip]') !== null");
+
+        var box = await chart.BoundingBoxAsync();
+        Assert.NotNull(box);
+        await Page.Mouse.MoveAsync(box.X + box.Width / 2, box.Y + box.Height / 2);
+
+        // 面板常驻 DOM 但带 hidden；等它可见就是等 JS 把读数填出来了。
+        var readout = Page.Locator(".dt-chart-readout").First;
+        try
+        {
+            await readout.WaitForAsync(new() { Timeout = 5000 });
+        }
+        catch (TimeoutException)
+        {
+            // 临时诊断：悬停读数没出来时，把图表此刻的状态原样打出来（读完即删）。
+            var probe = await Page.EvaluateAsync<string>("""
+                () => {
+                    const boxes = [...document.querySelectorAll('.dt-chart-box')];
+                    const svg = document.querySelector('svg.dt-chart');
+                    const rect = svg ? svg.getBoundingClientRect() : null;
+                    const at = rect ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) : null;
+                    return JSON.stringify({
+                        html: document.querySelector('.dt-chart-box') ? document.querySelector('.dt-chart-box').outerHTML.slice(0, 700) : null,
+                        boxes: boxes.length,
+                        boxHeads: boxes.map(b => (b.parentElement ? b.parentElement.className : '') + ' > ' + b.className),
+                        points: boxes.map(b => b.querySelectorAll('circle.dt-point').length),
+                        tips: boxes.map(b => [...b.querySelectorAll('circle.dt-point')].map(c => c.getAttribute('data-tip'))),
+                        svgRect: rect ? { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) } : null,
+                        atCenter: at ? at.tagName + '|' + (at.getAttribute('class') || '') : null,
+                        tabs: [...document.querySelectorAll('.mud-tab')].map(t => t.textContent + (t.getAttribute('aria-selected') === 'true' ? '*' : ''))
+                    });
+                }
+                """);
+            Assert.Fail($"悬停读数未出现。状态：{probe}");
+        }
+
+        var text = await readout.InnerTextAsync();
+        Assert.Contains("→", text);
+        Assert.Contains("采样点", text);
     }
 
     /// <summary>
@@ -293,8 +357,11 @@ public class UiRegressionE2ETests : E2ETestBase
     [Fact]
     public async Task SettingsWarnsAboutUnsavedEditsAndClearsItAfterSaving()
     {
-        await Page.GotoAsync($"{App.BaseUrl}/config/settings");
+        await OpenAsync("/config/settings");
         await WaitForAsync("text=系统设置");
+        // 打字前必须等 circuit 接手：输入框在预渲染的 HTML 里就已经存在，而接管时这段 DOM
+        // 会被整段重建，那个窗口里发出的 input 会被丢掉——失败方式就是"敲了 90，页面上什么都没发生"。
+        await WaitForCircuitReadyAsync();
 
         Assert.Equal(0, await Page.Locator("text=未保存").CountAsync());
 
@@ -333,7 +400,7 @@ public class UiRegressionE2ETests : E2ETestBase
     {
         // 这条规则原本在工站配置页和型号限值对话框各写一份，而对话框那份漏了目标值两条，
         // 同一组数字一边拒绝一边放行。现在两边共用域层那一份。
-        await Page.GotoAsync($"{App.BaseUrl}/config/recipes");
+        await OpenAsync("/config/recipes");
         await WaitForAsync("text=产品型号");
 
         await OpenDialogAsync(Page.Locator("table tbody button", new() { HasText = "限值" }).First);
@@ -354,7 +421,7 @@ public class UiRegressionE2ETests : E2ETestBase
     {
         // 对话框曾经直接绑定父页表格里的同一个实体，点「取消」并不会把改到一半的
         // 名称和 IP 撤回去 —— 表格会继续显示一个从来没被保存过的连接。
-        await Page.GotoAsync($"{App.BaseUrl}/config/plc");
+        await OpenAsync("/config/plc");
         await WaitForAsync("text=编辑");
 
         var firstRow = Page.Locator("table tbody tr").First;
@@ -386,7 +453,7 @@ public class UiRegressionE2ETests : E2ETestBase
         // 写成 AriaLabel="…" 能编译、能渲染、页面也看不出问题，但 MudBlazor 会把它落成
         // arialabel 属性（分析器 MUD0002 报的就是这个），而 ARIA 只认 aria-label ——
         // 读屏软件什么都读不到。所以按"可访问名"查，而不是按属性名查。
-        await Page.GotoAsync($"{App.BaseUrl}/query");
+        await OpenAsync("/query");
         await WaitForResultRowsAsync();
 
         Assert.True(
@@ -404,7 +471,7 @@ public class UiRegressionE2ETests : E2ETestBase
     public async Task DashboardKpiSummaryStaysOnOneLine()
     {
         await Page.AddInitScriptAsync("localStorage.removeItem('dt-shopfloor');");
-        await Page.GotoAsync(App.BaseUrl);
+        await OpenAsync("");
         await WaitForCircuitReadyAsync();
         await Page.GetByRole(AriaRole.Button, new() { Name = "大屏模式" }).ClickAsync();
         await Page.WaitForFunctionAsync("() => document.body.classList.contains('dt-shopfloor')");
@@ -440,7 +507,7 @@ public class UiRegressionE2ETests : E2ETestBase
     public async Task ShopFloorModeHidesAppBarAndKeepsExitAction()
     {
         await Page.AddInitScriptAsync("localStorage.removeItem('dt-shopfloor');");
-        await Page.GotoAsync(App.BaseUrl);
+        await OpenAsync("");
         await WaitForCircuitReadyAsync();
 
         var menu = Page.Locator(".dt-appbar-menu");
@@ -467,7 +534,7 @@ public class UiRegressionE2ETests : E2ETestBase
     [Fact]
     public async Task ThemeSwitchPersistsAcrossReload()
     {
-        await Page.GotoAsync(App.BaseUrl);
+        await OpenAsync("");
         await WaitForCircuitReadyAsync();
 
         var appBar = Page.Locator(".mud-appbar");
@@ -502,7 +569,7 @@ public class UiRegressionE2ETests : E2ETestBase
     [Fact]
     public async Task PwaManifestWorkerAndInstallActionAreAvailable()
     {
-        await Page.GotoAsync(App.BaseUrl);
+        await OpenAsync("");
         await WaitForCircuitReadyAsync();
 
         Assert.Equal(

@@ -453,9 +453,10 @@
     private async Task OnBeforeInternalNavigation(LocationChangingContext context)
     {
         if (!Dirty) return;
-        var ok = await DialogService.ShowMessageBox(
+        var ok = await DialogService.ConfirmDangerAsync(
             "未保存的改动",
             $"工站 {_current?.Code} 有未保存的改动，离开本页会丢弃它们。确定离开？",
+            acknowledge: "我了解离开会丢弃这些未保存的改动",
             yesText: "离开", cancelText: "留下");
         if (ok != true)
         {
@@ -782,7 +783,7 @@
         isNew: true);
 
     /// <summary>编辑点位：传克隆体进对话框，取消时不会在跟踪上下文里留下脏实体。</summary>
-    private Task EditTag(TagDefinition tag) => ShowTagDialog(CloneTag(tag), isNew: false);
+    private Task EditTag(TagDefinition tag) => ShowTagDialog(tag.Clone(), isNew: false);
 
     /// <summary>
     /// 点位编辑对话框：新增与编辑共用，页面不再常驻一大片表单。
@@ -825,9 +826,9 @@
             var oldTag = isNew ? null : station.Tags.FirstOrDefault(t => t.Id == edited.Id);
             var oldSnap = oldTag is null ? null
                 : $"{oldTag.Address}; {oldTag.DataType}; limits={DisplayLabels.LimitRange(oldTag.LowerLimit, oldTag.UpperLimit)}";
-            ReportAudit(await Changes.SaveTagAsync(edited, await AuditOf(
+            await Changes.SaveTagAsync(edited, await AuditOf(
                 isNew ? "Create" : "Save", "TagDefinition", $"{station.Code}/{edited.Name}", oldSnap,
-                $"source={edited.Source}; {edited.Address}; {edited.DataType}; limits={DisplayLabels.LimitRange(edited.LowerLimit, edited.UpperLimit)}")));
+                $"source={edited.Source}; {edited.Address}; {edited.DataType}; limits={DisplayLabels.LimitRange(edited.LowerLimit, edited.UpperLimit)}"));
             var tab = _tab;
             await Select(station, reload: true);
             _tab = tab;
@@ -849,13 +850,13 @@
             return;
         }
 
-        var clone = CloneTag(tag);
+        var clone = tag.Clone();
         clone.Enabled = enabled;
         try
         {
-            ReportAudit(await Changes.SaveTagAsync(clone, await AuditOf(
+            await Changes.SaveTagAsync(clone, await AuditOf(
                 "Save", "TagDefinition", $"{_current.Code}/{tag.Name}",
-                $"enabled={tag.Enabled}", $"enabled={enabled}; {clone.Address}; {clone.DataType}")));
+                $"enabled={tag.Enabled}", $"enabled={enabled}; {clone.Address}; {clone.DataType}"));
             Toast.Add($"{tag.Name} 已{(enabled ? "启用" : "停用")}", Severity.Success);
         }
         finally
@@ -866,35 +867,6 @@
             _tab = tab;
         }
     });
-
-    /// <summary>
-    /// 点位的克隆体，供对话框编辑与列表里直接改启用状态使用。
-    /// </summary>
-    /// <remarks>
-    /// 漏抄任何一个字段都会静默改配置（例如漏了 Source，编辑一次就把来源重置回 PLC），
-    /// 所以这里逐字段列全，新增字段时必须同步补上。
-    /// </remarks>
-    private static TagDefinition CloneTag(TagDefinition tag) => new()
-    {
-        Id = tag.Id,
-        StationId = tag.StationId,
-        Name = tag.Name,
-        Address = tag.Address,
-        DataType = tag.DataType,
-        Source = tag.Source,
-        Length = tag.Length,
-        Scale = tag.Scale,
-        Offset = tag.Offset,
-        Unit = tag.Unit,
-        LowerLimit = tag.LowerLimit,
-        UpperLimit = tag.UpperLimit,
-        WarningLowerLimit = tag.WarningLowerLimit,
-        WarningUpperLimit = tag.WarningUpperLimit,
-        TargetValue = tag.TargetValue,
-        IsRequired = tag.IsRequired,
-        PositionIndex = tag.PositionIndex,
-        Enabled = tag.Enabled
-    };
 
     /// <summary>
     /// 曲线编辑对话框：新增与编辑共用，页面不再常驻一大片表单。
@@ -934,9 +906,9 @@
             var summary = $"points={edited.PointCount}; " +
                           $"y={SeriesAddress(edited, SeriesRole.Y)}; x={SeriesAddress(edited, SeriesRole.X)}; " +
                           $"enabled={edited.Enabled}";
-            ReportAudit(await Changes.SaveCurveAsync(edited, await AuditOf(
+            await Changes.SaveCurveAsync(edited, await AuditOf(
                 isNew ? "Create" : "Save", "CurveDefinition", $"{station.Code}/{code}",
-                isNew ? null : summary, summary)));
+                isNew ? null : summary, summary));
             var tab = _tab;
             await Select(station, reload: true);
             _tab = tab;
@@ -963,9 +935,9 @@
         clone.Enabled = enabled;
         try
         {
-            ReportAudit(await Changes.SaveCurveAsync(clone, await AuditOf(
+            await Changes.SaveCurveAsync(clone, await AuditOf(
                 "Save", "CurveDefinition", $"{_current.Code}/{curve.Code}",
-                $"enabled={curve.Enabled}", $"enabled={enabled}; {clone.Code}")));
+                $"enabled={curve.Enabled}", $"enabled={enabled}; {clone.Code}"));
             Toast.Add($"曲线 {curve.Code} 已{(enabled ? "启用" : "停用")}", Severity.Success);
         }
         finally
@@ -1068,9 +1040,10 @@
         // 以及对话框里刚加的点位与曲线都会无声消失，所以先问一次。
         if (!reload && Dirty)
         {
-            var confirmed = await DialogService.ShowMessageBox(
+            var confirmed = await DialogService.ConfirmDangerAsync(
                 "未保存的改动",
                 $"工站 {_current?.Code} 有未保存的改动，切换到 {station.Code} 会丢弃它们。确定切换？",
+                acknowledge: "我了解切换后本站未保存的改动会丢失",
                 yesText: "放弃并切换", cancelText: "留在本站");
             if (confirmed != true)
             {
@@ -1133,8 +1106,8 @@
             PositionCount = 1,
             Enabled = true
         };
-        ReportAudit(await Changes.SaveStationAsync(station, await AuditOf(
-            "Create", "Station", station.Code, null, $"{station.Name}; plc={station.PlcConnectionId}; seq={station.Sequence}")));
+        await Changes.SaveStationAsync(station, await AuditOf(
+            "Create", "Station", station.Code, null, $"{station.Name}; plc={station.PlcConnectionId}; seq={station.Sequence}"));
         await ReloadList();
         await Select(station, reload: true);
         _tab = 0;
@@ -1146,17 +1119,18 @@
         var tags = station.Tags.Count;
         var curves = station.Curves.Count;
         var extra = tags + curves > 0 ? $"，同时删除 {tags} 个点位、{curves} 条曲线定义" : "";
-        var confirmed = await DialogService.ShowMessageBox(
+        var confirmed = await DialogService.ConfirmDangerAsync(
             "删除工站",
             $"确定删除工站「{station.Code} {station.Name}」？{extra}。已采集的历史记录不受影响，但操作不可恢复。",
+            acknowledge: "我了解将删除该工站及其点位与曲线定义，且无法恢复",
             yesText: "删除", cancelText: "取消");
         if (confirmed != true)
         {
             return;
         }
 
-        ReportAudit(await Changes.DeleteStationAsync(station.Id, await AuditOf(
-            "Delete", "Station", station.Code, $"{station.Name}; tags={tags}; curves={curves}", null)));
+        await Changes.DeleteStationAsync(station.Id, await AuditOf(
+            "Delete", "Station", station.Code, $"{station.Name}; tags={tags}; curves={curves}", null));
         if (_current?.Id == station.Id)
         {
             _current = null;
@@ -1205,11 +1179,11 @@
         var before = _stations.FirstOrDefault(s => s.Id == _current.Id);
         var oldSnap = before is null ? null
             : $"{before.Name}; plc={before.PlcConnectionId}; trigger={before.TriggerAddress}; enabled={before.Enabled}";
-        ReportAudit(await Changes.SaveStationAsync(_current, await AuditOf(
+        await Changes.SaveStationAsync(_current, await AuditOf(
             "Save", "Station", _current.Code, oldSnap,
             $"{_current.Name}; plc={_current.PlcConnectionId}; trigger={_current.TriggerAddress}; " +
             $"dataFile={_current.DataFilePath}; format={_current.DataFileFormat}; " +
-            $"occupied={position?.OccupiedAddress ?? "-"}; enabled={_current.Enabled}")));
+            $"occupied={position?.OccupiedAddress ?? "-"}; enabled={_current.Enabled}"));
         Toast.Add($"{_current.Code} 已保存并下发采集器", Severity.Success);
         var id = _current.Id;
         var tab = _tab;
@@ -1221,17 +1195,18 @@
     private Task DeleteTag(TagDefinition tag) => Run("删除点位", async () =>
     {
         if (_current is null) return;
-        var confirmed = await DialogService.ShowMessageBox(
+        var confirmed = await DialogService.ConfirmDangerAsync(
             "删除点位",
             $"确定删除点位「{tag.Name}」？删除后采集时不再读取该地址。",
+            acknowledge: "我了解删除后采集时不再读取该地址，且无法恢复",
             yesText: "删除", cancelText: "取消");
         if (confirmed != true)
         {
             return;
         }
 
-        ReportAudit(await Changes.DeleteTagAsync(tag.Id, await AuditOf(
-            "Delete", "TagDefinition", $"{_current.Code}/{tag.Name}", tag.Address, null)));
+        await Changes.DeleteTagAsync(tag.Id, await AuditOf(
+            "Delete", "TagDefinition", $"{_current.Code}/{tag.Name}", tag.Address, null));
         var tab = _tab;
         await Select(_current, reload: true);
         _tab = tab;
@@ -1272,9 +1247,9 @@
             // 不写 curve.Criteria：它是被跟踪实体的导航集合，替换它会和 EF 的导航修正
             // 互相打架（同一行会在集合里留下两份）。仓储按主键同步，随后重读即可。
             var beforeCount = curve.Criteria?.Count ?? 0;
-            ReportAudit(await Changes.SaveCurveCriteriaAsync(curve.Id, criteria, await AuditOf(
+            await Changes.SaveCurveCriteriaAsync(curve.Id, criteria, await AuditOf(
                 "Save", "CurveCriterion", $"{station.Code}/{curve.Code}",
-                $"count={beforeCount}", $"count={criteria.Count}")));
+                $"count={beforeCount}", $"count={criteria.Count}"));
             var tab = _tab;
             await Select(station, reload: true);
             _tab = tab;
@@ -1289,18 +1264,19 @@
     private Task DeleteCurve(CurveDefinition curve) => Run("删除曲线", async () =>
     {
         if (_current is null) return;
-        var confirmed = await DialogService.ShowMessageBox(
+        var confirmed = await DialogService.ConfirmDangerAsync(
             "删除曲线定义",
             $"确定删除曲线「{curve.Code} {curve.Name}」？历史曲线文件不会被删除，" +
             "但这条曲线的波形基线会随之失效（重建需要重新累积样本）。",
+            acknowledge: "我了解该曲线的波形基线会随之失效，且无法恢复",
             yesText: "删除", cancelText: "取消");
         if (confirmed != true)
         {
             return;
         }
 
-        ReportAudit(await Changes.DeleteCurveAsync(curve.Id, await AuditOf(
-            "Delete", "CurveDefinition", $"{_current.Code}/{curve.Code}", curve.Name, null)));
+        await Changes.DeleteCurveAsync(curve.Id, await AuditOf(
+            "Delete", "CurveDefinition", $"{_current.Code}/{curve.Code}", curve.Name, null));
         var tab = _tab;
         await Select(_current, reload: true);
         _tab = tab;
@@ -1311,14 +1287,6 @@
     {
         var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
         return new ConfigAudit(user, action, entityType, key, oldValue, newValue);
-    }
-
-    private void ReportAudit(ConfigurationChangeResult result)
-    {
-        if (result.AuditError is { } error)
-        {
-            Toast.Add($"操作已完成，但审计记录失败：{error}", Severity.Warning);
-        }
     }
 }
 

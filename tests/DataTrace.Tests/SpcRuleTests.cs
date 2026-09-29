@@ -26,6 +26,44 @@ public class SpcRuleTests
 
     private static double[] Series(params double[] values) => values;
 
+    // ---------- 按点位开关 ----------
+
+    /// <summary>
+    /// 关掉的规则连判异都不跑：现场据此压掉长期误报的那一条，
+    /// 而不是把整个点位停用（那会把超限这类真问题一起丢掉）。
+    /// </summary>
+    [Fact]
+    public void Disabled_rules_produce_no_violations()
+    {
+        // 9 点同侧：只可能命中规则 2。
+        var values = Series(0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4);
+
+        Assert.Contains(SpcRuleEvaluator.Evaluate(values, Chart()), v => v.Rule == SpcRule.NineOnOneSide);
+
+        var masked = SpcRuleEvaluator.Evaluate(values, Chart(), SpcRuleMask.Set(null, SpcRule.NineOnOneSide, false));
+
+        Assert.DoesNotContain(masked, v => v.Rule == SpcRule.NineOnOneSide);
+    }
+
+    /// <summary>
+    /// null（没配过）等于全套规则，且"全开状态下关掉一条"必须真的关掉。
+    /// </summary>
+    /// <remarks>
+    /// 后者是这里的坑：掩码为 null 时若原样返回 null，界面上这条规则永远关不上
+    /// （读回来又是"全开"），用户会以为开关没生效。
+    /// </remarks>
+    [Fact]
+    public void Null_mask_keeps_every_rule_enabled_and_can_still_be_narrowed()
+    {
+        Assert.True(SpcRuleMask.IsEnabled(null, SpcRule.FourteenAlternating));
+
+        var narrowed = SpcRuleMask.Set(null, SpcRule.SixMonotonic, false);
+
+        Assert.False(SpcRuleMask.IsEnabled(narrowed, SpcRule.SixMonotonic));
+        Assert.True(SpcRuleMask.IsEnabled(narrowed, SpcRule.NineOnOneSide));
+        Assert.Equal(SpcRuleMask.All, SpcRuleMask.Set(narrowed, SpcRule.SixMonotonic, true));
+    }
+
     // ---------- 规则 1：超出控制限 ----------
 
     [Fact]

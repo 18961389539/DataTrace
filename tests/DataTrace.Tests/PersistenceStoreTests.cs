@@ -455,6 +455,101 @@ public class ConfigRepositoryTests
         return (workspace, db, plc);
     }
 
+    /// <summary>
+    /// 配置写入与审计写在同一个事务里：要么都落库，要么都不落。
+    /// </summary>
+    /// <remarks>
+    /// 走生产同款接线 —— 仓储与审计注入同一个 <see cref="ConfigDbContext"/>（scoped），
+    /// 并用"删掉审计表"制造真实的写入失败。这样验的才是"两者真的同事务"，
+    /// 而不是替身各写各的（替身不建事务，见 Web.Tests 的 FakeConfigRepository）。
+    /// </remarks>
+    [Fact]
+    public async Task Configuration_change_rolls_back_when_the_audit_write_fails()
+    {
+        var (workspace, db, plc) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = Repo(db);
+        var changes = new ConfigurationChangeService(repo, new AuditLogger(db));
+
+        // 审计写不进去（现场可能是库被占用、只读、文件损坏）。
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE AuditLogs");
+
+        await Assert.ThrowsAsync<ConfigurationChangeFailedException>(() => changes.SaveTagAsync(
+            NewTag(plc.Stations.Single().Id),
+            new ConfigAudit("admin", "Create", "TagDefinition", "新增点位", null, null)));
+
+        // 配置也没落库：用另一个上下文读，避免读到本上下文里被跟踪的实体。
+        await using var verify = await TestDatabase.CreateConfigAsync(workspace.Path("config.db"));
+        Assert.False(await verify.Tags.AnyAsync(t => t.Name == "新增点位"));
+    }
+
+    /// <summary>
+    /// 正常路径：一次配置变更同时落下审计记录，且两者都能被读回来。
+    /// </summary>
+    [Fact]
+    public async Task Configuration_change_persists_the_change_and_its_audit_record_together()
+    {
+        var (workspace, db, plc) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = Repo(db);
+        var changes = new ConfigurationChangeService(repo, new AuditLogger(db));
+
+        await changes.SaveTagAsync(
+            NewTag(plc.Stations.Single().Id),
+            new ConfigAudit("admin", "Create", "TagDefinition", "新增点位", null, "D1200"));
+
+        await using var verify = await TestDatabase.CreateConfigAsync(workspace.Path("config.db"));
+        Assert.True(await verify.Tags.AnyAsync(t => t.Name == "新增点位"));
+        Assert.True(await verify.AuditLogs.AnyAsync(a => a.Action == "Create" && a.EntityKey == "新增点位"));
+    }
+
+    private static TagDefinition NewTag(int stationId) => new()
+    {
+        StationId = stationId,
+        Name = "新增点位",
+        Address = "D1200",
+        DataType = PlcDataType.Float,
+        PositionIndex = 1,
+        Enabled = true
+    };
+
+    /// <summary>
+    /// 判异开关与冻结控制限要能落库再读回。
+    /// </summary>
+    /// <remarks>
+    /// 保存走整行 SetValues：映射或补列漏一列，都会在这一条上暴露成"存了但读不到"。
+    /// </remarks>
+    [Fact]
+    public async Task Saved_tag_keeps_spc_rule_mask_and_frozen_control_limits()
+    {
+        var (workspace, db, plc) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var repo = Repo(db);
+
+        var tag = NewTag(plc.Stations.Single().Id);
+        tag.SpcRuleMask = SpcRuleMask.Set(null, SpcRule.FourteenAlternating, false);
+        tag.ControlCenterLine = 10;
+        tag.ControlUpperLimit = 10.3;
+        tag.ControlLowerLimit = 9.7;
+        tag.ControlSampleCount = 40;
+        tag.ControlCapturedAt = new DateTime(2026, 9, 20, 10, 30, 0);
+        tag.ControlCapturedBy = "qe";
+
+        await repo.SaveTagAsync(SaveTagCommand.From(tag));
+
+        await using var verify = await TestDatabase.CreateConfigAsync(workspace.Path("config.db"));
+        var saved = await verify.Tags.SingleAsync(t => t.Name == "新增点位");
+        Assert.Equal(tag.SpcRuleMask, saved.SpcRuleMask);
+        Assert.Equal(10d, saved.ControlCenterLine);
+        Assert.Equal(40, saved.ControlSampleCount);
+        Assert.Equal("qe", saved.ControlCapturedBy);
+        var frozen = Assert.NotNull(saved.FrozenControlLimits);
+        Assert.Equal(10.3d, frozen.UpperControlLimit);
+    }
+
     [Fact]
     public async Task Snapshot_assembles_settings_plcs_and_station_graph()
     {

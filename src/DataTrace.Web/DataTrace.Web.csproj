@@ -3,6 +3,36 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- SDK 的 SourceLink 会往 InformationalVersion 追加 "+<40 位 sha>"，会盖掉下面算出来的盖章值。 -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+
+  <!--
+    构建盖章：把提交号写进版本号（形如 1.1.0+d279acf）。
+    为什么要它：现场问"这台机器跑的是哪次提交"时，以前只能答出人工 bump 的版本号 ——
+    同一个版本号下的不同提交分辨不了（5080 上跑着旧 Debug 产物就是这么发现的）。
+    取值顺序：GITHUB_SHA（CI）→ 直接读 .git（不依赖 git 命令，本机就没装）→ nogit。
+    取不到也不失败：产物里明写 nogit，比因此编不出包诚实；ProductVersion 会带上这段，
+    verify.ps1（对比安装记录）与设置页（现场肉眼）都读它。
+
+    为什么在"求值阶段"算而不是写个 Target：目标阶段改 InformationalVersion 会晚于
+    SDK 的 CoreGenerateAssemblyInfo / 它的输入缓存，既可能被忽略，也会因缓存与产物不一致
+    导致每次全量重编。求值阶段算出来的值按提交稳定，增量构建不受影响。
+    注：未提交改动无法从这里看出来 —— 产物上的提交号只说明它基于哪次提交。
+  -->
+  <PropertyGroup>
+    <DtGitDir>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\..\.git\'))</DtGitDir>
+    <DtCommitSha>$(GITHUB_SHA)</DtCommitSha>
+    <DtHeadText Condition="'$(DtCommitSha)' == '' and Exists('$(DtGitDir)HEAD')">$([System.IO.File]::ReadAllText('$(DtGitDir)HEAD').Trim())</DtHeadText>
+    <DtHeadRef Condition="'$(DtHeadText)' != '' and $(DtHeadText.StartsWith('ref: '))">$(DtHeadText.Substring(5).Trim())</DtHeadRef>
+    <DtHeadSha Condition="'$(DtCommitSha)' == '' and '$(DtHeadRef)' != '' and Exists('$(DtGitDir)$(DtHeadRef)')">$([System.IO.File]::ReadAllText('$(DtGitDir)$(DtHeadRef)').Trim())</DtHeadSha>
+    <DtHeadSha Condition="'$(DtCommitSha)' == '' and '$(DtHeadRef)' == '' and '$(DtHeadText)' != '' and !$(DtHeadText.StartsWith('ref: '))">$(DtHeadText)</DtHeadSha>
+    <DtCommitSha Condition="'$(DtCommitSha)' == '' and '$(DtHeadSha)' != ''">$(DtHeadSha)</DtCommitSha>
+    <DtCommitSha Condition="'$(DtCommitSha)' == ''">nogit</DtCommitSha>
+    <DtCommitSha Condition="'$(DtCommitSha.Length)' > '7'">$(DtCommitSha.Substring(0, 7))</DtCommitSha>
+    <InformationalVersion>$(Version)+$(DtCommitSha)</InformationalVersion>
+    <!-- 一并写 ProductVersion：Win32 版本资源读的是它，而 verify.ps1 与"文件属性"看到的正是 ProductVersion。 -->
+    <ProductVersion>$(InformationalVersion)</ProductVersion>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\DataTrace.Application\DataTrace.Application.csproj" />

@@ -223,7 +223,15 @@ public class RuntimeStoreTests
             Record = BuildRecord(palletCode, serialNo, triggerTime, judgement, stationId, stationCode, sessionId: sessionId)
         };
 
-    private static CollectQueryRequest Query(string? pallet = null, string? serial = null, int? stationId = null, Judgement? judgement = null, int skip = 0, int take = 50)
+    private static CollectQueryRequest Query(
+        string? pallet = null,
+        string? serial = null,
+        int? stationId = null,
+        Judgement? judgement = null,
+        int skip = 0,
+        int take = 50,
+        CollectSortField sortBy = CollectSortField.TriggerTime,
+        bool descending = true)
         => new()
         {
             From = new DateTime(2026, 1, 1),
@@ -233,7 +241,9 @@ public class RuntimeStoreTests
             StationId = stationId,
             Judgement = judgement,
             Skip = skip,
-            Take = take
+            Take = take,
+            SortBy = sortBy,
+            SortDescending = descending
         };
 
     [Fact]
@@ -361,6 +371,75 @@ public class RuntimeStoreTests
 
         Assert.Equal(5, collected.Count);
         Assert.Equal(5, collected.Distinct().Count());
+    }
+
+    /// <summary>
+    /// 换列排序时，每个月库的"局部前 N"必须跟着换列。
+    /// </summary>
+    /// <remarks>
+    /// 局部裁剪按全局同一次序取，才能保证全局前 N 一定落在某个库的局部前 N 里。
+    /// 若局部仍按时间倒序取前 2，8 月那条耗时最短的记录会在裁剪阶段就被扔掉，
+    /// 后面无论怎么合并都补不回来。
+    /// </remarks>
+    [Fact]
+    public async Task Query_sorts_by_the_requested_column_before_each_months_local_take()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+
+        // 8 月三条：耗时最短的恰好触发得最早（时间倒序取前 2 会把它裁掉）。
+        var early = FirstStation("202608", "G1", "S1", new DateTime(2026, 8, 20, 8, 0, 0));
+        early.Record.DurationMs = 100;
+        await env.Store.SaveAsync(early);
+
+        var middle = FirstStation("202608", "G2", "S2", new DateTime(2026, 8, 20, 9, 0, 0));
+        middle.Record.DurationMs = 400;
+        await env.Store.SaveAsync(middle);
+
+        var late = FirstStation("202608", "G3", "S3", new DateTime(2026, 8, 20, 10, 0, 0));
+        late.Record.DurationMs = 500;
+        await env.Store.SaveAsync(late);
+
+        var other = FirstStation("202609", "H1", "S4", new DateTime(2026, 9, 20, 8, 0, 0));
+        other.Record.DurationMs = 200;
+        await env.Store.SaveAsync(other);
+
+        var result = await env.Store.QueryAsync(Query(take: 2, sortBy: CollectSortField.DurationMs, descending: false));
+
+        Assert.Equal(4, result.Total);
+        Assert.Equal(new[] { "G1", "H1" }, result.Items.Select(i => i.Record.PalletCode).ToArray());
+    }
+
+    /// <summary>
+    /// 非时间列全部并列时（都在同一格结果码上），翻完所有页必须不重不漏。
+    /// </summary>
+    /// <remarks>
+    /// 与 TriggerTime 并列那条用例同一个道理：排序末尾没有 Id / MonthKey 兜底，
+    /// 每次查询的"并列中的任意几条"都会变，分页就会重复行与漏行。
+    /// </remarks>
+    [Fact]
+    public async Task Query_pages_cover_every_record_when_a_non_time_column_ties()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        for (var i = 1; i <= 3; i++)
+        {
+            await env.Store.SaveAsync(FirstStation("202608", $"N{i}", $"SN{i}", new DateTime(2026, 8, 20, 8, 0, i)));
+        }
+
+        for (var i = 1; i <= 3; i++)
+        {
+            await env.Store.SaveAsync(FirstStation("202609", $"P{i}", $"SP{i}", new DateTime(2026, 9, 20, 8, 0, i)));
+        }
+
+        var collected = new List<string>();
+        for (var skip = 0; skip < 6; skip += 2)
+        {
+            var page = await env.Store.QueryAsync(
+                Query(skip: skip, take: 2, sortBy: CollectSortField.ResultCode, descending: false));
+            collected.AddRange(page.Items.Select(i => i.Record.PalletCode));
+        }
+
+        Assert.Equal(6, collected.Count);
+        Assert.Equal(6, collected.Distinct().Count());
     }
 
     [Fact]

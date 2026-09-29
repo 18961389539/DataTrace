@@ -143,6 +143,47 @@ public class QueryPageTests : WebTestBase
         Assert.Equal(Severity.Warning, Toast.LastSeverity);
     }
 
+    /// <summary>
+    /// 点表头是服务端排序：重新发一次查询（不是只排当前页），并且回到第 1 页 ——
+    /// 换了次序，原来的第 N 页是另一批记录。
+    /// </summary>
+    [Fact]
+    public async Task Clicking_a_column_header_sorts_on_the_server_and_returns_to_page_one()
+    {
+        // 造出不止一页：翻页控件得有第 2 页可点。
+        _store
+            .Setup(s => s.QueryAsync(It.IsAny<CollectQueryRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CollectQueryResult { Total = 60, Items = [] });
+
+        var cut = Render();
+        await cut.InvokeAsync(() => cut.FindComponent<MudPagination>().Instance.SelectedChanged.InvokeAsync(2));
+
+        // 先确认真的停在第 2 页，否则下面的"回到第 1 页"是句空话。
+        _store.Verify(
+            s => s.QueryAsync(It.Is<CollectQueryRequest>(r => r.Skip == 20), It.IsAny<CancellationToken>()),
+            Times.AtLeastOnce);
+
+        // 时间列默认最近在前，其余列默认升序（按工站/托盘码看时是从前往后读）。
+        ClickButton(cut, "托盘码");
+        _store.Verify(
+            s => s.QueryAsync(
+                It.Is<CollectQueryRequest>(r => r.SortBy == CollectSortField.PalletCode && !r.SortDescending && r.Skip == 0),
+                It.IsAny<CancellationToken>()),
+            Times.AtLeastOnce);
+
+        // 同一列再点一次：换方向，仍从第 1 页开始。
+        ClickButton(cut, "托盘码");
+        _store.Verify(
+            s => s.QueryAsync(
+                It.Is<CollectQueryRequest>(r => r.SortBy == CollectSortField.PalletCode && r.SortDescending && r.Skip == 0),
+                It.IsAny<CancellationToken>()),
+            Times.AtLeastOnce);
+
+        // 地址栏带上排序列：刷新、转发、从明细页返回都停在同一批结果上。
+        var uri = Context.Services.GetRequiredService<NavigationManager>().Uri;
+        Assert.Contains("sort=pallet", uri);
+    }
+
     [Fact]
     public async Task Selecting_all_recipes_sends_no_recipe_filter()
     {

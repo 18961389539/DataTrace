@@ -1,4 +1,4 @@
-﻿@page "/query"
+@page "/query"
 @attribute [Authorize]
 @using DataTrace.Application.Configuration
 @using DataTrace.Application.Runtime
@@ -153,14 +153,42 @@ else
           FixedHeader="true" Height="var(--dt-grid-height)"
           Class="dt-clickable" OnRowClick="@((TableRowClickEventArgs<CollectRecordListItem> args) => OnRowClicked(args))">
     <HeaderContent>
-        <MudTh Class="dt-nowrap">时间</MudTh>
-        <MudTh>流水号</MudTh>
-        <MudTh>托盘码</MudTh>
-        <MudTh>工站</MudTh>
-        <MudTh>型号 <InfoHint Topic="HelpTexts.RecipeScope" /></MudTh>
-        <MudTh>判定 <InfoHint Topic="HelpTexts.JudgementThreeState" /></MudTh>
-        <MudTh Class="dt-nowrap">结果码</MudTh>
-        <MudTh Class="dt-right">耗时</MudTh>
+        @* 表头即排序入口：服务端分页下只排当前页等于没排，所以点表头是重新查询，
+           箭头只画在当前排序列上（见 SortIcon）。 *@
+        <MudTh Class="dt-nowrap">
+            <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0" EndIcon="@SortIcon(CollectSortField.TriggerTime)"
+                       OnClick="@(() => OnSortClicked(CollectSortField.TriggerTime))">时间</MudButton>
+        </MudTh>
+        <MudTh>
+            <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0" EndIcon="@SortIcon(CollectSortField.SerialNo)"
+                       OnClick="@(() => OnSortClicked(CollectSortField.SerialNo))">流水号</MudButton>
+        </MudTh>
+        <MudTh>
+            <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0" EndIcon="@SortIcon(CollectSortField.PalletCode)"
+                       OnClick="@(() => OnSortClicked(CollectSortField.PalletCode))">托盘码</MudButton>
+        </MudTh>
+        <MudTh>
+            <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0" EndIcon="@SortIcon(CollectSortField.StationCode)"
+                       OnClick="@(() => OnSortClicked(CollectSortField.StationCode))">工站</MudButton>
+        </MudTh>
+        <MudTh>
+            <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0" EndIcon="@SortIcon(CollectSortField.RecipeCode)"
+                       OnClick="@(() => OnSortClicked(CollectSortField.RecipeCode))">型号</MudButton>
+            <InfoHint Topic="HelpTexts.RecipeScope" />
+        </MudTh>
+        <MudTh>
+            <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0" EndIcon="@SortIcon(CollectSortField.Judgement)"
+                       OnClick="@(() => OnSortClicked(CollectSortField.Judgement))">判定</MudButton>
+            <InfoHint Topic="HelpTexts.JudgementThreeState" />
+        </MudTh>
+        <MudTh Class="dt-nowrap">
+            <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0" EndIcon="@SortIcon(CollectSortField.ResultCode)"
+                       OnClick="@(() => OnSortClicked(CollectSortField.ResultCode))">结果码</MudButton>
+        </MudTh>
+        <MudTh Class="dt-right">
+            <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0" EndIcon="@SortIcon(CollectSortField.DurationMs)"
+                       OnClick="@(() => OnSortClicked(CollectSortField.DurationMs))">耗时</MudButton>
+        </MudTh>
         <MudTh Class="dt-right">操作</MudTh>
     </HeaderContent>
     <RowTemplate>
@@ -353,6 +381,10 @@ else
     private bool _recordsLoaded;
     private CancellationTokenSource? _debounceCts;
 
+    /// <summary>当前排序列与方向。默认最近的在前，与默认视图一致。</summary>
+    private CollectSortField _sortBy = CollectSortField.TriggerTime;
+    private bool _sortDesc = true;
+
     /// <summary>
     /// 导出 ⓘ 的动态补充行：把"这次会不会被截断"在点按钮前就说清，
     /// 而不是等导出完才在提示里看到"已导出前 N 条"。
@@ -408,6 +440,27 @@ else
 
     [SupplyParameterFromQuery(Name = "result")]
     public int? ResultCodeQuery { get; set; }
+
+    /// <summary>排序列：<c>sort=pallet</c> 这样的短名。缺省（不写）= 触发时间。</summary>
+    [SupplyParameterFromQuery(Name = "sort")]
+    public string? SortQuery { get; set; }
+
+    /// <summary>只写升序（<c>dir=asc</c>）：缺省即降序，绝大多数视图都按降序看。</summary>
+    [SupplyParameterFromQuery(Name = "dir")]
+    public string? DirQuery { get; set; }
+
+    /// <summary>排序列的地址栏短名 ↔ 枚举。别名表是唯一真相，写地址栏与读地址栏都走它。</summary>
+    private static readonly (string Key, CollectSortField Field)[] SortKeys =
+    [
+        ("time", CollectSortField.TriggerTime),
+        ("serial", CollectSortField.SerialNo),
+        ("pallet", CollectSortField.PalletCode),
+        ("station", CollectSortField.StationCode),
+        ("recipe", CollectSortField.RecipeCode),
+        ("judge", CollectSortField.Judgement),
+        ("result", CollectSortField.ResultCode),
+        ("duration", CollectSortField.DurationMs)
+    ];
 
     protected override async Task OnInitializedAsync()
     {
@@ -465,6 +518,13 @@ else
         if (PageQuery is { } page && page > 0)
         {
             _page = page;
+        }
+
+        // 排序：地址栏只表达"非默认"的部分，缺省即时间倒序。
+        _sortBy = ParseSortField(SortQuery);
+        if (string.Equals(DirQuery, "asc", StringComparison.OrdinalIgnoreCase))
+        {
+            _sortDesc = false;
         }
 
         if (NoRecipeQuery == 1)
@@ -526,7 +586,9 @@ else
         Judgement = _judgement,
         ResultCode = _resultCode,
         Skip = skip,
-        Take = take
+        Take = take,
+        SortBy = _sortBy,
+        SortDescending = _sortDesc
     };
 
     private async Task OnSubmit() => await Search();
@@ -739,6 +801,18 @@ else
             parts.Add($"size={_pageSize}");
         }
 
+        // 排序不是筛选条件，"重置/清空全部"不动它（下拉与表头都还指着这一列），
+        // 但地址栏要带着：刷新、转发、从明细页返回都得停在同一批结果上。
+        if (_sortBy != CollectSortField.TriggerTime)
+        {
+            parts.Add($"sort={SortKeyOf(_sortBy)}");
+        }
+
+        if (!_sortDesc)
+        {
+            parts.Add("dir=asc");
+        }
+
         if (_page > 1)
         {
             parts.Add($"page={_page}");
@@ -914,6 +988,51 @@ else
     /// <summary>发给查询请求的型号参数：null=不限、空串=未选型号、其它=精确匹配。</summary>
     private string? ToRecipeQueryArg()
         => _recipeFilter is { Length: > 0 } code ? code.Trim() : _recipeFilter;
+
+    /// <summary>地址栏短名 → 排序列。不认识的值退回默认，手改的链接不该把页面带进怪状态。</summary>
+    private static CollectSortField ParseSortField(string? key)
+    {
+        foreach (var (shortName, field) in SortKeys)
+        {
+            if (string.Equals(shortName, key, StringComparison.OrdinalIgnoreCase))
+            {
+                return field;
+            }
+        }
+
+        return CollectSortField.TriggerTime;
+    }
+
+    /// <summary>排序列 → 地址栏短名，<see cref="SortKeys"/> 的反向查找。</summary>
+    private static string SortKeyOf(CollectSortField field)
+        => SortKeys.First(s => s.Field == field).Key;
+
+    /// <summary>
+    /// 点表头：同一列换方向，换一列用该列的默认方向。
+    /// 时间列默认"最近在前"，其余列默认升序 —— 按工站/托盘码看时想从前往后读。
+    /// </summary>
+    private async Task OnSortClicked(CollectSortField field)
+    {
+        if (_sortBy == field)
+        {
+            _sortDesc = !_sortDesc;
+        }
+        else
+        {
+            _sortBy = field;
+            _sortDesc = field == CollectSortField.TriggerTime;
+        }
+
+        // 换了次序，原来的第 N 页没有意义了：同一个 _page 在新次序下是另一批记录。
+        _page = 1;
+        await Load();
+    }
+
+    /// <summary>表头排序按钮的箭头：只在当前排序列上画，方向即箭头方向。</summary>
+    private string? SortIcon(CollectSortField field)
+        => _sortBy != field
+            ? null
+            : _sortDesc ? Icons.Material.Filled.ArrowDownward : Icons.Material.Filled.ArrowUpward;
 
     private async Task OnRecipeFilterChanged(RecipeFilterValue? value)
     {

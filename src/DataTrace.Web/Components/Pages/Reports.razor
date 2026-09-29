@@ -1,4 +1,4 @@
-﻿@page "/reports"
+@page "/reports"
 @attribute [Authorize]
 @implements IDisposable
 @using System.Globalization
@@ -10,6 +10,7 @@
 @inject IReportService ReportService
 @inject ISpcService SpcService
 @inject IConfigRepository Config
+@inject IConfigurationChanges Changes
 @inject IRuntimeStore Store
 @using DataTrace.Application.Runtime
 @inject IAuditLogger Audit
@@ -125,7 +126,7 @@
                     <MudTable Items="_fpy" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading">
                         <HeaderContent>
                             <MudTh>班次</MudTh>
-                            <MudTh Class="dt-num">总数</MudTh>
+                            <MudTh Class="dt-num">总数（件）</MudTh>
                             <MudTh Class="dt-num">OK</MudTh>
                             <MudTh Class="dt-num">NG <InfoHint Topic="HelpTexts.NgSource" /></MudTh>
                             <MudTh Class="dt-num">未判定</MudTh>
@@ -159,7 +160,28 @@
                             <MudTd DataLabel="少做">@StopBrief(context.Day)</MudTd>
                         </RowTemplate>
                         <NoRecordsContent>
-                            <MudText Typo="Typo.body2" Class="dt-muted py-3">所选区间没有走出末站的件。</MudText>
+                            @* 空态也给出口：只说"没有件"，用户得自己回到上面猜是区间太窄还是筛选太狠。 *@
+                            <div class="dt-empty-hint">
+                                <MudText Typo="Typo.body2" Class="dt-muted py-3">所选区间没有走出末站的件。</MudText>
+                                <MudStack Row="true" Spacing="2" Class="mt-1 flex-wrap">
+                                    @if (IsDefaultRange)
+                                    {
+                                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                                   StartIcon="@Icons.Material.Filled.DateRange" Disabled="_loading"
+                                                   OnClick="WidenRangeToThirtyDaysAsync">
+                                            放宽到近 30 天
+                                        </MudButton>
+                                    }
+                                    @if (ActiveFilters.Count > 0)
+                                    {
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                                                   StartIcon="@Icons.Material.Filled.FilterAltOff" Disabled="_loading"
+                                                   OnClick="ClearAllFiltersAsync">
+                                            清空筛选条件
+                                        </MudButton>
+                                    }
+                                </MudStack>
+                            </div>
                         </NoRecordsContent>
                     </MudTable>
                     @if (_fpy.Count > 0)
@@ -208,7 +230,7 @@
                     <MudTable Items="_byRecipe" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading">
                         <HeaderContent>
                             <MudTh>型号</MudTh>
-                            <MudTh Class="dt-num">产量</MudTh>
+                            <MudTh Class="dt-num">产量（件）</MudTh>
                             <MudTh Class="dt-num">OK</MudTh>
                             <MudTh Class="dt-num">NG</MudTh>
                             <MudTh Class="dt-num">未判定</MudTh>
@@ -238,7 +260,17 @@
                             </MudTd>
                         </RowTemplate>
                         <NoRecordsContent>
-                            <MudText Class="dt-muted">所选范围内没有记录。</MudText>
+                            <div class="dt-empty-hint">
+                                <MudText Typo="Typo.body2" Class="dt-muted py-3">所选范围内没有记录。</MudText>
+                                @if (IsDefaultRange)
+                                {
+                                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                               StartIcon="@Icons.Material.Filled.DateRange" Disabled="_loading"
+                                               OnClick="WidenRangeToThirtyDaysAsync">
+                                        放宽到近 30 天
+                                    </MudButton>
+                                }
+                            </div>
                         </NoRecordsContent>
                     </MudTable>
                 </MudPaper>
@@ -492,6 +524,32 @@
                         · 实测范围 @SpcCalculator.Format(segment.Summary.Min, "0.###") ~ @SpcCalculator.Format(segment.Summary.Max, "0.###")
                         · σ 总体 @SpcCalculator.Format(segment.Summary.OverallStdDev, "0.####")
                         · 控制限 @SpcCalculator.Format(segment.Summary.LowerControlLimit, "0.###") ~ @SpcCalculator.Format(segment.Summary.UpperControlLimit, "0.###")
+                        @if (segment.Summary.ControlLimitsFrozen)
+                        {
+                            <text> · </text>
+                            <span class="dt-text-success">控制限已冻结</span>
+                            @if (segment.Summary.FrozenSource is { Length: > 0 } frozenSource)
+                            {
+                                <text>（@frozenSource）</text>
+                            }
+                            @if (_canEditSpc)
+                            {
+                                <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0 ml-2" Disabled="_spcFrozenBusy"
+                                           OnClick="UnfreezeControlLimitsAsync">解除冻结</MudButton>
+                            }
+                        }
+                        else if (_canEditSpc && segment.Summary.Count >= SpcCalculator.MinimumSamplesForVerdict)
+                        {
+                            <MudTooltip Text="@FreezeHint">
+                                <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0 ml-2" Disabled="_spcFrozenBusy"
+                                           OnClick="@(() => FreezeControlLimitsAsync(segment))">冻结为基线</MudButton>
+                            </MudTooltip>
+                        }
+                        else if (_canEditSpc)
+                        {
+                            @* 样本太少的"基线"没有统计意义，冻下来反而把噪声当成了判据。 *@
+                            <text> · 样本不足 @SpcCalculator.MinimumSamplesForVerdict 条，暂不能冻结为基线</text>
+                        }
                         @if (segment.Summary.MeanOffsetInSigma is { } offset)
                         {
                             <text> · 均值偏离基准 @SpcCalculator.Format(offset, "+0.00;-0.00;0.00") σ</text>
@@ -529,7 +587,7 @@
                             {
                                 <MudTd DataLabel="段">@_spc.SegmentNumberOf(context.StartIndex)</MudTd>
                             }
-                            <MudTd DataLabel="规则">@RuleLabel(context.Rule)</MudTd>
+                            <MudTd DataLabel="规则">@DisplayLabels.SpcRuleText(context.Rule)</MudTd>
                             <MudTd DataLabel="说明">@context.Description</MudTd>
                             <MudTd DataLabel="采样点">@(context.StartIndex + 1) ~ @(context.EndIndex + 1)</MudTd>
                             <MudTd DataLabel="时间">@TimeText(context.StartIndex) ~ @TimeText(context.EndIndex)</MudTd>
@@ -582,6 +640,12 @@ private IssueTopReport _defects = new();
     private bool _loadPending;
     private bool _canExport;
 
+    /// <summary>冻结/解除控制限的角色门槛：写的是点位配置，与配置写入同一档。</summary>
+    private bool _canEditSpc;
+
+    /// <summary>冻结动作进行中：一次要读快照 + 写事务，期间禁用按钮避免重复提交。</summary>
+    private bool _spcFrozenBusy;
+
     /// <summary>
     /// 上一轮统计失败了。趋势与过程能力在失败后与"区间内没有采样数据"长得一样，
     /// 不说清楚的话现场会照着"这个点位没数据"去查传感器。
@@ -619,6 +683,8 @@ private IssueTopReport _defects = new();
     {
         var auth = await Auth.GetAuthenticationStateAsync();
         _canExport = auth.User.IsInRole(AppRoles.Administrator) || auth.User.IsInRole(AppRoles.Engineer);
+        // 冻结控制限是配置写入（写点位定义），角色门槛与导出同一档。
+        _canEditSpc = _canExport;
 
         ApplyQueryParameters();
         // 工站列表与型号列表都取自同一份配置快照：它按版本号在本电路内缓存，
@@ -1399,6 +1465,18 @@ private async Task OnStationChanged(int? stationId)
             : id.ToString();
     }
 
+    /// <summary>
+    /// 空态出口：默认区间（近 7 天）里一件都没有时，多半是"这批活刚开工"或"末站没跑"，
+    /// 把区间放宽到近 30 天是最省事的一次尝试，比让用户自己去点日期控件快得多。
+    /// </summary>
+    private async Task WidenRangeToThirtyDaysAsync()
+    {
+        _from = DateTime.Today.AddDays(-29);
+        _to = DateTime.Today;
+        RefreshTags();
+        await Load();
+    }
+
     private async Task ClearAllFiltersAsync()
     {
         _stationId = null;
@@ -1417,13 +1495,104 @@ private async Task OnStationChanged(int? stationId)
         await Load();
     }
 
-    private static string RuleLabel(SpcRule rule) => rule switch
+    /// <summary>冻结按钮的说明：讲清"冻的是什么"，避免被当成"保存这份报表"。</summary>
+    private const string FreezeHint =
+        "把本段的中心线与上下控制限存到这个点位上，之后控制图与判异都用这套基线，" +
+        "不再跟着最近的数据漂移（过程跑偏时限会跟着放宽，判异反而更容易漏报）。" +
+        "冻结会写审计；规格限与合格判定不受影响。";
+
+    /// <summary>
+    /// 把当前段的控制限冻结到点位上。
+    /// </summary>
+    /// <remarks>
+    /// 冻结的是"这一段"而不是整个区间：段本来就是按规格限切的，
+    /// 跨段取一条基线会把两套规格下的波动混成同一个判据。
+    /// 参数直接收段对象而不是循环下标：@for 里的下标变量在循环结束后等于段数，
+    /// 捕获它去点击只会落到"段不存在"上（这个坑已经被测试钉住）。
+    /// </remarks>
+    private Task FreezeControlLimitsAsync(ProcessCapabilitySegment segment)
     {
-        SpcRule.BeyondControlLimit => "规则 1 · 超 3σ",
-        SpcRule.NineOnOneSide => "规则 2 · 同侧连续",
-        SpcRule.SixMonotonic => "规则 3 · 持续趋势",
-        SpcRule.FourteenAlternating => "规则 4 · 系统性振荡",
-        SpcRule.TwoOfThreeBeyondTwoSigma => "规则 5 · 2/3 超 2σ",
-        _ => rule.ToString()
-    };
+        if (segment.Summary.Count < SpcCalculator.MinimumSamplesForVerdict)
+        {
+            return Task.CompletedTask;
+        }
+
+        var summary = segment.Summary;
+        return UpdateTagSpcAsync("冻结控制限", tag =>
+        {
+            tag.ControlCenterLine = summary.CenterLine;
+            tag.ControlUpperLimit = summary.UpperControlLimit;
+            tag.ControlLowerLimit = summary.LowerControlLimit;
+            tag.ControlSampleCount = summary.Count;
+            tag.ControlCapturedAt = DateTime.Now;
+        });
+    }
+
+    /// <summary>解除冻结：之后控制限与判异回到"按当前区间现算"。</summary>
+    private Task UnfreezeControlLimitsAsync()
+        => UpdateTagSpcAsync("解除冻结", tag =>
+        {
+            tag.ControlCenterLine = null;
+            tag.ControlUpperLimit = null;
+            tag.ControlLowerLimit = null;
+            tag.ControlSampleCount = null;
+            tag.ControlCapturedAt = null;
+            tag.ControlCapturedBy = null;
+        });
+
+    /// <summary>
+    /// 改当前点位的 SPC 设置：取快照里那份、克隆、打补丁、走配置变更服务落库。
+    /// </summary>
+    /// <remarks>
+    /// 必须克隆：快照是共享只读实例，就地改会污染本电路后续的每一次读取。
+    /// 保存走 <see cref="IConfigurationChanges"/>（配置与审计同事务），失败会抛异常，
+    /// 所以成功提示只在真的写进去之后才发。
+    /// </remarks>
+    private async Task UpdateTagSpcAsync(string what, Action<TagDefinition> patch)
+    {
+        if (_spcFrozenBusy)
+        {
+            return;
+        }
+
+        _spcFrozenBusy = true;
+        try
+        {
+            var snapshot = await Config.GetSnapshotAsync();
+            var tag = snapshot.Stations.SelectMany(s => s.Tags).FirstOrDefault(t => t.Id == _spc?.TagId);
+            if (tag is null)
+            {
+                Toast.Add("该点位已不存在，请刷新后重试", Severity.Warning);
+                return;
+            }
+
+            var clone = tag.Clone();
+            clone.ControlCapturedBy = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            patch(clone);
+            await Changes.SaveTagAsync(clone, new ConfigAudit(
+                clone.ControlCapturedBy!,
+                "SaveSpcSettings",
+                "TagDefinition",
+                $"{clone.Name}（SPC 设置）",
+                DescribeControlLimits(tag),
+                DescribeControlLimits(clone)));
+            Toast.Add($"{what}已保存并生效", Severity.Success);
+            await Load();
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"{what}失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _spcFrozenBusy = false;
+        }
+    }
+
+    /// <summary>审计里的旧值/新值：只写这次会动的控制限基线。</summary>
+    private static string DescribeControlLimits(TagDefinition tag)
+        => tag.FrozenControlLimits is { } frozen
+            ? $"CL={frozen.CenterLine:0.###} UCL={frozen.UpperControlLimit:0.###} " +
+              $"LCL={frozen.LowerControlLimit:0.###}（{frozen.SampleCount} 样本，{frozen.CapturedBy} {frozen.CapturedAt:yyyy-MM-dd HH:mm}）"
+            : "未冻结";
 }

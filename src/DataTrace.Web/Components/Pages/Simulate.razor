@@ -217,10 +217,11 @@
         // 打开就会往运行时库里写仿真记录，关掉没有副作用，所以只在"打开"这个方向上拦一道。
         if (value)
         {
-            var confirmed = await DialogService.ShowMessageBox(
+            var confirmed = await DialogService.ConfirmDangerAsync(
                 "启动自动跑线",
                 "启动后仿真器会按工站顺序持续产生记录并写入运行时库。" +
                 "如果这台机器接的是真实 PLC，请先确认采集已停用。确定启动？",
+                acknowledge: "我了解启动后仿真器会持续产生记录并写入运行时库",
                 yesText: "启动", cancelText: "取消");
             if (confirmed != true)
             {
@@ -268,9 +269,10 @@
             return;
         }
 
-        var ok = await DialogService.ShowMessageBox(
+        var ok = await DialogService.ConfirmDangerAsync(
             "参数未保存",
             "仿真参数改过但还没点「保存参数」，离开本页将丢失这些改动。确定离开？",
+            acknowledge: "我了解离开将丢失未保存的仿真参数改动",
             yesText: "离开", cancelText: "留下");
         if (ok != true)
         {
@@ -313,12 +315,9 @@
             }
 
             var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
-            var result = await Changes.SaveSettingsAsync(settings, new ConfigAudit(
+            // 配置写入与审计同一个事务：失败即回滚并抛异常，由调用方的 catch 按"未保存"报告。
+            await Changes.SaveSettingsAsync(settings, new ConfigAudit(
                 user, auditAction, "LineSimulator", "simulator", oldValues, SummarizeOptions(settings)));
-            if (result.AuditError is { } auditError)
-            {
-                Toast.Add($"审计记录失败：{auditError}", Severity.Warning);
-            }
 
             if (includeOptions)
             {
@@ -424,10 +423,11 @@
         // 非首站单点触发：采集端找不到在制会话时会把这条记成"跳站"异常，先说清楚再动手。
         if (!station.IsFirstStation)
         {
-            var confirmed = await DialogService.ShowMessageBox(
+            var confirmed = await DialogService.ConfirmDangerAsync(
                 $"触发 {station.Code}",
                 $"{station.Code} 不是首站。若托盘 {_pallet.Trim()} 当前没有在制会话，" +
                 "采集端会把这条记录判为「未找到在制托盘会话（可能跳站）」并建一个异常会话。确定继续？",
+                acknowledge: "我了解这会被记为跳站异常并建立异常会话",
                 yesText: "继续触发", cancelText: "取消");
             if (confirmed != true)
             {

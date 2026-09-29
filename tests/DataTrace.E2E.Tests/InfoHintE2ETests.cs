@@ -21,7 +21,7 @@ public sealed class InfoHintE2ETests : E2ETestBase
     [Fact]
     public async Task Hovering_a_hint_shows_the_three_part_explanation()
     {
-        await Page.GotoAsync($"{App.BaseUrl}/reports");
+        await OpenAsync("/reports");
         await WaitForAsync(".mud-layout");
         await WaitForCircuitReadyAsync();
 
@@ -50,7 +50,7 @@ public sealed class InfoHintE2ETests : E2ETestBase
     public async Task Page_help_uses_a_single_column_topic_picker_on_mobile()
     {
         await Page.SetViewportSizeAsync(430, 932);
-        await Page.GotoAsync($"{App.BaseUrl}/reports");
+        await OpenAsync("/reports");
         await WaitForAsync(".mud-layout");
         await WaitForCircuitReadyAsync();
 
@@ -81,7 +81,7 @@ public sealed class InfoHintE2ETests : E2ETestBase
                      "/config/settings", "/simulate", "/users"
                  })
         {
-            await Page.GotoAsync($"{App.BaseUrl}{path}");
+            await OpenAsync(path);
             await WaitForAsync(".mud-layout");
             await WaitForCircuitReadyAsync();
 
@@ -138,7 +138,7 @@ public sealed class InfoHintE2ETests : E2ETestBase
         // "提示看不全"现场不会当成 bug 上报，但它是真的看不见：文案最长的那条在 430px 上
         // 一旦被裁到屏幕外，用户只能看到半句话，还以为这就是全部内容。
         await Page.SetViewportSizeAsync(430, 932);
-        await Page.GotoAsync($"{App.BaseUrl}/query");
+        await OpenAsync("/query");
         await WaitForAsync(".mud-layout");
         await WaitForCircuitReadyAsync();
 
@@ -182,7 +182,7 @@ public sealed class InfoHintE2ETests : E2ETestBase
     [Fact]
     public async Task A_hint_can_be_read_with_the_keyboard_alone()
     {
-        await Page.GotoAsync($"{App.BaseUrl}/reports");
+        await OpenAsync("/reports");
         await WaitForAsync(".mud-layout");
         await WaitForCircuitReadyAsync();
 

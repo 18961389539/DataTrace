@@ -1,5 +1,6 @@
 @* 统一折线图：坐标轴 + 网格 + 图例 + 悬停数值，各页面复用。
-   坐标文字用 MarkupString 输出：Razor 把 <text> 当作内置标签，不能带属性。 *@
+   坐标文字用 MarkupString 输出：Razor 把 <text> 当作内置标签，不能带属性。
+   悬停读数不需要组件参与：点位带 data-tip，js/datatrace.js 在 document 上委托监听鼠标。 *@
 @using System.Globalization
 @using System.Text
 @if (_plots.Count == 0)
@@ -32,6 +33,12 @@ else
             @((MarkupString)_axisMarkup)
             @((MarkupString)_seriesMarkup)
         </svg>
+        @* 悬停读数面板：内容与位置都由 js/datatrace.js 填，见那里的 dtChartReadout。
+           带轴的图才铺：迷你曲线没有点位、也没有可读的距离。 *@
+        @if (ShowAxis)
+        {
+            <div class="dt-chart-readout" hidden aria-hidden="true"></div>
+        }
     </div>
 }
 
@@ -90,8 +97,8 @@ else
 
         foreach (var series in Series.Where(s => s.Values.Length > 0))
         {
-            var (xs, ys, min, max) = Prepare(series);
-            _plots.Add(new Plot(series.Name, series.Color, series.Unit, xs, ys, min, max));
+            var (xs, ys, min, max, indexAxis) = Prepare(series);
+            _plots.Add(new Plot(series.Name, series.Color, series.Unit, xs, ys, min, max, indexAxis));
         }
 
         if (_plots.Count == 0)
@@ -174,9 +181,16 @@ else
             for (var i = 0; i < plot.X.Length; i++)
             {
                 var unit = string.IsNullOrEmpty(plot.Unit) ? "" : " " + plot.Unit;
-                var tip = $"{plot.Name}：{SeriesAxisName} {ChartUtil.Label(plot.X[i])} → {ChartUtil.Label(plot.Y[i])}{unit}";
+                // 序号轴取整：ChartUtil.Label 对 0 会补成 "0.000"，读起来像坏掉的数字。
+                var xText = plot.IndexAxis
+                    ? plot.X[i].ToString("0", CultureInfo.InvariantCulture)
+                    : ChartUtil.Label(plot.X[i]);
+                // 读数文案：轴名在前、序列名在后（"位移 1.086 → 压力 12.9 kN" 的读法），
+                // 与图上"横轴是位移、纵轴是压力"的顺序一致；多条序列时各点自报家门，不必再对图例。
+                var tip = $"{SeriesAxisName} {xText} → {plot.Name} {ChartUtil.Label(plot.Y[i])}{unit}";
+                // 数值放 data-tip 而不是 <title>：面板已即时给出读数，再挂原生提示会出现两个浮层抢光标。
                 body.Append($"<circle class=\"dt-point\" r=\"3.5\" cx=\"{F(MapX(plot.X[i]))}\" cy=\"{F(MapY(plot.Y[i]))}\" ")
-                    .Append($"style=\"color:{plot.Color}\" stroke=\"currentColor\" stroke-width=\"1\"><title>{Esc(tip)}</title></circle>");
+                    .Append($"style=\"color:{plot.Color}\" stroke=\"currentColor\" stroke-width=\"1\" data-tip=\"{Esc(tip)}\"></circle>");
             }
         }
 
@@ -188,26 +202,27 @@ else
     /// X 就是点序号的情形（XValues 为空）先拿下标再建两列：否则要为一列最终只会留下
     /// <see cref="MaxPoints"/> 个元素的序号，先铺满整条原始长度（最多两万个）。
     /// </summary>
-    private (float[] X, float[] Y, double Min, double Max) Prepare(LineSeries series)
+    private (float[] X, float[] Y, double Min, double Max, bool IndexAxis) Prepare(LineSeries series)
     {
         var values = series.Values;
         // 自带 X 轴（如位移曲线）时按它抽稀；X 列比数据短就不认这一列，退回按点序号画。
         if (series.XValues is { Length: > 0 } custom && custom.Length >= values.Length)
         {
-            return ChartUtil.SampleEnvelope(values, custom, MaxPoints);
+            var (xs, ys, min, max) = ChartUtil.SampleEnvelope(values, custom, MaxPoints);
+            return (xs, ys, min, max, false);
         }
 
-        var (min, max) = ChartUtil.Range(values);
+        var (rangeMin, rangeMax) = ChartUtil.Range(values);
         var indices = ChartUtil.SampleIndices(values, MaxPoints);
-        var xs = new float[indices.Length];
-        var ys = new float[indices.Length];
+        var indexX = new float[indices.Length];
+        var indexY = new float[indices.Length];
         for (var i = 0; i < indices.Length; i++)
         {
-            xs[i] = indices[i];
-            ys[i] = values[indices[i]];
+            indexX[i] = indices[i];
+            indexY[i] = values[indices[i]];
         }
 
-        return (xs, ys, min, max);
+        return (indexX, indexY, rangeMin, rangeMax, true);
     }
 
     private double MapX(double x)
@@ -244,5 +259,13 @@ else
     private static string LegendText(Plot plot)
         => string.IsNullOrEmpty(plot.Unit) ? plot.Name : $"{plot.Name}（{plot.Unit}）";
 
-    private sealed record Plot(string Name, string Color, string? Unit, float[] X, float[] Y, double Min, double Max);
+    private sealed record Plot(
+        string Name,
+        string Color,
+        string? Unit,
+        float[] X,
+        float[] Y,
+        double Min,
+        double Max,
+        bool IndexAxis);
 }

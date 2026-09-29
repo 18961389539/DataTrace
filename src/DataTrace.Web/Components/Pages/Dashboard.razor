@@ -52,11 +52,6 @@
 
     </ChildContent>
     <Actions>
-        <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="mr-2"
-                   StartIcon="@(_shopFloor ? Icons.Material.Filled.FullscreenExit : Icons.Material.Filled.Fullscreen)"
-                   OnClick="ToggleShopFloorAsync">
-            @(_shopFloor ? "退出大屏" : "大屏模式")
-        </MudButton>
         <MudText Typo="Typo.caption" Class="@(_dataStale ? "dt-clock-stale" : "dt-muted")"
                  aria-label="@(_dataStale ? "本地时钟不代表数据仍在更新" : null)">
             PLC @_plcs.Count(p => p.Connected)/@_plcs.Count
@@ -98,7 +93,7 @@
     <div class="dt-kpi-card">
         <div class="dt-kpi-main">
             <span class="dt-kpi-label">本班完成<InfoHint Topic="HelpTexts.TodayScope" /></span>
-            <span class="dt-kpi-value">@_shiftTotal</span>
+            <span class="dt-kpi-value">@_shiftTotal <span class="dt-kpi-unit">件</span></span>
         </div>
         <span class="dt-kpi-hint">@_shiftWindowText · OK @_shiftOk · 未判定 @_shiftNone</span>
         <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftStopText <InfoHint Topic="HelpTexts.ShiftShortfall" /></span>
@@ -107,6 +102,8 @@
         <div class="dt-kpi-main">
             <span class="dt-kpi-label">直通率<InfoHint Topic="HelpTexts.YieldRate" /></span>
             <span class="dt-kpi-value">@_shiftYieldText</span>
+            @* 百分比旁边给实际件数：只有一个百分比，看不出它是拿 3 件还是 3000 件算出来的。 *@
+            <span class="dt-kpi-sub">OK @_shiftOk · NG @_shiftNg</span>
         </div>
         <span class="dt-kpi-hint">@_shiftDragText</span>
         @if (!string.IsNullOrEmpty(_shiftSideText))
@@ -219,8 +216,8 @@ else
     <MudExpansionPanel Class="dt-recent-panel"
                        Expanded="@RecentPanelExpanded"
                        ExpandedChanged="OnRecentExpandedChangedAsync"
-                       Disabled="_shopFloor"
-                       HideIcon="_shopFloor">
+                       Disabled="ShopFloor"
+                       HideIcon="ShopFloor">
         <TitleContent>
             <div class="dt-recent-title">
                 <MudText Typo="Typo.subtitle1" Class="mb-0">最近采集 · @_recentPreview.Count 条</MudText>
@@ -276,9 +273,15 @@ else
                     </MudTd>
                 </RowTemplate>
                 <NoRecordsContent>
-                    <MudText Typo="Typo.body2" Class="dt-muted py-3">
+                    <MudText Typo="Typo.body2" Class="dt-muted pt-3">
                         还没有采集记录。可在「PLC 仿真」页触发一条走线，快速验证采集链路是否通畅。
                     </MudText>
+                    @* 与上面工站空态一样给按钮：文案已经指了路，但同一页里
+                       一个能给按钮、一个只能读字，看着像两套做法。 *@
+                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Science" Href="/simulate" Class="mb-3">
+                        去 PLC 仿真
+                    </MudButton>
                 </NoRecordsContent>
             </MudTable>
         </ChildContent>
@@ -289,14 +292,18 @@ else
     private const int ShiftCacheSeconds = 15;
     /// <summary>页面级刷新节拍（毫秒）。</summary>
     private const int UiTickMs = 5000;
-    private const string ShopFloorKey = "dt-shopfloor";
+
+    /// <summary>
+    /// 车间大屏开关由 MainLayout 统一持有（顶栏按钮在每页可达），这里只消费状态：
+    /// 大屏时禁止展开「最近采集」，因为它只是巡线摘要，会挤掉工站卡片的版面。
+    /// </summary>
+    [CascadingParameter(Name = "ShopFloor")] private bool ShopFloor { get; set; }
 
     private bool _productionSimWarning;
     private bool _showSimulationDetails;
     private bool _backupStale;
     private bool _isAdmin;
     private bool _canManageRecipes;
-    private bool _shopFloor;
     /// <summary>User preference for recent-collect panel (localStorage dtRecentOpen). Forced closed while shop-floor.</summary>
     private bool _recentOpenPref;
     private bool _dataStale;
@@ -378,22 +385,16 @@ else
         protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
+
+        // Default false (collapsed) when unset — matches dtRecentOpen.get
         try
         {
-            var on = await Js.InvokeAsync<bool>("dtShopFloor.get");
-            if (on != _shopFloor)
-            {
-                _shopFloor = on;
-                await Js.InvokeVoidAsync("dtShopFloor.set", _shopFloor);
-            }
-
-            // Default false (collapsed) when unset — matches dtRecentOpen.get
             _recentOpenPref = await Js.InvokeAsync<bool>("dtRecentOpen.get");
             StateHasChanged();
         }
         catch
         {
-            // JS not ready: keep defaults (shop-floor off, recent collapsed)
+            // JS not ready: keep defaults (recent collapsed)
         }
     }
     private void OnChanged() => _ = InvokeAsync(async () =>
@@ -639,11 +640,11 @@ else
     private void GoRecipes() => Nav.NavigateTo("/config/recipes");
 
     /// <summary>Effective expand state: always collapsed in shop-floor; otherwise user preference.</summary>
-    private bool RecentPanelExpanded => !_shopFloor && _recentOpenPref;
+    private bool RecentPanelExpanded => !ShopFloor && _recentOpenPref;
 
     private async Task OnRecentExpandedChangedAsync(bool open)
     {
-        if (_shopFloor)
+        if (ShopFloor)
         {
             return;
         }
@@ -656,19 +657,6 @@ else
         catch
         {
             // preference write best-effort
-        }
-    }
-
-    private async Task ToggleShopFloorAsync()
-    {
-        _shopFloor = !_shopFloor;
-        try
-        {
-            await Js.InvokeVoidAsync("dtShopFloor.set", _shopFloor);
-        }
-        catch
-        {
-            // 无 JS 时仍切换本地标记；CSS 依赖 body class，失败则仅按钮文案变化
         }
     }
 

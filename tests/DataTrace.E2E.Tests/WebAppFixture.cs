@@ -319,6 +319,23 @@ public abstract class E2ETestBase : IAsyncLifetime
             new PageWaitForFunctionOptions { Timeout = timeoutMs });
 
     /// <summary>
+    /// 打开应用内页面（<paramref name="relativePath"/> 以 / 开头），并等 Blazor circuit 真的接管了 DOM。
+    /// </summary>
+    /// <remarks>
+    /// <b>这是本套件的默认打开方式</b>，别直接写 <c>Page.GotoAsync</c>：
+    /// 预渲染的 HTML 里只有静态结构，事件处理器要等 circuit 建立后才挂上；
+    /// 这个窗口里发出的点击/回车会被丢掉，表现为"点了没反应"，后续断言静默空过。
+    /// 等接管之后再交互，这一整类假红就从根上没有了 —— 比事后逐点重试可靠。
+    /// 断言地址栏时另外记住：换页是 History API 改的（DOM 换新与地址栏更新不是同一拍），
+    /// 别刚看到新页面就去读 Page.Url（用 <c>Page.WaitForURLAsync</c> 等它落地）。
+    /// </remarks>
+    protected async Task OpenAsync(string relativePath)
+    {
+        await Page.GotoAsync($"{App.BaseUrl}{relativePath}");
+        await WaitForCircuitReadyAsync();
+    }
+
+    /// <summary>
     /// 等 SignalR circuit 真的接管。
     /// </summary>
     /// <remarks>
@@ -379,10 +396,10 @@ public abstract class AuthE2ETestBase : E2ETestBase
     }
 
     /// <summary>从登录页提交（不带回跳目标）。</summary>
-    protected async Task SubmitLoginAsync(string userName, string password)
+    protected async Task SubmitLoginAsync(string userName, string password, bool rememberMe = false)
     {
         await Page.GotoAsync($"{App.BaseUrl}/login");
-        await PostLoginFormAsync(userName, password);
+        await PostLoginFormAsync(userName, password, rememberMe);
     }
 
     /// <summary>
@@ -393,8 +410,9 @@ public abstract class AuthE2ETestBase : E2ETestBase
     /// 赋值与提交放在同一个 JS 任务里，不能拆成 FillAsync + ClickAsync：登录表在预渲染的
     /// DOM 上，circuit 起来后第一次渲染会把这一段重建，把先前填进去的值一起抹掉，
     /// 于是服务端收到的是空用户名空密码。真人手打碰不到这个窗口，自动化必撞。
+    /// "记住我"是勾选框，同样在这一步里一起定下来。
     /// </remarks>
-    protected async Task PostLoginFormAsync(string userName, string password)
+    protected async Task PostLoginFormAsync(string userName, string password, bool rememberMe = false)
     {
         await Page.WaitForSelectorAsync("form[action='/account/login'] input[name=UserName]");
 
@@ -402,13 +420,14 @@ public abstract class AuthE2ETestBase : E2ETestBase
         // 按 URL 形状等会立刻返回，断言就读到还没跳转的旧地址。
         var from = Page.Url;
         await Page.EvaluateAsync(
-            @"([userName, password]) => {
+            @"([userName, password, rememberMe]) => {
                   const form = document.querySelector('form[action=""/account/login""]');
                   form.querySelector('input[name=UserName]').value = userName;
                   form.querySelector('input[name=Password]').value = password;
+                  form.querySelector('input[name=RememberMe]').checked = rememberMe;
                   form.requestSubmit(form.querySelector('button.login-btn'));
               }",
-            new[] { userName, password });
+            new object[] { userName, password, rememberMe });
 
         await Page.WaitForURLAsync(url => url != from);
     }

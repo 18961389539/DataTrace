@@ -139,9 +139,10 @@ if (-not (Test-Path -LiteralPath $prodPath)) {
 $newExe = Get-ExePath -InstallDir $InstallDir
 $newVersion = Get-DtAppVersion -ExePath $newExe
 if (-not $newVersion) { $newVersion = 'unknown' }
-Write-VersionMeta -InstallDir $InstallDir -AppVersion $newVersion -PreviousVersion $prevVersion
+Write-VersionMeta -InstallDir $InstallDir -AppVersion $newVersion -PreviousVersion $prevVersion `
+    -BuildStamp (Get-DtBuildStamp -ExePath $newExe)
 Update-CustomerMetaVersion -InstallDir $InstallDir -AppVersion $newVersion -PreviousVersion $prevVersion
-Write-DtOk "Version recorded: $prevVersion -> $newVersion"
+Write-DtOk "Version recorded: $prevVersion -> $newVersion (build $(Get-DtBuildStamp -ExePath $newExe))"
 
 Write-DtInfo "DB schema: app startup runs EnsureCreated + SqliteSchema.AddColumnIfMissing (same as normal boot). No separate SQL required."
 

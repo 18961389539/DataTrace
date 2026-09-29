@@ -39,7 +39,7 @@ public class VisualRegressionE2ETests : E2ETestBase
     public async Task NoRouteOverflowsHorizontallyOnDesktop(string path)
     {
         await Page.SetViewportSizeAsync(DesktopWidth, DesktopHeight);
-        await Page.GotoAsync($"{App.BaseUrl}{path}");
+        await OpenAsync(path);
         await WaitForAsync(".mud-layout");
 
         await AssertNoHorizontalOverflow(path);
@@ -52,7 +52,7 @@ public class VisualRegressionE2ETests : E2ETestBase
 
         foreach (var path in new[] { "/", "/query", "/reports", "/config/settings", "/users" })
         {
-            await Page.GotoAsync($"{App.BaseUrl}{path}");
+            await OpenAsync(path);
             await WaitForAsync(".mud-layout");
 
             // 表格允许自己横向滚（.dt-scroll-x 就是干这个的），整页不允许。
@@ -68,7 +68,7 @@ public class VisualRegressionE2ETests : E2ETestBase
     public async Task FilterCardKeepsItsBlocksApart()
     {
         await Page.SetViewportSizeAsync(DesktopWidth, DesktopHeight);
-        await Page.GotoAsync($"{App.BaseUrl}/query");
+        await OpenAsync("/query");
         var card = await WaitForAsync(".dt-filter-card");
 
         var report = await card.EvaluateAsync<string>("""
@@ -132,7 +132,7 @@ public class VisualRegressionE2ETests : E2ETestBase
     public async Task ResultGridHasARealScrollHeight()
     {
         await Page.SetViewportSizeAsync(DesktopWidth, DesktopHeight);
-        await Page.GotoAsync($"{App.BaseUrl}/query");
+        await OpenAsync("/query");
         await WaitForAsync(".mud-table-container");
 
         var measured = await Page.EvaluateAsync<double[]>("""
@@ -191,7 +191,7 @@ public class VisualRegressionE2ETests : E2ETestBase
     public async Task ScreenshotsMatchTheirBaseline(string target, string path, string selector)
     {
         await Page.SetViewportSizeAsync(DesktopWidth, DesktopHeight);
-        await Page.GotoAsync($"{App.BaseUrl}{path}");
+        await OpenAsync(path);
 
         var masks = GoldenMasks.TryGetValue(target, out var selectors)
             ? selectors.Select(selector => Page.Locator(selector)).ToArray()

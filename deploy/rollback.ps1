@@ -138,7 +138,8 @@ if ($RestoreData) {
 
 $restoredVer = Get-DtAppVersion -ExePath (Join-Path $InstallDir 'DataTrace.Web.exe')
 if ($restoredVer) {
-    Write-VersionMeta -InstallDir $InstallDir -AppVersion $restoredVer -PreviousVersion 'rollback'
+    Write-VersionMeta -InstallDir $InstallDir -AppVersion $restoredVer -PreviousVersion 'rollback' `
+        -BuildStamp (Get-DtBuildStamp -ExePath (Join-Path $InstallDir 'DataTrace.Web.exe'))
     Update-CustomerMetaVersion -InstallDir $InstallDir -AppVersion $restoredVer -PreviousVersion 'rollback'
 }
 
