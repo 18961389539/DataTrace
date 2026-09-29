@@ -1,3 +1,4 @@
+using DataTrace.Application.Reporting;
 using DataTrace.Application.Runtime;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
@@ -678,6 +679,7 @@ public class RuntimeStoreTests
         var defects = await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddHours(3), null);
         var defect = Assert.Single(defects);
         Assert.Equal("压力", defect.TagName);
+        Assert.False(defect.Missing);
         Assert.Empty(await env.Store.QueryOutOfLimitTagsAsync(Day1, Day1.AddHours(1), null));
 
         // 工站过滤同样下推到 SQL：选错工站就会去错工站找原因。
@@ -1144,6 +1146,7 @@ public class RuntimeStoreTests
         var fault = Assert.Single(ngPiece.Faults);
         Assert.Equal("ST010", fault.StationCode);
         Assert.Equal("压力", fault.Name);
+        Assert.Equal(PointSide.Unspecified, fault.Side);
 
         var okPiece = Assert.Single(pieces, piece => piece.SessionId == ok.Record.PalletSessionId);
         Assert.Equal(Judgement.Ok, okPiece.Judgement);
@@ -1152,6 +1155,56 @@ public class RuntimeStoreTests
 
         var onlyA = await env.Store.ListFinishedPiecesAsync(from, to, "A100");
         Assert.Equal(ngPiece.SessionId, Assert.Single(onlyA).SessionId);
+    }
+
+    [Fact]
+    public async Task Out_of_limit_tags_split_high_low_and_missing_and_ok_readings_stay_in_spec()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        var scrap = FirstStation("202609", "P0001", "S1", Day1, Judgement.Ng);
+        scrap.Record.TagValues =
+        [
+            new TagValue { TagId = 101, TagName = "压力", DataType = PlcDataType.Float, NumericValue = 30, LowerLimit = 0, UpperLimit = 20, IsOutOfLimit = true },
+            new TagValue { TagId = 102, TagName = "温度", DataType = PlcDataType.Float, NumericValue = 1, LowerLimit = 10, UpperLimit = 40, IsOutOfLimit = true },
+            new TagValue { TagId = 103, TagName = "位移", DataType = PlcDataType.Float, NumericValue = null, IsOutOfLimit = true }
+        ];
+        await env.Store.SaveAsync(scrap);
+        await env.Store.SaveAsync(FollowingStation(
+            "202609", "P0001", "S1", Day1.AddMinutes(2), scrap.Record.PalletSessionId, close: true, judgement: Judgement.Ok, stationId: 40, stationCode: "ST040"));
+
+        var from = Day1.Date;
+        var to = Day1.Date.AddDays(1).AddTicks(-1);
+        var faults = (await env.Store.ListFinishedPiecesAsync(from, to)).Single().Faults;
+        Assert.Equal(PointSide.High, faults.Single(fault => fault.Name == "压力").Side);
+        Assert.Equal(PointSide.Low, faults.Single(fault => fault.Name == "温度").Side);
+        Assert.Equal(PointSide.Missing, faults.Single(fault => fault.Name == "位移").Side);
+
+        var issues = await env.Store.QueryOutOfLimitTagsAsync(from, to, null);
+        Assert.False(issues.Single(issue => issue.TagName == "压力").Missing);
+        Assert.True(issues.Single(issue => issue.TagName == "位移").Missing);
+
+        var good = FirstStation("202609", "P0002", "S2", Day1.AddHours(1));
+        good.Record.TagValues.Single().NumericValue = 18;
+        good.Record.TagValues.Single().LowerLimit = 0;
+        good.Record.TagValues.Single().UpperLimit = 20;
+        await env.Store.SaveAsync(good);
+        await env.Store.SaveAsync(FollowingStation(
+            "202609", "P0002", "S2", Day1.AddHours(1).AddMinutes(2), good.Record.PalletSessionId, close: true));
+
+        var mixed = FirstStation("202609", "P0003", "S3", Day1.AddHours(2));
+        mixed.Record.TagValues.Single().NumericValue = 15;
+        mixed.Record.TagValues.Single().LowerLimit = 0;
+        mixed.Record.TagValues.Single().UpperLimit = 20;
+        await env.Store.SaveAsync(mixed);
+        await env.Store.SaveAsync(FollowingStation(
+            "202609", "P0003", "S3", Day1.AddHours(2).AddMinutes(2), mixed.Record.PalletSessionId,
+            close: true, judgement: Judgement.Ng, stationId: 40, stationCode: "ST040"));
+
+        var line = await env.Store.ListInSpecReadingsAsync(from, to, "ST010", "压力", null);
+        Assert.Equal(18, Assert.Single(line).Value);
+
+        var atStation = await env.Store.ListInSpecReadingsAsync(from, to, "ST010", "压力", 10);
+        Assert.Equal(new[] { 18d, 15d }, atStation.Select(reading => reading.Value).OrderByDescending(value => value));
     }
 
     [Fact]

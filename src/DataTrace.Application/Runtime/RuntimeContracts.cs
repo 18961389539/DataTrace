@@ -104,11 +104,17 @@ public sealed class JudgementCount
     public int Count { get; init; }
 }
 
-/// <summary>不良 / 预警统计的窄投影：只带点位名称。</summary>
+/// <summary>不良 / 预警统计的窄投影。没读到数和越过红线都可能标着超限，用 <see cref="Missing"/> 分开。</summary>
 public sealed class TagIssuePoint
 {
     public string TagName { get; init; } = "";
+
+    /// <summary>必填点位没有数值。这种行不是工艺超差。</summary>
+    public bool Missing { get; init; }
 }
+
+/// <summary>还在规格限内的一次读数，用来算离红线还有多远。</summary>
+public readonly record struct InSpecReading(double Value, double? Lower, double? Upper);
 
 /// <summary>
 /// 趋势统计的窄投影：只要某个点位自身的数值、时间与托盘码。
@@ -203,6 +209,19 @@ public interface IRuntimeAnalytics
     /// <param name="stationId">工站过滤：null = 全部工站。</param>
     /// <param name="recipeCode">型号过滤：null = 不限；"" = 仅「未选型号」；其它 = 精确匹配。</param>
     Task<IReadOnlyList<TagIssuePoint>> QueryOutOfLimitTagsAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 某个点在合格件上、且没有越出规格限的读数。直通率那个点用它看离红线还有多远。
+    /// 不选工站时，件的判定是整件合格；选了工站时，只看这一站自己合格的记录。
+    /// </summary>
+    Task<IReadOnlyList<InSpecReading>> ListInSpecReadingsAsync(
+        DateTime from,
+        DateTime to,
+        string stationCode,
+        string tagName,
+        int? stationId,
+        string? recipeCode = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>预警点位的窄投影查询（服务端按 IsWarning 过滤）。</summary>
     /// <param name="stationId">工站过滤：null = 全部工站。</param>

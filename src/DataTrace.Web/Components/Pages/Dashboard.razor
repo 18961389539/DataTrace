@@ -109,6 +109,18 @@
             <span class="dt-kpi-value">@_shiftYieldText</span>
         </div>
         <span class="dt-kpi-hint">@_shiftDragText</span>
+        @if (!string.IsNullOrEmpty(_shiftSideText))
+        {
+            <span class="dt-kpi-hint">@_shiftSideText</span>
+        }
+        @if (!string.IsNullOrEmpty(_shiftFirstNgText))
+        {
+            <span class="dt-kpi-hint">@_shiftFirstNgText <InfoHint Topic="HelpTexts.FirstNgStation" /></span>
+        }
+        @if (!string.IsNullOrEmpty(_shiftClearanceText))
+        {
+            <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftClearanceText <InfoHint Topic="HelpTexts.SpecClearance" /></span>
+        }
     </div>
     <div class="dt-kpi-card">
         <div class="dt-kpi-main">
@@ -304,6 +316,9 @@ else
     private string? _inProcessNote;
     private string _shiftWindowText = ShiftWindow.Containing(DateTime.Now, SystemDefaults.ShiftStartHour, SystemDefaults.ShiftLengthHours).Label;
     private string _shiftDragText = "";
+    private string _shiftSideText = "";
+    private string _shiftFirstNgText = "";
+    private string _shiftClearanceText = "";
     private string _shiftNgSourceText = "";
     private string _shiftStopText = "";
     private DateTime _shiftWindowStart;
@@ -523,6 +538,9 @@ else
                     ? "走完的件都还没有判定"
                     : report.Drag?.Text
                       ?? (_shiftCollectNg > 0 ? "没有点位超差，不合格来自没采成" : "本班没有不合格件");
+            _shiftSideText = report.Drag?.SideText ?? "";
+            _shiftFirstNgText = report.FirstNg?.Text ?? "";
+            _shiftClearanceText = report.Clearance?.Text ?? "";
             _shiftStopText = stops.ByShift.FirstOrDefault(row => row.ShiftStart == window.Start)?.Detail
                 ?? "本班各站没有明显停顿";
             _shiftWindowText = window.Label;

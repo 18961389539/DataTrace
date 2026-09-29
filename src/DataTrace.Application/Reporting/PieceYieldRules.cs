@@ -61,7 +61,8 @@ public static class PieceYieldRules
         {
             ByShift = byShift,
             ByRecipe = byRecipe,
-            Drag = DragOf(counted, stationId)
+            Drag = DragOf(counted, stationId),
+            FirstNg = FirstNgOf(counted)
         };
     }
 
@@ -140,7 +141,7 @@ public static class PieceYieldRules
 
     private static PieceYieldDrag? DragOf(IReadOnlyList<CountedPiece> pieces, int? stationId)
     {
-        var tally = new Dictionary<(string Station, string Name), int>();
+        var tally = new Dictionary<(string Station, string Name), (int Count, int High, int Low)>();
         foreach (var piece in pieces)
         {
             if (!IsQualityNg(piece, stationId))
@@ -148,26 +149,29 @@ public static class PieceYieldRules
                 continue;
             }
 
-            var points = piece.Faults
-                .Where(fault => !string.IsNullOrWhiteSpace(fault.Name))
-                .Select(fault => (Station: fault.StationCode.Trim(), Name: fault.Name.Trim()))
-                .Distinct()
+            // 没读到数不是越过红线。这种点不参加「哪一个点在拉低合格率」。
+            var groups = piece.Faults
+                .Where(fault => fault.Side != PointSide.Missing && !string.IsNullOrWhiteSpace(fault.Name))
+                .GroupBy(fault => (Station: fault.StationCode.Trim(), Name: fault.Name.Trim()))
                 .ToList();
-            if (points.Count == 0)
+            if (groups.Count == 0)
             {
-                points = piece.Piece.Stations
+                groups = piece.Piece.Stations
                     .Where(station => station.Judgement == Judgement.Ng && (stationId is null || station.StationId == stationId))
                     .Select(station => station.StationCode.Trim())
                     .Where(code => code.Length > 0)
                     .Distinct(StringComparer.Ordinal)
-                    .Select(code => (Station: code, Name: "不合格"))
+                    .Select(code => new[] { new PieceFaultPoint(0, code, "不合格") }.GroupBy(_ => (Station: code, Name: "不合格")).First())
                     .ToList();
             }
 
-            foreach (var point in points)
+            foreach (var group in groups)
             {
-                tally.TryGetValue(point, out var count);
-                tally[point] = count + 1;
+                tally.TryGetValue(group.Key, out var current);
+                tally[group.Key] = (
+                    current.Count + 1,
+                    current.High + (group.Any(fault => fault.Side == PointSide.High) ? 1 : 0),
+                    current.Low + (group.Any(fault => fault.Side == PointSide.Low) ? 1 : 0));
             }
         }
 
@@ -177,7 +181,7 @@ public static class PieceYieldRules
         }
 
         var top = tally
-            .OrderByDescending(item => item.Value)
+            .OrderByDescending(item => item.Value.Count)
             .ThenBy(item => item.Key.Station, StringComparer.Ordinal)
             .ThenBy(item => item.Key.Name, StringComparer.Ordinal)
             .First();
@@ -185,8 +189,57 @@ public static class PieceYieldRules
         {
             StationCode = top.Key.Station,
             PointName = top.Key.Name,
-            PieceCount = top.Value
+            PieceCount = top.Value.Count,
+            HighCount = top.Value.High,
+            LowCount = top.Value.Low
         };
+    }
+
+    /// <summary>
+    /// 每件只取工站顺序上第一次判废的那一站，再看哪一站这样出现得最多。
+    /// 顺序用配置里的序号；没有序号时退回工站编号，避免全部挤成同一站。
+    /// </summary>
+    private static PieceFirstNg? FirstNgOf(IReadOnlyList<CountedPiece> pieces)
+    {
+        var tally = new Dictionary<string, (int Count, int Sequence, int StationId)>(StringComparer.Ordinal);
+        foreach (var piece in pieces)
+        {
+            if (piece.Outcome != Judgement.Ng)
+            {
+                continue;
+            }
+
+            var first = piece.Piece.Stations
+                .Where(station => station.Judgement == Judgement.Ng && !string.IsNullOrWhiteSpace(station.StationCode))
+                .OrderBy(station => station.Sequence)
+                .ThenBy(station => station.StationId)
+                .Cast<PieceStationMark?>()
+                .FirstOrDefault();
+            if (first is not { } mark)
+            {
+                continue;
+            }
+
+            var code = mark.StationCode.Trim();
+            tally.TryGetValue(code, out var current);
+            var count = current.Count + 1;
+            tally[code] = current.Count == 0 || mark.Sequence < current.Sequence || (mark.Sequence == current.Sequence && mark.StationId < current.StationId)
+                ? (count, mark.Sequence, mark.StationId)
+                : (count, current.Sequence, current.StationId);
+        }
+
+        if (tally.Count == 0)
+        {
+            return null;
+        }
+
+        var top = tally
+            .OrderByDescending(item => item.Value.Count)
+            .ThenBy(item => item.Value.Sequence)
+            .ThenBy(item => item.Value.StationId)
+            .ThenBy(item => item.Key, StringComparer.Ordinal)
+            .First();
+        return new PieceFirstNg { StationCode = top.Key, PieceCount = top.Value.Count };
     }
 
     private static Judgement OutcomeOf(IEnumerable<Judgement> judgements)

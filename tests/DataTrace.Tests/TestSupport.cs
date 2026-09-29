@@ -344,8 +344,20 @@ internal class FakeRuntimeStore : IRuntimeStore
                 .Where(x => stationId is null || x.Record.StationId == stationId)
                 .Where(x => recipeCode is null || x.Record.RecipeCode == recipeCode)
                 .SelectMany(x => x.Record.TagValues.Where(t => t.IsOutOfLimit))
-                .Select(t => new TagIssuePoint { TagName = t.TagName })
+                .Select(t => new TagIssuePoint { TagName = t.TagName, Missing = t.NumericValue is null })
                 .ToList());
+
+    public List<InSpecReading> InSpecReadings { get; } = [];
+
+    public Task<IReadOnlyList<InSpecReading>> ListInSpecReadingsAsync(
+        DateTime from,
+        DateTime to,
+        string stationCode,
+        string tagName,
+        int? stationId,
+        string? recipeCode = null,
+        CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<InSpecReading>>(InSpecReadings);
 
     public Task<IReadOnlyList<TagIssuePoint>> QueryWarningTagsAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default)
         => Task.FromResult<IReadOnlyList<TagIssuePoint>>(

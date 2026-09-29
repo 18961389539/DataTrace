@@ -1,4 +1,4 @@
-@page "/reports"
+﻿@page "/reports"
 @attribute [Authorize]
 @implements IDisposable
 @using System.Globalization
@@ -18,7 +18,7 @@
 @inject IJSRuntime Js
 @inject NavigationManager Nav
 
-<PageHeader Title="报表" HelpRoute="reports">
+<PageHeader Title="报表" HelpRoute="reports" Busy="_loading">
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">@DateRangeFilter.Format(_from, _to) 　共 @_fpy.Sum(x => x.Total) 条记录</MudText>
     </Actions>
@@ -101,9 +101,26 @@
                     <MudText Typo="Typo.caption" Class="dt-muted mb-2">
                         每一行是一个班次，件数是这一班走出末站的件。任一站不合格，整件算不合格。末站完成时刻要落在所选日期里。
                     </MudText>
-                    @if (_pieceDrag is not null)
+                    @if (_pieceDrag is not null || _pieceFirstNg is not null || _pieceClearance is not null)
                     {
-                        <MudText Typo="Typo.body2" Class="mb-2">@_pieceDrag.Text</MudText>
+                        <div class="mb-2">
+                            @if (_pieceDrag is not null)
+                            {
+                                <MudText Typo="Typo.body2">@_pieceDrag.Text</MudText>
+                                @if (!string.IsNullOrEmpty(_pieceDrag.SideText))
+                                {
+                                    <MudText Typo="Typo.body2" Class="dt-muted">@_pieceDrag.SideText</MudText>
+                                }
+                            }
+                            @if (_pieceFirstNg is not null)
+                            {
+                                <MudText Typo="Typo.body2" Class="dt-muted">@_pieceFirstNg.Text <InfoHint Topic="HelpTexts.FirstNgStation" /></MudText>
+                            }
+                            @if (_pieceClearance is not null)
+                            {
+                                <MudText Typo="Typo.body2" Class="dt-muted">@_pieceClearance.Text <InfoHint Topic="HelpTexts.SpecClearance" /></MudText>
+                            }
+                        </div>
                     }
                     <MudTable Items="_fpy" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading">
                         <HeaderContent>
@@ -122,8 +139,11 @@
                             <MudTd DataLabel="NG" Class="dt-num">
                                 @if (context.Ng > 0)
                                 {
-                                    <strong class="dt-text-error">@context.Ng</strong>
-                                    <div class="dt-muted">@PieceYieldRules.NgSourceText(context.QualityNg, context.CollectNg)</div>
+                                    @* 来源说明挂 tooltip：塞进右对齐的数值格里会把「NG>0 的行」撑成两行、
+                                       NG=0 的行一行，同一列数字纵向不再对齐 —— dt-num 等的就是这个对齐。 *@
+                                    <MudTooltip Text="@PieceYieldRules.NgSourceText(context.QualityNg, context.CollectNg)" Arrow="true">
+                                        <strong class="dt-text-error">@context.Ng</strong>
+                                    </MudTooltip>
                                 }
                                 else
                                 {
@@ -168,6 +188,15 @@
                            那样就看不出"榜外还有一大截"，也就不会去查第 11 个点位。 *@
                         <MudText Typo="Typo.caption" Class="dt-muted mt-2">
                             区间共 @_defects.Total 次超规格，下表列出前 @_defects.Items.Count 项；占比以全部次数为分母。
+                        </MudText>
+                    }
+                    @if (_defects.MissingTotal > 0)
+                    {
+                        <MudText Typo="Typo.subtitle2" Class="mt-4 mb-1">没读到数 <InfoHint Topic="HelpTexts.MissingPoint" /></MudText>
+                        <IssueTopTable Items="_defects.MissingItems" Loading="_loading" Share="MissingShare"
+                                       EmptyText="区间内没有没读到数的点。" />
+                        <MudText Typo="Typo.caption" Class="dt-muted mt-2">
+                            区间共 @_defects.MissingTotal 次没读到数。这些次数不在上面的超规格榜里。
                         </MudText>
                     }
                 </MudPaper>
@@ -530,6 +559,8 @@
     private IReadOnlyList<DailyThroughput> _fpy = [];
     private IReadOnlyList<RecipeThroughput> _byRecipe = [];
     private PieceYieldDrag? _pieceDrag;
+    private PieceFirstNg? _pieceFirstNg;
+    private SpecClearance? _pieceClearance;
     private Dictionary<DateTime, ShiftStopSummary> _stops = [];
     /// <summary>型号筛选：null/缺省=全部型号；<c>""</c>=未选型号；其它为精确匹配。作用于整份报表。</summary>
     private string? _recipeFilter;
@@ -858,6 +889,8 @@ private async Task OnStationChanged(int? stationId)
                 _fpy = throughput.ByShift;
                 _byRecipe = MergeByRecipe(throughput.ByRecipe);
                 _pieceDrag = throughput.Drag;
+                _pieceFirstNg = throughput.FirstNg;
+                _pieceClearance = throughput.Clearance;
                 _stops = (await stopTask).ByShift.ToDictionary(row => row.ShiftStart);
                 _defects = await defectsTask;
                 _warnings = await warningsTask;
@@ -953,6 +986,8 @@ private async Task OnStationChanged(int? stationId)
         // 这张表也要清：它同样会"进度条一消失还留着旧数字"。
         _byRecipe = [];
         _pieceDrag = null;
+        _pieceFirstNg = null;
+        _pieceClearance = null;
         _stops = [];
         _defects = new();
         _warnings = new();
@@ -1101,6 +1136,9 @@ private async Task OnStationChanged(int? stationId)
 
     private double DefectShare(int count)
         => _defects.Total == 0 ? 0 : (double)count / _defects.Total;
+
+    private double MissingShare(int count)
+        => _defects.MissingTotal == 0 ? 0 : (double)count / _defects.MissingTotal;
 
     private double WarningShare(int count)
         => _warnings.Total == 0 ? 0 : (double)count / _warnings.Total;

@@ -63,8 +63,26 @@ public sealed class ReportService : IReportService
     public async Task<PieceYieldReport> GetPieceYieldAsync(DateTime from, DateTime to, int? stationId, string? recipeCode = null, CancellationToken cancellationToken = default)
     {
         var pieces = await _store.ListFinishedPiecesAsync(from, to, recipeCode, cancellationToken).ConfigureAwait(false);
+        var ordered = await WithPieceOrderAsync(pieces, cancellationToken).ConfigureAwait(false);
         var (startHour, lengthHours) = await ShiftAsync(cancellationToken).ConfigureAwait(false);
-        return PieceYieldRules.Summarize(pieces, stationId, startHour, lengthHours);
+        var report = PieceYieldRules.Summarize(ordered, stationId, startHour, lengthHours);
+        if (report.Drag is not { } drag
+            || string.IsNullOrWhiteSpace(drag.PointName)
+            || drag.PointName == "不合格")
+        {
+            return report;
+        }
+
+        var readings = await _store.ListInSpecReadingsAsync(
+            from, to, drag.StationCode, drag.PointName, stationId, recipeCode, cancellationToken).ConfigureAwait(false);
+        return new PieceYieldReport
+        {
+            ByShift = report.ByShift,
+            ByRecipe = report.ByRecipe,
+            Drag = report.Drag,
+            FirstNg = report.FirstNg,
+            Clearance = SpecClearanceRules.Of(readings)
+        };
     }
 
     public async Task<ShiftStopReport> GetShiftStopsAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default)
@@ -88,6 +106,34 @@ public sealed class ReportService : IReportService
         var passes = await _store.ListStationPassesAsync(loadFrom, loadTo, cancellationToken).ConfigureAwait(false);
         var ordered = await WithStationOrderAsync(passes, cancellationToken).ConfigureAwait(false);
         return StationStopRules.Summarize(ordered, from, to, asOf, startHour, lengthHours);
+    }
+
+    private async Task<IReadOnlyList<FinishedPieceObservation>> WithPieceOrderAsync(
+        IReadOnlyList<FinishedPieceObservation> pieces,
+        CancellationToken cancellationToken)
+    {
+        if (_config is null || pieces.Count == 0)
+        {
+            return pieces;
+        }
+
+        var stations = (await _config.GetSnapshotAsync(cancellationToken).ConfigureAwait(false)).Stations
+            .ToDictionary(station => station.Id);
+        return pieces.Select(piece => new FinishedPieceObservation
+        {
+            MonthKey = piece.MonthKey,
+            SessionId = piece.SessionId,
+            EndTime = piece.EndTime,
+            Judgement = piece.Judgement,
+            RecipeCode = piece.RecipeCode,
+            Stations = piece.Stations.Select(mark =>
+            {
+                stations.TryGetValue(mark.StationId, out var station);
+                var sequence = station?.Sequence ?? (mark.Sequence != 0 ? mark.Sequence : mark.StationId);
+                return mark with { Sequence = sequence };
+            }).ToList(),
+            Faults = piece.Faults
+        }).ToList();
     }
 
     private async Task<IReadOnlyList<StationPass>> WithStationOrderAsync(
@@ -132,7 +178,15 @@ public sealed class ReportService : IReportService
     public async Task<IssueTopReport> GetDefectTopAsync(DateTime from, DateTime to, int? stationId, int take = 10, string? recipeCode = null, CancellationToken cancellationToken = default)
     {
         var points = await _store.QueryOutOfLimitTagsAsync(from, to, stationId, recipeCode, cancellationToken).ConfigureAwait(false);
-        return Top(points, take);
+        var exceeded = Top(points.Where(point => !point.Missing).ToList(), take);
+        var missing = Top(points.Where(point => point.Missing).ToList(), take);
+        return new IssueTopReport
+        {
+            Items = exceeded.Items,
+            Total = exceeded.Total,
+            MissingItems = missing.Items,
+            MissingTotal = missing.Total
+        };
     }
 
     public async Task<IssueTopReport> GetWarningTopAsync(DateTime from, DateTime to, int? stationId, int take = 10, string? recipeCode = null, CancellationToken cancellationToken = default)

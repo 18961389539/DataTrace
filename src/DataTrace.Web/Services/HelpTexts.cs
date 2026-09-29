@@ -68,6 +68,21 @@ public static class HelpTexts
         "同一工站相邻两件完成的间隔；看板上是间隔最长的那一站。",
         "这一站决定这一班最多能做多少件，班中去疏通不用等到班后。");
 
+    public static readonly HelpTopic FirstNgStation = new(
+        "最先坏站",
+        "不合格件按工站顺序，取第一次判废的那一站。",
+        "后面的站再超点，也不算这件的起点。");
+
+    public static readonly HelpTopic SpecClearance = new(
+        "离红线",
+        "还合格的件里，这个点离规格限最近还有多远。",
+        "靠红线的一成是规格带宽度的十分之一。");
+
+    public static readonly HelpTopic MissingPoint = new(
+        "没读到数",
+        "必填点位没有数值，和越过红线分开计数。",
+        "没读到数先查测量和文件，收紧规格限没有用。");
+
     // ---------- 数据查询 ----------
 
     public static readonly HelpTopic RangeScope = new(
@@ -396,9 +411,9 @@ public static class HelpTexts
         var path = route.Split('?')[0].Trim('/').ToLowerInvariant();
         return path switch
         {
-            "" => [YieldRate, TodayScope, JudgementThreeState, LimitThreeTiers, StaleData, Cadence, ShiftShortfall, NgSource, PieceGap],
+            "" => [YieldRate, TodayScope, JudgementThreeState, LimitThreeTiers, StaleData, Cadence, ShiftShortfall, NgSource, PieceGap, FirstNgStation, SpecClearance],
             "query" => [RangeScope, MatchMode, ExportLimit, ResultCode, RecipeScope, JudgementThreeState],
-            "reports" => [YieldRate, AverageYield, ShiftWindow, ShiftShortfall, NgSource, RecipeScope, IssueShare, LimitThreeTiers, TrendSampleLimit, Capability, SegmentAsterisk],
+            "reports" => [YieldRate, AverageYield, ShiftWindow, ShiftShortfall, NgSource, RecipeScope, IssueShare, LimitThreeTiers, TrendSampleLimit, Capability, SegmentAsterisk, FirstNgStation, SpecClearance, MissingPoint],
             "curve-baseline" => [BaselineSampleCounts, RecipeMismatch, DeviationThresholds, OnlineBaseline, CriterionDisabled, CurveFeatureAxis],
             "logs" => [LogTimeRange, LogTimestamp, LogEntityKey, LogChange, LogKeyword],
             "config/plc" => [Heartbeat, PlcEnabled, MergeGap, SimulatorBrand],
@@ -428,7 +443,7 @@ public static class HelpTexts
                     "先看顶部采集状态、心跳和 PLC 异常，再看工站卡片。卡片状态按停用、故障、采集中、NG、OK 等状态表达；点位异常会突出显示。点选「本站明细」可直接检查最近一条记录。",
                     "「最近采集」是便于巡线的 12 条摘要，不是完整历史；需要按时间、托盘、工站等条件查找时进入数据查询。"),
                 Section("指标与点位",
-                    "本班完成按走出末站的件数统计，从班次起点算到本班结束。一件在任一站不合格，整件算不合格；未判定不进直通率。不合格再分成质量不合格和没采成。直通率旁边写出本班拉低合格率最多的工站和点位，只统计质量不合格。少做停点按整线安静的时间记在当时件停住的工站，并估出少做的件数。当前间隔是同一工站相邻两件完成相隔的时间，看板上写出间隔最长的那一站。",
+                    "本班完成按走出末站的件数统计，从班次起点算到本班结束。一件在任一站不合格，整件算不合格；未判定不进直通率。不合格再分成质量不合格和没采成。直通率旁边写出本班拉低合格率最多的工站和点位，只统计质量不合格，并写明这个点偏高还是偏低、合格件离红线还有多远。不合格件按工站顺序取第一次判废的那一站。少做停点按整线安静的时间记在当时件停住的工站，并估出少做的件数。当前间隔是同一工站相邻两件完成相隔的时间，看板上写出间隔最长的那一站。",
                     "顶部最近节拍表示距离最近一次工站完成经过的时间，与当前间隔含义不同。卡片展示 5 个以内的全部点位；点位更多时优先显示超限/预警项，普通点位可展开查看。"),
                 Section("异常排查",
                     "若数据新鲜度异常，先确认采集服务是否运行，再看 PLC 连接状态、工站握手地址及最近记录的结果码和错误信息。若 PLC 正常但最近节拍变慢，也要区分产线无料、工站停用和采集链路停止。",
@@ -473,7 +488,7 @@ public static class HelpTexts
                     "报表从区间数据汇总质量与过程表现，可按工站、型号和日期范围查看直通率、型号汇总、不良/预警 Top N、参数趋势及过程能力。趋势和过程能力需要再选择数值点位。",
                     "按筛选条件刷新后，各图表和表格使用对应区间；趋势与过程能力可能在首屏摘要之后加载。需要留档时，可导出有权限的趋势数据。"),
                 Section("质量与 Top N",
-                    "直通率表每一行是一个班次，件数是这一班走出末站的件；任一站不合格，整件只算一次不合格。不合格分成质量不合格和没采成，没采成不进直通率旁边的点位。区间直通率按这些件的 OK ÷ (OK + NG) 计算，未判定排除，不是各班直通率的简单平均。选了工站时，这张表只看该站自己的判定。少做一列是这一班停得最久的地方和时长；整线同时停下时，记在当时在制件停住的工站。不良榜仍按超规格次数统计。",
+                    "直通率表每一行是一个班次，件数是这一班走出末站的件；任一站不合格，整件只算一次不合格。不合格分成质量不合格和没采成，没采成不进直通率旁边的点位。直通率旁边还会写出最先坏的工站、这个点偏高还是偏低，以及合格件离红线还有多远。区间直通率按这些件的 OK ÷ (OK + NG) 计算，未判定排除，不是各班直通率的简单平均。选了工站时，这张表只看该站自己的判定。少做一列是这一班停得最久的地方和时长；整线同时停下时，记在当时在制件停住的工站。不良榜仍按超规格次数统计。没读到数单独成榜，不和越过红线的次数混在一起。",
                     "榜单按点位名称聚合次数；不筛工站时，不同工站的同名点位可能合并。占比以区间内相应类别的总次数为分母，榜内占比未达到 100% 时，差额来自未显示项目。"),
                 Section("趋势与过程能力",
                     $"趋势和过程能力单次最多处理最近 {SystemDefaults.TrendSampleLimit:N0} 个采样点；达到上限会提示数据截断，可缩短日期区间查看更早时段。规格限发生变化时，过程能力按限值分段计算，带星号的限值可能来自当前配置估计。",

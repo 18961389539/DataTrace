@@ -400,16 +400,19 @@ public sealed class RuntimeStore : IRuntimeStore
 
             var ngIds = sessions.Where(session => session.Judgement == Judgement.Ng).Select(session => session.Id).ToHashSet();
             var ngRecordIds = records.Where(record => ngIds.Contains(record.SessionId)).Select(record => record.Id).ToList();
-            var tags = new List<(long RecordId, string Name)>();
+            var tags = new List<(long RecordId, string Name, PointSide Side)>();
             var reasons = new List<(long RecordId, string Name)>();
             foreach (var ids in Chunk(ngRecordIds))
             {
                 var tagPart = await db.TagValues.AsNoTracking()
                     .Where(tag => tag.IsOutOfLimit && ids.Contains(tag.CollectRecordId))
-                    .Select(tag => new { tag.CollectRecordId, tag.TagName })
+                    .Select(tag => new { tag.CollectRecordId, tag.TagName, tag.NumericValue, tag.LowerLimit, tag.UpperLimit })
                     .ToListAsync(cancellationToken)
                     .ConfigureAwait(false);
-                tags.AddRange(tagPart.Select(tag => (tag.CollectRecordId, tag.TagName ?? "")));
+                tags.AddRange(tagPart.Select(tag => (
+                    tag.CollectRecordId,
+                    tag.TagName ?? "",
+                    SideOf(tag.NumericValue, tag.LowerLimit, tag.UpperLimit))));
 
                 var reasonPart = await db.ProductRecords.AsNoTracking()
                     .Where(product => product.Judgement == Judgement.Ng && ids.Contains(product.CollectRecordId))
@@ -425,7 +428,7 @@ public sealed class RuntimeStore : IRuntimeStore
             var recordsBySession = records.GroupBy(record => record.SessionId).ToDictionary(group => group.Key, group => group.ToList());
             var recordById = records.ToDictionary(record => record.Id);
             var faultsBySession = new Dictionary<long, List<PieceFaultPoint>>();
-            void AddFault(long recordId, string name)
+            void AddFault(long recordId, string name, PointSide side)
             {
                 if (string.IsNullOrWhiteSpace(name) || !recordById.TryGetValue(recordId, out var record))
                 {
@@ -438,22 +441,22 @@ public sealed class RuntimeStore : IRuntimeStore
                     faultsBySession[record.SessionId] = list;
                 }
 
-                if (list.Any(fault => fault.StationId == record.StationId && fault.Name == name))
+                if (list.Any(fault => fault.StationId == record.StationId && fault.Name == name && fault.Side == side))
                 {
                     return;
                 }
 
-                list.Add(new PieceFaultPoint(record.StationId, record.StationCode, name));
+                list.Add(new PieceFaultPoint(record.StationId, record.StationCode, name, side));
             }
 
             foreach (var tag in tags)
             {
-                AddFault(tag.RecordId, tag.Name.Trim());
+                AddFault(tag.RecordId, tag.Name.Trim(), tag.Side);
             }
 
             foreach (var reason in reasons)
             {
-                AddFault(reason.RecordId, reason.Name);
+                AddFault(reason.RecordId, reason.Name, PointSide.Unspecified);
             }
 
             foreach (var session in sessions)
@@ -512,6 +515,26 @@ public sealed class RuntimeStore : IRuntimeStore
         }
 
         return passes;
+    }
+
+    private static PointSide SideOf(double? value, double? lower, double? upper)
+    {
+        if (value is null || !double.IsFinite(value.Value))
+        {
+            return PointSide.Missing;
+        }
+
+        if (upper is { } high && value.Value > high)
+        {
+            return PointSide.High;
+        }
+
+        if (lower is { } low && value.Value < low)
+        {
+            return PointSide.Low;
+        }
+
+        return PointSide.Unspecified;
     }
 
     private readonly record struct PieceRecordRow(
@@ -683,7 +706,8 @@ public sealed class RuntimeStore : IRuntimeStore
                 .Where(x => x.record.TriggerTime >= from && x.record.TriggerTime <= to)
                 .Select(x => new TagIssuePoint
                 {
-                    TagName = x.tag.TagName
+                    TagName = x.tag.TagName,
+                    Missing = x.tag.NumericValue == null
                 })
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
@@ -691,6 +715,62 @@ public sealed class RuntimeStore : IRuntimeStore
         }
 
         return points;
+    }
+
+    public async Task<IReadOnlyList<InSpecReading>> ListInSpecReadingsAsync(
+        DateTime from,
+        DateTime to,
+        string stationCode,
+        string tagName,
+        int? stationId,
+        string? recipeCode = null,
+        CancellationToken cancellationToken = default)
+    {
+        var readings = new List<InSpecReading>();
+        if (string.IsNullOrWhiteSpace(stationCode) || string.IsNullOrWhiteSpace(tagName))
+        {
+            return readings;
+        }
+
+        foreach (var month in ExistingMonthKeys())
+        {
+            await using var db = _factory.Open(month);
+            var rows = db.TagValues.AsNoTracking()
+                .Join(
+                    db.CollectRecords.AsNoTracking(),
+                    tag => tag.CollectRecordId,
+                    record => record.Id,
+                    (tag, record) => new { tag, record })
+                .Join(
+                    db.PalletSessions.AsNoTracking(),
+                    pair => pair.record.PalletSessionId,
+                    session => session.Id,
+                    (pair, session) => new { pair.tag, pair.record, session })
+                .Where(x => x.session.Status == SessionStatus.Closed
+                    && x.session.EndTime >= from
+                    && x.session.EndTime <= to
+                    && x.record.StationCode == stationCode
+                    && x.tag.TagName == tagName
+                    && x.tag.NumericValue != null
+                    && !x.tag.IsOutOfLimit);
+
+            rows = stationId is { } sid
+                ? rows.Where(x => x.record.StationId == sid && x.record.Judgement == Judgement.Ok)
+                : rows.Where(x => x.session.Judgement == Judgement.Ok);
+
+            if (recipeCode is not null)
+            {
+                rows = rows.Where(x => x.record.RecipeCode == recipeCode);
+            }
+
+            var part = await rows
+                .Select(x => new { x.tag.NumericValue, x.tag.LowerLimit, x.tag.UpperLimit })
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            readings.AddRange(part.Select(x => new InSpecReading(x.NumericValue!.Value, x.LowerLimit, x.UpperLimit)));
+        }
+
+        return readings;
     }
 
     public async Task<IReadOnlyList<TagTrendPoint>> QueryTagTrendAsync(

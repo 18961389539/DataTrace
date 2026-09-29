@@ -143,9 +143,9 @@ public class HelpTextsTests
     }
 
     [Theory]
-    [InlineData("", 9)]
+    [InlineData("", 11)]
     [InlineData("query", 6)]
-    [InlineData("reports", 11)]
+    [InlineData("reports", 14)]
     [InlineData("curve-baseline", 6)]
     [InlineData("logs", 5)]
     [InlineData("config/plc", 4)]

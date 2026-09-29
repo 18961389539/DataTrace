@@ -49,8 +49,13 @@ public sealed class IssueTopReport
 {
     public IReadOnlyList<IssueTopItem> Items { get; init; } = [];
 
-    /// <summary>区间内全部次数（含榜外的那些）。</summary>
+    /// <summary>区间内全部次数（含榜外的那些）。不良榜这里只计越过红线，不含没读到数。</summary>
     public int Total { get; init; }
+
+    /// <summary>必填点位没有数值的次数。和越过红线分开，避免同一个点名两种原因。</summary>
+    public IReadOnlyList<IssueTopItem> MissingItems { get; init; } = [];
+
+    public int MissingTotal { get; init; }
 }
 
 public sealed class TrendPoint
@@ -102,9 +107,23 @@ public sealed class FinishedPieceObservation
     public IReadOnlyList<PieceFaultPoint> Faults { get; init; } = [];
 }
 
-public readonly record struct PieceStationMark(int StationId, string StationCode, Judgement Judgement, short ResultCode = 0);
+public readonly record struct PieceStationMark(
+    int StationId,
+    string StationCode,
+    Judgement Judgement,
+    short ResultCode = 0,
+    int Sequence = 0);
 
-public readonly record struct PieceFaultPoint(int StationId, string StationCode, string Name);
+/// <summary>一个不合格点相对规格限的方向。没有数和没带限值时不算偏高或偏低。</summary>
+public enum PointSide
+{
+    Unspecified = 0,
+    High = 1,
+    Low = 2,
+    Missing = 3
+}
+
+public readonly record struct PieceFaultPoint(int StationId, string StationCode, string Name, PointSide Side = PointSide.Unspecified);
 
 /// <summary>本班（或所选区间）把合格率拉下去最多的那一个点。</summary>
 public sealed class PieceYieldDrag
@@ -112,10 +131,38 @@ public sealed class PieceYieldDrag
     public string StationCode { get; init; } = "";
     public string PointName { get; init; } = "";
     public int PieceCount { get; init; }
+    public int HighCount { get; init; }
+    public int LowCount { get; init; }
 
     public string Text => string.IsNullOrWhiteSpace(PointName) || PointName == "不合格"
         ? $"不合格多出在 {StationCode}，{PieceCount} 件"
         : $"不合格多出在 {StationCode} {PointName}，{PieceCount} 件";
+
+    public string SideText => (HighCount, LowCount) switch
+    {
+        (0, 0) => "",
+        (_, 0) => $"偏高 {HighCount} 件",
+        (0, _) => $"偏低 {LowCount} 件",
+        _ => $"偏高 {HighCount} 件 · 偏低 {LowCount} 件"
+    };
+}
+
+/// <summary>不合格件里，按工站顺序第一次判废出现最多的那一站。</summary>
+public sealed class PieceFirstNg
+{
+    public string StationCode { get; init; } = "";
+    public int PieceCount { get; init; }
+
+    public string Text => $"最先坏在 {StationCode}，{PieceCount} 件";
+}
+
+/// <summary>直通率那个点上，还合格的读数离红线还有多远。</summary>
+public sealed class SpecClearance
+{
+    public double Nearest { get; init; }
+    public int NearCount { get; init; }
+    public bool HasBand { get; init; }
+    public string Text { get; init; } = "";
 }
 
 /// <summary>按走出末站的一件汇总。任一站不合格，整件算不合格。</summary>
@@ -124,6 +171,8 @@ public sealed class PieceYieldReport
     public IReadOnlyList<DailyThroughput> ByShift { get; init; } = [];
     public IReadOnlyList<RecipeThroughput> ByRecipe { get; init; } = [];
     public PieceYieldDrag? Drag { get; init; }
+    public PieceFirstNg? FirstNg { get; init; }
+    public SpecClearance? Clearance { get; init; }
 }
 
 public interface IReportService

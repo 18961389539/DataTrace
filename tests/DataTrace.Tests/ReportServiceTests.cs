@@ -174,6 +174,26 @@ public class ReportServiceTests
     }
 
     [Fact]
+    public async Task Defect_top_keeps_missing_values_off_the_exceeded_board()
+    {
+        var store = new FakeRuntimeStore();
+        store.Records.Add(("202609", Record(Day1, Judgement.Ng, 10,
+            Tag(1, "压力", 25, true),
+            Tag(2, "压力", null, true),
+            Tag(3, "位移", null, true))));
+        var service = new ReportService(store);
+
+        var top = await service.GetDefectTopAsync(Day1, Day2, stationId: null);
+
+        Assert.Equal("压力", Assert.Single(top.Items).Name);
+        Assert.Equal(1, top.Items[0].Count);
+        Assert.Equal(1, top.Total);
+        Assert.Equal(2, top.MissingTotal);
+        Assert.Equal(1, top.MissingItems.Single(item => item.Name == "压力").Count);
+        Assert.Equal(1, top.MissingItems.Single(item => item.Name == "位移").Count);
+    }
+
+    [Fact]
     public async Task Defect_top_honors_take_and_ignores_in_limit_tags()
     {
         var service = new ReportService(BuildStore());
