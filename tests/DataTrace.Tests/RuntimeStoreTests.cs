@@ -105,12 +105,81 @@ public class RuntimeStoreTests
             ReadLimitColumns(reopened);
         }
 
+        await AssertColumnsAndVersionAsync(path, "TagValues", columns);
+    }
+
+    /// <summary>
+    /// 会话首因列同样要在老月份库里补上：v1 时代的 PalletSessions 没有这四列，
+    /// 靠 RuntimeSchema v2 补 —— 还是只有打开旧文件才会炸，新库全绿发现不了。
+    /// </summary>
+    [Fact]
+    public async Task Existing_month_db_gains_the_session_cause_columns()
+    {
+        string[] columns = ["FirstNgStationCode", "FirstNgAt", "FirstNgResultCode", "FirstNgReason"];
+        const string monthKey = "202609";
+
+        using var workspace = new TempWorkspace();
+        var root = workspace.Path("runtime");
+        var path = new RuntimeDbFactory(root).GetPath(monthKey);
+
+        await using (var created = new RuntimeDbFactory(root).Open(monthKey))
+        {
+            ReadCauseColumns(created);
+        }
+
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+
+        // 模拟 v1 时代的月份库：掉列，版本退回到 1（而不是 0）—— 走的正是 v1 → v2 这一档。
+        await using (var raw = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
+        {
+            await raw.OpenAsync();
+            foreach (var column in columns)
+            {
+                await using var drop = raw.CreateCommand();
+                drop.CommandText = $"""ALTER TABLE "PalletSessions" DROP COLUMN "{column}" """;
+                await drop.ExecuteNonQueryAsync();
+            }
+
+            await using var rewind = raw.CreateCommand();
+            rewind.CommandText = """UPDATE "RuntimeSchemaVersion" SET "Version" = 1 WHERE "Id" = 1""";
+            await rewind.ExecuteNonQueryAsync();
+        }
+
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+
+        await using (var reopened = new RuntimeDbFactory(root).Open(monthKey))
+        {
+            ReadCauseColumns(reopened);
+        }
+
+        await AssertColumnsAndVersionAsync(path, "PalletSessions", columns);
+    }
+
+    /// <summary>
+    /// 用一次真的引用列名的查询探月库结构。
+    /// 老月份库缺列时 EF 会抛 no such column —— 而 Any() 编译成 SELECT EXISTS，
+    /// 一个列名都不碰，缺列也照样返回成功，所以不能用它当探针。
+    /// </summary>
+    private static void ReadLimitColumns(RuntimeDbContext ctx)
+        => ctx.TagValues
+            .Select(t => new { t.LowerLimit, t.UpperLimit, t.WarningLowerLimit, t.WarningUpperLimit })
+            .ToList();
+
+    /// <summary>会话首因列的探针，理由同上：必须让列名进 SQL。</summary>
+    private static void ReadCauseColumns(RuntimeDbContext ctx)
+        => ctx.PalletSessions
+            .Select(s => new { s.FirstNgStationCode, s.FirstNgAt, s.FirstNgResultCode, s.FirstNgReason })
+            .ToList();
+
+    /// <summary>补完之后：列真的在表里，且版本号已经到当前档（打开时才不会再补一遍）。</summary>
+    private static async Task AssertColumnsAndVersionAsync(string path, string table, IReadOnlyList<string> columns)
+    {
         var present = new List<string>();
         await using (var check = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
         {
             await check.OpenAsync();
             await using var probe = check.CreateCommand();
-            probe.CommandText = "SELECT name FROM pragma_table_info('TagValues')";
+            probe.CommandText = $"SELECT name FROM pragma_table_info('{table}')";
             await using var reader = await probe.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
@@ -132,16 +201,6 @@ public class RuntimeStoreTests
         }
     }
 
-    /// <summary>
-    /// 用一次真的引用列名的查询探月库结构。
-    /// 老月份库缺列时 EF 会抛 no such column —— 而 Any() 编译成 SELECT EXISTS，
-    /// 一个列名都不碰，缺列也照样返回成功，所以不能用它当探针。
-    /// </summary>
-    private static void ReadLimitColumns(RuntimeDbContext ctx)
-        => ctx.TagValues
-            .Select(t => new { t.LowerLimit, t.UpperLimit, t.WarningLowerLimit, t.WarningUpperLimit })
-            .ToList();
-
     private static CollectRecord BuildRecord(
         string palletCode,
         string serialNo,
@@ -150,9 +209,14 @@ public class RuntimeStoreTests
         int stationId = 10,
         string stationCode = "ST010",
         double? pressure = 12.5,
-        long sessionId = 0)
+        long sessionId = 0,
+        short? resultCode = null,
+        string? errorMessage = null,
+        Judgement? productJudgement = null)
     {
-        var outOfLimit = judgement == Judgement.Ng;
+        // 记录判定与品位判定默认一致；跳站这类流程异常是"记录 NG、品位没问题"，
+        // 需要分开给的时候才分开传。
+        var productJudged = productJudgement ?? judgement;
         return new CollectRecord
         {
             PalletSessionId = sessionId,
@@ -163,9 +227,10 @@ public class RuntimeStoreTests
             TriggerTime = triggerTime,
             CompleteTime = triggerTime.AddMilliseconds(120),
             DurationMs = 120,
-            ResultCode = ResultCodes.Success,
+            ResultCode = resultCode ?? ResultCodes.Success,
             Judgement = judgement,
-            Products = [new ProductRecord { PositionIndex = 1, Occupied = true, Judgement = judgement, NgReason = outOfLimit ? "压力超限" : null }],
+            ErrorMessage = errorMessage,
+            Products = [new ProductRecord { PositionIndex = 1, Occupied = true, Judgement = productJudged, NgReason = productJudged == Judgement.Ng ? "压力超限" : null }],
             TagValues =
             [
                 new TagValue
@@ -175,7 +240,7 @@ public class RuntimeStoreTests
                     PositionIndex = 1,
                     DataType = PlcDataType.Float,
                     NumericValue = pressure,
-                    IsOutOfLimit = outOfLimit
+                    IsOutOfLimit = judgement == Judgement.Ng
                 }
             ]
         };
@@ -214,13 +279,19 @@ public class RuntimeStoreTests
         bool close = false,
         Judgement judgement = Judgement.Ok,
         int stationId = 30,
-        string stationCode = "ST030")
+        string stationCode = "ST030",
+        short? resultCode = null,
+        string? errorMessage = null,
+        Judgement? productJudgement = null)
         => new()
         {
             MonthKey = monthKey,
             CloseSession = close,
             RemoveActiveSession = close,
-            Record = BuildRecord(palletCode, serialNo, triggerTime, judgement, stationId, stationCode, sessionId: sessionId)
+            Record = BuildRecord(
+                palletCode, serialNo, triggerTime, judgement, stationId, stationCode,
+                sessionId: sessionId, resultCode: resultCode, errorMessage: errorMessage,
+                productJudgement: productJudgement)
         };
 
     private static CollectQueryRequest Query(
@@ -665,6 +736,115 @@ public class RuntimeStoreTests
 
         Assert.NotNull(session);
         Assert.Equal(Judgement.Ng, session!.Judgement);
+    }
+
+    /// <summary>
+    /// 会话判定是"任一站 NG 即 NG"，可光有一个 NG 字，事后不知道从哪一站开始废。
+    /// 首因必须钉在触发时刻最早的那条 NG 记录上 —— 落库顺序不作数（补传会打乱顺序）。
+    /// </summary>
+    [Fact]
+    public async Task Closed_session_pins_the_first_ng_record_as_the_cause()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        var first = FirstStation("202609", "P0001", "S1", Day1, Judgement.Ok);
+        await env.Store.SaveAsync(first);
+        var sessionId = first.Record.PalletSessionId;
+
+        // 先写晚的那条、再写早的那条：取的是时刻最早，不是最早落库。
+        await env.Store.SaveAsync(FollowingStation(
+            "202609", "P0001", "S1", Day1.AddMinutes(3), sessionId,
+            judgement: Judgement.Ng, stationId: 40, stationCode: "ST040"));
+        await env.Store.SaveAsync(FollowingStation(
+            "202609", "P0001", "S1", Day1.AddMinutes(2), sessionId,
+            judgement: Judgement.Ng, stationId: 20, stationCode: "ST020"));
+        await env.Store.SaveAsync(FollowingStation(
+            "202609", "P0001", "S1", Day1.AddMinutes(4), sessionId,
+            close: true, stationId: 99, stationCode: "ST099"));
+
+        var session = await env.Store.GetSessionAsync("202609", sessionId);
+
+        Assert.NotNull(session);
+        Assert.Equal(Judgement.Ng, session!.Judgement);
+        Assert.Equal("ST020", session.FirstNgStationCode);
+        Assert.Equal(Day1.AddMinutes(2), session.FirstNgAt);
+        Assert.Equal(ResultCodes.Success, session.FirstNgResultCode.GetValueOrDefault());
+        Assert.Equal("压力超限", session.FirstNgReason);
+    }
+
+    /// <summary>
+    /// 跳站这类流程异常是"记录 NG、品位没问题"，原因只在采集错误里。
+    /// 首因不能恰好在最需要解释的一种 NG 上留空。
+    /// </summary>
+    [Fact]
+    public async Task Closed_session_cause_keeps_the_process_error_for_skipped_stations()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        var first = FirstStation("202609", "P0001", "S1", Day1);
+        await env.Store.SaveAsync(first);
+        var sessionId = first.Record.PalletSessionId;
+
+        await env.Store.SaveAsync(FollowingStation(
+            "202609", "P0001", "S1", Day1.AddMinutes(1), sessionId,
+            judgement: Judgement.Ng, productJudgement: Judgement.Ok,
+            resultCode: ResultCodes.ProcessAbnormal, errorMessage: "检测到跳站",
+            stationId: 40, stationCode: "ST040"));
+        await env.Store.SaveAsync(FollowingStation(
+            "202609", "P0001", "S1", Day1.AddMinutes(2), sessionId,
+            close: true, stationId: 50, stationCode: "ST050"));
+
+        var session = await env.Store.GetSessionAsync("202609", sessionId);
+
+        Assert.NotNull(session);
+        Assert.Equal("ST040", session!.FirstNgStationCode);
+        Assert.Equal(ResultCodes.ProcessAbnormal, session.FirstNgResultCode.GetValueOrDefault());
+        Assert.Equal("检测到跳站", session.FirstNgReason);
+    }
+
+    /// <summary>
+    /// 采集错误与品位不良原因同时存在时都要留下，先记采集错误：那是"这一站没测成"，
+    /// 比"测出来超差"更靠前，顺序反了会让人以为只是质量判废。
+    /// </summary>
+    [Fact]
+    public async Task Closed_session_cause_joins_error_and_defect_reasons_in_order()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        var first = FirstStation("202609", "P0001", "S1", Day1);
+        await env.Store.SaveAsync(first);
+        var sessionId = first.Record.PalletSessionId;
+
+        await env.Store.SaveAsync(FollowingStation(
+            "202609", "P0001", "S1", Day1.AddMinutes(1), sessionId,
+            judgement: Judgement.Ng, resultCode: ResultCodes.DataValidationFailed,
+            errorMessage: "缺少必填点位"));
+        await env.Store.SaveAsync(FollowingStation(
+            "202609", "P0001", "S1", Day1.AddMinutes(2), sessionId,
+            close: true, stationId: 50, stationCode: "ST050"));
+
+        var session = await env.Store.GetSessionAsync("202609", sessionId);
+
+        Assert.NotNull(session);
+        Assert.Equal("缺少必填点位；压力超限", session!.FirstNgReason);
+    }
+
+    /// <summary>全绿的一次会话不该背着一个首因；重新关闭（补传重放）也不能留下上一轮的首因。</summary>
+    [Fact]
+    public async Task Closed_session_without_ng_leaves_no_cause()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        var first = FirstStation("202609", "P0001", "S1", Day1);
+        await env.Store.SaveAsync(first);
+
+        await env.Store.SaveAsync(FollowingStation(
+            "202609", "P0001", "S1", Day1.AddMinutes(1), first.Record.PalletSessionId, close: true));
+
+        var session = await env.Store.GetSessionAsync("202609", first.Record.PalletSessionId);
+
+        Assert.NotNull(session);
+        Assert.Equal(Judgement.Ok, session!.Judgement);
+        Assert.Null(session.FirstNgStationCode);
+        Assert.Null(session.FirstNgAt);
+        Assert.Null(session.FirstNgResultCode);
+        Assert.Null(session.FirstNgReason);
     }
 
     [Fact]

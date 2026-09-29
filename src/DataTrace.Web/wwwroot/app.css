@@ -2299,6 +2299,13 @@ html.dt-theme-dark button.dt-settings-nav-btn.active {
     gap: 4px 20px;
 }
 
+/* 首因：判定 NG 时"从哪一站开始坏"。给错误色，在一排灰标签里一眼能定位。 */
+.dt-trace-first-ng {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--mud-palette-error);
+}
+
 .dt-trace-timeline {
     display: grid;
     grid-template-columns: minmax(0, 1fr);

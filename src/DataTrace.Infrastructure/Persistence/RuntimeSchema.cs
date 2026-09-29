@@ -12,7 +12,7 @@ namespace DataTrace.Infrastructure.Persistence;
 /// </remarks>
 public static class RuntimeSchema
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
 
     public static void Upgrade(RuntimeDbContext ctx)
     {
@@ -22,6 +22,12 @@ public static class RuntimeSchema
         {
             ApplyVersion1(ctx);
             WriteVersion(ctx, 1);
+        }
+
+        if (version < 2)
+        {
+            ApplyVersion2(ctx);
+            WriteVersion(ctx, 2);
         }
     }
 
@@ -196,5 +202,36 @@ public static class RuntimeSchema
                 """UPDATE "TagValues" SET "TagName" = "TagCode" WHERE "TagName" IS NULL OR trim("TagName") = ''""");
             SqliteSchema.DropColumnIfPresent(ctx, "TagValues", "TagCode");
         }
+    }
+
+    /// <summary>
+    /// 会话首因：判定为 NG 的会话要能说清"哪一站先出问题"。
+    /// 新库由 EnsureCreated 直接从模型建出这几列，老库靠这一档补齐。
+    /// </summary>
+    private static void ApplyVersion2(RuntimeDbContext ctx)
+    {
+        SqliteSchema.AddColumnIfMissing(
+            ctx,
+            "PalletSessions",
+            "FirstNgStationCode",
+            """ALTER TABLE "PalletSessions" ADD COLUMN "FirstNgStationCode" TEXT NULL""");
+
+        SqliteSchema.AddColumnIfMissing(
+            ctx,
+            "PalletSessions",
+            "FirstNgAt",
+            """ALTER TABLE "PalletSessions" ADD COLUMN "FirstNgAt" TEXT NULL""");
+
+        SqliteSchema.AddColumnIfMissing(
+            ctx,
+            "PalletSessions",
+            "FirstNgResultCode",
+            """ALTER TABLE "PalletSessions" ADD COLUMN "FirstNgResultCode" INTEGER NULL""");
+
+        SqliteSchema.AddColumnIfMissing(
+            ctx,
+            "PalletSessions",
+            "FirstNgReason",
+            """ALTER TABLE "PalletSessions" ADD COLUMN "FirstNgReason" TEXT NULL""");
     }
 }

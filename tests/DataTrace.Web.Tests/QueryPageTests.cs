@@ -112,6 +112,90 @@ public class QueryPageTests : WebTestBase
         Assert.DoesNotContain("托盘码", cut.Markup);
     }
 
+    /// <summary>
+    /// 会话判 NG 时必须把首因一起摆出来：只有一个"不合格"，
+    /// 操作工得逐站翻履历才知道从哪一站开始坏 —— 多站多件的会话一眼看不出来。
+    /// </summary>
+    [Fact]
+    public void Trace_mode_shows_the_first_ng_station_and_reason()
+    {
+        const string serial = "20260919-000001";
+        _store
+            .Setup(s => s.FindSessionTracesBySerialNoAsync(serial, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([Trace(serial, Judgement.Ng)]);
+        var cut = Render();
+
+        ClickButton(cut, "产品追溯");
+        TypeInto(cut, "产品流水号", serial);
+        cut.Find("form").TriggerEvent("onsubmit", new EventArgs());
+
+        var firstNg = cut.Find(".dt-trace-first-ng");
+        Assert.Contains("首因", firstNg.TextContent);
+        Assert.Contains("ST020", firstNg.TextContent);
+        Assert.Contains("质量不合格", firstNg.TextContent);
+        Assert.Contains("压力超限", firstNg.TextContent);
+    }
+
+    /// <summary>全绿会话没有首因，那一行不能挂着"未知工站"之类的空壳。</summary>
+    [Fact]
+    public void Trace_mode_leaves_the_cause_line_out_for_qualified_sessions()
+    {
+        const string serial = "20260919-000001";
+        _store
+            .Setup(s => s.FindSessionTracesBySerialNoAsync(serial, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([Trace(serial, Judgement.Ok)]);
+        var cut = Render();
+
+        ClickButton(cut, "产品追溯");
+        TypeInto(cut, "产品流水号", serial);
+        cut.Find("form").TriggerEvent("onsubmit", new EventArgs());
+
+        Assert.Contains(serial, cut.Markup);
+        Assert.Empty(cut.FindAll(".dt-trace-first-ng"));
+    }
+
+    /// <summary>一条判定为 <paramref name="judgement"/> 的会话履历；NG 时带上首因四件套。</summary>
+    private static CollectSessionTrace Trace(string serial, Judgement judgement)
+    {
+        var start = new DateTime(2026, 9, 19, 10, 0, 0);
+        var ng = judgement == Judgement.Ng;
+        return new CollectSessionTrace
+        {
+            MonthKey = "202609",
+            SessionId = 7,
+            Session = new PalletSession
+            {
+                Id = 7,
+                SerialNo = serial,
+                PalletCode = "P0001",
+                StartTime = start,
+                EndTime = start.AddMinutes(5),
+                Status = SessionStatus.Closed,
+                Judgement = judgement,
+                FirstNgStationCode = ng ? "ST020" : null,
+                FirstNgAt = ng ? start.AddSeconds(3) : null,
+                FirstNgResultCode = ng ? ResultCodes.QualityRejected : null,
+                FirstNgReason = ng ? "压力超限" : null
+            },
+            Records =
+            [
+                new CollectRecord
+                {
+                    Id = 11,
+                    PalletSessionId = 7,
+                    SerialNo = serial,
+                    PalletCode = "P0001",
+                    StationId = 10,
+                    StationCode = "ST010",
+                    TriggerTime = start,
+                    CompleteTime = start.AddSeconds(1),
+                    ResultCode = ResultCodes.Success,
+                    Judgement = Judgement.Ok
+                }
+            ]
+        };
+    }
+
     [Fact]
     public void Export_writes_an_audit_entry_naming_the_range_and_the_filters()
     {

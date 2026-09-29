@@ -271,33 +271,7 @@ public class UiRegressionE2ETests : E2ETestBase
 
         // 面板常驻 DOM 但带 hidden；等它可见就是等 JS 把读数填出来了。
         var readout = Page.Locator(".dt-chart-readout").First;
-        try
-        {
-            await readout.WaitForAsync(new() { Timeout = 5000 });
-        }
-        catch (TimeoutException)
-        {
-            // 临时诊断：悬停读数没出来时，把图表此刻的状态原样打出来（读完即删）。
-            var probe = await Page.EvaluateAsync<string>("""
-                () => {
-                    const boxes = [...document.querySelectorAll('.dt-chart-box')];
-                    const svg = document.querySelector('svg.dt-chart');
-                    const rect = svg ? svg.getBoundingClientRect() : null;
-                    const at = rect ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2) : null;
-                    return JSON.stringify({
-                        html: document.querySelector('.dt-chart-box') ? document.querySelector('.dt-chart-box').outerHTML.slice(0, 700) : null,
-                        boxes: boxes.length,
-                        boxHeads: boxes.map(b => (b.parentElement ? b.parentElement.className : '') + ' > ' + b.className),
-                        points: boxes.map(b => b.querySelectorAll('circle.dt-point').length),
-                        tips: boxes.map(b => [...b.querySelectorAll('circle.dt-point')].map(c => c.getAttribute('data-tip'))),
-                        svgRect: rect ? { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) } : null,
-                        atCenter: at ? at.tagName + '|' + (at.getAttribute('class') || '') : null,
-                        tabs: [...document.querySelectorAll('.mud-tab')].map(t => t.textContent + (t.getAttribute('aria-selected') === 'true' ? '*' : ''))
-                    });
-                }
-                """);
-            Assert.Fail($"悬停读数未出现。状态：{probe}");
-        }
+        await readout.WaitForAsync(new() { Timeout = 5000 });
 
         var text = await readout.InnerTextAsync();
         Assert.Contains("→", text);

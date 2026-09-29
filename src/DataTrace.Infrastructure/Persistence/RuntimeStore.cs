@@ -88,12 +88,49 @@ public sealed class RuntimeStore : IRuntimeStore
                 {
                     session.Status = SessionStatus.Closed;
                     session.EndTime = request.Record.CompleteTime;
-                    var judgements = await db.CollectRecords.AsNoTracking()
+                    var records = await db.CollectRecords.AsNoTracking()
                         .Where(record => record.PalletSessionId == session.Id)
-                        .Select(record => record.Judgement)
+                        .OrderBy(record => record.TriggerTime)
+                        .ThenBy(record => record.Id)
+                        .Select(record => new
+                        {
+                            record.Id,
+                            record.Judgement,
+                            record.StationCode,
+                            record.TriggerTime,
+                            record.ResultCode,
+                            record.ErrorMessage
+                        })
                         .ToListAsync(cancellationToken)
                         .ConfigureAwait(false);
-                    session.Judgement = CombineSessionJudgements(judgements);
+                    session.Judgement = CombineSessionJudgements(records.Select(record => record.Judgement).ToList());
+
+                    // 判定是"任一站 NG 即 NG"，光有这个判定，事后只知道废了、不知道从哪一站开始废。
+                    // 首因钉在最前面那条 NG 记录上：先按触发时刻，再按 Id 定先后。
+                    var firstNg = records.FirstOrDefault(record => record.Judgement == Judgement.Ng);
+                    if (firstNg is null)
+                    {
+                        session.FirstNgStationCode = null;
+                        session.FirstNgAt = null;
+                        session.FirstNgResultCode = null;
+                        session.FirstNgReason = null;
+                    }
+                    else
+                    {
+                        var reasons = await db.ProductRecords.AsNoTracking()
+                            .Where(product => product.CollectRecordId == firstNg.Id
+                                              && product.Judgement == Judgement.Ng
+                                              && product.NgReason != null
+                                              && product.NgReason != "")
+                            .OrderBy(product => product.PositionIndex)
+                            .Select(product => product.NgReason!)
+                            .ToListAsync(cancellationToken)
+                            .ConfigureAwait(false);
+                        session.FirstNgStationCode = firstNg.StationCode;
+                        session.FirstNgAt = firstNg.TriggerTime;
+                        session.FirstNgResultCode = firstNg.ResultCode;
+                        session.FirstNgReason = ComposeFirstNgReason(firstNg.ErrorMessage, reasons);
+                    }
                 }
             }
 
@@ -1144,5 +1181,30 @@ public sealed class RuntimeStore : IRuntimeStore
         return judgements.Any(judgement => judgement == Judgement.Ng)
             ? Judgement.Ng
             : Judgement.Ok;
+    }
+
+    /// <summary>
+    /// 首因说明：先记采集/流程错误（跳站、校验失败都在这里），再接各不良品位的判定原因，
+    /// 去重后拼成一句。不去重的话，一件上多个同样的不良原因会原样重复好几遍。
+    /// 不做截断：这是判定时刻的审计事实，显示端要省略是显示端的事。
+    /// </summary>
+    private static string? ComposeFirstNgReason(string? errorMessage, IReadOnlyList<string> productReasons)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(errorMessage))
+        {
+            parts.Add(errorMessage.Trim());
+        }
+
+        foreach (var reason in productReasons)
+        {
+            var text = reason.Trim();
+            if (text.Length > 0 && !parts.Contains(text))
+            {
+                parts.Add(text);
+            }
+        }
+
+        return parts.Count == 0 ? null : string.Join("；", parts);
     }
 }

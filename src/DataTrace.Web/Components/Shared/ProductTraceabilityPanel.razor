@@ -98,6 +98,14 @@ else if (_traces.Count > 0 && SelectedTrace is { } trace)
             <MudText Typo="Typo.caption">
                 <span class="dt-muted">最终判定</span> @FinalJudgement(trace)
             </MudText>
+            @if (FirstNg(trace) is { } firstNg)
+            {
+                @* 判定只说"任一站 NG 即 NG"；首因把"从哪一站、哪一刻、因为什么"钉出来，
+                   否则看到 NG 只能从履历里自己找，多件多站时一眼看不出来。 *@
+                <MudText Typo="Typo.caption" Class="dt-trace-first-ng">
+                    <span class="dt-muted">首因</span> @firstNg
+                </MudText>
+            }
         </MudStack>
     </MudPaper>
 
@@ -508,6 +516,36 @@ else
             judgement = trace.Records[^1].Judgement;
         }
         return DisplayLabels.JudgementText(judgement);
+    }
+
+    /// <summary>
+    /// 首因一行：工站 + 时刻 + 结果码 + 原因。判定不是 NG、或旧数据没有记首因时整行不显示。
+    /// 原因直接铺在行内而不是塞进悬浮提示：车间大屏多为触摸，悬浮不是总能触发的交互。
+    /// </summary>
+    private static string? FirstNg(CollectSessionTrace trace)
+    {
+        var session = trace.Session;
+        if (session?.FirstNgAt is not { } at)
+        {
+            return null;
+        }
+
+        var parts = new List<string>
+        {
+            string.IsNullOrWhiteSpace(session.FirstNgStationCode) ? "未知工站" : session.FirstNgStationCode,
+            at.ToString("yyyy-MM-dd HH:mm:ss")
+        };
+        if (session.FirstNgResultCode is { } code)
+        {
+            parts.Add(ResultCodes.Describe(code));
+        }
+
+        if (!string.IsNullOrWhiteSpace(session.FirstNgReason))
+        {
+            parts.Add(session.FirstNgReason);
+        }
+
+        return string.Join(" · ", parts);
     }
 
     private string DetailUrl(CollectSessionTrace trace, CollectRecord record)
