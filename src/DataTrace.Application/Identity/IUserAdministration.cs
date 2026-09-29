@@ -58,5 +58,16 @@ public interface IUserAdministration
         string actor,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// 本人改自己的密码：必须校验旧密码。与 <see cref="ResetPasswordAsync"/> 的区别是后者由管理员
+    /// 发起、不需要旧密码，因此不能拿它顶替自助改密。
+    /// </summary>
+    Task<UserAdminResult> ChangePasswordAsync(
+        string userName,
+        string currentPassword,
+        string newPassword,
+        string actor,
+        CancellationToken cancellationToken = default);
+
     Task<UserAdminResult> DeleteAsync(string userName, string actor, CancellationToken cancellationToken = default);
 }

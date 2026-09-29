@@ -2,6 +2,7 @@ using DataTrace.Application.Configuration;
 using DataTrace.Application.Identity;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Validation;
+using DataTrace.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,20 +12,54 @@ public sealed class UserAdministration : IUserAdministration
 {
     private readonly UserManager<ApplicationUser> _users;
     private readonly IAuditLogger _audit;
+    private readonly ConfigDbContext _db;
 
-    public UserAdministration(UserManager<ApplicationUser> users, IAuditLogger audit)
+    public UserAdministration(UserManager<ApplicationUser> users, IAuditLogger audit, ConfigDbContext db)
     {
         _users = users;
         _audit = audit;
+        _db = db;
     }
 
     public async Task<IReadOnlyList<UserAccount>> ListAsync(CancellationToken cancellationToken = default)
     {
         var list = await _users.Users.ToListAsync(cancellationToken).ConfigureAwait(false);
+        if (list.Count == 0)
+        {
+            return [];
+        }
+
+        // 角色关系一次取回来：原来在循环里对每个用户各调一次 GetRolesAsync，是 N+1 查询。
+        var ids = list.Select(user => user.Id).ToList();
+        var links = await _db.UserRoles
+            .Where(link => ids.Contains(link.UserId))
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var roleIds = links.Select(link => link.RoleId).Distinct().ToList();
+        var roleRows = await _db.Roles
+            .Where(role => roleIds.Contains(role.Id))
+            .Select(role => new { role.Id, role.Name })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        var nameById = new Dictionary<string, string>();
+        foreach (var row in roleRows)
+        {
+            nameById[row.Id] = row.Name ?? "";
+        }
+
+        var rolesByUser = links
+            .GroupBy(link => link.UserId)
+            .ToDictionary(
+                group => group.Key,
+                group => group
+                    .Select(link => nameById.TryGetValue(link.RoleId, out var name) ? name : "")
+                    .Where(name => name.Length > 0)
+                    .ToList());
+
         var accounts = new List<UserAccount>(list.Count);
         foreach (var user in list)
         {
-            var roles = await _users.GetRolesAsync(user).ConfigureAwait(false);
+            var roles = rolesByUser.TryGetValue(user.Id, out var found) ? found : new List<string>();
             accounts.Add(ToAccount(user, roles));
         }
 
@@ -64,14 +99,18 @@ public sealed class UserAdministration : IUserAdministration
         if (!roleResult.Succeeded)
         {
             var detail = IdentityErrorText.Format(roleResult);
+            // 不能留下"已创建但没有任何角色"的账号：它能不能登录、能看见什么全看授权配置，
+            // 是个不确定的中间态。分配不成功就把账号撤掉，让管理员重来一次。
+            var rolledBack = await _users.DeleteAsync(user).ConfigureAwait(false);
+            var rollbackNote = rolledBack.Succeeded ? "已自动撤销该账号" : "撤销账号也失败了，请手动删除";
             return await FinishAsync(
                     actor,
                     "Create",
                     userName,
                     null,
-                    $"partial; account created; role={role} failed; {detail}",
+                    $"rolled back; role={role} failed; {detail}; {rollbackNote}",
                     "Failure",
-                    UserAdminResult.Warn("用户已创建，但角色分配失败：" + detail),
+                    UserAdminResult.Fail($"创建失败（{rollbackNote}）：角色分配失败，{detail}"),
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -241,6 +280,54 @@ public sealed class UserAdministration : IUserAdministration
                 detail,
                 "Failure",
                 UserAdminResult.Fail("重置失败：" + detail),
+                cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<UserAdminResult> ChangePasswordAsync(
+        string userName,
+        string currentPassword,
+        string newPassword,
+        string actor,
+        CancellationToken cancellationToken = default)
+    {
+        var user = await _users.FindByNameAsync(userName).ConfigureAwait(false);
+        if (user is null)
+        {
+            return UserAdminResult.Fail("用户不存在，可能已被删除");
+        }
+
+        // 先单独验一次旧密码：ChangePasswordAsync 失败时只回 Identity 的错误码，
+        // 单独验过才能明确说"当前密码不正确"，而不是让用户去猜那串英文码。
+        if (!await _users.CheckPasswordAsync(user, currentPassword).ConfigureAwait(false))
+        {
+            return UserAdminResult.Fail("当前密码不正确");
+        }
+
+        var changed = await _users.ChangePasswordAsync(user, currentPassword, newPassword).ConfigureAwait(false);
+        if (!changed.Succeeded)
+        {
+            var detail = IdentityErrorText.Format(changed);
+            return await FinishAsync(
+                    actor,
+                    "ChangePassword",
+                    userName,
+                    null,
+                    detail,
+                    "Failure",
+                    UserAdminResult.Fail("修改密码失败：" + detail),
+                    cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        return await FinishAsync(
+                actor,
+                "ChangePassword",
+                userName,
+                null,
+                "password changed by self",
+                "Success",
+                UserAdminResult.Ok("密码已修改，下次登录请使用新密码"),
                 cancellationToken)
             .ConfigureAwait(false);
     }

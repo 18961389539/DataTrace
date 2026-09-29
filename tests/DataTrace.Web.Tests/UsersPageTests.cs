@@ -290,6 +290,51 @@ public class UsersPageTests : WebTestBase, IDisposable
         box.Change(on);
     }
 
+    // ---------- 自助改密：本人凭旧密码改自己的密码 ----------
+
+    [Fact]
+    public async Task ChangePassword_refuses_a_wrong_current_password()
+    {
+        using var scope = Context.Services.CreateScope();
+        var admin = scope.ServiceProvider.GetRequiredService<IUserAdministration>();
+
+        var result = await admin.ChangePasswordAsync("zhang", "Wrong@1234", "Zhang@5678", "zhang");
+
+        Assert.Equal(UserAdminStatus.Error, result.Status);
+        Assert.Contains("当前密码不正确", result.Message);
+    }
+
+    [Fact]
+    public async Task ChangePassword_with_the_right_current_password_takes_effect()
+    {
+        using var scope = Context.Services.CreateScope();
+        var admin = scope.ServiceProvider.GetRequiredService<IUserAdministration>();
+
+        var result = await admin.ChangePasswordAsync("zhang", "Zhang@1234", "Zhang@5678", "zhang");
+
+        Assert.Equal(UserAdminStatus.Success, result.Status);
+
+        // 真的换了：新密码过得去，旧密码过不去。
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var user = await users.FindByNameAsync("zhang");
+        Assert.True(await users.CheckPasswordAsync(user!, "Zhang@5678"));
+        Assert.False(await users.CheckPasswordAsync(user!, "Zhang@1234"));
+    }
+
+    // ---------- 创建时同步查重，别等提交后服务端才说 ----------
+
+    [Fact]
+    public void Create_reports_a_duplicate_name_on_the_field_before_submitting()
+    {
+        var provider = RenderDialogHost();
+        var cut = RenderUsers();
+        OpenCreateDialog(cut, provider);
+
+        TypeInto(provider, "用户名", "zhang");
+
+        provider.WaitForAssertion(() => Assert.Contains("用户名 zhang 已存在", provider.Markup));
+    }
+
     private void Seed(string name, string display, string password, string role)
     {
         using var scope = Context.Services.CreateScope();

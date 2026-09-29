@@ -53,6 +53,10 @@
     private string _displayName = "";
     private string _password = "";
     private string _role = AppRoles.Operator;
+
+    /// <summary>已存在的用户名，用于边输入边查重，别让人填完整张表单才被告知重名。</summary>
+    [Parameter] public IReadOnlyList<string> ExistingUserNames { get; set; } = [];
+
     private string? _userError;
     private string? _displayError;
     private string? _passwordError;
@@ -60,7 +64,20 @@
 
     private void Cancel() => MudDialog?.Cancel();
 
-    private void ValidateUserName() => _userError = UserNameRules.Error(_userName);
+    private void ValidateUserName()
+    {
+        _userError = UserNameRules.Error(_userName);
+        if (_userError is not null)
+        {
+            return;
+        }
+
+        var name = _userName.Trim();
+        if (ExistingUserNames.Any(existing => string.Equals(existing, name, StringComparison.OrdinalIgnoreCase)))
+        {
+            _userError = $"用户名 {name} 已存在";
+        }
+    }
 
     private void ValidateDisplayName()
         => _displayError = string.IsNullOrWhiteSpace(_displayName) ? "请填写显示名" : null;

@@ -1,9 +1,15 @@
 @inherits LayoutComponentBase
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Http
+@using DataTrace.Application.Identity
+@using DataTrace.Web.Components.Dialogs
 @using DataTrace.Web.Services
 @inject CustomerBrandingStore Branding
 @inject IJSRuntime Js
+@inject IDialogService DialogService
+@inject IUserAdministration UsersAdmin
+@inject AuthenticationStateProvider Auth
+@inject DtToast Toast
 
 <MudThemeProvider Theme="DataTraceTheme.Current" @bind-IsDarkMode="_isDarkMode" />
 <MudPopoverProvider />
@@ -54,6 +60,13 @@
                     </MudChip>
                     <MudIcon Icon="@Icons.Material.Filled.AccountCircle" Class="mr-1" aria-label="@context.User.Identity?.Name" />
                     <MudText Class="mr-4 d-none d-sm-flex">@context.User.Identity?.Name</MudText>
+                    @* 自助改密。放在这里而不是用户管理页：那页要 Administrator 角色，
+                       而操作员与工程师同样要能改自己的密码——否则只能等管理员来重置，
+                       管理员就必须知道或设定他人密码，问责链是断的。 *@
+                    <MudButton Variant="Variant.Text" Color="Color.Inherit" Class="dt-change-password"
+                               StartIcon="@Icons.Material.Filled.Password" OnClick="ChangePasswordAsync">
+                        修改密码
+                    </MudButton>
                     @* 退出走 POST 表单：GET 带副作用会被一张 <img src="/account/logout"> 或一次
                        顶层导航点掉登录态。原生提交（data-enhance="false"）后由服务端 302 回看板。 *@
                     <form method="post" action="/account/logout" data-enhance="false" class="dt-logout-form">
@@ -137,6 +150,43 @@
         catch (JSException)
         {
             // 读不到就按关闭处理；body class 仍由 datatrace.js 里的内联脚本负责。
+        }
+    }
+
+    /// <summary>
+    /// 自助改密。入口挂顶栏而不是用户管理页，因为那页要 Administrator 角色，
+    /// 而操作员与工程师同样要能改自己的密码。
+    /// </summary>
+    private async Task ChangePasswordAsync()
+    {
+        var state = await Auth.GetAuthenticationStateAsync();
+        var name = state.User.Identity?.Name;
+        if (string.IsNullOrEmpty(name))
+        {
+            return;
+        }
+
+        var dialog = await DialogService.ShowAsync<ChangePasswordDialog>("修改密码",
+            new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true, CloseOnEscapeKey = true });
+        var result = await dialog.Result;
+        if (result is null || result.Canceled
+            || result.Data is not ChangePasswordDialog.ChangePasswordRequest request)
+        {
+            return;
+        }
+
+        var changed = await UsersAdmin.ChangePasswordAsync(
+            name, request.CurrentPassword, request.NewPassword, name);
+        Toast.Add(changed.Message, changed.Status switch
+        {
+            UserAdminStatus.Success => Severity.Success,
+            UserAdminStatus.Warning => Severity.Warning,
+            _ => Severity.Error
+        });
+
+        if (changed.AuditError is { } auditError)
+        {
+            Toast.Add($"密码已修改，但审计记录失败：{auditError}", Severity.Warning);
         }
     }
 

@@ -122,13 +122,14 @@
                                StartIcon="@Icons.Material.Filled.LockOpen"
                                Disabled="_working" OnClick="@(() => UnlockUser(context))">解除锁定</MudButton>
                 }
-                @* 下面两个按钮的禁用跟"你正在用哪个账号"有关，不给一句话就只是一次"按不动"。
+                @* 删除按钮的禁用跟"你正在用哪个账号"有关，不给一句话就只是一次"按不动"。
+                   （重置密码曾经也有类似的限制，已移除：见 ResetHint 上的说明。）
                    禁用按钮收不到 hover，靠 app.css 里 .mud-tooltip .mud-button:disabled
                    把指针事件让给外层包裹。 *@
                 <MudTooltip Text="@ResetHint(context)">
                     <ChildContent>
                         <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.LockReset"
-                                   Disabled="_working || SelfResetBlocked(context)"
+                                   Disabled="_working"
                                    OnClick="@(() => ResetPassword(context))">重置密码</MudButton>
                     </ChildContent>
                 </MudTooltip>
@@ -295,7 +296,11 @@
             return;
         }
 
-        var dialog = await DialogService.ShowAsync<UserCreateDialog>("新建用户",
+        var parameters = new DialogParameters<UserCreateDialog>
+        {
+            { x => x.ExistingUserNames, _users.Select(row => row.UserName).ToList() }
+        };
+        var dialog = await DialogService.ShowAsync<UserCreateDialog>("新建用户", parameters,
             new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true });
         var result = await dialog.Result;
         if (result is null || result.Canceled || result.Data is not UserCreateDialog.UserCreateRequest request)
@@ -347,14 +352,14 @@
     private bool IsSelf(UserRow row) => row.UserName == _currentUser;
 
     /// <summary>
-    /// 自己的账号只剩一个角色时不给重置。这条规则来自初始提交，既没有注释也没有用例说明原委，
-    /// 行为照原样保留，这里只把"为什么按不动"说出来。
+    /// 这里原本还有一条"自己的账号只剩一个角色时不给重置"的限制，随初始提交进来、
+    /// 没有注释也没有用例说明原委（见 3847ba5）。它挡住的是管理员重置自己密码这个正当场景，
+    /// 与"没有自助改密入口"叠在一起就成了死结：管理员既改不了也重置不了自己的密码。
+    /// 现已移除；自助改密改由顶栏的「修改密码」承担，那才是本人改密码的正路。
     /// </summary>
-    private bool SelfResetBlocked(UserRow row) => IsSelf(row) && row.RoleList.Count == 1;
-
     private string ResetHint(UserRow row)
-        => SelfResetBlocked(row)
-            ? "当前登录账号只剩一个角色，不允许在这里重置密码"
+        => IsSelf(row)
+            ? $"为你自己（{row.UserName}）重设一个新密码；重设后本次登录仍然有效"
             : $"为 {row.UserName} 设置一个新密码";
 
     private string DeleteHint(UserRow row)
