@@ -6,6 +6,8 @@ using DataTrace.Domain.Entities;
 using DataTrace.Web.Components.Pages;
 using DataTrace.Web.Services;
 using Microsoft.Extensions.DependencyInjection;
+using Moq;
+using Microsoft.JSInterop;
 
 namespace DataTrace.Web.Tests;
 
@@ -106,6 +108,8 @@ public class DiagnosticsPageTests : WebTestBase
         Assert.Contains("PLC 1号PLC", text);
         Assert.Contains("最近一次", text);
         Assert.Contains("D200", text);
+        // 成功项只回机器口令 ok：摘要里同样只说"正常"，不把它当说明抄进去。
+        Assert.DoesNotContain("ok", text);
         Assert.Contains("链接已断开", text);
         Assert.Contains("database is locked", text);
     }
@@ -306,6 +310,24 @@ public class DiagnosticsPageTests : WebTestBase
         // 报障第一句就是"哪个版本、跑了多久"：报告里现成的东西不该让用户去别处找。
         Assert.Contains("版本 1.0.0", cut.Markup);
         Assert.Contains("已运行", cut.Markup);
+        // 探活成功项只回机器口令 ok：页面上已经有"正常"这一列，不该再把它晾出来。
+        Assert.DoesNotContain(">ok<", cut.Markup);
+    }
+
+    /// <summary>
+    /// 可见性回调挂不上（浏览器缓存着旧版脚本）时不该把整页拖垮：照常轮询即可。
+    /// </summary>
+    [Fact]
+    public void Missing_visibility_hook_falls_back_to_plain_polling()
+    {
+        Context.JSInterop.SetupVoid("dtVisibility.initialize", _ => true)
+            .SetException(new JSException("TypeError: dtVisibility is undefined"));
+
+        var spool = new FakeSpool();
+        var (cut, _, _) = Render(spool);
+
+        Assert.Contains("系统健康", cut.Markup);
+        cut.WaitForAssertion(() => Assert.True(spool.DescribeCalls >= 2), TimeSpan.FromSeconds(5));
     }
 
     /// <summary>
@@ -699,6 +721,9 @@ public class DiagnosticsPageTests : WebTestBase
         Context.Services.AddSingleton<IHealthProbe>(_health);
         Context.Services.AddSingleton<ISpoolStore>(spool);
         Context.Services.AddSingleton<ICollectWriter>(Writer);
+        // 补传前的幂等查重：这一页验的是补传流程本身，"库里有没有"由用例之外的场景决定，
+        // 这里统一返"没有"。查重行为在 DataTrace.Tests 用真库验证。
+        Context.Services.AddSingleton(new Mock<ICollectQuery>().Object);
         Context.Services.AddSingleton<SpoolReplayRunner>();
 
         // 页面里有 MudChip / MudTooltip / MudExpansionPanels，浮层宿主必须先渲染出来。

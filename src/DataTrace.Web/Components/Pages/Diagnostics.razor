@@ -68,7 +68,10 @@
                         @(check.Healthy ? "正常" : "异常")
                     </span>
                     <span>@HealthName(check.Name)</span>
-                    <span class="dt-muted">@check.Detail</span>
+                    @if (HealthDetail(check) is { } detail)
+                    {
+                        <span class="dt-muted">@detail</span>
+                    }
                 </div>
             }
         </div>
@@ -510,7 +513,15 @@ else
         }
 
         _visibilityRef = DotNetObjectReference.Create(this);
-        await Js.InvokeVoidAsync("dtVisibility.initialize", _visibilityRef);
+        try
+        {
+            await Js.InvokeVoidAsync("dtVisibility.initialize", _visibilityRef);
+        }
+        catch (JSException)
+        {
+            // 浏览器多半还拿着旧版 datatrace.js（没有这个模块）。为省 2 秒轮询不该把整页电路搭进去：
+            // 退化成"不挂起"、照常轮询即可；ref 仍由 DisposeAsync 统一收尾。
+        }
     }
 
     /// <summary>
@@ -719,7 +730,8 @@ else
             text.AppendLine($"系统健康：{health.Status} · 版本 {health.Version} · 已运行 {UptimeText(health.UptimeSeconds)}");
             foreach (var check in health.Checks)
             {
-                text.AppendLine($"  {HealthName(check.Name)}：{(check.Healthy ? "正常" : "异常")} {check.Detail}");
+                var detail = HealthDetail(check);
+                text.AppendLine($"  {HealthName(check.Name)}：{(check.Healthy ? "正常" : "异常")}{(detail is null ? "" : $" {detail}")}");
             }
         }
         else
@@ -944,6 +956,16 @@ else
         "collector" => "采集服务心跳",
         _ => name
     };
+
+    /// <summary>
+    /// 健康项要显示的说明：换成 null 表示"没有可说的"。
+    /// </summary>
+    /// <remarks>
+    /// 探活对成功项只回机器口令 ok（它刻意不回显安装路径），而页面上已经有"正常/异常"这一列 ——
+    /// 再把 ok 当说明晾出来，既违背"码名留给 /healthz 判读"的自述，也是纯噪声。
+    /// </remarks>
+    private static string? HealthDetail(HealthCheck check)
+        => string.Equals(check.Detail, "ok", StringComparison.OrdinalIgnoreCase) ? null : check.Detail;
 
     /// <summary>把"距今多久"写成现场能念出来的一句话。</summary>
     private static string SinceText(TimeSpan? gap)
