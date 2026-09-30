@@ -5,6 +5,7 @@ using DataTrace.Infrastructure;
 using DataTrace.Infrastructure.Identity;
 using DataTrace.Infrastructure.Persistence;
 using DataTrace.Web.Services;
+using DataTrace.Shared;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;

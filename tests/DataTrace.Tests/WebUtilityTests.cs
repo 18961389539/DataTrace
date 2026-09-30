@@ -1,8 +1,7 @@
 using System.Globalization;
 using System.Text;
 using DataTrace.Domain.Constants;
-using DataTrace.Web.Components.Shared;
-using DataTrace.Web.Services;
+using DataTrace.Shared;
 
 namespace DataTrace.Tests;
 

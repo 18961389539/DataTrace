@@ -1,10 +1,11 @@
-namespace DataTrace.Web.Components.Shared;
+namespace DataTrace.Shared;
 
 /// <summary>
 /// 全站语义色，唯一取值来源：Mud 主题、图表序列色与 app.css 的 --dt-* 变量都对齐到这里。
 /// 产线看板长时间盯屏，语义色一律取深色档，保证白底正文的对比度。
 /// app.css 里的 --dt-chart-* 与本类的 <see cref="Axis"/>/<see cref="Grid"/>/<see cref="PlotBackground"/> 同值，改动需同步。
-/// 单独成文件是因为测试工程只按文件链接取用 <see cref="ChartUtil"/>，不能把 MudBlazor 依赖带进去。
+/// 放在 DataTrace.Shared 而不是 Web：它与 ChartUtil 都是纯函数/常量，单测直接引用本工程即可，
+/// 不必为一个色值把整个 Blazor 应用及其 UI 依赖拉进测试工程。
 /// </summary>
 public static class DtColors
 {

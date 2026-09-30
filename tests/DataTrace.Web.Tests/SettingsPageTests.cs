@@ -4,6 +4,7 @@ using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Web.Components.Pages;
 using DataTrace.Web.Services;
+using DataTrace.Shared;
 using Moq;
 
 namespace DataTrace.Web.Tests;

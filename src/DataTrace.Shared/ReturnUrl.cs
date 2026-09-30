@@ -1,4 +1,4 @@
-namespace DataTrace.Web.Services;
+namespace DataTrace.Shared;
 
 /// <summary>
 /// 登录后回跳目标（<c>ReturnUrl</c>）的安全阀：只认站内根相对路径。

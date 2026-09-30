@@ -1,4 +1,4 @@
-namespace DataTrace.Web.Services;
+namespace DataTrace.Shared;
 
 /// <summary>
 /// 不带凭据的表单 POST（登录）既不能靠 SameSite 拦跨站提交，也用不上防伪令牌：

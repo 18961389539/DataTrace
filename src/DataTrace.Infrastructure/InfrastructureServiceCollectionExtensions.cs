@@ -57,6 +57,8 @@ public static class InfrastructureServiceCollectionExtensions
                 options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(SystemDefaults.LockoutMinutes);
             })
             .AddEntityFrameworkStores<ConfigDbContext>()
+            // 用带"必须改密"标记的主体工厂：管道据此在改密前拦下其它页面。
+            .AddClaimsPrincipalFactory<ApplicationUserClaimsPrincipalFactory>()
             .AddDefaultTokenProviders();
 
     public static IServiceCollection AddDataTraceInfrastructure(this IServiceCollection services, string dataRoot)
@@ -102,7 +104,9 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<AuditRetentionArchiveService>();
         services.AddScoped<IAuditRetention>(sp => sp.GetRequiredService<AuditRetentionArchiveService>());
         services.AddScoped<IActiveSessionStore, ActiveSessionStore>();
-        services.AddScoped<ISerialNumberGenerator, SerialNumberGenerator>();
+        // 流水号生成现在无状态（自增交给数据库），注册为单例：
+        // 它的实例级锁不再承担互斥职责，作用域生命周期只会有误导性。
+        services.AddSingleton<ISerialNumberGenerator, SerialNumberGenerator>();
         services.AddScoped<RuntimeStore>();
         services.AddScoped<IRuntimeStore>(sp => sp.GetRequiredService<RuntimeStore>());
         services.AddScoped<ICollectWriter>(sp => sp.GetRequiredService<RuntimeStore>());

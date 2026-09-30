@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text;
 
-namespace DataTrace.Web.Services;
+namespace DataTrace.Shared;
 
 /// <summary>
 /// CSV 导出工具：统一处理转义与 UTF-8 BOM，保证 Excel 打开中文不乱码。

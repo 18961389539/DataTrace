@@ -1,3 +1,4 @@
+using DataTrace.Shared;
 using MudBlazor;
 
 namespace DataTrace.Web.Components.Shared;

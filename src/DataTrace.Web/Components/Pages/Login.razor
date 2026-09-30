@@ -28,7 +28,7 @@
         </div>
         <h1 class="login-title">登录 @_siteName</h1>
         <p class="login-hint">产线数据采集与追溯。请使用工程师分配的账号登录。</p>
-        <p class="login-hint login-security">首次部署请立即到「用户」页修改默认密码（如 admin / Admin@123），勿把出厂口令留在现场。</p>
+        <p class="login-hint login-security">生产环境首次部署会生成随机管理员口令，并强制首次登录改密；admin / Admin@123 之类的演示账号只在本机开发环境存在，勿留在现场。</p>
         <form method="post" action="/account/login" data-enhance="false" data-enhance-nav="false">
             @* 这里不放 <AntiforgeryToken />：本页在 Routes 的 InteractiveServer 下渲染，令牌组件靠
                AntiforgeryStateProvider 取令牌，交互渲染阶段取不到；端点也没在用令牌
@@ -108,8 +108,8 @@
     {
         null or "" => null,
         // 全限定：本页有个同名属性 ReturnUrl，裸写会解析到那个 string 上。
-        DataTrace.Web.Services.ReturnUrl.LockedError => "账号因连续登录失败已被临时锁定，请稍后再试或联系管理员解除。",
-        DataTrace.Web.Services.ReturnUrl.CrossSiteError => "登录请求来源异常，已拒绝。请回到本站登录页重新登录。",
+        DataTrace.Shared.ReturnUrl.LockedError => "账号因连续登录失败已被临时锁定，请稍后再试或联系管理员解除。",
+        DataTrace.Shared.ReturnUrl.CrossSiteError => "登录请求来源异常，已拒绝。请回到本站登录页重新登录。",
         _ => "用户名或密码错误。"
     };
 }

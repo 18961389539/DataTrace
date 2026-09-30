@@ -9,8 +9,8 @@ namespace DataTrace.E2E.Tests;
 /// <remarks>
 /// 为什么两种都要：几何断言能抓住"叠印""表格塌成一坨""横向溢出"这类真出过的事故，
 /// 而且换浏览器版本不会抖；但它看不见颜色、圆角、字号这类纯观感的退化。
-/// 像素基线正好反过来 —— 什么都能看见，但对渲染器差异敏感，所以它默认只在本地跑
-/// （CI 设 DATATRACE_E2E_GOLDEN=off，理由见 <see cref="VisualGolden"/>）。
+/// 像素基线正好反过来 —— 什么都能看见，但对渲染器差异敏感，所以本地默认严格比（compare），
+/// CI 用 auto：只有在 runner 上录过基线才真比，否则只验"截得出图"，不抖假红（详见 <see cref="VisualGolden"/>）。
 /// 截图只挑没有实时数据的外壳区域：看板上每几秒就刷新一次时间，那种图每次都不同。
 /// </remarks>
 [Collection("e2e-visual")]
@@ -152,9 +152,9 @@ public class VisualRegressionE2ETests : E2ETestBase
     /// </summary>
     /// <remarks>
     /// 这里不能按模式返回空集合：xunit 把"没有数据点的 Theory"判成**失败**（No data found），
-    /// 不是跳过 —— CI 设 DATATRACE_E2E_GOLDEN=off 时就是被这条红掉的。
-    /// 关掉的是像素比对（在 <see cref="VisualGolden.Verify"/> 里），截图本身照截，
-    /// 所以 off 模式下仍然在验"这块区域存在、可见、能截出图"。
+    /// 不是跳过 —— 早先按模式返回空集合时，CI（当时设的是 off）就是被这条红掉的。
+    /// 关掉的只是像素比对（在 <see cref="VisualGolden.Verify"/> 里），截图本身照截，
+    /// 所以 off / auto 退档下仍然在验"这块区域存在、可见、能截出图"。
     /// </remarks>
     [SupportedOSPlatform("windows")]
     public static TheoryData<string, string, string> GoldenTargets
@@ -206,7 +206,7 @@ public class VisualRegressionE2ETests : E2ETestBase
             })
             : await ScreenshotRegionAsync(selector, masks);
 
-        VisualGolden.Verify(target, png);
+        VisualGolden.Verify(target, png, VisualGolden.Fingerprint(Browser.Version));
     }
 
     /// <summary>

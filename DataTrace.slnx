@@ -6,6 +6,7 @@
     <Project Path="src/DataTrace.Infrastructure/DataTrace.Infrastructure.csproj" />
     <Project Path="src/DataTrace.Plc.Drivers.IoTClient/DataTrace.Plc.Drivers.IoTClient.csproj" />
     <Project Path="src/DataTrace.Plc/DataTrace.Plc.csproj" />
+    <Project Path="src/DataTrace.Shared/DataTrace.Shared.csproj" />
     <Project Path="src/DataTrace.Web/DataTrace.Web.csproj" />
   </Folder>
   <Folder Name="/tests/">

@@ -13,17 +13,33 @@
 | （可选）管理员执行 `set-firewall.ps1` | ☐ | 需局域网访问时 |
 | （可选）管理员执行 `install-service.ps1` | ☐ | 否则用 `start.ps1` 控制台进程 |
 
-## 2. 默认账号（首次安装自动创建）
+## 2. 账号与口令（首次安装自动创建）
 
-| 用户 | 初始密码 | 角色 |
+**生产环境不会种入演示账号。** 首启动只建一个引导管理员 `admin`：
+
+- 口令**随机生成**，只在首启动日志里打印一次（`data\logs\datatrace-*.log`，搜"引导管理员"）；
+  若部署脚本要可控口令，用配置项 `Seed:AdminPassword`（环境变量 `Seed__AdminPassword`）指定。
+- 该账号带「必须改密」标记：登录后会被拦在 `/change-password`，改完才能进其它页面。
+- 其余账号（engineer / operator / viewer）由管理员在「用户」页按需创建。
+
+| 项 | 状态 | 备注 |
 |---|---|---|
-| admin | Admin@123 | 管理员 |
-| engineer | Engineer@123 | 工程师 |
-| operator | Operator@123 | 操作员 |
-| viewer | Viewer@123 | 访客 |
+| 已从首启动日志取得 `admin` 初始口令 | ☐ | 或已用 `Seed:AdminPassword` 指定 |
+| 首次登录已完成强制改密 | ☐ | 系统会自己拦，确认改完即可 |
+| 运行环境确认为 `ASPNETCORE_ENVIRONMENT=Production` | ☐ | `start.ps1` / 服务脚本会设置；勿开开发态免登录 |
+| 已删除日志里那段初始口令，或确认日志目录访问受限 | ☐ | 初始口令是一次性的，改完即失效 |
+| 升级上来的老库：确认 `admin` 不再是 `Admin@123` 之类演示口令 | ☐ | 启动会检测并强制改密，但仍应人工确认 |
 
-- [ ] **首次登录后立即修改 admin（及其它角色）密码**
-- [ ] 运行环境确认为 `ASPNETCORE_ENVIRONMENT=Production`（`start.ps1` / 服务脚本会设置），勿开开发态免登录
+> 开发/演示环境（`Development`）才会种入 `admin/Admin@123`、`engineer/Engineer@123`、
+> `operator/Operator@123`、`viewer/Viewer@123` —— 那是本机开发用的，**不要留在现场**。
+
+## 2b. 传输安全
+
+| 项 | 状态 | 备注 |
+|---|---|---|
+| 二选一：已配置 HTTPS 端点（`Kestrel:Endpoints:Https` + 证书） | ☐ | 配了之后 Cookie 自动钉 `Secure`、非开发态下发 HSTS |
+| 或：纯 HTTP 部署已做网络隔离 | ☐ | 防火墙/VLAN 只放行工控网段；口令与会话在 HTTP 下是明文 |
+| 探活已接入 | ☐ | `GET /healthz`，不健康返回 503；可接服务守护或客户监控 |
 
 ## 3. 配得开（品牌 / 演示关闭）
 

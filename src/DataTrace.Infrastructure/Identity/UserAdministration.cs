@@ -301,13 +301,25 @@ public sealed class UserAdministration : IUserAdministration
         // 单独验过才能明确说"当前密码不正确"，而不是让用户去猜那串英文码。
         if (!await _users.CheckPasswordAsync(user, currentPassword).ConfigureAwait(false))
         {
-            return UserAdminResult.Fail("当前密码不正确");
+            return new UserAdminResult
+            {
+                Status = UserAdminStatus.Error,
+                Message = "当前密码不正确",
+                Code = "current"
+            };
         }
+
+        // 自助改密同时也意味着"初始口令已经换掉"：把强制改密标记一起清掉。
+        // 在调用前改，ChangePasswordAsync 内部的 UpdateAsync 会把它和密码同一个事务持久化，
+        // 不会出现"密码改了、标记还在，下次登录又被拦回改密页"的中间态。
+        var wasForced = user.MustChangePassword;
+        user.MustChangePassword = false;
 
         var changed = await _users.ChangePasswordAsync(user, currentPassword, newPassword).ConfigureAwait(false);
         if (!changed.Succeeded)
         {
             var detail = IdentityErrorText.Format(changed);
+            // 旧密码已经单独验过，走到这里基本只剩"新密码不合策略"一类，故归类为 policy。
             return await FinishAsync(
                     actor,
                     "ChangePassword",
@@ -315,7 +327,12 @@ public sealed class UserAdministration : IUserAdministration
                     null,
                     detail,
                     "Failure",
-                    UserAdminResult.Fail("修改密码失败：" + detail),
+                    new UserAdminResult
+                    {
+                        Status = UserAdminStatus.Error,
+                        Message = "修改密码失败：" + detail,
+                        Code = "policy"
+                    },
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -325,7 +342,7 @@ public sealed class UserAdministration : IUserAdministration
                 "ChangePassword",
                 userName,
                 null,
-                "password changed by self",
+                wasForced ? "bootstrap password replaced by self" : "password changed by self",
                 "Success",
                 UserAdminResult.Ok("密码已修改，下次登录请使用新密码"),
                 cancellationToken)

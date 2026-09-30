@@ -1,6 +1,6 @@
 using System.Globalization;
 
-namespace DataTrace.Web.Components.Shared;
+namespace DataTrace.Shared;
 
 /// <summary>
 /// SVG 绘图区：统一留白与坐标换算，避免各页面各写一套折线点计算。

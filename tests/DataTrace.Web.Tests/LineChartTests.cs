@@ -1,4 +1,5 @@
 using DataTrace.Web.Components.Shared;
+using DataTrace.Shared;
 using Microsoft.Extensions.DependencyInjection;
 using MudBlazor.Services;
 
@@ -6,7 +7,7 @@ namespace DataTrace.Web.Tests;
 
 /// <summary>
 /// 折线图组件的接线。抽稀算法本身在 <see cref="ChartUtil.SampleEnvelope"/> 有直接单测
-/// （DataTrace.Tests 按文件链接引用 ChartUtil），这里只守住一件事：
+/// （ChartUtil 在 DataTrace.Shared，DataTrace.Tests 直接引用该工程），这里只守住一件事：
 /// 组件确实把真实极值显示出来了，而不是抽稀之后的近似值。
 /// </summary>
 public class LineChartTests

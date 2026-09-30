@@ -1399,6 +1399,20 @@ h5:focus,
     text-align: left;
 }
 
+/* 次要动作（强制改密页的"退出登录"）：降级成描边按钮，不与主按钮抢同一块实心主色，
+   否则一页上会出现两个看起来同等重要的操作。 */
+.login-btn-plain {
+    background: transparent;
+    color: var(--mud-palette-text-secondary);
+    border: 1px solid var(--mud-palette-lines-default);
+}
+
+    .login-btn-plain:hover {
+        background: transparent;
+        color: var(--mud-palette-text-primary);
+        border-color: var(--mud-palette-text-primary);
+    }
+
 /* 手机（含手持终端）：卡片左右留白收紧，别让输入框只剩一条。
    宽度与内边距一起收，避免出现"卡片占满屏、边框贴着机身"的观感。 */
 @media (max-width: 480px) {

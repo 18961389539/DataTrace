@@ -1,7 +1,7 @@
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Validation;
 
-namespace DataTrace.Web.Services;
+namespace DataTrace.Shared;
 
 /// <summary>
 /// 一条概念详解。三段固定结构：是什么 / 怎么算或边界 / 影响什么。

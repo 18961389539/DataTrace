@@ -2,6 +2,7 @@ using DataTrace.Application.Alarms;
 using DataTrace.Domain.Constants;
 using DataTrace.Web.Components.Pages;
 using DataTrace.Web.Services;
+using DataTrace.Shared;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DataTrace.Web.Tests;

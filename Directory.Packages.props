@@ -1,0 +1,48 @@
+<Project>
+
+  <!--
+    集中包版本管理（CPM）。所有工程的 <PackageReference> 只写 Include，版本统一在这里定，
+    避免同一个包在不同工程漂到不同补丁号（本仓库此前 Microsoft.Extensions.* 就同时存在
+    8.0.1 与 8.0.2）。
+
+    版本口径：家族内每个包取**其 8.0.x 线的最高补丁**。注意这里做不到"全家族同一个数字" ——
+    各包的 8.0.x 收尾版本并不一致（实测：Abstractions 系到 8.0.2/8.0.3，
+    Hosting.Abstractions、Http、Logging.Debug、Hosting.WindowsServices 都止步于 8.0.1）。
+    强行对齐到同一个数字只会把有安全修复的包降级。
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup Label="运行时">
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+    <!-- 8.0.3 是 8.0.x 线的最高补丁；此前停在 8.0.2。 -->
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.3" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="8.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="8.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
+    <!--
+      EF Core 与 Identity 刻意停在 8.0.11 而不是追到 8.0.x 线尾：持久化层依赖 SQLite 的
+      PRAGMA、WAL 与 RETURNING 行为，升这两包要单独跑一遍分库/备份/恢复的回归。
+      真要升时改这一处即可，但请单独开一次变更。
+    -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.11" />
+    <PackageVersion Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="8.0.11" />
+    <PackageVersion Include="IoTClient" Version="1.0.48" />
+    <PackageVersion Include="MudBlazor" Version="7.16.0" />
+    <PackageVersion Include="Serilog.AspNetCore" Version="8.0.3" />
+  </ItemGroup>
+
+  <ItemGroup Label="测试">
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageVersion Include="xunit" Version="2.5.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="2.5.3" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.0" />
+    <PackageVersion Include="bunit" Version="1.40.0" />
+    <PackageVersion Include="Moq" Version="4.20.72" />
+    <PackageVersion Include="Microsoft.Playwright" Version="1.60.0" />
+    <PackageVersion Include="System.Drawing.Common" Version="8.0.10" />
+  </ItemGroup>
+
+</Project>

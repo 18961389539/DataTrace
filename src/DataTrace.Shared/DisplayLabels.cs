@@ -4,7 +4,7 @@ using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
 
-namespace DataTrace.Web.Services;
+namespace DataTrace.Shared;
 
 /// <summary>
 /// 界面上的原始码（枚举名、审计动作）转成车间人员能直接读懂的中文。

@@ -2,6 +2,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Text.Json;
 
 namespace DataTrace.E2E.Tests;
 
@@ -9,15 +10,19 @@ namespace DataTrace.E2E.Tests;
 /// 像素基线（golden）比对：截图、与已提交的基线逐像素比、超阈值就失败。
 /// </summary>
 /// <remarks>
-/// 模式由环境变量 <c>DATRACE_E2E_GOLDEN</c>（常量 <see cref="ModeVariable"/>）决定：
+/// 模式由环境变量 <c>DATATRACE_E2E_GOLDEN</c>（常量 <see cref="ModeVariable"/>）决定：
 /// <list type="bullet">
-/// <item><c>update</c>：把截图写成新基线。改完界面样式后跑一次，人眼确认过再提交。</item>
+/// <item><c>update</c>：把截图写成新基线，同时记下录制环境的指纹（浏览器版本 + 操作系统）。
+/// 改完界面样式后跑一次，人眼确认过再提交。</item>
 /// <item><c>compare</c>（默认）：与基线比。基线文件不存在时**判失败**而不是静默通过 ——
-/// 一条什么都没比的"绿"用例比红更糟。</item>
-/// <item><c>off</c>：不比像素（截图照截，只断言"截出了一张有内容的图"）。CI 目前用它：
-/// 基线是在某台机器的 Edge 上录的，
-/// runner 上的 Edge 版本不同就会在抗锯齿/字体度量的差别上抖出假红。
-/// 想在 CI 上用，先在 windows-latest 上录一批基线再改这一行。</item>
+/// 一条什么都没比的"绿"用例比红更糟。指纹不参与判断：本机跑就是要严格比，
+/// 换机器跑对不上说明确实不一样，该看一眼再决定是重录还是查问题。</item>
+/// <item><c>auto</c>：比对的前提是"有基线"且"录制环境指纹与本次一致"，两个条件缺一就只验
+/// "截出了一张有内容的图"。CI 用这个档：基线是在某台机器的 Edge 上录的，
+/// runner 上的浏览器版本不同会在抗锯齿与字体度量上抖出假红，而那些红不带任何信息量。
+/// 一旦有人在 runner 上用 <c>update</c> 重录并提交，CI 就会自动升级成真比对 —— 不需要改代码。</item>
+/// <item><c>off</c>：不比像素（截图照截，只断言"截出了一张有内容的图"）。留给需要把像素比对
+/// 彻底关掉的场合；CI 现在用 <c>auto</c> 取代它。</item>
 /// </list>
 /// 截图一律禁用 CSS 动画，且只挑没有实时数据的外壳区域（登录页、筛选卡、越权面板、页头），
 /// 否则看板上的刷新时间会让每张图每次都不同。
@@ -40,6 +45,9 @@ public static class VisualGolden
     /// </summary>
     public static string GoldenDirectory { get; } = ResolveGoldenDirectory();
 
+    /// <summary>录制环境指纹的存放点。和基线一起提交，补录时一起更新。</summary>
+    private static string EnvironmentFile => Path.Combine(GoldenDirectory, "environment.json");
+
     private static string ResolveGoldenDirectory()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
@@ -59,13 +67,22 @@ public static class VisualGolden
     private static string Mode => (Environment.GetEnvironmentVariable(ModeVariable) ?? "compare").Trim().ToLowerInvariant();
 
     /// <summary>
+    /// 录制/比对环境的指纹。像素基线只对"同一操作系统 + 同一浏览器版本"有意义，
+    /// 把这两项拼起来就能一眼看出基线是不是本机录的。
+    /// </summary>
+    public static string Fingerprint(string browserVersion)
+        => $"{RuntimeInformation.OSDescription.Trim()}|chromium/{browserVersion}";
+
+    /// <summary>
     /// 比对（或录制）一张截图。失败信息里直接给出怎么重录，省得回头翻代码。
     /// </summary>
-    public static void Verify(string name, byte[] png)
+    /// <param name="fingerprint">见 <see cref="Fingerprint"/>，只在 <c>update</c> 与 <c>auto</c> 下参与判断。</param>
+    public static void Verify(string name, byte[] png, string fingerprint)
     {
         // off 只关掉像素比对，截图本身仍然要成功：区域不存在、被折叠成 0 高度、
         // 或者渲染成一张空白，都得在这里红，而不是整条用例静默不做事。
-        if (Mode == "off")
+        // auto 在没有可用基线时也落到这条上，一行不改，只是多了一句说明。
+        if (Mode is "off" || (Mode == "auto" && !BaselineUsable(name, fingerprint)))
         {
             Assert.True(png.Length > 1024, $"{name} 截出来的图只有 {png.Length} 字节，区域大概没渲染出来");
             return;
@@ -77,6 +94,7 @@ public static class VisualGolden
         {
             Directory.CreateDirectory(GoldenDirectory);
             File.WriteAllBytes(path, png);
+            WriteEnvironment(fingerprint);
             return;
         }
 
@@ -113,6 +131,41 @@ public static class VisualGolden
         {
             expected.Dispose();
         }
+    }
+
+    /// <summary>
+    /// <c>auto</c> 下能不能真比对：基线文件在，且录它的环境与本次一致。
+    /// 指纹文件缺失（老基线）也按"不能比"处理 —— 宁可少比一次，也别抖出一屏假红把人训练成"红了就重录"。
+    /// </summary>
+    private static bool BaselineUsable(string name, string fingerprint)
+    {
+        if (!File.Exists(FullPath(name)) || !File.Exists(EnvironmentFile))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(EnvironmentFile));
+            return document.RootElement.TryGetProperty("fingerprint", out var recorded)
+                   && recorded.GetString() == fingerprint;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static void WriteEnvironment(string fingerprint)
+    {
+        var payload = new Dictionary<string, string>
+        {
+            ["fingerprint"] = fingerprint,
+            ["recordedAt"] = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ssK")
+        };
+        File.WriteAllText(
+            EnvironmentFile,
+            JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }));
     }
 
     private static (int DiffPixels, int WorstDelta) Compare(Bitmap expected, Bitmap actual)

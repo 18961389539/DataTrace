@@ -1,0 +1,740 @@
+using DataTrace.Application.Alarms;
+using DataTrace.Application.Reporting;
+using DataTrace.Application.Runtime;
+using DataTrace.Domain.Entities;
+using DataTrace.Domain.Enums;
+using Microsoft.EntityFrameworkCore;
+
+namespace DataTrace.Infrastructure.Persistence;
+
+partial class RuntimeStore
+{
+    public async Task<IReadOnlyList<CollectRecord>> QueryForReportAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default)
+    {
+        var list = new List<CollectRecord>();
+        foreach (var month in ExistingMonthKeys())
+        {
+            await using var db = _factory.Open(month);
+            var part = await db.CollectRecords.AsNoTracking()
+                .Where(x => x.TriggerTime >= from && x.TriggerTime <= to)
+                .Include(x => x.Products)
+                .Include(x => x.TagValues)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            list.AddRange(part);
+        }
+
+        return list;
+    }
+
+    public async Task<IReadOnlyList<JudgementCount>> CountJudgementsAsync(
+        DateTime from,
+        DateTime to,
+        int? stationId,
+        string? recipeCode = null,
+        CancellationToken cancellationToken = default)
+    {
+        var counts = new List<JudgementCount>();
+        foreach (var month in ExistingMonthKeys())
+        {
+            await using var db = _factory.Open(month);
+            var query = db.CollectRecords.AsNoTracking()
+                .Where(x => x.TriggerTime >= from && x.TriggerTime <= to);
+            if (stationId is { } sid)
+            {
+                query = query.Where(x => x.StationId == sid);
+            }
+
+            query = ApplyRecipeFilter(query, recipeCode);
+
+            // 数格子交给 SQLite：区间内几万条记录只回十几行（日 × 型号 × 判定）。
+            // 日期按 年/月/日 三个字段分组，翻译出来是 strftime，不会把整行拉回来在内存里算日期。
+            var part = await query
+                .GroupBy(x => new { x.TriggerTime.Year, x.TriggerTime.Month, x.TriggerTime.Day, x.TriggerTime.Hour, x.RecipeCode, x.Judgement })
+                .Select(g => new
+                {
+                    g.Key.Year,
+                    g.Key.Month,
+                    g.Key.Day,
+                    g.Key.Hour,
+                    g.Key.RecipeCode,
+                    g.Key.Judgement,
+                    Count = g.Count()
+                })
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            counts.AddRange(part.Select(x => new JudgementCount
+            {
+                Day = new DateTime(x.Year, x.Month, x.Day),
+                Hour = x.Hour,
+                RecipeCode = x.RecipeCode ?? "",
+                Judgement = x.Judgement,
+                Count = x.Count
+            }));
+        }
+
+        return counts;
+    }
+
+    public async Task<IReadOnlyList<FinishedPieceObservation>> ListFinishedPiecesAsync(
+        DateTime from,
+        DateTime to,
+        string? recipeCode = null,
+        CancellationToken cancellationToken = default)
+    {
+        var pieces = new List<FinishedPieceObservation>();
+        foreach (var month in ExistingMonthKeys())
+        {
+            await using var db = _factory.Open(month);
+            var sessions = await db.PalletSessions.AsNoTracking()
+                .Where(session => session.Status == SessionStatus.Closed
+                                  && session.EndTime != null
+                                  && session.EndTime >= from
+                                  && session.EndTime <= to)
+                .Select(session => new { session.Id, EndTime = session.EndTime!.Value, session.Judgement })
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (sessions.Count == 0)
+            {
+                continue;
+            }
+
+            var records = new List<PieceRecordRow>();
+            foreach (var ids in Chunk(sessions.Select(session => session.Id)))
+            {
+                var part = await db.CollectRecords.AsNoTracking()
+                    .Where(record => ids.Contains(record.PalletSessionId))
+                    .Select(record => new PieceRecordRow(
+                        record.Id,
+                        record.PalletSessionId,
+                        record.StationId,
+                        record.StationCode,
+                        record.Judgement,
+                        record.ResultCode,
+                        record.RecipeCode,
+                        record.CompleteTime))
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                records.AddRange(part);
+            }
+
+            var ngIds = sessions.Where(session => session.Judgement == Judgement.Ng).Select(session => session.Id).ToHashSet();
+            var ngRecordIds = records.Where(record => ngIds.Contains(record.SessionId)).Select(record => record.Id).ToList();
+            var tags = new List<(long RecordId, string Name, PointSide Side)>();
+            var reasons = new List<(long RecordId, string Name)>();
+            foreach (var ids in Chunk(ngRecordIds))
+            {
+                var tagPart = await db.TagValues.AsNoTracking()
+                    .Where(tag => tag.IsOutOfLimit && ids.Contains(tag.CollectRecordId))
+                    .Select(tag => new { tag.CollectRecordId, tag.TagName, tag.NumericValue, tag.LowerLimit, tag.UpperLimit })
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                tags.AddRange(tagPart.Select(tag => (
+                    tag.CollectRecordId,
+                    tag.TagName ?? "",
+                    SideOf(tag.NumericValue, tag.LowerLimit, tag.UpperLimit))));
+
+                var reasonPart = await db.ProductRecords.AsNoTracking()
+                    .Where(product => product.Judgement == Judgement.Ng && ids.Contains(product.CollectRecordId))
+                    .Select(product => new { product.CollectRecordId, product.NgReason })
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                reasons.AddRange(reasonPart
+                    .Where(product => !string.IsNullOrWhiteSpace(product.NgReason)
+                                      && !product.NgReason!.Contains("超限", StringComparison.Ordinal))
+                    .Select(product => (product.CollectRecordId, product.NgReason!.Trim())));
+            }
+
+            var recordsBySession = records.GroupBy(record => record.SessionId).ToDictionary(group => group.Key, group => group.ToList());
+            var recordById = records.ToDictionary(record => record.Id);
+            var faultsBySession = new Dictionary<long, List<PieceFaultPoint>>();
+            void AddFault(long recordId, string name, PointSide side)
+            {
+                if (string.IsNullOrWhiteSpace(name) || !recordById.TryGetValue(recordId, out var record))
+                {
+                    return;
+                }
+
+                if (!faultsBySession.TryGetValue(record.SessionId, out var list))
+                {
+                    list = [];
+                    faultsBySession[record.SessionId] = list;
+                }
+
+                if (list.Any(fault => fault.StationId == record.StationId && fault.Name == name && fault.Side == side))
+                {
+                    return;
+                }
+
+                list.Add(new PieceFaultPoint(record.StationId, record.StationCode, name, side));
+            }
+
+            foreach (var tag in tags)
+            {
+                AddFault(tag.RecordId, tag.Name.Trim(), tag.Side);
+            }
+
+            foreach (var reason in reasons)
+            {
+                AddFault(reason.RecordId, reason.Name, PointSide.Unspecified);
+            }
+
+            foreach (var session in sessions)
+            {
+                recordsBySession.TryGetValue(session.Id, out var sessionRecords);
+                sessionRecords ??= [];
+                var recipe = sessionRecords
+                    .OrderByDescending(record => record.CompleteTime)
+                    .Select(record => record.RecipeCode ?? "")
+                    .FirstOrDefault() ?? "";
+                if (recipeCode is not null && recipe != recipeCode)
+                {
+                    continue;
+                }
+
+                pieces.Add(new FinishedPieceObservation
+                {
+                    MonthKey = month,
+                    SessionId = session.Id,
+                    EndTime = session.EndTime,
+                    Judgement = session.Judgement,
+                    RecipeCode = recipe,
+                    Stations = sessionRecords
+                        .Select(record => new PieceStationMark(record.StationId, record.StationCode, record.Judgement, record.ResultCode))
+                        .ToList(),
+                    Faults = faultsBySession.TryGetValue(session.Id, out var faults) ? faults : []
+                });
+            }
+        }
+
+        return pieces;
+    }
+
+    public async Task<IReadOnlyList<StationPass>> ListStationPassesAsync(
+        DateTime from,
+        DateTime to,
+        CancellationToken cancellationToken = default)
+    {
+        var passes = new List<StationPass>();
+        foreach (var month in ExistingMonthKeys())
+        {
+            await using var db = _factory.Open(month);
+            var part = await db.CollectRecords.AsNoTracking()
+                .Where(record => record.CompleteTime >= from && record.CompleteTime <= to)
+                .Select(record => new StationPass
+                {
+                    MonthKey = month,
+                    SessionId = record.PalletSessionId,
+                    StationId = record.StationId,
+                    StationCode = record.StationCode,
+                    CompleteTime = record.CompleteTime
+                })
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            passes.AddRange(part);
+        }
+
+        return passes;
+    }
+
+    private static PointSide SideOf(double? value, double? lower, double? upper)
+    {
+        if (value is null || !double.IsFinite(value.Value))
+        {
+            return PointSide.Missing;
+        }
+
+        if (upper is { } high && value.Value > high)
+        {
+            return PointSide.High;
+        }
+
+        if (lower is { } low && value.Value < low)
+        {
+            return PointSide.Low;
+        }
+
+        return PointSide.Unspecified;
+    }
+
+    private readonly record struct PieceRecordRow(
+        long Id,
+        long SessionId,
+        int StationId,
+        string StationCode,
+        Judgement Judgement,
+        short ResultCode,
+        string RecipeCode,
+        DateTime CompleteTime);
+
+    private static IEnumerable<List<long>> Chunk(IEnumerable<long> ids)
+    {
+        var chunk = new List<long>(400);
+        foreach (var id in ids)
+        {
+            chunk.Add(id);
+            if (chunk.Count == 400)
+            {
+                yield return chunk;
+                chunk = new List<long>(400);
+            }
+        }
+
+        if (chunk.Count > 0)
+        {
+            yield return chunk;
+        }
+    }
+
+    public async Task<IReadOnlyList<StationJudgementMark>> ListMonthJudgementsAsync(
+        string monthKey,
+        CancellationToken cancellationToken = default)
+    {
+        if (!_factory.Exists(monthKey))
+        {
+            return [];
+        }
+
+        await using var db = _factory.Open(monthKey);
+        return await db.CollectRecords.AsNoTracking()
+            .OrderBy(x => x.CompleteTime)
+            .Select(x => new StationJudgementMark
+            {
+                StationId = x.StationId,
+                StationCode = x.StationCode,
+                CompleteTime = x.CompleteTime,
+                Judgement = x.Judgement,
+                ResultCode = x.ResultCode
+            })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<TagObservation>> ListRecentTagObservationsAsync(
+        string monthKey,
+        DateTime since,
+        int perTag,
+        CancellationToken cancellationToken = default)
+    {
+        if (!_factory.Exists(monthKey) || perTag <= 0)
+        {
+            return [];
+        }
+
+        await using var db = _factory.Open(monthKey);
+        var rows = await db.TagValues.AsNoTracking()
+            .Where(tag => tag.CollectRecord!.CompleteTime >= since)
+            .Select(tag => new TagObservation
+            {
+                StationId = tag.CollectRecord!.StationId,
+                StationCode = tag.CollectRecord.StationCode,
+                TagId = tag.TagId,
+                TagName = tag.TagName,
+                CompleteTime = tag.CollectRecord.CompleteTime,
+                IsWarning = tag.IsWarning,
+                IsOutOfLimit = tag.IsOutOfLimit,
+                NumericValue = tag.NumericValue
+            })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return rows
+            .GroupBy(item => (item.StationId, item.TagId))
+            .SelectMany(group => group.OrderByDescending(item => item.CompleteTime).Take(perTag))
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<string>> ListRecipeCodesAsync(
+        DateTime from,
+        DateTime to,
+        CancellationToken cancellationToken = default)
+    {
+        var codes = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var month in ExistingMonthKeys())
+        {
+            await using var db = _factory.Open(month);
+            var part = await db.CollectRecords.AsNoTracking()
+                .Where(x => x.TriggerTime >= from && x.TriggerTime <= to)
+                .Select(x => x.RecipeCode)
+                .Distinct()
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            foreach (var code in part)
+            {
+                codes.Add(code ?? "");
+            }
+        }
+
+        return codes
+            .OrderBy(c => string.IsNullOrEmpty(c) ? "~" : c, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    public Task<IReadOnlyList<TagIssuePoint>> QueryOutOfLimitTagsAsync(
+        DateTime from,
+        DateTime to,
+        int? stationId,
+        string? recipeCode = null,
+        CancellationToken cancellationToken = default)
+        => QueryTagIssuesAsync(from, to, stationId, warning: false, recipeCode, cancellationToken);
+
+    public Task<IReadOnlyList<TagIssuePoint>> QueryWarningTagsAsync(
+        DateTime from,
+        DateTime to,
+        int? stationId,
+        string? recipeCode = null,
+        CancellationToken cancellationToken = default)
+        => QueryTagIssuesAsync(from, to, stationId, warning: true, recipeCode, cancellationToken);
+
+    private async Task<IReadOnlyList<TagIssuePoint>> QueryTagIssuesAsync(
+        DateTime from,
+        DateTime to,
+        int? stationId,
+        bool warning,
+        string? recipeCode,
+        CancellationToken cancellationToken)
+    {
+        var points = new List<TagIssuePoint>();
+        foreach (var month in ExistingMonthKeys())
+        {
+            await using var db = _factory.Open(month);
+            // 显式 join 而不是靠导航属性，保证被翻译成单条带 WHERE 的 SQL，
+            // 不在内存里展开任何一条记录的 TagValues 集合。
+            var issues = db.TagValues
+                .AsNoTracking()
+                .Join(
+                    db.CollectRecords.AsNoTracking(),
+                    tag => tag.CollectRecordId,
+                    record => record.Id,
+                    (tag, record) => new { tag, record });
+
+            // 超限与预警互斥（判定结果是单值），按哪个标记筛由调用方决定。
+            issues = warning
+                ? issues.Where(x => x.tag.IsWarning)
+                : issues.Where(x => x.tag.IsOutOfLimit);
+
+            if (stationId is { } sid)
+            {
+                issues = issues.Where(x => x.record.StationId == sid);
+            }
+
+            if (recipeCode is not null)
+            {
+                issues = issues.Where(x => x.record.RecipeCode == recipeCode);
+            }
+
+            var part = await issues
+                .Where(x => x.record.TriggerTime >= from && x.record.TriggerTime <= to)
+                .Select(x => new TagIssuePoint
+                {
+                    TagName = x.tag.TagName,
+                    Missing = x.tag.NumericValue == null
+                })
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            points.AddRange(part);
+        }
+
+        return points;
+    }
+
+    public async Task<IReadOnlyList<InSpecReading>> ListInSpecReadingsAsync(
+        DateTime from,
+        DateTime to,
+        string stationCode,
+        string tagName,
+        int? stationId,
+        string? recipeCode = null,
+        CancellationToken cancellationToken = default)
+    {
+        var readings = new List<InSpecReading>();
+        if (string.IsNullOrWhiteSpace(stationCode) || string.IsNullOrWhiteSpace(tagName))
+        {
+            return readings;
+        }
+
+        foreach (var month in ExistingMonthKeys())
+        {
+            await using var db = _factory.Open(month);
+            var rows = db.TagValues.AsNoTracking()
+                .Join(
+                    db.CollectRecords.AsNoTracking(),
+                    tag => tag.CollectRecordId,
+                    record => record.Id,
+                    (tag, record) => new { tag, record })
+                .Join(
+                    db.PalletSessions.AsNoTracking(),
+                    pair => pair.record.PalletSessionId,
+                    session => session.Id,
+                    (pair, session) => new { pair.tag, pair.record, session })
+                .Where(x => x.session.Status == SessionStatus.Closed
+                    && x.session.EndTime >= from
+                    && x.session.EndTime <= to
+                    && x.record.StationCode == stationCode
+                    && x.tag.TagName == tagName
+                    && x.tag.NumericValue != null
+                    && !x.tag.IsOutOfLimit);
+
+            rows = stationId is { } sid
+                ? rows.Where(x => x.record.StationId == sid && x.record.Judgement == Judgement.Ok)
+                : rows.Where(x => x.session.Judgement == Judgement.Ok);
+
+            if (recipeCode is not null)
+            {
+                rows = rows.Where(x => x.record.RecipeCode == recipeCode);
+            }
+
+            var part = await rows
+                .Select(x => new { x.tag.NumericValue, x.tag.LowerLimit, x.tag.UpperLimit })
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            readings.AddRange(part.Select(x => new InSpecReading(x.NumericValue!.Value, x.LowerLimit, x.UpperLimit)));
+        }
+
+        return readings;
+    }
+
+    public async Task<IReadOnlyList<TagTrendPoint>> QueryTagTrendAsync(
+        DateTime from,
+        DateTime to,
+        int tagId,
+        string? recipeCode = null,
+        int take = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var points = new List<TagTrendPoint>();
+
+        // take > 0 时从最新的月库往回取、凑够就停：每个月都取 take 条的话，
+        // "单次最多 take 点"这个上限在跨年区间上会被放大十几倍（高频点位一年十几万条），
+        // 而更早的月库不可能提供更新的点，取它们纯属白读。
+        var months = ExistingMonthKeys();
+
+        foreach (var month in months)
+        {
+            await using var db = _factory.Open(month);
+
+            // 别把这对 join 反过来写（以采集记录为驱动表）：SQLite 会自己重排内连接，
+            // 两种写法的计划一模一样；而真去锁死循环顺序（CROSS JOIN）时，内层拿不到
+            // 等值条件、只能按 IX_TagValues_TagId_NumericValue 每个记录全扫一遍，直接退化成嵌套扫描。
+            // 这个计划的成本与"该点位当月有多少行"成正比、与区间取多窄无关：区间再窄也省不下来，
+            // 但它已经是索引驱动的最优解（实测某点位 1.5 万行约 0.1~0.2 s），take 提前到也帮不上。
+            var query = db.TagValues
+                .AsNoTracking()
+                .Join(
+                    db.CollectRecords.AsNoTracking(),
+                    tag => tag.CollectRecordId,
+                    record => record.Id,
+                    (tag, record) => new { tag, record })
+                .Where(x => x.tag.TagId == tagId
+                            && x.tag.NumericValue != null
+                            && x.record.TriggerTime >= from
+                            && x.record.TriggerTime <= to);
+
+            if (recipeCode is not null)
+            {
+                query = query.Where(x => x.record.RecipeCode == recipeCode);
+            }
+
+            // 要"最新 take 点"就得先倒序取；take <= 0 时不加限制，按月库顺序升序返回。
+            var ordered = take > 0
+                ? query.OrderByDescending(x => x.record.TriggerTime).Take(take)
+                : query.OrderBy(x => x.record.TriggerTime);
+
+            var part = await ordered
+                .Select(x => new TagTrendPoint
+                {
+                    Time = x.record.TriggerTime,
+                    Value = x.tag.NumericValue!.Value,
+                    PalletCode = x.record.PalletCode,
+                    LowerLimit = x.tag.LowerLimit,
+                    UpperLimit = x.tag.UpperLimit
+                })
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            points.AddRange(part);
+
+        }
+
+        if (take <= 0)
+        {
+            return points.OrderBy(p => p.Time).ToList();
+        }
+
+        // 跨月合并后重新取全局最新 take 条：已取到的点比所有未读的月库都新，
+        // 所以只要凑够 take 条，结果必然就是全局最新的那批。最后统一升序，交给画图与移动极差。
+        return points
+            .OrderByDescending(p => p.Time)
+            .Take(take)
+            .OrderBy(p => p.Time)
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<CurveFeaturePoint>> QueryCurveFeaturesAsync(
+        int curveDefinitionId,
+        string? seriesName,
+        DateTime from,
+        DateTime to,
+        int take,
+        IReadOnlyCollection<string>? recipeCodes = null,
+        CancellationToken cancellationToken = default,
+        Judgement? judgement = null)
+    {
+        var points = new List<CurveFeaturePoint>();
+        if (take <= 0)
+        {
+            return points;
+        }
+
+        // 型号过滤下推到 SQL，且必须在 Take 之前：take 要的是"最新 N 条"，
+        // 取回内存再筛的话，另一种型号最近产量大一点就会把本型号整段挤出去。
+        var codes = recipeCodes?.Where(c => c is not null).Distinct(StringComparer.Ordinal).ToList();
+
+        // 倒序走月库、取够即停：每个月都取 take 条的话，跨年区间的读取量会按月份数放大，
+        // 而更早的月库不可能提供更新的点。
+        var months = ExistingMonthKeys();
+
+        foreach (var month in months)
+        {
+            await using var db = _factory.Open(month);
+
+            // 三层显式 join：特征 → 曲线记录（定义 Id）→ 采集记录（时间 / 判定 / 型号）。
+            // 用 join 而不是导航属性，保证翻译成带 WHERE 的单条 SQL，不在内存里展开任何集合。
+            var query = db.CurveFeatures
+                .AsNoTracking()
+                .Join(
+                    db.CurveRecords.AsNoTracking(),
+                    feature => feature.CurveRecordId,
+                    curve => curve.Id,
+                    (feature, curve) => new { feature, curve })
+                .Join(
+                    db.CollectRecords.AsNoTracking(),
+                    x => x.curve.CollectRecordId,
+                    record => record.Id,
+                    (x, record) => new { x.feature, x.curve, record })
+                .Where(x => x.curve.CurveDefinitionId == curveDefinitionId
+                            && x.record.TriggerTime >= from
+                            && x.record.TriggerTime <= to);
+
+            if (judgement is { } requiredJudgement)
+            {
+                query = query.Where(x => x.record.Judgement == requiredJudgement);
+            }
+
+            if (!string.IsNullOrWhiteSpace(seriesName))
+            {
+                query = query.Where(x => x.feature.SeriesName == seriesName);
+            }
+
+            if (codes is { Count: > 0 })
+            {
+                query = query.Where(x => codes.Contains(x.record.RecipeCode));
+            }
+
+            var part = await query
+                .OrderByDescending(x => x.record.TriggerTime)
+                .Take(take)
+                .Select(x => new CurveFeaturePoint
+                {
+                    CurveRecordId = x.curve.Id,
+                    Time = x.record.TriggerTime,
+                    PalletCode = x.record.PalletCode,
+                    ActualJudgement = x.record.Judgement,
+                    RecipeCode = x.record.RecipeCode,
+                    SeriesName = x.feature.SeriesName,
+                    Role = x.feature.Role,
+                    Feature = new CurveFeature
+                    {
+                        Id = x.feature.Id,
+                        CurveRecordId = x.feature.CurveRecordId,
+                        SeriesName = x.feature.SeriesName,
+                        Role = x.feature.Role,
+                        PointCount = x.feature.PointCount,
+                        Min = x.feature.Min,
+                        MinIndex = x.feature.MinIndex,
+                        Peak = x.feature.Peak,
+                        PeakIndex = x.feature.PeakIndex,
+                        Mean = x.feature.Mean,
+                        StdDev = x.feature.StdDev,
+                        Area = x.feature.Area,
+                        RiseSlope = x.feature.RiseSlope,
+                        HoldSlope = x.feature.HoldSlope,
+                        RiseIndex = x.feature.RiseIndex,
+                        RiseSpan = x.feature.RiseSpan,
+                        FallRatio = x.feature.FallRatio,
+                        MaxStep = x.feature.MaxStep,
+                        Oscillations = x.feature.Oscillations
+                    }
+                })
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            points.AddRange(part);
+
+        }
+
+        // 跨月合并后重新取全局最新 take 条：已取到的点比所有未读的月库都新，
+        // 所以只要凑够 take 条，结果必然就是全局最新的那批。最后统一升序。
+        return points
+            .OrderByDescending(p => p.Time)
+            .Take(take)
+            .OrderBy(p => p.Time)
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<CurveRecipeSampleCount>> CountCurveFeaturesByRecipeAsync(
+        int curveDefinitionId,
+        string? seriesName,
+        DateTime from,
+        DateTime to,
+        CancellationToken cancellationToken = default)
+    {
+        var counts = new Dictionary<string, (int Total, int Ng, int Unjudged)>(StringComparer.Ordinal);
+        foreach (var month in ExistingMonthKeys())
+        {
+            await using var db = _factory.Open(month);
+            var part = await db.CurveFeatures
+                .AsNoTracking()
+                .Join(
+                    db.CurveRecords.AsNoTracking(),
+                    feature => feature.CurveRecordId,
+                    curve => curve.Id,
+                    (feature, curve) => new { feature, curve })
+                .Join(
+                    db.CollectRecords.AsNoTracking(),
+                    x => x.curve.CollectRecordId,
+                    record => record.Id,
+                    (x, record) => new { x.feature, x.curve, record })
+                .Where(x => x.curve.CurveDefinitionId == curveDefinitionId
+                            && x.record.TriggerTime >= from
+                            && x.record.TriggerTime <= to
+                            && (seriesName == null || x.feature.SeriesName == seriesName))
+                .GroupBy(x => x.record.RecipeCode)
+                .Select(g => new
+                {
+                    RecipeCode = g.Key,
+                    Total = g.Count(),
+                    Ng = g.Count(x => x.record.Judgement == Judgement.Ng),
+                    Unjudged = g.Count(x => x.record.Judgement == Judgement.None)
+                })
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            foreach (var item in part)
+            {
+                var code = item.RecipeCode ?? "";
+                var current = counts.GetValueOrDefault(code);
+                counts[code] = (
+                    current.Total + item.Total,
+                    current.Ng + item.Ng,
+                    current.Unjudged + item.Unjudged);
+            }
+        }
+
+        return counts
+            .OrderByDescending(kv => kv.Value.Total)
+            .ThenBy(kv => kv.Key, StringComparer.Ordinal)
+            .Select(kv => new CurveRecipeSampleCount(
+                kv.Key, kv.Value.Total, kv.Value.Ng, kv.Value.Unjudged))
+            .ToList();
+    }
+}

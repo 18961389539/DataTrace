@@ -1,3 +1,4 @@
+using System.Globalization;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
@@ -105,15 +106,21 @@ public class RuntimeDbFactoryTests
     }
 }
 
-/// <summary>序列号生成：按日计数、跨日重置、并发不重号。</summary>
+/// <summary>序列号生成：按日计数、跨日重置、并发既不重号也不丢号。</summary>
 public class SerialNumberGeneratorTests
 {
+    /// <summary>
+    /// 走"每次一个新 context"的工厂，与生产注册一致 —— 这正是旧实现暴露竞态的地方：
+    /// 挂在实例字段上的锁在"每次新实例"下没有任何互斥作用。
+    /// </summary>
+    private static SerialNumberGenerator GeneratorFor(ConfigDbContext db) => new(TestDatabase.FactoryFor(db));
+
     [Fact]
     public async Task Generates_daily_incrementing_serial()
     {
         using var workspace = new TempWorkspace();
         await using var db = await TestDatabase.CreateConfigAsync(workspace.Path("config.db"));
-        var generator = new SerialNumberGenerator(db);
+        var generator = GeneratorFor(db);
         var day = new DateTime(2026, 9, 19, 8, 0, 0);
 
         Assert.Equal("20260919-000001", await generator.NextAsync(day));
@@ -126,7 +133,7 @@ public class SerialNumberGeneratorTests
     {
         using var workspace = new TempWorkspace();
         await using var db = await TestDatabase.CreateConfigAsync(workspace.Path("config.db"));
-        var generator = new SerialNumberGenerator(db);
+        var generator = GeneratorFor(db);
 
         Assert.Equal("20260919-000001", await generator.NextAsync(new DateTime(2026, 9, 19)));
         Assert.Equal("20260920-000001", await generator.NextAsync(new DateTime(2026, 9, 20)));
@@ -138,15 +145,22 @@ public class SerialNumberGeneratorTests
     {
         using var workspace = new TempWorkspace();
         await using var db = await TestDatabase.CreateConfigAsync(workspace.Path("config.db"));
-        var generator = new SerialNumberGenerator(db);
+        var generator = GeneratorFor(db);
         var day = new DateTime(2026, 9, 19);
 
         var serials = await Task.WhenAll(Enumerable.Range(0, 24).Select(_ => generator.NextAsync(day)));
 
         Assert.Equal(24, serials.Distinct().Count());
-        Assert.Equal("20260919-000024", serials.Last());
         Assert.All(serials, s => Assert.StartsWith("20260919-", s));
-        Assert.Single(await db.SerialCounters.ToListAsync());
+
+        // 并发下"谁先跑完"不确定，所以不去断言最后一次正好是 24，
+        // 而是断言这 24 次调用正好覆盖 1..24：既不重号，也不丢号。
+        var numbers = serials
+            .Select(s => int.Parse(s["20260919-".Length..], CultureInfo.InvariantCulture))
+            .OrderBy(v => v)
+            .ToList();
+        Assert.Equal(Enumerable.Range(1, 24).ToList(), numbers);
+        Assert.Single(await db.SerialCounters.AsNoTracking().ToListAsync());
     }
 }
 

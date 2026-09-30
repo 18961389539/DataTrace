@@ -1,6 +1,7 @@
 using AngleSharp.Dom;
 using DataTrace.Web.Components.Dialogs;
 using DataTrace.Web.Services;
+using DataTrace.Shared;
 using Microsoft.Extensions.DependencyInjection;
 using MudBlazor;
 

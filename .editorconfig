@@ -1,0 +1,48 @@
+# DataTrace 代码风格约定
+#
+# 本文件只声明**约定**，不把任何规则提升为 error：项目已经把"零警告"做成编译期门禁
+# （见 Directory.Build.props 的 TreatWarningsAsErrors），再在这里把样式规则设成 error，
+# 只会让一个缩进问题把构建弄红。样式偏差交给 IDE 提示与评审。
+#
+# 语言与框架的默认规则集保持不动；这里只固定团队实际在用的那几条。
+
+root = true
+
+[*]
+charset = utf-8
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+
+[*.{json,yml,yaml}]
+indent_size = 2
+
+[*.{csproj,props,targets,slnx,xml}]
+indent_size = 2
+
+[*.razor]
+indent_size = 4
+
+[*.{css,js}]
+indent_size = 4
+
+[*.md]
+# Markdown 里行尾两个空格是有意义的换行，别被自动裁掉。
+trim_trailing_whitespace = false
+
+[*.cs]
+# using 排在命名空间外面（本仓库全部如此）。
+csharp_using_directive_placement = outside_namespace:suggestion
+
+# 注释与代码的既有写法：一律用 4 空格缩进，不用 tab。
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+
+# 只对"明显是笔误"的写法给出提示，不做强制重排。
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = false:suggestion
+
+# 未使用的 using 只提示，不影响构建。
+dotnet_diagnostic.IDE0005.severity = suggestion

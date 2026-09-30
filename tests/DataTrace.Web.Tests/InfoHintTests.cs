@@ -1,4 +1,5 @@
 using DataTrace.Web.Components.Shared;
+using DataTrace.Shared;
 using DataTrace.Web.Services;
 
 namespace DataTrace.Web.Tests;

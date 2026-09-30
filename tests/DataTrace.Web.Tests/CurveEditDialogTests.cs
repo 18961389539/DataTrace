@@ -2,6 +2,7 @@ using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Web.Components.Dialogs;
 using DataTrace.Web.Services;
+using DataTrace.Shared;
 using Microsoft.Extensions.DependencyInjection;
 using MudBlazor;
 

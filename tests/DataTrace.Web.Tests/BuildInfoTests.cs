@@ -1,5 +1,6 @@
 using DataTrace.Web.Services;
 
+using DataTrace.Shared;
 namespace DataTrace.Web.Tests;
 
 /// <summary>

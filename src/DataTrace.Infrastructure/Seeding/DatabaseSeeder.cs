@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
@@ -10,11 +11,16 @@ using Microsoft.Extensions.Logging;
 
 namespace DataTrace.Infrastructure.Seeding;
 
-public sealed class DatabaseSeeder
+// 按职责拆成 partial 多文件：账号与主流程本文件，补表补列见 .Schema.cs，
+// 脏数据清理见 .Maintenance.cs，演示产线见 .DemoLine.cs。
+public sealed partial class DatabaseSeeder
 {
     private readonly ConfigDbContext _db;
+
     private readonly UserManager<ApplicationUser> _users;
+
     private readonly RoleManager<IdentityRole> _roles;
+
     private readonly ILogger<DatabaseSeeder> _logger;
 
     public DatabaseSeeder(
@@ -29,8 +35,20 @@ public sealed class DatabaseSeeder
         _logger = logger;
     }
 
-    public async Task SeedAsync(bool simulatorAutoRunSeed = true, CancellationToken cancellationToken = default)
+    /// <summary>
+/// 初始化配置库（建表、补列、角色与账号、演示产线）。
+    /// </summary>
+    /// <param name="users">
+    /// 种子账号策略。默认种入口令写在源码里的演示账号，仅供开发/演示/测试；
+    /// 生产必须显式传 <see cref="SeedUserOptions.Production"/>。
+    /// </param>
+    /// <param name="simulatorAutoRunSeed">新建库时写入的"启动即开仿真"初值。</param>
+    public async Task SeedAsync(
+        SeedUserOptions? users = null,
+        bool simulatorAutoRunSeed = true,
+        CancellationToken cancellationToken = default)
     {
+        users ??= new SeedUserOptions();
         await _db.Database.EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
         await _db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;", cancellationToken).ConfigureAwait(false);
         await EnsureAuditLogSchemaAsync(cancellationToken).ConfigureAwait(false);
@@ -104,6 +122,10 @@ public sealed class DatabaseSeeder
         await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlCapturedBy",
             "ALTER TABLE Tags ADD COLUMN ControlCapturedBy TEXT NULL", cancellationToken).ConfigureAwait(false);
 
+        // 强制改密标记。老配置库没有这列，登录管道读主体标记前 EF 会直接报 no such column。
+        await SqliteSchema.AddColumnIfMissingAsync(_db, "AspNetUsers", "MustChangePassword",
+            """ALTER TABLE "AspNetUsers" ADD COLUMN "MustChangePassword" INTEGER NOT NULL DEFAULT 0""", cancellationToken).ConfigureAwait(false);
+
         await RemoveTagCodesAsync(cancellationToken).ConfigureAwait(false);
 
         await CleanupOrphanRecipeLimitsAsync(cancellationToken).ConfigureAwait(false);
@@ -116,10 +138,17 @@ public sealed class DatabaseSeeder
             }
         }
 
-        await EnsureUserAsync("admin", "管理员", "Admin@123", AppRoles.Administrator).ConfigureAwait(false);
-        await EnsureUserAsync("engineer", "工程师", "Engineer@123", AppRoles.Engineer).ConfigureAwait(false);
-        await EnsureUserAsync("operator", "操作员", "Operator@123", AppRoles.Operator).ConfigureAwait(false);
-        await EnsureUserAsync("viewer", "访客", "Viewer@123", AppRoles.Viewer).ConfigureAwait(false);
+        if (users.DemoUsers)
+        {
+            await EnsureUserAsync("admin", "管理员", "Admin@123", AppRoles.Administrator).ConfigureAwait(false);
+            await EnsureUserAsync("engineer", "工程师", "Engineer@123", AppRoles.Engineer).ConfigureAwait(false);
+            await EnsureUserAsync("operator", "操作员", "Operator@123", AppRoles.Operator).ConfigureAwait(false);
+            await EnsureUserAsync("viewer", "访客", "Viewer@123", AppRoles.Viewer).ConfigureAwait(false);
+        }
+        else
+        {
+            await EnsureBootstrapAdminAsync(users.AdminPassword).ConfigureAwait(false);
+        }
 
         if (!await _db.SystemSettings.AnyAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -152,119 +181,98 @@ public sealed class DatabaseSeeder
         _logger.LogInformation("配置库初始化完成");
     }
 
-    private async Task EnsureAuditLogSchemaAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// 生产首启动的引导管理员：口令取自配置，没配就随机生成一次并打印到日志。
+    /// 两种来源都要求首次登录改密 —— 交付单或日志里的口令都只应当是一次性的。
+    /// </summary>
+    private async Task EnsureBootstrapAdminAsync(string? configuredPassword)
     {
-        // EnsureCreated does not create tables in a non-empty legacy database.
-        await _db.Database.ExecuteSqlRawAsync(
-            """
-            CREATE TABLE IF NOT EXISTS "AuditLogs" (
-                "Id" INTEGER NOT NULL CONSTRAINT "PK_AuditLogs" PRIMARY KEY AUTOINCREMENT,
-                "Time" TEXT NOT NULL,
-                "UserName" TEXT NOT NULL,
-                "Action" TEXT NOT NULL,
-                "EntityType" TEXT NOT NULL,
-                "EntityKey" TEXT NULL,
-                "OldValue" TEXT NULL,
-                "NewValue" TEXT NULL,
-                "Outcome" TEXT NOT NULL DEFAULT 'Success',
-                "Source" TEXT NOT NULL DEFAULT 'Legacy / unknown',
-                "SourceIp" TEXT NULL,
-                "CorrelationId" TEXT NULL
-            )
-            """,
-            cancellationToken).ConfigureAwait(false);
-
-        var outcomeColumnMissing = !SqliteSchema.ColumnExists(_db, "AuditLogs", "Outcome");
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "AuditLogs", "Outcome",
-            """ALTER TABLE "AuditLogs" ADD COLUMN "Outcome" TEXT NOT NULL DEFAULT 'Success'""",
-            cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "AuditLogs", "Source",
-            """ALTER TABLE "AuditLogs" ADD COLUMN "Source" TEXT NOT NULL DEFAULT 'Legacy / unknown'""",
-            cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "AuditLogs", "SourceIp",
-            """ALTER TABLE "AuditLogs" ADD COLUMN "SourceIp" TEXT NULL""",
-            cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "AuditLogs", "CorrelationId",
-            """ALTER TABLE "AuditLogs" ADD COLUMN "CorrelationId" TEXT NULL""",
-            cancellationToken).ConfigureAwait(false);
-        if (outcomeColumnMissing)
+        if (await _users.FindByNameAsync("admin").ConfigureAwait(false) is not null)
         {
-            await _db.Database.ExecuteSqlRawAsync(
-                """UPDATE "AuditLogs" SET "Outcome" = 'Failure' WHERE "Action" = 'LoginFailed' AND "Outcome" = 'Success'""",
-                cancellationToken).ConfigureAwait(false);
+            await FlagLegacyDefaultPasswordAsync().ConfigureAwait(false);
+            return;
         }
-        await _db.Database.ExecuteSqlRawAsync(
-            """CREATE INDEX IF NOT EXISTS "IX_AuditLogs_Time" ON "AuditLogs" ("Time")""",
-            cancellationToken).ConfigureAwait(false);
-    }
 
-    private async Task EnsureAlarmSchemaAsync(CancellationToken cancellationToken)
-    {
-        // EnsureCreated 不会给已经有表的配置库补新表。报警要能跨重启留下来，这张表必须自己建。
-        await _db.Database.ExecuteSqlRawAsync(
-            """
-            CREATE TABLE IF NOT EXISTS "AlarmIncidents" (
-                "Id" INTEGER NOT NULL CONSTRAINT "PK_AlarmIncidents" PRIMARY KEY AUTOINCREMENT,
-                "Key" TEXT NOT NULL,
-                "Kind" INTEGER NOT NULL,
-                "Message" TEXT NOT NULL,
-                "RaisedAt" TEXT NOT NULL,
-                "AcknowledgedAt" TEXT NULL,
-                "AcknowledgedBy" TEXT NULL,
-                "ClearedAt" TEXT NULL
-            )
-            """,
-            cancellationToken).ConfigureAwait(false);
-        await _db.Database.ExecuteSqlRawAsync(
-            """CREATE INDEX IF NOT EXISTS "IX_AlarmIncidents_RaisedAt" ON "AlarmIncidents" ("RaisedAt")""",
-            cancellationToken).ConfigureAwait(false);
+        var generated = string.IsNullOrWhiteSpace(configuredPassword);
+        var password = generated ? GenerateBootstrapPassword() : configuredPassword!;
+
+        await EnsureUserAsync("admin", "管理员", password, AppRoles.Administrator, mustChangePassword: true)
+            .ConfigureAwait(false);
+
+        if (generated)
+        {
+            _logger.LogWarning(
+                "已创建引导管理员 admin，本次随机口令为：{Password}；登录后必须立即修改。",
+                password);
+        }
     }
 
     /// <summary>
-    /// 演示型号 A100：压力规格上限 20 → 16 kN、工站温度预警上限 80 → 45℃。
-    /// <b>默认不激活</b>：老产线的判定行为不该因为一次升级就被悄悄改掉，
-    /// 必须由人在「产品型号」页显式切换。
+    /// 已经装好的现场：admin 若还挂着源码里的演示口令，补上强制改密标记。
     /// </summary>
-    private async Task SeedDemoRecipeAsync(CancellationToken cancellationToken)
+    /// <remarks>
+    /// 少了这一步，口令策略的修复就只对新装库有效 —— 升级上来的老现场照样拿着一把公开钥匙。
+    /// </remarks>
+    private async Task FlagLegacyDefaultPasswordAsync()
     {
-        if (await _db.Recipes.AnyAsync(cancellationToken).ConfigureAwait(false))
+        var admin = await _users.FindByNameAsync("admin").ConfigureAwait(false);
+        if (admin is null || admin.MustChangePassword)
         {
             return;
         }
 
-        var tags = await _db.Tags.ToListAsync(cancellationToken).ConfigureAwait(false);
-        if (tags.Count == 0)
+        if (!await _users.CheckPasswordAsync(admin, "Admin@123").ConfigureAwait(false))
         {
             return;
         }
 
-        var recipe = new Recipe
+        admin.MustChangePassword = true;
+        var updated = await _users.UpdateAsync(admin).ConfigureAwait(false);
+        if (updated.Succeeded)
         {
-            Code = "A100",
-            Name = "演示型号 A100",
-            Enabled = true,
-            Remark = "压力规格上限收紧到 16kN；工站温度预警上限收紧到 45℃"
-        };
-
-        foreach (var tag in tags)
-        {
-            if (tag.Name == "压力")
-            {
-                // 只覆盖规格上限，其余字段留空 → 沿用点位默认值。
-                recipe.Limits.Add(new RecipeLimit { TagId = tag.Id, UpperLimit = 16 });
-            }
-            else if (tag.Name == "工站温度")
-            {
-                // 温度只收紧黄线，红线仍是 80℃、不判废。
-                recipe.Limits.Add(new RecipeLimit { TagId = tag.Id, WarningUpperLimit = 45 });
-            }
+            _logger.LogWarning("admin 仍在使用初始演示口令，已要求其在下次登录时修改。");
         }
-
-        _db.Recipes.Add(recipe);
-        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task EnsureUserAsync(string userName, string display, string password, string role)
+    /// <summary>
+    /// 生成一个一定满足 Identity 密码策略的随机口令：定长大写/小写/数字各取一位，其余补足后打散。
+    /// </summary>
+    private static string GenerateBootstrapPassword()
+    {
+        // 去掉 0/O/1/l/I 这类易混字符：口令要能被人从交付单上准确抄进去。
+        const string upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+        const string lower = "abcdefghijkmnopqrstuvwxyz";
+        const string digits = "23456789";
+        const string all = upper + lower + digits;
+
+        var chars = new List<char>
+        {
+            upper[RandomNumberGenerator.GetInt32(upper.Length)],
+            lower[RandomNumberGenerator.GetInt32(lower.Length)],
+            digits[RandomNumberGenerator.GetInt32(digits.Length)]
+        };
+
+        while (chars.Count < 16)
+        {
+            chars.Add(all[RandomNumberGenerator.GetInt32(all.Length)]);
+        }
+
+        // Fisher-Yates 打散：不然前三位的类别是固定图样，肉眼可预测。
+        for (var i = chars.Count - 1; i > 0; i--)
+        {
+            var j = RandomNumberGenerator.GetInt32(i + 1);
+            (chars[i], chars[j]) = (chars[j], chars[i]);
+        }
+
+        return new string([.. chars]);
+    }
+
+    private async Task EnsureUserAsync(
+        string userName,
+        string display,
+        string password,
+        string role,
+        bool mustChangePassword = false)
     {
         var user = await _users.FindByNameAsync(userName).ConfigureAwait(false);
         if (user is null)
@@ -274,7 +282,8 @@ public sealed class DatabaseSeeder
                 UserName = userName,
                 Email = $"{userName}@datatrace.local",
                 DisplayName = display,
-                EmailConfirmed = true
+                EmailConfirmed = true,
+                MustChangePassword = mustChangePassword
             };
             var created = await _users.CreateAsync(user, password).ConfigureAwait(false);
             if (!created.Succeeded)
@@ -288,347 +297,5 @@ public sealed class DatabaseSeeder
             await _users.AddToRoleAsync(user, role).ConfigureAwait(false);
         }
     }
-
-    private void SeedDemoLine()
-    {
-        var plc = new PlcConnection
-        {
-            Name = "模拟PLC",
-            Brand = PlcBrand.Simulator,
-            Host = "127.0.0.1",
-            Port = 6000,
-            FloatWordOrder = FloatWordOrder.CDAB,
-            Enabled = true,
-            Heartbeat = new HeartbeatSettings
-            {
-                Address = "D0",
-                IntervalMs = 1000,
-                Mode = HeartbeatMode.Increment,
-                Enabled = true
-            }
-        };
-
-        plc.Stations.Add(CreateStation(
-            "ST010", "上料工站", 10, first: true, last: false,
-            trigger: "D1000", pallet: "D1010",
-            press: "D1100", temp: "D1110",
-            y: "D2000", x: "D2400"));
-
-        plc.Stations.Add(CreateStation(
-            "ST020", "压装工站", 20, first: false, last: false,
-            trigger: "D1200", pallet: "D1210",
-            press: "D1300", temp: "D1310",
-            y: "D3600", x: "D4000"));
-
-        plc.Stations.Add(CreateStation(
-            "ST030", "下线工站", 30, first: false, last: false,
-            trigger: "D1400", pallet: "D1410",
-            press: "D1500", temp: "D1510",
-            y: "D5200", x: "D5600"));
-
-        foreach (var station in CreateAdditionalDemoStations())
-        {
-            plc.Stations.Add(station);
-        }
-
-        _db.PlcConnections.Add(plc);
-    }
-
-    private async Task EnsureDemoStationsAsync(CancellationToken cancellationToken)
-    {
-        var demoPlc = await _db.PlcConnections
-            .Include(p => p.Stations)
-            .FirstOrDefaultAsync(
-                p => p.Name == "模拟PLC" && p.Brand == PlcBrand.Simulator,
-                cancellationToken)
-            .ConfigureAwait(false);
-        if (demoPlc is null)
-        {
-            return;
-        }
-
-        var existingCodes = (await _db.Stations
-            .Select(s => s.Code)
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false))
-            .ToHashSet(StringComparer.Ordinal);
-        var changed = false;
-        foreach (var station in CreateAdditionalDemoStations())
-        {
-            if (existingCodes.Add(station.Code))
-            {
-                demoPlc.Stations.Add(station);
-                changed = true;
-            }
-        }
-
-        var previousLastStation = demoPlc.Stations.FirstOrDefault(s => s.Code == "ST030");
-        if (previousLastStation?.IsLastStation == true)
-        {
-            previousLastStation.IsLastStation = false;
-            changed = true;
-        }
-
-        if (changed)
-        {
-            var version = await _db.ConfigVersions.FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
-            if (version is not null)
-            {
-                version.Version++;
-            }
-        }
-    }
-
-    private static Station[] CreateAdditionalDemoStations() =>
-    [
-        CreateStation(
-            "ST040", "装配工站", 40, first: false, last: false,
-            trigger: "D1600", pallet: "D1610",
-            press: "D1700", temp: "D1710",
-            y: "D6800", x: "D7200"),
-        CreateStation(
-            "ST050", "性能检测工站", 50, first: false, last: false,
-            trigger: "D1800", pallet: "D1810",
-            press: "D1900", temp: "D1910",
-            y: "D8400", x: "D8800"),
-        CreateStation(
-            "ST060", "终检工站", 60, first: false, last: true,
-            trigger: "D2000", pallet: "D2010",
-            press: "D2100", temp: "D2110",
-            y: "D10000", x: "D10400")
-    ];
-
-    private async Task CollapseToSingleProductAsync(CancellationToken cancellationToken)
-    {
-        var stations = await _db.Stations
-            .Include(s => s.Positions)
-            .Include(s => s.Tags)
-            .Include(s => s.Curves)
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
-
-        var changed = false;
-        foreach (var station in stations)
-        {
-            if (station.PositionCount != 1)
-            {
-                station.PositionCount = 1;
-                changed = true;
-            }
-
-            foreach (var extra in station.Positions.Where(p => p.Index != 1).ToList())
-            {
-                _db.ProductPositions.Remove(extra);
-                changed = true;
-            }
-
-            var product = station.Positions.FirstOrDefault(p => p.Index == 1);
-            // 只收敛名称：有料地址仍被采集端使用，启动时清掉等于把现场配的空位检测弄没。
-            if (product is not null && product.Name != "产品")
-            {
-                product.Name = "产品";
-                changed = true;
-            }
-
-            foreach (var tag in station.Tags.Where(t => t.PositionIndex > 1).ToList())
-            {
-                _db.Tags.Remove(tag);
-                changed = true;
-            }
-
-            foreach (var tag in station.Tags.Where(t => t.PositionIndex < 1))
-            {
-                tag.PositionIndex = 1;
-                changed = true;
-            }
-
-            foreach (var curve in station.Curves.Where(c => c.PositionIndex > 1).ToList())
-            {
-                _db.Curves.Remove(curve);
-                changed = true;
-            }
-
-            foreach (var curve in station.Curves.Where(c => c.PositionIndex < 1))
-            {
-                curve.PositionIndex = 1;
-                changed = true;
-            }
-        }
-
-        if (changed)
-        {
-            var version = await _db.ConfigVersions.FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
-            if (version is not null)
-            {
-                version.Version++;
-            }
-        }
-    }
-
-    private static Station CreateStation(
-        string code,
-        string name,
-        int sequence,
-        bool first,
-        bool last,
-        string trigger,
-        string pallet,
-        string press,
-        string temp,
-        string y,
-        string x)
-    {
-        const int points = 50;
-        return new Station
-        {
-            Code = code,
-            Name = name,
-            Sequence = sequence,
-            IsFirstStation = first,
-            IsLastStation = last,
-            TriggerAddress = trigger,
-            TriggerValue = 1,
-            PalletCodeAddress = pallet,
-            PalletCodeLength = 16,
-            PalletCodeDataType = PlcDataType.String,
-            PositionCount = 1,
-            Enabled = true,
-            Positions =
-            [
-                new ProductPositionDefinition { Index = 1, Name = "产品" }
-            ],
-            Tags =
-            [
-                // 演示用三级限值：规格限 0~80℃，黄线 60℃，模拟器给的温度区间是 16~64℃，
-                // 所以跑一会儿就会偶发进入预警带，让「预警不判废 + 预警 Top N」开箱可见。
-                new TagDefinition
-                {
-                    Name = "工站温度", Address = temp, DataType = PlcDataType.Float, Unit = "℃",
-                    LowerLimit = 0, UpperLimit = 80, WarningUpperLimit = 60, TargetValue = 40, PositionIndex = 1
-                },
-                new TagDefinition
-                {
-                    Name = "压力", Address = press, DataType = PlcDataType.Float, Unit = "kN",
-                    LowerLimit = 5, UpperLimit = 20, WarningLowerLimit = 6, WarningUpperLimit = 16, TargetValue = 12.5,
-                    PositionIndex = 1
-                }
-            ],
-            Curves =
-            [
-                CreateCurve($"{code}_PD", "位移压力曲线", points, y, x)
-            ]
-        };
-    }
-
-    private static CurveDefinition CreateCurve(string code, string name, int points, string yStart, string xStart)
-        => new()
-        {
-            Code = code,
-            Name = name,
-            PointCount = points,
-            PositionIndex = 1,
-            Enabled = true,
-            Series =
-            [
-                new CurveSeries { Name = "压力", Role = SeriesRole.Y, StartAddress = yStart, DataType = PlcDataType.Float, StrideWords = 2, Unit = "kN" },
-                new CurveSeries { Name = "位移", Role = SeriesRole.X, StartAddress = xStart, DataType = PlcDataType.Float, StrideWords = 2, Unit = "mm" }
-            ]
-        };
-
-    /// <summary>
-    /// 点位不再有编码。老库把空名称补成原来的编码，重名的加上后缀，然后删掉 Code 列。
-    /// 新库由模型直接建出 (工站, 名称) 唯一索引，这里看到没有 Code 列就跳过。
-    /// </summary>
-    private async Task RemoveTagCodesAsync(CancellationToken cancellationToken)
-    {
-        if (!SqliteSchema.ColumnExists(_db, "Tags", "Code"))
-        {
-            return;
-        }
-
-        var rows = new List<(int Id, int StationId, string Name, string Code)>();
-        var connection = _db.Database.GetDbConnection();
-        await using (var cmd = connection.CreateCommand())
-        {
-            cmd.CommandText = """SELECT "Id", "StationId", "Name", "Code" FROM "Tags" ORDER BY "Id" """;
-            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-            {
-                rows.Add((
-                    reader.GetInt32(0),
-                    reader.GetInt32(1),
-                    reader.IsDBNull(2) ? "" : reader.GetString(2),
-                    reader.IsDBNull(3) ? "" : reader.GetString(3)));
-            }
-        }
-
-        var seen = new HashSet<(int StationId, string Name)>();
-        foreach (var row in rows)
-        {
-            var name = string.IsNullOrWhiteSpace(row.Name)
-                ? (string.IsNullOrWhiteSpace(row.Code) ? $"点位{row.Id}" : row.Code.Trim())
-                : row.Name.Trim();
-            if (!seen.Add((row.StationId, name.ToLowerInvariant())))
-            {
-                var suffix = string.IsNullOrWhiteSpace(row.Code) ? row.Id.ToString() : row.Code.Trim();
-                var n = 2;
-                var candidate = $"{name} ({suffix})";
-                while (!seen.Add((row.StationId, candidate.ToLowerInvariant())))
-                {
-                    candidate = $"{name} ({suffix}-{n++})";
-                }
-
-                name = candidate;
-            }
-
-            if (string.Equals(name, row.Name, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            await _db.Database.ExecuteSqlInterpolatedAsync(
-                $"""UPDATE "Tags" SET "Name" = {name} WHERE "Id" = {row.Id}""",
-                cancellationToken).ConfigureAwait(false);
-        }
-
-        SqliteSchema.DropColumnIfPresent(_db, "Tags", "Code");
-        await _db.Database.ExecuteSqlRawAsync(
-            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_Tags_StationId_Name" ON "Tags" ("StationId", "Name")""",
-            cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <summary>
-    /// 一次性清理悬空/不可用的型号限值覆盖：Tag 已删，或 Tag 已改为 Bool/String。
-    /// 幂等；日志打印清理行数，便于现场核对历史脏数据。
-    /// </summary>
-    /// <remarks>
-    /// "哪些点位能配覆盖"这份名单来自 <see cref="RecipeLimitScope"/>，与限值对话框共用一份，
-    /// 免得一边放行一边判成脏数据。
-    /// </remarks>
-    private async Task CleanupOrphanRecipeLimitsAsync(CancellationToken cancellationToken)
-    {
-        var validTagIds = await _db.Tags.AsNoTracking()
-            .Where(t => RecipeLimitScope.NumericTypes.Contains(t.DataType))
-            .Select(t => t.Id)
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
-        var valid = validTagIds.ToHashSet();
-
-        var orphans = await _db.RecipeLimits
-            .Where(l => !valid.Contains(l.TagId))
-            .ToListAsync(cancellationToken)
-            .ConfigureAwait(false);
-
-        if (orphans.Count == 0)
-        {
-            _logger.LogInformation("型号限值孤儿清理：无需处理（0 行）");
-            return;
-        }
-
-        _db.RecipeLimits.RemoveRange(orphans);
-        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
-        _logger.LogWarning("型号限值孤儿清理：已删除 {Count} 行（点位不存在或已改为 Bool/String）", orphans.Count);
-    }
-
-
 }
+

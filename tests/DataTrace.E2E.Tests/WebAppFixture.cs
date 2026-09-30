@@ -45,6 +45,16 @@ public abstract class WebAppHost : IDisposable
 
     public int Port { get; private set; }
 
+    /// <summary>
+    /// 启动实例时是否显式要求种入演示账号（<c>Seed__DemoUsers=true</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 应用侧的规则是"生产永不种演示账号，其它环境默认只有 Development 种"。
+    /// 鉴权用例跑在 Staging，所以需要自己声明一次；不声明的话 <c>admin/Admin@123</c> 不存在，
+    /// 整组登录用例会以"用户名或密码错误"失败。
+    /// </remarks>
+    protected virtual bool SeedDemoUsers => false;
+
     public Task Started => _start ??= StartAsync();
 
     private async Task StartAsync()
@@ -67,6 +77,10 @@ public abstract class WebAppHost : IDisposable
         startInfo.Environment["ASPNETCORE_ENVIRONMENT"] = EnvironmentName;
         startInfo.Environment["Kestrel__Endpoints__Http__Url"] = BaseUrl;
         startInfo.Environment["DataRoot"] = _dataRoot;
+        if (SeedDemoUsers)
+        {
+            startInfo.Environment["Seed__DemoUsers"] = "true";
+        }
 
         _process = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动 DataTrace.Web");
         _process.OutputDataReceived += (_, e) => { if (e.Data is not null) lock (_output) _output.AppendLine(e.Data); };
@@ -207,6 +221,12 @@ public sealed class AuthWebAppFixture : WebAppHost
         : base("Staging")
     {
     }
+
+    /// <summary>
+    /// Staging 不是 Development，应用默认不会种演示账号；而这一组用例正是用
+    /// admin/Admin@123、engineer/Engineer@123 走真实登录流程的，所以显式要一次。
+    /// </summary>
+    protected override bool SeedDemoUsers => true;
 
     /// <summary>
     /// 故意在一个空目录里拉起进程，模拟 Windows 服务（工作目录 = System32）的形态：

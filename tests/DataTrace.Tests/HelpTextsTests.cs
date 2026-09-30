@@ -1,7 +1,7 @@
 using System.Reflection;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Validation;
-using DataTrace.Web.Services;
+using DataTrace.Shared;
 
 namespace DataTrace.Tests;
 

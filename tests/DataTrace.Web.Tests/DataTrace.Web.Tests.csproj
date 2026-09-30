@@ -6,16 +6,18 @@
     <RootNamespace>DataTrace.Web.Tests</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="bunit" Version="1.40.0" />
-    <PackageReference Include="coverlet.collector" Version="6.0.0" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="bunit" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <!-- MudBlazor 的 ISnackbar / IDialogService 成员很多且随版本增删，用 mock 接住比手写替身耐升级。 -->
-    <PackageReference Include="Moq" Version="4.20.72" />
-    <PackageReference Include="xunit" Version="2.5.3" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
+    <PackageReference Include="Moq" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\DataTrace.Web\DataTrace.Web.csproj" />
+    <!-- 直接引用共享工程：页面测试会直接用 HelpTexts / ChartUtil / ReturnUrl 这些纯函数 -->
+    <ProjectReference Include="..\..\src\DataTrace.Shared\DataTrace.Shared.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

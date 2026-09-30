@@ -6,6 +6,7 @@ using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
 using DataTrace.Web.Components.Pages;
 using DataTrace.Web.Components.Shared;
+using DataTrace.Shared;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 

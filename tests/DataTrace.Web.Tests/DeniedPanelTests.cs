@@ -1,4 +1,5 @@
 using DataTrace.Web.Components.Shared;
+using DataTrace.Shared;
 using Microsoft.Extensions.DependencyInjection;
 using MudBlazor.Services;
 

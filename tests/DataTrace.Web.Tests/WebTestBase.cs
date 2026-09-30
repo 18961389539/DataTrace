@@ -6,6 +6,7 @@ using DataTrace.Domain.Constants;
 using DataTrace.Plc.Simulator;
 using DataTrace.Web.Options;
 using DataTrace.Web.Services;
+using DataTrace.Shared;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
