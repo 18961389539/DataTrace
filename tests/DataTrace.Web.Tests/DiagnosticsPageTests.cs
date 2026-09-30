@@ -88,7 +88,9 @@ public class DiagnosticsPageTests : WebTestBase
             diag.PublishPlcTraffic(new PlcTrafficView(
                 1, "1号PLC", TotalCount: 42, FailureCount: 1, LastDurationMs: 12, MaxDurationMs: 6000,
                 LastSuccessAt: DateTime.Now.AddSeconds(-5),
-                [],
+                // 一条最近的成功流水：摘要里要有它作对照，否则读的人分不清"现在还通不通"。
+                [new PlcExchangeView(
+                    DateTime.Now.AddSeconds(-1), false, "D200", 1, 12, true, null, [3])],
                 [new PlcExchangeView(
                     DateTime.Now.AddSeconds(-2), false, "D100", 1, 40, false, "链接已断开", [])]));
         });
@@ -102,6 +104,8 @@ public class DiagnosticsPageTests : WebTestBase
         Assert.Contains("版本 1.0.0", text);
         Assert.Contains("采集循环", text);
         Assert.Contains("PLC 1号PLC", text);
+        Assert.Contains("最近一次", text);
+        Assert.Contains("D200", text);
         Assert.Contains("链接已断开", text);
         Assert.Contains("database is locked", text);
     }
@@ -427,6 +431,36 @@ public class DiagnosticsPageTests : WebTestBase
         // 放行并把这一跳走完，别把未完成的取数留给测试收尾。
         gate.SetResult();
         cut.WaitForAssertion(() => Assert.True(spool.DescribeCalls >= 3), TimeSpan.FromSeconds(6));
+    }
+
+    /// <summary>
+    /// 页面切到后台就挂起轮询，切回来立即取一轮。
+    /// </summary>
+    /// <remarks>
+    /// 每个开着的标签页都在按秒取数；没人看的时候不该继续占着服务端。
+    /// 手动暂停着的页面切回前台也不该被顺手解开 —— 那是用户按下的状态。
+    /// </remarks>
+    [Fact]
+    public async Task Hidden_tab_suspends_polling_and_returning_refreshes_at_once()
+    {
+        var spool = new FakeSpool();
+        var (cut, _, _) = Render(spool);
+
+        // 页面渲染时把可见性回调挂上（JS→.NET 的入口）。
+        Context.JSInterop.VerifyInvoke("dtVisibility.initialize");
+
+        await cut.InvokeAsync(() => cut.Instance.OnVisibilityChanged(hidden: true));
+        Assert.Contains("刷新已挂起", cut.Markup);
+
+        // 跨过一整拍也不该再取数。
+        var frozen = spool.DescribeCalls;
+        await Task.Delay(2600);
+        Assert.Equal(frozen, spool.DescribeCalls);
+
+        // 切回来：立即取一轮，不等下一拍。
+        await cut.InvokeAsync(() => cut.Instance.OnVisibilityChanged(hidden: false));
+        Assert.True(spool.DescribeCalls > frozen, "切回前台应当立即取一轮");
+        Assert.DoesNotContain("刷新已挂起", cut.Markup);
     }
 
     /// <summary>

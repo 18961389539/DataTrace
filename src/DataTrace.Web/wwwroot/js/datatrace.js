@@ -336,3 +336,33 @@ window.dtAlarm = (function () {
         }
     };
 })();
+
+// 页面可见性：切到后台时通知 .NET。
+// 诊断页据此挂起按秒的轮询 —— 每个开着的标签页都在取数，没人看的时候不该继续占着服务端。
+window.dtVisibility = (function () {
+    var dotNetReference = null;
+
+    function notify() {
+        if (!dotNetReference) {
+            return;
+        }
+
+        // 切页竞态（回调落到已释放的对象上）不该在控制台喧哗：出错了当没人订阅就是。
+        dotNetReference.invokeMethodAsync('OnVisibilityChanged', document.hidden).catch(function () { });
+    }
+
+    document.addEventListener('visibilitychange', notify);
+
+    return {
+        initialize: function (reference) {
+            dotNetReference = reference;
+            // 打开时就在后台（新标签页、切走的旧页签）也要先报一次。
+            notify();
+        },
+        dispose: function (reference) {
+            if (dotNetReference === reference) {
+                dotNetReference = null;
+            }
+        }
+    };
+})();

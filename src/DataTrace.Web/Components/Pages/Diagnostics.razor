@@ -6,7 +6,7 @@
 @using DataTrace.Collector
 @using DataTrace.Domain.Constants
 @using DataTrace.Shared
-@implements IDisposable
+@implements IAsyncDisposable
 @inject ICollectorDiagnostics Diag
 @inject IHealthProbe Probe
 @inject ISpoolStore Spool
@@ -398,11 +398,13 @@ else
     private bool _refreshing;
     private bool _refetchRequested;
     private bool _paused;
+    private bool _hidden;
     private bool _replayingAll;
     private int _replayDone;
     private CancellationTokenSource? _replayCts;
     private string? _workingFile;
     private Timer? _timer;
+    private DotNetObjectReference<Diagnostics>? _visibilityRef;
 
     /// <summary>
     /// 采集循环的趋势线：每轮总耗时，对照当时的扫描间隔。
@@ -438,28 +440,30 @@ else
     private string LoopEndText => _loop.Ticks.Count == 0 ? "" : _loop.Ticks[0].At.ToString("HH:mm:ss");
 
     /// <summary>
-    /// 算"距今多久"时用的当前时刻：暂停时取快照时刻。
+    /// 算"距今多久"时用的当前时刻：刷新被挂起（暂停/后台）时取快照时刻。
     /// </summary>
     /// <remarks>
     /// 页面暂停后读数冻着，再用真实时钟去老化它们，就会把好着的循环说成"已停止推进" ——
     /// 停够一个判活窗口（≥5×扫描间隔、下限 2 秒）后随便点个按钮触发重画，假警报就出来了。
     /// </remarks>
-    private DateTime AgeReference => _paused && _refreshedAt is { } snapshotAt ? snapshotAt : DateTime.Now;
+    private DateTime AgeReference => AutoRefreshSuspended && _refreshedAt is { } snapshotAt ? snapshotAt : DateTime.Now;
 
-    /// <summary>最后一轮采集采样距今（暂停时按快照时刻算）。Ticks 是倒序（最新在前）。</summary>
+    /// <summary>最后一轮采集采样距今（挂起时按快照时刻算）。Ticks 是倒序（最新在前）。</summary>
     private TimeSpan? SinceLastTick => _loop.Ticks.Count > 0 ? AgeReference - _loop.Ticks[0].At : null;
 
-    /// <summary>页头右侧那行字：暂停时说清这是哪一刻的快照，运行时说明刷新节拍。</summary>
+    /// <summary>页头右侧那行字：暂停/后台时说清读数停在哪一刻，运行时说明刷新节拍。</summary>
     private string RefreshCaption => _paused
         ? $"已暂停{(_refreshedAt is { } snapshotAt ? $" · 显示 {snapshotAt:HH:mm:ss} 的快照" : "")}"
-        : $"{(_refreshedAt is { } at ? $"{at:HH:mm:ss} 更新 · " : "")}每 {DiagTickMs / 1000} 秒自动刷新";
+        : _hidden
+            ? $"{(_refreshedAt is { } lastAt ? $"{lastAt:HH:mm:ss} 更新 · " : "")}页面在后台，刷新已挂起（切回来即恢复）"
+            : $"{(_refreshedAt is { } at ? $"{at:HH:mm:ss} 更新 · " : "")}每 {DiagTickMs / 1000} 秒自动刷新";
 
-    /// <summary>健康块的复查说明：暂停时不再复查，别让分区说明与页头的"已暂停"打架。</summary>
-    private string HealthCadenceText => _paused ? "复查已暂停" : $"每 {HealthTickMs / 1000} 秒复查";
+    /// <summary>健康块的复查说明：挂起时不再复查，别让分区说明与页头的状态打架。</summary>
+    private string HealthCadenceText => AutoRefreshSuspended ? "复查已暂停" : $"每 {HealthTickMs / 1000} 秒复查";
 
-    /// <summary>补传明细的刷新说明：暂停时自动重读停了，只在恢复或做动作之后更新。</summary>
-    private string DetailCadenceText => _paused
-        ? "页面已暂停，这些读数不会自动更新"
+    /// <summary>补传明细的刷新说明：挂起时自动重读停了，只在恢复或做动作之后更新。</summary>
+    private string DetailCadenceText => AutoRefreshSuspended
+        ? "自动刷新已暂停，这些读数不会自动更新"
         : $"件数每 {DiagTickMs / 1000} 秒更新，明细每 {SpoolDetailTickMs / 1000} 秒重读，件数变化时立即重读";
 
     /// <summary>
@@ -498,6 +502,36 @@ else
         _timer = new Timer(_ => _ = InvokeAsync(TickAsync), null, DiagTickMs, DiagTickMs);
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        _visibilityRef = DotNetObjectReference.Create(this);
+        await Js.InvokeVoidAsync("dtVisibility.initialize", _visibilityRef);
+    }
+
+    /// <summary>
+    /// 浏览器把页面切到后台/切回来。
+    /// </summary>
+    /// <remarks>
+    /// 切走就挂起按秒的轮询：每个开着的标签页都在取数，没人看的时候不该继续占着服务端。
+    /// 切回来立即取一轮；手动暂停着的页面保持暂停，别顺手把用户按下的暂停解掉。
+    /// </remarks>
+    [JSInvokable]
+    public async Task OnVisibilityChanged(bool hidden)
+    {
+        _hidden = hidden;
+        if (!hidden && !_paused)
+        {
+            await RefreshAsync();
+        }
+
+        StateHasChanged();
+    }
+
     /// <summary>
     /// 定时跳：取一轮数，然后显式重画。
     /// </summary>
@@ -507,8 +541,9 @@ else
     /// </remarks>
     private async Task TickAsync()
     {
-        // 暂停期间连重画一起停：页面冻成一份可以慢慢读（选文本、对照日志）的快照。
-        if (_paused)
+        // 暂停期间连重画一起停：页面冻成一份可以慢慢读（选文本、对照日志）的快照；
+        // 切到后台则连取数都不做。
+        if (AutoRefreshSuspended)
         {
             return;
         }
@@ -516,6 +551,9 @@ else
         await RefreshAsync();
         StateHasChanged();
     }
+
+    /// <summary>自动刷新是否已被挂起：用户按了暂停，或浏览器把页面切到了后台。</summary>
+    private bool AutoRefreshSuspended => _paused || _hidden;
 
     /// <summary>
     /// 暂停/继续自动刷新。
@@ -702,6 +740,15 @@ else
         {
             text.AppendLine(
                 $"PLC {plc.Name}：请求 {plc.TotalCount} · 失败 {plc.FailureCount} · 最近 {plc.LastDurationMs} ms · 最长 {plc.MaxDurationMs} ms · {SuccessSinceText(plc)}");
+
+            // 带一条最新流水作对照：只给失败的话，读的人分不清"现在还通不通"。
+            if (plc.Recent.Count > 0)
+            {
+                var latest = plc.Recent[0];
+                text.AppendLine(
+                    $"  最近一次：{latest.At:HH:mm:ss.fff} {(latest.IsWrite ? "写" : "读")} {latest.Address} {latest.DurationMs} ms {(latest.Ok ? "成功" : "失败")}");
+            }
+
             foreach (var failure in plc.RecentFailures.Take(DigestFailureLines))
             {
                 text.AppendLine($"  {failure.At:HH:mm:ss.fff} {failure.Address} {failure.Error}");
@@ -958,5 +1005,27 @@ else
             : string.Join(' ', exchange.Values.Select(value => value.ToString())) +
               (exchange.WordCount > exchange.Values.Count ? " …" : "");
 
-    public void Dispose() => _timer?.Dispose();
+    public async ValueTask DisposeAsync()
+    {
+        _timer?.Dispose();
+
+        if (_visibilityRef is not { } visibilityRef)
+        {
+            return;
+        }
+
+        _visibilityRef = null;
+        try
+        {
+            await Js.InvokeVoidAsync("dtVisibility.dispose", visibilityRef);
+        }
+        catch (JSDisconnectedException)
+        {
+            // 导航/关停时电路可能已经断了：拆不掉也无妨，JS 侧拿不到 ref 就不会再回调。
+        }
+        finally
+        {
+            visibilityRef.Dispose();
+        }
+    }
 }
