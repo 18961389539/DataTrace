@@ -73,7 +73,7 @@ public static class DisplayLabels
     [
         "Create", "Update", "Save", "Delete", "Login", "LoginFailed", "Logout", "Toggle", "Switch", "Export",
         "Activate", "Deactivate", "Enable", "Disable", "Copy", "Recode", "SaveLimits",
-        "ResetPassword", "Unlock", "Backup", "DeleteRuntimeMonth", "ArchiveAndPurge", "Acknowledge"
+        "ResetPassword", "Unlock", "Backup", "DeleteRuntimeMonth", "ArchiveAndPurge", "Acknowledge", "Trial"
     ];
 
     /// <summary>审计对象类型码全集。</summary>
@@ -109,6 +109,7 @@ public static class DisplayLabels
         "DeleteRuntimeMonth" => "清理运行数据",
         "ArchiveAndPurge" => "归档并清理审计",
         "Acknowledge" => "接手",
+        "Trial" => "试读",
         _ => NullOr(action)
     };
 
@@ -137,11 +138,12 @@ public static class DisplayLabels
     /// 这条审计是不是"改了什么"——只有变更类动作才有旧值/新值可对照。
     /// 登录、退出、导出、登录失败、解除锁定只是发生了一件事，日志页把它们的说明写成"新增 → …"
     /// 会读成"新增了导出 20 条"；未知动作按变更处理，宁可多显示箭头也不要吞掉内容。
+    /// 试读同理：它一条数据都没改，说明是结果摘要而不是"新增的内容"。
     /// </summary>
     public static bool IsChangeAction(string? action)
         => action is not (
             "Login" or "LoginFailed" or "Logout" or "Unlock" or "Export"
-            or "Backup" or "DeleteRuntimeMonth" or "ArchiveAndPurge" or "Acknowledge");
+            or "Backup" or "DeleteRuntimeMonth" or "ArchiveAndPurge" or "Acknowledge" or "Trial");
 
     /// <summary>关键字若匹配某动作的中文标签，返回这些动作码，供服务端 OR 查询。</summary>
     public static IReadOnlyList<string> ActionsMatchingKeyword(string? keyword)

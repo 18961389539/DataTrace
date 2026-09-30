@@ -50,6 +50,24 @@ partial class ConfigRepository
     public Task<MesOutboxSnapshot> GetMesOutboxStatusAsync(CancellationToken cancellationToken = default)
         => ReadAsync(db => LoadMesOutboxStatusAsync(db, cancellationToken), cancellationToken);
 
+    public Task<MesSessionOutbox?> FindMesOutboxAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default)
+        => ReadAsync(
+            async db => await db.MesOutbox.AsNoTracking()
+                .Where(x => x.MonthKey == monthKey && x.PalletSessionId == sessionId)
+                // 同一个会话理论上只有一行；取最新的一行是为了容忍历史脏数据里重复入队过的那种。
+                .OrderByDescending(x => x.Id)
+                .Select(x => new MesSessionOutbox
+                {
+                    Status = x.Status,
+                    AttemptCount = x.AttemptCount,
+                    CreatedAt = x.CreatedAt,
+                    LastAttemptAt = x.LastAttemptAt,
+                    LastError = x.LastError
+                })
+                .FirstOrDefaultAsync(cancellationToken)
+                .ConfigureAwait(false),
+            cancellationToken);
+
     private static async Task<MesOutboxSnapshot> LoadMesOutboxStatusAsync(ConfigDbContext db, CancellationToken cancellationToken)
     {
         var pending = await db.MesOutbox.AsNoTracking()

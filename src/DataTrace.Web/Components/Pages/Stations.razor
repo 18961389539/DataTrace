@@ -7,8 +7,11 @@
 @using DataTrace.Plc.Addresses
 @using DataTrace.Plc.Codec
 @using DataTrace.Domain.Evaluation
+@using DataTrace.Collector
 @inject IConfigRepository Config
 @inject IConfigurationChanges Changes
+@inject IStationTrialReader Trial
+@inject IAuditLogger Audit
 @inject AuthenticationStateProvider Auth
 @inject DtToast Toast
 @inject IDialogService DialogService
@@ -83,6 +86,14 @@
                         </MudChip>
                     }
                     <MudSpacer />
+                    @* 试读读的是页面当前这份（含未保存改动），用于验证刚改的地址配对没有 —— 
+                       它只读，所以不需要先保存。停机（采集关闭）时没有连接可用，按钮禁用并在下方说明原因。 *@
+                    <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="TrialStation"
+                               Disabled="@(_trialBusy || _busy || TrialBlockedReason is not null)"
+                               aria-label="@($"试读一次工站 {_current.Code} 的数据")"
+                               StartIcon="@(_trialBusy ? Icons.Material.Filled.Sync : Icons.Material.Filled.Visibility)">
+                        @(_trialBusy ? "读取中…" : "试读一次")
+                    </MudButton>
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveStation" Disabled="_busy"
                                StartIcon="@(_busy ? Icons.Material.Filled.Sync : Icons.Material.Filled.Save)">
                         @(_busy ? "保存中…" : $"保存 {_current.Code}")
@@ -122,6 +133,106 @@
                             }
                         </ul>
                     </MudAlert>
+                }
+                @if (TrialBlockedReason is { } blockedReason)
+                {
+                    <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">@blockedReason</MudAlert>
+                }
+                @if (_trial is { } trial)
+                {
+                    <MudPaper Class="pa-3 mb-3 dt-trial-panel">
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
+                            <MudText Typo="Typo.subtitle2">试读结果</MudText>
+                            <MudText Typo="Typo.caption" Class="dt-muted">
+                                @trial.At.ToString("HH:mm:ss") · @trial.ElapsedMs ms@(trial.Ok ? $" · {trial.BlockCount} 块 {trial.WordCount} 字" : "")
+                            </MudText>
+                            <MudSpacer />
+                            <MudButton Size="Size.Small" Variant="Variant.Text" aria-label="关闭试读结果"
+                                       OnClick="@(() => _trial = null)">关闭</MudButton>
+                        </MudStack>
+
+                        @if (trial.Error is { } trialError)
+                        {
+                            <MudAlert Severity="Severity.Error" Dense="true">@trialError</MudAlert>
+                        }
+                        else
+                        {
+                            <MudSimpleTable Dense="true" Bordered="false" Hover="false" Class="dt-trial-table">
+                                <thead>
+                                    <tr>
+                                        <th>项目</th>
+                                        <th>地址</th>
+                                        <th>原始字</th>
+                                        <th>值</th>
+                                        <th>限值</th>
+                                        <th>判定</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>触发</td>
+                                        <td>@trial.Trigger.Address</td>
+                                        <td class="dt-trial-raw">@(trial.Trigger.Value?.ToString() ?? "—")</td>
+                                        <td>期望 @trial.Trigger.Expected</td>
+                                        <td>—</td>
+                                        <td class="@TrialCellClass(trial.Trigger.Error is not null, !trial.Trigger.Matched)">
+                                            @(trial.Trigger.Error ?? (trial.Trigger.Matched ? "匹配" : "不匹配"))
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td>托盘码</td>
+                                        <td>@_current.PalletCodeAddress</td>
+                                        <td>—</td>
+                                        <td>@(trial.PalletCode ?? "—")</td>
+                                        <td>—</td>
+                                        <td class="@TrialCellClass(trial.PalletCode is null, false)">
+                                            @(trial.PalletCode is null ? "未读到" : "已读到")
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td>产品位</td>
+                                        <td>@(_occupiedAddress.Length == 0 ? "未配" : _occupiedAddress)</td>
+                                        <td>—</td>
+                                        <td>@TrialOccupiedText(trial.Occupied)</td>
+                                        <td>—</td>
+                                        <td class="dt-trial-ok">—</td>
+                                    </tr>
+                                    @foreach (var tag in trial.Tags)
+                                    {
+                                        <tr>
+                                            <td>@tag.Name@(tag.FromFile ? "（文件）" : "")</td>
+                                            <td>@tag.Address</td>
+                                            <td class="dt-trial-raw">@(string.IsNullOrEmpty(tag.RawText) ? "—" : tag.RawText)</td>
+                                            <td>@tag.Display</td>
+                                            <td>@tag.LimitText</td>
+                                            <td class="@TrialCellClass(tag.ReadFailed, tag.OutOfLimit)">
+                                                @(tag.ReadFailed ? "未读到" : tag.OutOfLimit ? "超限" : tag.Warning ? "预警" : "合格")
+                                            </td>
+                                        </tr>
+                                    }
+                                    @foreach (var curve in trial.Curves)
+                                    {
+                                        <tr>
+                                            <td>@curve.Name（曲线）</td>
+                                            <td>@curve.Address</td>
+                                            <td>@curve.PointCount 点</td>
+                                            <td>@curve.SeriesCount 序列</td>
+                                            <td>—</td>
+                                            <td class="@TrialCellClass(!curve.ReadOk, false)">@curve.Detail</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </MudSimpleTable>
+
+                            @* 这两句是必须写明的边界：不然用户会以为"试读过了就等于验过了"，
+                               而回写、会话、MES 这三样试读按定义不碰。 *@
+                            <MudText Typo="Typo.caption" Class="dt-muted mt-2">
+                                只读：不落库、不写回、不建会话、不取流水号、不推 MES、不归档文件、不计入运行状态。
+                                读到的是当前表单内容（可能含未保存改动），不代表已保存的配置；
+                                回写与上报仍须在停线窗口用一件试件真采一次。
+                            </MudText>
+                        }
+                    </MudPaper>
                 }
                 <MudTabs Elevation="0" Rounded="true" PanelClass="pt-4" AlwaysShowScrollButtons="true" @bind-ActivePanelIndex="_tab">
                     <MudTabPanel Text="握手">
@@ -475,6 +586,14 @@
 
     private int _depth;
     private bool _busy;
+
+    /// <summary>试读的独立忙标记：不能占 _busy —— 否则读一次会把保存按钮也一起锁住。</summary>
+    private bool _trialBusy;
+    private StationTrialResult? _trial;
+
+    /// <summary>现在能不能试读；null 表示可以，否则是原因（按钮据此禁用，顶部据此说明）。</summary>
+    private string? TrialBlockedReason
+        => _current is null || CurrentPlc is null ? null : Trial.UnavailableReason(_current.PlcConnectionId);
 
     private string? _codeError;
     private string? _nameError;
@@ -1282,6 +1401,79 @@
         _tab = tab;
         Toast.Add($"曲线 {curve.Code} 已删除", Severity.Success);
     });
+
+    /// <summary>
+    /// 只读读一次当前工站的数据，用来验证刚改过的握手地址与点位配对。
+    /// </summary>
+    /// <remarks>
+    /// 读的是页面上这一份（含未保存改动）—— 试读的意义正是"保存之前先看看配得对不对"。
+    /// 副作用为零，所以不需要二次确认；结果只展示，不写回、不落库、不写运行状态。
+    /// </remarks>
+    private async Task TrialStation()
+    {
+        if (_current is null || CurrentPlc is null || _trialBusy)
+        {
+            return;
+        }
+
+        if (Trial.UnavailableReason(_current.PlcConnectionId) is { } blocked)
+        {
+            Toast.Add(blocked, Severity.Warning);
+            return;
+        }
+
+        var station = _current;
+        var connection = CurrentPlc;
+        _trialBusy = true;
+        try
+        {
+            var result = await Trial.ReadAsync(station, connection);
+            _trial = result;
+            await AuditTrialAsync(station, result);
+        }
+        catch (Exception ex)
+        {
+            // 可预期的失败（地址非法 / 连接不可用 / 超时）都由结果对象返回了，走到这里说明是意外。
+            Toast.Add($"试读失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _trialBusy = false;
+        }
+    }
+
+    /// <summary>试读留痕：它不改工站数据，但"谁在什么时候试读了哪台"需要可查。</summary>
+    private async Task AuditTrialAsync(Station station, StationTrialResult result)
+    {
+        try
+        {
+            var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            var summary = result.Error is { } error
+                ? $"读取失败：{error}"
+                : $"{result.Tags.Count} 点位 · {result.Curves.Count} 曲线；" +
+                  $"未读到 {result.ReadFailedCount}、超限 {result.OutOfLimitCount}";
+            await Audit.WriteAsync(
+                user,
+                "Trial",
+                "Station",
+                station.Code,
+                null,
+                summary,
+                outcome: result.Error is null ? "Success" : "Failure");
+        }
+        catch (Exception ex)
+        {
+            // 与设置页同口径：审计写失败不阻断主操作，但不能不告诉人 —— 否则"谁试读过"永久缺一条。
+            Toast.Add($"审计记录失败：{ex.Message}", Severity.Warning);
+        }
+    }
+
+    private static string TrialOccupiedText(bool? occupied)
+        => occupied is null ? "恒为有料（未配有料地址）" : occupied.Value ? "有料" : "空位";
+
+    /// <summary>试读结果单元格的着色：没读到与超限是两种不同的问题，分开标色。</summary>
+    private static string TrialCellClass(bool failed, bool violation)
+        => failed ? "dt-trial-bad" : violation ? "dt-trial-violation" : "dt-trial-ok";
 
     private async Task<ConfigAudit> AuditOf(string action, string entityType, string key, string? oldValue, string? newValue)
     {

@@ -205,15 +205,26 @@ public sealed class CollectSessionCoordinator
             RemoveActiveSession = removeActive
         };
 
+        // 流水号到这一刻才定下来（首站是刚生成的，其余站取自 在制会话），所以内层作用域从这里开始：
+        // 落库与补传的每一行日志都带上它，"这件到底采上没采上、后来补上没有"就不用再靠时间戳猜了。
+        // 外层作用域（工站 + 触发时刻）由 StationCollectPipeline 开着，两层会叠加渲染。
+        using var pieceScope = _logger.BeginScope(new Dictionary<string, object>
+        {
+            [CollectionLogScope.Serial] = serialNo
+        });
+
         try
         {
             await writer.SaveAsync(save, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "工站 {Station} 写库失败，转入本地缓存", station.Code);
+            _logger.LogError(ex, "工站 {Station} 写库失败（{Serial}），转入本地缓存", station.Code, serialNo);
             var spool = scope.ServiceProvider.GetRequiredService<ISpoolStore>();
-            await spool.SaveAsync(save, cancellationToken).ConfigureAwait(false);
+            // 文件名同时记进日志：补传那边只有文件名，"写库失败"与"补传成功/失败"这两行
+            // 除了它再没有别的共同字段，事后想对上只能靠时间戳。
+            var spoolFile = await spool.SaveAsync(save, cancellationToken).ConfigureAwait(false);
+            _logger.LogWarning("已转存本地缓存 {SpoolFile}（{Serial}），补传循环会重试", spoolFile, serialNo);
             record.ResultCode = ResultCodes.DatabaseWriteFailed;
             record.ErrorMessage = ex.Message;
             return new PersistedCollect(record, assessment.Curves, monthKey);

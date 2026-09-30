@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Threading.Channels;
 using DataTrace.Plc.Abstractions;
 using DataTrace.Plc.Addresses;
@@ -21,13 +22,24 @@ public sealed class PlcRequestQueue : IAsyncDisposable
     private readonly Task _loop;
     private readonly TimeSpan _reconnectDelay = TimeSpan.FromSeconds(2);
     private readonly bool _ownsDriver;
+    private readonly Func<long> _monotonicMs;
     private int _failureStreak;
     private long _coolingUntilMs;
 
-    public PlcRequestQueue(IPlcDriver driver, bool ownsDriver = false)
+    /// <param name="monotonicMs">
+    /// 单调毫秒时钟，默认取 <see cref="Environment.TickCount64"/>。
+    /// </param>
+    /// <remarks>
+    /// 抽成可注入的时钟是为了让"冷却期是否还在"能被确定性地断言：
+    /// 冷却窗口只有几秒，而断言要等本用例的续体被线程池调度起来才执行 ——
+    /// 整机满载时这段调度延迟可以超过窗口，于是用例在负载高时偶发失败，
+    /// 看起来像熔断坏了，其实只是断言跑得太晚。
+    /// </remarks>
+    public PlcRequestQueue(IPlcDriver driver, bool ownsDriver = false, Func<long>? monotonicMs = null)
     {
         _driver = driver;
         _ownsDriver = ownsDriver;
+        _monotonicMs = monotonicMs ?? (static () => Environment.TickCount64);
         _channel = Channel.CreateUnbounded<WorkItem>(new UnboundedChannelOptions
         {
             SingleReader = true,
@@ -39,15 +51,36 @@ public sealed class PlcRequestQueue : IAsyncDisposable
     public IPlcDriver Driver => _driver;
 
     /// <summary>是否处于断线冷却期：此时请求会立刻失败，上层可据此跳过本轮扫描。</summary>
-    public bool IsCoolingDown => Environment.TickCount64 < Interlocked.Read(ref _coolingUntilMs);
+    public bool IsCoolingDown => _monotonicMs() < Interlocked.Read(ref _coolingUntilMs);
+
+    /// <summary>
+    /// 本连接的请求流水。队列是所有 PLC 请求的唯一收口，所以挂在这里就能看全 ——
+    /// 触发扫描、工站点位读取、响应码回写、心跳写入，一条不漏。
+    /// </summary>
+    public PlcTrafficLog Traffic { get; } = new();
 
     public async Task<ushort[]> ReadWordsAsync(PlcAddress start, int wordCount, CancellationToken cancellationToken = default)
     {
         var tcs = new TaskCompletionSource<ushort[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         var item = new WorkItem(async ct =>
         {
-            await EnsureConnectedAsync(ct).ConfigureAwait(false);
-            return await _driver.ReadWordsAsync(start, wordCount, ct).ConfigureAwait(false);
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                await EnsureConnectedAsync(ct).ConfigureAwait(false);
+                var words = await _driver.ReadWordsAsync(start, wordCount, ct).ConfigureAwait(false);
+                Traffic.Record(new PlcExchange(
+                    DateTime.Now, PlcExchangeKind.Read, Describe(start), wordCount,
+                    sw.ElapsedMilliseconds, true, null, PlcTrafficLog.Trim(words)));
+                return words;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Traffic.Record(new PlcExchange(
+                    DateTime.Now, PlcExchangeKind.Read, Describe(start), wordCount,
+                    sw.ElapsedMilliseconds, false, ex.Message, []));
+                throw;
+            }
         }, tcs, cancellationToken);
 
         await _channel.Writer.WriteAsync(item, cancellationToken).ConfigureAwait(false);
@@ -59,14 +92,33 @@ public sealed class PlcRequestQueue : IAsyncDisposable
         var tcs = new TaskCompletionSource<ushort[]>(TaskCreationOptions.RunContinuationsAsynchronously);
         var item = new WorkItem(async ct =>
         {
-            await EnsureConnectedAsync(ct).ConfigureAwait(false);
-            await _driver.WriteWordsAsync(start, words, ct).ConfigureAwait(false);
-            return [];
+            var sw = Stopwatch.StartNew();
+            try
+            {
+                await EnsureConnectedAsync(ct).ConfigureAwait(false);
+                await _driver.WriteWordsAsync(start, words, ct).ConfigureAwait(false);
+                // 写请求把"写下去的值"记进 Values：回写响应码出错时，第一个要确认的就是到底写了什么。
+                Traffic.Record(new PlcExchange(
+                    DateTime.Now, PlcExchangeKind.Write, Describe(start), words.Length,
+                    sw.ElapsedMilliseconds, true, null, PlcTrafficLog.Trim(words)));
+                return [];
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Traffic.Record(new PlcExchange(
+                    DateTime.Now, PlcExchangeKind.Write, Describe(start), words.Length,
+                    sw.ElapsedMilliseconds, false, ex.Message, PlcTrafficLog.Trim(words)));
+                throw;
+            }
         }, tcs, cancellationToken);
 
         await _channel.Writer.WriteAsync(item, cancellationToken).ConfigureAwait(false);
         await tcs.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>给人看的地址文本：优先用配置里写的原样，其次按"区名+偏移"拼。</summary>
+    private static string Describe(PlcAddress address)
+        => string.IsNullOrWhiteSpace(address.Original) ? $"{address.Area}{address.Offset}" : address.Original;
 
     private async Task EnsureConnectedAsync(CancellationToken cancellationToken)
     {
@@ -105,7 +157,7 @@ public sealed class PlcRequestQueue : IAsyncDisposable
     {
         var streak = Interlocked.Increment(ref _failureStreak);
         var seconds = Math.Min(MaxCooldown.TotalSeconds, InitialCooldown.TotalSeconds * Math.Pow(2, Math.Min(streak - 1, 4)));
-        Interlocked.Exchange(ref _coolingUntilMs, Environment.TickCount64 + (long)TimeSpan.FromSeconds(seconds).TotalMilliseconds);
+        Interlocked.Exchange(ref _coolingUntilMs, _monotonicMs() + (long)TimeSpan.FromSeconds(seconds).TotalMilliseconds);
     }
 
     private void ResetCooldown()
@@ -115,7 +167,7 @@ public sealed class PlcRequestQueue : IAsyncDisposable
     }
 
     private int RemainingCooldownSeconds()
-        => Math.Max(1, (int)Math.Ceiling((Interlocked.Read(ref _coolingUntilMs) - Environment.TickCount64) / 1000.0));
+        => Math.Max(1, (int)Math.Ceiling((Interlocked.Read(ref _coolingUntilMs) - _monotonicMs()) / 1000.0));
 
     private async Task ProcessLoopAsync()
     {

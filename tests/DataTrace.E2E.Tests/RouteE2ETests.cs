@@ -20,6 +20,7 @@ public class RouteE2ETests : E2ETestBase
     [InlineData("/config/recipes", "产品型号")]
     [InlineData("/config/settings", "系统设置")]
     [InlineData("/simulate", "PLC 仿真")]
+    [InlineData("/diagnostics", "运行诊断")]
     [InlineData("/users", "用户")]
     public async Task RouteRendersWithoutErrorBanner(string path, string expectedText)
     {

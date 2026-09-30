@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using DataTrace.Application.Configuration;
 using DataTrace.Application.Evaluation;
 using DataTrace.Application.Runtime;
@@ -185,7 +185,7 @@ public class SpoolReplayServiceTests
         await spool.SaveAsync(Request("P002"));
 
         await ctx.RunAsync(
-            new SpoolReplayService(ctx.ScopeFactory, spool, ctx.Logger<SpoolReplayService>()),
+            new SpoolReplayService(ReplayRunner(ctx, spool), ctx.Logger<SpoolReplayService>()),
             () => runtime.Saved.Count == 2);
 
         // 文件名精度只到毫秒，同一毫秒内由 GUID 决定先后，故这里只断言"两条都补传成功"。
@@ -211,7 +211,7 @@ public class SpoolReplayServiceTests
         await spool.SaveAsync(Request("P003"));
 
         await ctx.RunAsync(
-            new SpoolReplayService(ctx.ScopeFactory, spool, ctx.Logger<SpoolReplayService>()),
+            new SpoolReplayService(ReplayRunner(ctx, spool), ctx.Logger<SpoolReplayService>()),
             () => runtime.Saved.Count == 1);
 
         // break 之后不再尝试后续请求，未成功的文件必须留在盘上等下一轮。
@@ -227,9 +227,46 @@ public class SpoolReplayServiceTests
         Assert.Empty(await spool.ListAsync());
 
         await ctx.RunAsync(
-            new SpoolReplayService(ctx.ScopeFactory, spool, ctx.Logger<SpoolReplayService>()),
+            new SpoolReplayService(ReplayRunner(ctx, spool), ctx.Logger<SpoolReplayService>()),
             () => true);
     }
+
+    /// <summary>
+    /// 手动补传单条：按文件名只读那一条，并把"已经不在了"回成一句能读懂的话。
+    /// </summary>
+    /// <remarks>
+    /// 读的那一步不列整队 —— 队列大起来之后，为找一条而把全部缓存反序列化一遍，
+    /// 点击的代价会随队列长度增长。已经不在的（多半刚被后台补传成功）不该抛异常。
+    /// </remarks>
+    [Fact]
+    public async Task ManualReplayReadsTheNamedFileAndReportsMissingOnes()
+    {
+        var runtime = new FakeRuntimeStore();
+        await using var ctx = await InfrastructureContext.CreateAsync(configure: s =>
+        {
+            s.AddSingleton<IRuntimeStore>(runtime);
+            s.AddSingleton<ICollectWriter>(runtime);
+        });
+        var spool = ctx.Provider.GetRequiredService<ISpoolStore>();
+        await spool.SaveAsync(Request("P001"));
+        var file = (await spool.ListAsync()).Single().FileName;
+
+        var runner = ReplayRunner(ctx, spool);
+        var ok = await runner.ReplayOneAsync(file);
+
+        Assert.True(ok.Ok);
+        Assert.Equal("P001", Assert.Single(runtime.Saved).Record.PalletCode);
+        Assert.Empty(Directory.GetFiles(ctx.Workspace.Path("spool"), "*.spool.json"));
+
+        var missing = await runner.ReplayOneAsync(file);
+
+        Assert.False(missing.Ok);
+        Assert.Contains("已经不在了", missing.Error);
+    }
+
+    /// <summary>后台补传服务现在只是执行器的一层壳，测试按生产一致的装配方式构造。</summary>
+    private static SpoolReplayRunner ReplayRunner(InfrastructureContext ctx, ISpoolStore spool)
+        => new(ctx.ScopeFactory, spool, ctx.Logger<SpoolReplayRunner>());
 }
 
 /// <summary>MES Outbox 推送：状态流转、退避与批量上限。</summary>

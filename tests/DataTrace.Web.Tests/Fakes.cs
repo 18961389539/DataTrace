@@ -89,6 +89,15 @@ public sealed class FakeConfigRepository : IConfigRepository
         return Task.FromResult(MesOutboxStatus);
     }
 
+    /// <summary>按会话登记的 MES 出站记录；没登记的会话查出 null。</summary>
+    public Dictionary<(string MonthKey, long SessionId), MesSessionOutbox> MesOutbox { get; } = new();
+
+    public Task<MesSessionOutbox?> FindMesOutboxAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default)
+    {
+        Calls.Add(nameof(FindMesOutboxAsync));
+        return Task.FromResult(MesOutbox.GetValueOrDefault((monthKey, sessionId)));
+    }
+
     public Task<int> GetVersionAsync(CancellationToken cancellationToken = default) => Task.FromResult(Snapshot.Version);
 
     public Task<IReadOnlyList<PlcConnection>> GetPlcConnectionsAsync(CancellationToken cancellationToken = default)
@@ -399,4 +408,40 @@ public sealed class FakeJsonFileDialog : IJsonFileDialog
         LastFormat = format;
         return Task.FromResult(Result);
     }
+}
+
+/// <summary>
+/// 工站试读替身。默认"可用"且返回空结果 —— 这样渲染工站配置页的测试只会多出一个按钮，
+/// 不会被一条"为什么不能试读"的提示条影响既有断言。
+/// </summary>
+public sealed class FakeStationTrialReader : IStationTrialReader
+{
+    public string? Unavailable { get; set; }
+
+    public StationTrialResult? Result { get; set; }
+
+    public int CallCount { get; private set; }
+
+    public string? UnavailableReason(int plcConnectionId) => Unavailable;
+
+    public Task<StationTrialResult> ReadAsync(
+        Station station,
+        PlcConnection connection,
+        CancellationToken cancellationToken = default)
+    {
+        CallCount++;
+        return Task.FromResult(Result ?? Empty());
+    }
+
+    private static StationTrialResult Empty() => new(
+        DateTime.Now,
+        0,
+        0,
+        0,
+        new StationTrialTrigger("", 0, null, false, null),
+        null,
+        null,
+        [],
+        [],
+        null);
 }

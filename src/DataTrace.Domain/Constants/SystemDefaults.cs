@@ -57,6 +57,34 @@ public static class SystemDefaults
     /// <summary>托盘会话超过它还没走到末站，就呼叫（分钟）。</summary>
     public const int OpenSessionWarnMinutes = 30;
 
+    /// <summary>诊断页里每台 PLC 保留的最近请求条数。</summary>
+    public const int PlcTrafficCapacity = 40;
+
+    /// <summary>
+    /// PLC 流水里失败记录额外保留的条数。
+    /// </summary>
+    /// <remarks>
+    /// 高频请求下 40 条流水只覆盖几秒，偶发故障会被整段冲掉 ——
+    /// 于是出现过"标题写着失败 N、展开后全是成功"的状态。失败是低频事件，单独留一份才留得住。
+    /// </remarks>
+    public const int PlcTrafficFailureCapacity = 20;
+
+    /// <summary>诊断页里保留的最近采集循环轮数。</summary>
+    public const int CollectorLoopHistory = 60;
+
+    /// <summary>写库失败的缓存多久重试一次（秒）。</summary>
+    public const int SpoolReplaySeconds = 15;
+
+    /// <summary>
+    /// 数据盘剩余空间低于它就呼叫（MB）。
+    /// </summary>
+    /// <remarks>
+    /// 用绝对下限而不是百分比：现场的数据盘从 32 GB 到 2 TB 都有，百分比在大盘上永远不触发，
+    /// 而真正会让 SQLite 开始落库失败的是一件件记录、一张张曲线累积出来的绝对占用。
+    /// 1024 MB 是给"重新分库 + 写一份备份 + WAL 回放"留出的余量。
+    /// </remarks>
+    public const int MinDiskFreeMegabytes = 1024;
+
     /// <summary>第一班从当天这个整点开始。看板本班件数和报表按班分行都用它。</summary>
     public const int ShiftStartHour = 8;
 

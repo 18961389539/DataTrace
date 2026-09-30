@@ -120,6 +120,10 @@ public class HelpTextsTests
         Assert.Contains(SystemDefaults.LockoutMaxFailedAttempts.ToString(), HelpTexts.Lockout.How);
         Assert.Contains(SystemDefaults.LockoutMinutes.ToString(), HelpTexts.Lockout.How);
         Assert.Contains(SystemDefaults.MesBacklogWarnHours.ToString(), HelpTexts.MesOutbox.Impact);
+        Assert.Contains(SystemDefaults.MinDiskFreeMegabytes.ToString(), HelpTexts.AlarmCall.Impact);
+        Assert.Contains(SystemDefaults.CollectorLoopHistory.ToString(), HelpTexts.CollectorLoop.Impact);
+        Assert.Contains(SystemDefaults.PlcTrafficCapacity.ToString(), HelpTexts.PlcTraffic.Impact);
+        Assert.Contains(SystemDefaults.SpoolReplaySeconds.ToString(), HelpTexts.SpoolQueue.How);
 
         // 取值范围来自 SettingsLimits：文案里复述边界值，就得跟拦输入的规则同源。
         Assert.Contains(SettingsLimits.MinScanIntervalMs.ToString(), HelpTexts.ScanInterval.Impact);
@@ -139,12 +143,14 @@ public class HelpTextsTests
         Assert.Equal("型号口径", HelpTexts.RecipeScope.Title);
 
         var count = Enumerate().Count();
-        Assert.True(count is >= 40 and <= 70, $"文案条目数 {count} 超出预期区间（40~70）");
+        // 上限随页面增加而上移：这条断言防的是"文案库被塞进一堆一次性条目"，
+        // 不是精确配额，所以只在真的新增页面时调。
+        Assert.True(count is >= 40 and <= 75, $"文案条目数 {count} 超出预期区间（40~75）");
     }
 
     [Theory]
     [InlineData("", 11)]
-    [InlineData("query", 6)]
+    [InlineData("query", 7)]
     [InlineData("reports", 14)]
     [InlineData("curve-baseline", 6)]
     [InlineData("logs", 5)]
@@ -156,6 +162,7 @@ public class HelpTextsTests
     [InlineData("users", 5)]
     [InlineData("record", 7)]
     [InlineData("alarms", 1)]
+    [InlineData("diagnostics", 3)]
     public void Every_page_mapping_lists_topics_that_exist(string route, int expected)
     {
         // 页头「本页说明」按这份映射取条目；写错路由会让整页入口凭空消失，且没有任何别的检查能发现。

@@ -366,8 +366,17 @@ public class FileSpoolStoreTests
         Assert.Single(await store.ListAsync());
     }
 
+    /// <summary>
+    /// 坏掉的缓存文件不再堵死整条补传。
+    /// </summary>
+    /// <remarks>
+    /// 原来 <c>ListAsync</c> 在遇到坏文件时整体抛异常：补传循环每轮都在同一个文件上失败，
+    /// 排在它后面的所有件永远轮不到（而日志里只有一句"补传循环异常"）。
+    /// 现在坏文件被跳过，队列照常往前走，同时它在明细里如实出现、也仍然计入积压数 ——
+    /// 既不堵路，也不消失。
+    /// </remarks>
     [Fact]
-    public async Task Corrupted_entry_surfaces_error_from_list()
+    public async Task Corrupted_entry_is_skipped_but_still_visible()
     {
         using var workspace = new TempWorkspace();
         var root = workspace.Path("spool");
@@ -376,7 +385,17 @@ public class FileSpoolStoreTests
         await store.SaveAsync(BuildRequest("P0001", "S1"));
         await File.WriteAllTextAsync(Path.Combine(root, "broken.spool.json"), "{ not json");
 
-        // 现状：坏文件会让整个列表枚举失败（补传循环会反复重试同一批文件）。
-        await Assert.ThrowsAnyAsync<System.Text.Json.JsonException>(() => store.ListAsync());
+        // 好文件照常补传得动。
+        var replayable = Assert.Single(await store.ListAsync());
+        Assert.Equal("P0001", replayable.Request.Record.PalletCode);
+
+        // 坏文件在明细里如实出现，并说明是"解析不了"而不是"没有记录"。
+        var entries = await store.ListEntriesAsync();
+        Assert.Equal(2, entries.Count);
+        var broken = Assert.Single(entries, entry => entry.FileName == "broken.spool.json");
+        Assert.Equal("缓存文件无法解析", broken.LastError);
+
+        // 积压数仍然把它算进去：少报一件会把"还没补完"显示成"补完了"。
+        Assert.Equal(2, (await store.DescribeAsync()).Count);
     }
 }

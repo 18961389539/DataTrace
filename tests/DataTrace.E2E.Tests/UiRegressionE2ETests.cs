@@ -101,6 +101,7 @@ public class UiRegressionE2ETests : E2ETestBase
     [InlineData("/config/recipes")]
     [InlineData("/config/settings")]
     [InlineData("/simulate")]
+    [InlineData("/diagnostics")]
     [InlineData("/users")]
     public async Task SharedPageHeadingsStayCompactWithoutAFocusRing(string path)
     {

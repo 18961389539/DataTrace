@@ -25,6 +25,19 @@ public sealed class StationRuntimeStatus
     public string? LastError { get; set; }
     public string? LastMonthKey { get; set; }
     public long? LastRecordId { get; set; }
+
+    /// <summary>
+    /// 最近一次响应码回写用了几次尝试（1 = 一次就成）。0 表示还没写过。
+    /// </summary>
+    /// <remarks>
+    /// 回写发生在落库之后，所以它进不了那条记录，只能作为工站的当前状态保留：
+    /// "写回重试 3 次才成功"是链路正在变坏的早期信号，比等到回写彻底失败才报警早得多。
+    /// </remarks>
+    public int LastWriteBackAttempts { get; set; }
+
+    /// <summary>最近一次响应码回写是否成功。false 时工站会被标成故障。</summary>
+    public bool LastWriteBackOk { get; set; }
+
     public IReadOnlyList<StationLiveTag> LastTags { get; set; } = [];
     public IReadOnlyList<StationLiveCurve> LastCurves { get; set; } = [];
 }

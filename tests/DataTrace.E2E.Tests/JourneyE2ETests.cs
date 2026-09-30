@@ -103,6 +103,59 @@ public class JourneyE2ETests : E2ETestBase
             "详情页没有渲染判定结论");
     }
 
+    /// <summary>
+    /// 托盘全链路时序：追溯视图要给出逐站间隔、全链路时长，以及链路两头的会话结束与 MES 推送。
+    /// </summary>
+    /// <remarks>
+    /// 用真实记录跑。纯函数单测只保证间隔算得对，保证不了它有没有被渲染出来；
+    /// 而"时序"这套东西的价值全在渲染上，所以这段必须过一遍真浏览器。
+    /// 单个流水号可能只有一站（在制的一半），那就换下一个 —— 往列表里连试几个，
+    /// 只要有一条走到过第二站就足以验证间隔。
+    /// </remarks>
+    [Fact]
+    public async Task PalletTraceShowsTimelineWithSegmentDurationsAndEndpoints()
+    {
+        await OpenAsync("/query");
+        await WaitForAsync("text=数据查询");
+        await WaitForResultRowsAsync();
+
+        // 列序：时间 / 流水号 / 托盘码 / 工站 / 型号 / 判定 / 结果码 / 耗时 / 操作。
+        var rows = Page.Locator("table tbody tr").Filter(new() { HasText = "明细" });
+        var candidates = new List<string>();
+        var count = Math.Min(6, await rows.CountAsync());
+        for (var i = 0; i < count; i++)
+        {
+            var serial = (await rows.Nth(i).Locator("td").Nth(1).InnerTextAsync()).Trim();
+            if (!string.IsNullOrWhiteSpace(serial) && !candidates.Contains(serial))
+            {
+                candidates.Add(serial);
+            }
+        }
+
+        Assert.NotEmpty(candidates);
+
+        var sawInterval = false;
+        foreach (var serial in candidates)
+        {
+            await OpenAsync($"/query?view=trace&trace={Uri.EscapeDataString(serial)}");
+            // 履历标题只在真的查到会话时才出现；等它出来说明追溯数据已经到位。
+            await WaitBodyContainsAsync("工站履历", 30000);
+
+            var body = await Page.InnerTextAsync("body");
+            Assert.Contains("全链路", body);
+            Assert.Contains("会话结束", body);
+            Assert.Contains("MES 推送", body);
+
+            if (body.Contains("间隔 +"))
+            {
+                sawInterval = true;
+                break;
+            }
+        }
+
+        Assert.True(sawInterval, $"连续 {candidates.Count} 个流水号的追溯视图都没有渲染出站间间隔");
+    }
+
     [Fact]
     public async Task SimulatePageShowsSixStationTriggerButtons()
     {
@@ -131,5 +184,26 @@ public class JourneyE2ETests : E2ETestBase
 
         var body = await Page.InnerTextAsync("body");
         Assert.Contains("当前托盘", body);
+    }
+
+    /// <summary>
+    /// 工站试读：在真数据下点一次「试读一次」，要真读回握手与点位的值。
+    /// </summary>
+    /// <remarks>
+    /// bUnit 只能证明"点了会渲染结果面板"，证明不了面板里的值真是从 PLC 读回来的。
+    /// 开发态跑着内置模拟 PLC，所以这里能要求它读到值 —— 只出一句错误提示就说明链路没通。
+    /// </remarks>
+    [Fact]
+    public async Task Station_trial_reads_real_values_from_the_line()
+    {
+        await OpenAsync("/config/stations");
+        await WaitForCircuitReadyAsync();
+        await WaitBodyContainsAsync("工站配置");
+
+        await ClickButtonAsync("试读一次");
+
+        await WaitBodyContainsAsync("试读结果", 30000);
+        await WaitBodyContainsAsync("触发", 5000);
+        await WaitBodyContainsAsync("托盘码", 5000);
     }
 }

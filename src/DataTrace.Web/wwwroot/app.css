@@ -1473,6 +1473,77 @@ h5:focus,
     color: var(--mud-palette-text-secondary);
 }
 
+/* 错误页的回报码：现场要照着它念给工程师听，所以拉开字距、换成等宽，
+   免得 0/O、1/I 这类字符在看板上连成一片时读错一位。 */
+.dt-error-code {
+    font-family: var(--mud-typography-default-family, monospace);
+    letter-spacing: 0.18em;
+    font-variant-numeric: tabular-nums;
+    user-select: all;
+}
+
+/* 诊断页：超时的那一轮整格标红，扫一眼就能定位是哪几拍慢下来。 */
+.dt-diag-overrun {
+    color: var(--mud-palette-error);
+    font-weight: 500;
+}
+
+/* 每台 PLC 的汇总头一行放不下时换行，而不是把面板标题撑出横向滚动。 */
+.dt-diag-plc-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* 流水明细的表格嵌在面板里，字号再收一档，避免一屏放不下两条记录。 */
+.dt-diag-traffic .mud-table-cell {
+    font-size: 0.75rem;
+}
+
+/* 时序里的"两站之间"：与本站耗时并排，但用中性与加粗拉开轻重 ——
+   现场第一眼要看到的是"时间花在路上还是花在这一站"。 */
+.dt-trace-transit {
+    font-variant-numeric: tabular-nums;
+    color: var(--mud-palette-text-primary);
+}
+
+/* 每段占全链路的比例。纯装饰（数值就在旁边），只为了"哪一段最长"不用逐个读数字。 */
+.dt-trace-share {
+    display: inline-block;
+    width: 4rem;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--mud-palette-lines-default);
+    overflow: hidden;
+}
+
+.dt-trace-share-fill {
+    display: block;
+    height: 100%;
+    background: var(--mud-palette-primary);
+}
+
+/* 时序的两头（会话结束 / MES 推送）：与工站节点同宽同缩进，接在轨道末尾。 */
+.dt-trace-endpoints {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.5rem;
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border-left: 2px solid var(--mud-palette-lines-default);
+}
+
+.dt-trace-endpoint {
+    display: flex;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+}
+
+.dt-trace-endpoint-label {
+    color: var(--mud-palette-text-secondary);
+}
+
 /* 长内容对话框（型号限值矩阵、曲线判据卡片）：限高 + 内滚。
    此前只有「本页说明」自己处理过高度，其余对话框内容一多就把整框撑出屏幕，
    底部的「取消/确定」跟着消失，只能按 Esc 走。 */
@@ -2577,4 +2648,80 @@ html.dt-theme-dark button.dt-settings-nav-btn.active {
     .dt-baseline-selectors {
         grid-template-columns: minmax(0, 1fr);
     }
+}
+
+/* 工站试读：一次性只读结果，读完即可关掉。 */
+.dt-trial-panel {
+    border: 0.5px solid var(--mud-palette-lines-default, rgba(0, 0, 0, 0.12));
+}
+
+.dt-trial-table th {
+    font-weight: 500;
+}
+
+/* 原始字用等宽、对齐数字：字序与字节序的问题要靠逐字对比才看得出来。 */
+.dt-trial-raw {
+    font-family: var(--mud-typography-default-family, monospace);
+    font-variant-numeric: tabular-nums;
+}
+
+/* 合格 / 超限 / 未读到三种状态分开标色：超限是质量问题，未读到是采集问题。 */
+.dt-trial-ok {
+    color: var(--mud-palette-success);
+}
+
+.dt-trial-violation {
+    color: var(--mud-palette-error);
+}
+
+.dt-trial-bad {
+    color: var(--mud-palette-warning);
+}
+
+/* 已被流水挤掉的失败：紧凑三列，便于一眼扫过错误信息。 */
+.dt-diag-failures {
+    display: grid;
+    gap: 2px;
+    margin-bottom: 10px;
+}
+
+.dt-diag-failure {
+    display: grid;
+    grid-template-columns: 84px 92px minmax(0, 1fr);
+    gap: 8px;
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.dt-diag-failure-addr {
+    font-family: var(--mud-typography-default-family, monospace);
+}
+
+.dt-diag-failure-error {
+    color: var(--mud-palette-error);
+    overflow-wrap: anywhere;
+}
+
+/* 系统健康：与 /healthz 同一份判据，铺成一行行便于扫。 */
+.dt-diag-health-grid {
+    display: grid;
+    gap: 2px;
+    margin-top: 6px;
+}
+
+.dt-diag-health-item {
+    display: grid;
+    grid-template-columns: 40px 76px minmax(0, 1fr);
+    gap: 8px;
+    font-size: 0.75rem;
+    /* 异常项的原因可能是一整句（"数据盘剩余 12 MB，低于 1024 MB"），窄屏下必须能折行。 */
+    overflow-wrap: anywhere;
+}
+
+.dt-diag-health-ok {
+    color: var(--mud-palette-success);
+}
+
+.dt-diag-health-bad {
+    color: var(--mud-palette-error);
 }

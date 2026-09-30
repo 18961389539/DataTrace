@@ -28,6 +28,8 @@ partial class RuntimeStatusHub
            && a.LastError == b.LastError
            && a.LastMonthKey == b.LastMonthKey
            && a.LastRecordId == b.LastRecordId
+           && a.LastWriteBackAttempts == b.LastWriteBackAttempts
+           && a.LastWriteBackOk == b.LastWriteBackOk
            && SameTags(a.LastTags, b.LastTags)
            && SameCurves(a.LastCurves, b.LastCurves);
 

@@ -23,6 +23,15 @@
                     <span class="dt-station-meta-label">节拍</span>
                     <span class="dt-station-meta-value">@CadenceText</span>
                 </div>
+                @* 只有"不止试了一次"才出现：一次就写回成功是常态，常驻一个「回写 1 次」只是噪音。
+                   回写重试变多意味着握手通道在变差，比等到彻底写不回去早得多。 *@
+                @if (WriteBackText is { } writeBack)
+                {
+                    <div class="dt-station-meta">
+                        <span class="dt-station-meta-label">回写</span>
+                        <span class="dt-station-meta-value">@writeBack</span>
+                    </div>
+                }
             </div>
         </div>
         <MudChip T="string" Size="Size.Small" Color="@StateColor" Icon="@StateIcon"
@@ -183,6 +192,23 @@
     private string StationTitle => $"{Station.StationCode} {Station.StationName}";
 
     private string CadenceText => DurationFormat.Text(Station.LastDurationMs);
+
+    /// <summary>
+    /// 响应码回写的重试情况。常态（一次就成功、或还没采过）返回 null，不渲染。
+    /// </summary>
+    /// <remarks>
+    /// 回写在落库之后发生，所以它进不了那一条记录，只能作为工站的当前状态显示。
+    /// <c>Attempts == 0</c> 表示"还没写过"，那时不显示 —— 常驻一个「未写回」会把
+    /// 还没跑过的工位说成有问题的工位，而真正的写回失败已经带着原因进了卡片的错误提示。
+    /// </remarks>
+    private string? WriteBackText => Station.LastWriteBackAttempts switch
+    {
+        0 => null,
+        1 => Station.LastWriteBackOk ? null : "写回失败",
+        _ => Station.LastWriteBackOk
+            ? $"重试 {Station.LastWriteBackAttempts} 次后成功"
+            : $"重试 {Station.LastWriteBackAttempts} 次仍失败"
+    };
 
     private bool HasManyTags => Station.LastTags.Count > FullDisplayTagLimit;
 

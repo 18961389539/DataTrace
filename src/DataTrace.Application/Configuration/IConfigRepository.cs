@@ -22,6 +22,26 @@ public sealed class AppConfigurationSnapshot
 }
 
 /// <summary>
+/// 单个托盘会话的 MES 出站状态：时序视图的终点要用的那一节。
+/// </summary>
+public sealed class MesSessionOutbox
+{
+    public required MesOutboxStatus Status { get; init; }
+
+    /// <summary>已经推过多少次。入队时是 0。</summary>
+    public int AttemptCount { get; init; }
+
+    /// <summary>这条上报进入出站队列的时刻。</summary>
+    public DateTime CreatedAt { get; init; }
+
+    /// <summary>最近一次推送尝试的时间；一次都没试过时为 null。</summary>
+    public DateTime? LastAttemptAt { get; init; }
+
+    /// <summary>最近一次失败的原始原因。</summary>
+    public string? LastError { get; init; }
+}
+
+/// <summary>
 /// MES 推送积压状态：有多少条还没推出去、最近一次成功/失败是什么时候。
 /// </summary>
 public sealed class MesOutboxSnapshot
@@ -86,6 +106,15 @@ public interface IConfigRepository
 
     /// <summary>MES 推送积压与最近一次推送结果，供设置页显示对接健康状态。</summary>
     Task<MesOutboxSnapshot> GetMesOutboxStatusAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 某个托盘会话的 MES 出站记录：推没推出去、试了几次、上次为什么没成。
+    /// </summary>
+    /// <remarks>
+    /// 返回 null 表示这个会话在出站表里没有行 —— 可能是 MES 没开，也可能是这件的上报还没入队。
+    /// 两者在界面上都必须说成"没有记录"，不能当成"推送成功"。
+    /// </remarks>
+    Task<MesSessionOutbox?> FindMesOutboxAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<Recipe>> GetRecipesAsync(CancellationToken cancellationToken = default);
 

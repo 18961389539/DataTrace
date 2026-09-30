@@ -51,6 +51,10 @@ if (!Path.IsPathRooted(dataRoot))
     dataRoot = Path.Combine(AppContext.BaseDirectory, dataRoot);
 }
 
+// 控制台与文件共用一份模板：两边长相不同时，照着控制台的说法去文件里搜会搜不到。
+const string LogOutputTemplate =
+    "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}]{Properties} {Message:lj}{NewLine}{Exception}";
+
 builder.Host.UseWindowsService();
 builder.Host.UseSerilog((ctx, log) =>
 {
@@ -58,10 +62,45 @@ builder.Host.UseSerilog((ctx, log) =>
     // 而装在 Program Files 下的实例通常对安装目录根本没有写权限。
     var logDir = Path.Combine(dataRoot, "logs");
     Directory.CreateDirectory(logDir);
+
+    // 体积闸门：以前只按天滚动，没有任何上限。PLC 断链重连风暴、数据库锁重试或一次异常刷屏
+    // 能在一个班上写出 GB 级日志，把数据盘写满 —— 数据盘一满 SQLite 就开始落库失败，
+    // 现场看到的是"采集莫名停了"，而日志还在继续把剩下的空间吃掉。
+    // 单文件上限 × 封顶份数把日志总量钉死在两者相乘以内（默认 32 MB × 30 ≈ 960 MB）。
+    // 三个参数必须一起给：只给 fileSizeLimitBytes 而不开 rollOnFileSizeLimit，文件涨到上限就不再写；
+    // 只给 retainedFileCountLimit 则只按天清理，管不住单日暴涨。
+    //
+    // {Properties} 不能省：Serilog 的默认模板不渲染作用域属性，而采集链路就是靠
+    // "一次采集一个作用域"把读取、判定、落库、补传这几段的日志串起来的 ——
+    // 模板里不带它，作用域写进去了也一个字都看不见。
+    // 级别（含 Microsoft.EntityFrameworkCore 的压制）来自 appsettings 的 Serilog 段，
+    // ReadFrom.Configuration 只读那一段；原来的 Logging:LogLevel 从来没被读过。
     log.ReadFrom.Configuration(ctx.Configuration)
-        .WriteTo.Console()
-        .WriteTo.File(Path.Combine(logDir, "datatrace-.log"), rollingInterval: RollingInterval.Day);
+        .WriteTo.Console(outputTemplate: LogOutputTemplate)
+        .WriteTo.File(
+            Path.Combine(logDir, "datatrace-.log"),
+            rollingInterval: RollingInterval.Day,
+            fileSizeLimitBytes: ReadLogFileLimitBytes(ctx.Configuration),
+            rollOnFileSizeLimit: true,
+            retainedFileCountLimit: ReadLogRetainedFiles(ctx.Configuration),
+            outputTemplate: LogOutputTemplate);
 });
+
+// 配置读坏（写错单位、填 0 或负数）时不能退化成"没有上限"—— 那正好是这次要堵的洞。
+// 取不到或不合法一律回默认值。
+static long ReadLogFileLimitBytes(IConfiguration configuration)
+{
+    const int defaultMegabytes = 32;
+    var megabytes = configuration.GetValue<int?>("Logging:File:FileSizeLimitMb") ?? defaultMegabytes;
+    return (megabytes > 0 ? megabytes : defaultMegabytes) * 1024L * 1024L;
+}
+
+static int ReadLogRetainedFiles(IConfiguration configuration)
+{
+    const int defaultCount = 30;
+    var count = configuration.GetValue<int?>("Logging:File:RetainedFileCount") ?? defaultCount;
+    return count > 0 ? count : defaultCount;
+}
 
 builder.Services.AddSingleton<IConfigureOptions<CustomerOptions>, CustomerOptionsSetup>();
 builder.Services.AddOptions<CustomerOptions>();
@@ -90,6 +129,8 @@ builder.Services.AddScoped<DataTrace.Web.Services.DtToast>();
 builder.Services.AddSingleton<IJsonFileDialog, WindowsJsonFileDialog>();
 // /healthz 的判据（配置库、数据盘可写、采集器心跳）。只依赖单例服务。
 builder.Services.AddSingleton<HealthProbe>();
+// 诊断页按接口取探活结果（测试里要能换成假报告）；/healthz 端点继续用具体类型。
+builder.Services.AddSingleton<IHealthProbe>(sp => sp.GetRequiredService<HealthProbe>());
 builder.Services.AddSingleton<PasswordPolicy>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddCascadingAuthenticationState();
@@ -159,6 +200,12 @@ if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
 }
+
+// 回报码必须挂在异常处理**之后**（也就是更内层）：它先拿到异常、配上码、记日志，再把异常抛回去，
+// 由上面的 UseExceptionHandler 渲染 /Error 页 —— 两者共用同一个 HttpContext，所以码能传过去。
+// 挂反了就永远拿不到异常（外层先接住），只剩一块没有码的错误页。
+// 开发态这里没有 UseExceptionHandler，于是只记日志、异常照旧弹开发者页，本来也不该给现场发码。
+app.UseExceptionTrace();
 
 // 只有真跑在 TLS 上才下 HSTS：纯 HTTP 部署里下它，浏览器会把后续访问硬升级成 https，
 // 现场看到的现象是"网站突然打不开了"。

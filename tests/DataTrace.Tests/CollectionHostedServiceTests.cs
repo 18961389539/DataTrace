@@ -53,6 +53,7 @@ public class CollectionHostedServiceTests
                 ctx.Provider.GetRequiredService<ICollectArchiveStore>(),
                 ctx.Logger<StationCollectPipeline>()),
             ctx.Provider.GetRequiredService<IRuntimeStatusHub>(),
+            ctx.Provider.GetRequiredService<ICollectorDiagnostics>(),
             ctx.Logger<CollectionHostedService>());
 
     /// <summary>启动后台服务，等条件成立再停机（比 HostedServiceProbe 更细，可分阶段断言）。</summary>
@@ -102,6 +103,36 @@ public class CollectionHostedServiceTests
 
     private static bool Logged(InfrastructureContext ctx, string fragment)
         => ctx.Logs.Snapshot().Any(x => x.Message.Contains(fragment));
+
+    // ---------- 采集循环的耗时度量 ----------
+
+    /// <summary>
+    /// 工作耗时的读数里不能含"等待扫描间隔"的时间。
+    /// </summary>
+    /// <remarks>
+    /// 回填一个埋点错误：读数原来写在 finally 里，而 finally 跑在 Task.Delay 之后，
+    /// 于是每轮工作量恒等于扫描间隔 —— 实测表现为"平均 200ms、配置 200ms、28 轮超时"，
+    /// 而同一页上扫描与心跳都是 0ms：那 200ms 就是等待本身。
+    /// 工作量把等待算进去之后，"超时"永远在报，这一页也就失去了意义。
+    /// </remarks>
+    [Fact]
+    public async Task Loop_work_time_excludes_the_scan_interval_wait()
+    {
+        await using var ctx = await InfrastructureContext.CreateAsync();
+        var service = CreateService(ctx, new CountingDriverFactory());
+        var diagnostics = ctx.Provider.GetRequiredService<ICollectorDiagnostics>();
+
+        // 头几轮还要建连接、拉配置快照，看稳定态。
+        await RunUntilAsync(service, () => diagnostics.Loop.Ticks.Count >= 6, () => ctx.Logs.Dump());
+
+        Assert.All(diagnostics.Loop.Ticks.Take(3), tick =>
+        {
+            Assert.True(
+                tick.WorkMs < tick.ConfiguredIntervalMs,
+                $"第 {tick.At:HH:mm:ss} 轮的工作耗时 {tick.WorkMs}ms 不该含等待（间隔 {tick.ConfiguredIntervalMs}ms）");
+            Assert.False(tick.Overran);
+        });
+    }
 
     // ---------- 连接重建的判定范围（P9） ----------
 
@@ -349,6 +380,7 @@ public class CollectionHostedServiceTests
                 harness.Provider.GetRequiredService<IPlcDriverFactory>(),
                 harness.Pipeline,
                 harness.StatusHub,
+                harness.Provider.GetRequiredService<ICollectorDiagnostics>(),
                 harness.Provider.GetRequiredService<ILogger<CollectionHostedService>>());
         }
 

@@ -59,6 +59,16 @@ public sealed class StationCollectPipeline
     {
         var triggerTime = DateTime.Now;
         var sw = Stopwatch.StartNew();
+
+        // 一次采集一个日志作用域：读取、判定、落库、故障、回写这几段散在四个类里，
+        // 以前各自的日志只带工站码，同一工站连续两件就分不清哪行属于哪一件。
+        // 作用域是 AsyncLocal 的，各工站的采集任务并发跑也互不串味。
+        using var scope = _logger.BeginScope(new Dictionary<string, object>
+        {
+            [CollectionLogScope.Station] = station.Code,
+            [CollectionLogScope.Trigger] = triggerTime.ToString("HH:mm:ss.fff")
+        });
+
         short resultCode = ResultCodes.InternalError;
         string? error = null;
         CollectOutcome? outcome = null;
@@ -89,7 +99,7 @@ public sealed class StationCollectPipeline
         }
         finally
         {
-            var wrote = await WriteResultAsync(station, connection, queue, resultCode, config.Settings, cancellationToken)
+            var writeBack = await WriteResultAsync(station, connection, queue, resultCode, config.Settings, cancellationToken)
                 .ConfigureAwait(false);
             // DurationMs 不在这里赋值：之前在 finally 里改内存对象、库早已写完，等于从没落库。
             // 现在它在 CollectAndSaveAsync 的记录构造时就取好了，这里直接把同一个值报给看板 ——
@@ -98,11 +108,15 @@ public sealed class StationCollectPipeline
             // 托盘码非法和判废是业务结果，工站本身没问题。
             var fault = resultCode is ResultCodes.PlcReadFailed or ResultCodes.InternalError
                 or ResultCodes.FileSourceFailed or ResultCodes.ArchiveFailed
-                || !wrote;
+                || !writeBack.Ok;
             var statusError = error;
-            if (!wrote)
+            if (!writeBack.Ok)
             {
-                statusError = string.IsNullOrWhiteSpace(error) ? "响应码写回失败" : $"{error}；响应码写回失败";
+                // 尝试 0 次说明连地址都没解析出来（位地址/解析失败），说"尝试 0 次"只会让人以为没重试够。
+                var detail = writeBack.Attempts == 0
+                    ? "响应码写回失败"
+                    : $"响应码写回失败（尝试 {writeBack.Attempts} 次）";
+                statusError = string.IsNullOrWhiteSpace(error) ? detail : $"{error}；{detail}";
             }
 
             SetStatus(
@@ -117,11 +131,25 @@ public sealed class StationCollectPipeline
                 outcome?.Tags,
                 outcome?.Curves,
                 outcome?.MonthKey,
-                saved?.Id);
+                saved?.Id,
+                writeBack.Attempts,
+                writeBack.Ok);
             if (saved is not null)
             {
                 _events.Publish(saved);
             }
+
+            // 这一行是整条链路的锚点：现场报"某件丢了 / 某件慢了"时，先用流水号搜到它，
+            // 再顺着同一个作用域看它前后那些行（读取、落库、补传、回写）。
+            // 正常件也要记：只记异常的话，来查一件正常件时会发现根本没有锚点可搜。
+            // 代价是每件一行 —— 而这一轮顺带消掉了每轮好几条 EF Core SQL 行，净日志量是下降的。
+            _logger.LogInformation(
+                "采集完成 {Serial} 结果 {Result} 判定 {Judgement} 耗时 {DurationMs}ms 回写 {WriteBack}",
+                string.IsNullOrWhiteSpace(saved?.SerialNo) ? "（未落库）" : saved.SerialNo,
+                ResultCodes.Describe(resultCode),
+                saved?.Judgement ?? Judgement.None,
+                sw.ElapsedMilliseconds,
+                writeBack.Ok ? $"{writeBack.Attempts} 次成功" : $"{writeBack.Attempts} 次失败");
         }
     }
 
@@ -223,7 +251,10 @@ public sealed class StationCollectPipeline
         }
     }
 
-    private async Task<bool> WriteResultAsync(
+    /// <summary>响应码回写的结果：试了几次、最后成没成、失败原因。</summary>
+    private readonly record struct WriteBackOutcome(int Attempts, bool Ok, string? Error);
+
+    private async Task<WriteBackOutcome> WriteResultAsync(
         Station station,
         PlcConnection connection,
         PlcRequestQueue queue,
@@ -234,13 +265,13 @@ public sealed class StationCollectPipeline
         if (!queue.Driver.TryParseAddress(station.TriggerAddress, out var address))
         {
             _logger.LogError("工站 {Station} 触发地址无法解析: {Address}", station.Code, station.TriggerAddress);
-            return false;
+            return new WriteBackOutcome(0, false, "触发地址无法解析");
         }
 
         if (address.IsBit)
         {
             _logger.LogError("工站 {Station} 触发地址是位地址，响应码无法写回: {Address}", station.Code, station.TriggerAddress);
-            return false;
+            return new WriteBackOutcome(0, false, "触发地址是位地址");
         }
 
         var retries = Math.Max(1, settings.WriteRetryCount);
@@ -254,7 +285,7 @@ public sealed class StationCollectPipeline
                 var readBack = await queue.ReadWordsAsync(address, 1, cancellationToken).ConfigureAwait(false);
                 if (readBack.Length > 0 && (short)readBack[0] == resultCode)
                 {
-                    return true;
+                    return new WriteBackOutcome(i + 1, true, null);
                 }
 
                 last = new PlcDriverException("写回校验不一致");
@@ -272,7 +303,7 @@ public sealed class StationCollectPipeline
         }
 
         _logger.LogError(last, "工站 {Station} 响应码写回失败", station.Code);
-        return false;
+        return new WriteBackOutcome(retries, false, last?.Message);
     }
 
     private async Task WriteFailureAuditAsync(Station station, DateTime triggerTime, short resultCode, string error)
@@ -313,7 +344,9 @@ public sealed class StationCollectPipeline
         IReadOnlyList<StationLiveTag>? tags = null,
         IReadOnlyList<StationLiveCurve>? curves = null,
         string? monthKey = null,
-        long? recordId = null)
+        long? recordId = null,
+        int? writeBackAttempts = null,
+        bool? writeBackOk = null)
     {
         var previous = _status.Stations.FirstOrDefault(x => x.StationId == station.Id);
         var completed = code is not null;
@@ -335,6 +368,10 @@ public sealed class StationCollectPipeline
             LastError = error,
             LastMonthKey = monthKey ?? previous?.LastMonthKey,
             LastRecordId = recordId is > 0 ? recordId : previous?.LastRecordId,
+            // 开跑时（Busy 那次调用）不传，于是沿用上一件的回写结果：
+            // 采集途中把"上次回写重试 3 次"抹成 0，等于让人以为链路一直很健康。
+            LastWriteBackAttempts = writeBackAttempts ?? previous?.LastWriteBackAttempts ?? 0,
+            LastWriteBackOk = writeBackOk ?? previous?.LastWriteBackOk ?? false,
             LastTags = tags ?? previous?.LastTags ?? [],
             LastCurves = curves ?? previous?.LastCurves ?? []
         });

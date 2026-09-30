@@ -1,11 +1,26 @@
 ﻿@page "/Error"
 @attribute [AllowAnonymous]
+@using DataTrace.Shared
+@using DataTrace.Web.Services
 
+@* 回报码在 ExceptionTraceMiddleware 里配好并已记进日志，这里只负责取出来显示。
+   两者共用同一个 HttpContext，所以"用户看到的这串"与"日志里那行"一定是同一个值。
+   取不到就整块不渲染 —— 直接访问 /Error（没有异常）时不该凭空多出一个码。 *@
 <MudPaper Class="pa-6" Style="max-width:640px;margin:6vh auto">
     <MudText Typo="Typo.h5" Class="mb-2">系统发生错误</MudText>
     <MudText Typo="Typo.body2" Class="mb-3">
-        当前操作没有完成。可以先返回看板重试一次；如果反复出现，请把发生时间告诉维护工程师。
+        当前操作没有完成。可以先返回看板重试一次；如果反复出现，请联系维护工程师。
     </MudText>
+    @if (ErrorCode is not null)
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-3">
+            <MudText Typo="Typo.body2">回报码</MudText>
+            <MudText Typo="Typo.h5" Class="dt-error-code">@ErrorCode</MudText>
+            <MudText Typo="Typo.body2" Class="mt-1">
+                连同发生时间一起报给维护工程师即可：日志里搜这串码，就是这次错误的完整堆栈。
+            </MudText>
+        </MudAlert>
+    }
     <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-4">
         日志文件：程序目录下 data/logs/datatrace-yyyyMMdd.log（记录完整堆栈与时间）
     </MudAlert>
@@ -14,3 +29,23 @@
         <MudButton Variant="Variant.Outlined" Href="/query">数据查询</MudButton>
     </MudStack>
 </MudPaper>
+
+@code {
+    /// <summary>
+    /// 静态 SSR 下由 Blazor 端点提供，就是抛出异常的那个请求本身。
+    /// 交互式电路里的异常根本到不了这一页（那走 Blazor 自己的重连界面），所以这里不会是 null；
+    /// 类型上仍写可空并逐处判空：错误页自己再抛一次 NRE 会连错误页都渲染不出来。
+    /// </summary>
+    [CascadingParameter] public Microsoft.AspNetCore.Http.HttpContext? HttpContext { get; set; }
+
+    /// <summary>本次请求的回报码。取不到、或形状不是本系统生成的，则为 null。</summary>
+    private string? ErrorCode { get; set; }
+
+    protected override void OnInitialized()
+    {
+        // IsWellFormed 不能省：这个值会被原样渲染，而错误页匿名可达，
+        // 不校验形状就等于开了个反射任意文本的出口。
+        var stashed = HttpContext?.Items[ExceptionTraceMiddleware.CodeItemKey] as string;
+        ErrorCode = ErrorTrace.IsWellFormed(stashed) ? stashed : null;
+    }
+}

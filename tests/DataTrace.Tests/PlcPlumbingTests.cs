@@ -449,11 +449,24 @@ public class PlcRequestQueueTests
 
     // ---------- 断线熔断 ----------
 
+    /// <summary>可手动推进的单调时钟：把"冷却期还在不在"从墙钟里解耦出来。</summary>
+    private sealed class ManualClock
+    {
+        private long _ms;
+
+        public long Read() => Interlocked.Read(ref _ms);
+
+        public void Advance(TimeSpan by) => Interlocked.Add(ref _ms, (long)by.TotalMilliseconds);
+    }
+
     [Fact]
     public async Task Queue_failsFast_whileCoolingDownAfterLinkLoss()
     {
+        // 时钟由用例控制：冷却窗口只有 5 秒，而断言要等本用例的续体被线程池调度起来才跑，
+        // 整机满载时这段调度延迟能超过窗口 —— 用真墙钟断言会在负载高时偶发变红。
+        var clock = new ManualClock();
         var driver = new SwitchableDriver();
-        await using var queue = new PlcRequestQueue(driver);
+        await using var queue = new PlcRequestQueue(driver, monotonicMs: clock.Read);
 
         driver.DropLinkOnRead = true;
         await Assert.ThrowsAsync<PlcDriverException>(() => queue.ReadWordsAsync(Addr("D100"), 1));
@@ -466,6 +479,29 @@ public class PlcRequestQueueTests
         var ex = await Assert.ThrowsAsync<PlcDriverException>(() => queue.ReadWordsAsync(Addr("D100"), 1));
         Assert.Contains("冷却期", ex.Message);
         Assert.Equal(connectsAfterFailure, driver.ConnectCount);
+    }
+
+    /// <summary>冷却过期后应当重新尝试连接，而不是永远拒绝服务。</summary>
+    [Fact]
+    public async Task Queue_reconnects_after_the_cooldown_expires()
+    {
+        var clock = new ManualClock();
+        var driver = new SwitchableDriver();
+        await using var queue = new PlcRequestQueue(driver, monotonicMs: clock.Read);
+
+        driver.DropLinkOnRead = true;
+        await Assert.ThrowsAsync<PlcDriverException>(() => queue.ReadWordsAsync(Addr("D100"), 1));
+        var connectsAfterFailure = driver.ConnectCount;
+        Assert.True(queue.IsCoolingDown);
+
+        // 首轮冷却 5 秒；推过窗口之后就不该再拦了。
+        clock.Advance(TimeSpan.FromSeconds(6));
+        driver.DropLinkOnRead = false;
+
+        Assert.False(queue.IsCoolingDown);
+        var words = await queue.ReadWordsAsync(Addr("D100"), 1);
+        Assert.NotEmpty(words);
+        Assert.True(driver.ConnectCount > connectsAfterFailure, "冷却过期后应当重新连接");
     }
 
     [Fact]

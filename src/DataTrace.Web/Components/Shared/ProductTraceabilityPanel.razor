@@ -67,7 +67,7 @@ else if (_traces.Count > 0 && SelectedTrace is { } trace)
             该流水号关联到多个生产会话，不能合并推断；请选择要查看的会话。
         </MudAlert>
         <MudPaper Class="dt-filter-card mb-3">
-            <MudSelect T="string" Value="_selectedTraceKey" ValueChanged="SelectTrace"
+            <MudSelect T="string" Value="_selectedTraceKey" ValueChanged="SelectTraceAsync"
                        Label="生产会话" Dense="true" ShrinkLabel="true">
                 @foreach (var candidate in _traces)
                 {
@@ -135,15 +135,24 @@ else if (_traces.Count > 0 && SelectedTrace is { } trace)
             {
                 <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Error">检测到跳站/流程异常</MudChip>
             }
+            <MudSpacer />
+            @* 全链路时长放在标题行：逐站间隔只有跟它对照才知道"这段算不算长"。 *@
+            @if (TotalSpan(trace) is { } total)
+            {
+                <MudText Typo="Typo.caption" Class="dt-muted">
+                    全链路 @DurationFormat.Text((int)total.TotalMilliseconds)
+                </MudText>
+            }
         </MudStack>
         @* 原来是常驻在结果顶部的 Info alert，一次查询就占三行；口径说明降级成履历里的一行小字。 *@
         <MudText Typo="Typo.caption" Class="dt-muted mb-1">
-            缺站按当前启用工站对照；历史期间工艺路线有调整时提示仅供参考。
+            缺站按当前启用工站对照；历史期间工艺路线有调整时提示仅供参考。间隔是本站触发距上一站完成的时间，缺站时它就是跨过缺站的真实时间。
         </MudText>
         <div class="dt-trace-timeline">
-            @foreach (var step in RouteSteps(trace))
+            @foreach (var row in Timeline(trace))
             {
-                var stepRecords = RecordsForStep(step, trace);
+                var step = row.Step;
+                var stepRecords = row.Records;
                 <div class="@StepClass(step)">
                     <div class="dt-trace-rail" aria-hidden="true">
                         <span class="dt-trace-marker">
@@ -185,6 +194,22 @@ else if (_traces.Count > 0 && SelectedTrace is { } trace)
                         {
                             <div class="dt-trace-station-meta">
                                 <span class="dt-trace-step-time">@summaryRecord.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                                @* 间隔与本站耗时并排：一眼能看出时间花在"路上"还是花在"这一站"。 *@
+                                @if (row.Transit is { } transit)
+                                {
+                                    <span class="dt-trace-transit">间隔 +@DurationFormat.Text((int)transit.TotalMilliseconds)</span>
+                                    @* 比例条是纯装饰（数值已经写在旁边），但它让"哪一段最长"不用逐个读数字。 *@
+                                    @if (row.Share > 0)
+                                    {
+                                        <span class="dt-trace-share" aria-hidden="true">
+                                            <span class="dt-trace-share-fill" style="@($"width:{row.Share * 100:0.#}%")"></span>
+                                        </span>
+                                    }
+                                }
+                                @if (summaryRecord.DurationMs > 0)
+                                {
+                                    <span>本站 @DurationFormat.Text(summaryRecord.DurationMs)</span>
+                                }
                                 <span>@summaryRecord.TagValues.Count 点位 · @summaryRecord.Curves.Count 曲线</span>
                                 @if (summaryRecord.TagValues.Any(v => v.IsOutOfLimit))
                                 {
@@ -218,6 +243,19 @@ else if (_traces.Count > 0 && SelectedTrace is { } trace)
                     </div>
                 </div>
             }
+
+            @* 链路的两头：会话何时结束、上报推没推出去。缺了这一节，时序到末站就断了，
+               而"这件最后到底有没有进 MES"正是现场最常问的一句。 *@
+            <div class="dt-trace-endpoints">
+                <div class="dt-trace-endpoint">
+                    <span class="dt-trace-endpoint-label">会话结束</span>
+                    <span>@SessionEndText(trace)</span>
+                </div>
+                <div class="dt-trace-endpoint">
+                    <span class="dt-trace-endpoint-label">MES 推送</span>
+                    <span>@MesText()</span>
+                </div>
+            </div>
         </div>
     </MudPaper>
 }
@@ -243,6 +281,10 @@ else
     private IReadOnlyList<CollectSessionTrace> _traces = [];
     private IReadOnlyList<Station> _stations = [];
     private Dictionary<string, string> _recipeNames = new(StringComparer.Ordinal);
+
+    /// <summary>当前会话的 MES 出站记录；null 表示没有记录（未启用 MES，或还没入队）。</summary>
+    private MesSessionOutbox? _mesOutbox;
+    private bool _mesLoaded;
 
     private CollectSessionTrace? SelectedTrace
         => _traces.FirstOrDefault(x => TraceKey(x) == _selectedTraceKey);
@@ -320,6 +362,8 @@ else
             _loading = false;
         }
 
+        await LoadMesAsync();
+
         if (syncUrl)
         {
             await OnSearchCompleted.InvokeAsync(serialNo);
@@ -340,9 +384,44 @@ else
         _traces = [];
         _selectedTraceKey = null;
         _error = null;
+        _mesOutbox = null;
+        _mesLoaded = false;
     }
 
-    private void SelectTrace(string? key) => _selectedTraceKey = key;
+    private async Task SelectTraceAsync(string? key)
+    {
+        _selectedTraceKey = key;
+        await LoadMesAsync();
+    }
+
+    /// <summary>
+    /// 取当前会话的 MES 出站记录。
+    /// </summary>
+    /// <remarks>
+    /// 读不到只影响时序末尾那一节，所以失败不往上抛：整页已经查到履历了，
+    /// 因为查不到一条出站记录就把履历一起判失败是本末倒置。读失败与"没有记录"都在界面上如实说。
+    /// </remarks>
+    private async Task LoadMesAsync()
+    {
+        _mesOutbox = null;
+        _mesLoaded = false;
+        if (SelectedTrace is not { SessionId: { } sessionId } trace)
+        {
+            _mesLoaded = true;
+            return;
+        }
+
+        try
+        {
+            _mesOutbox = await Config.FindMesOutboxAsync(trace.MonthKey, sessionId);
+        }
+        catch
+        {
+            // 保持 null：界面会把 null 说成"没有记录或读不到"，不会说成"已推送"。
+        }
+
+        _mesLoaded = true;
+    }
 
     private string TraceKey(CollectSessionTrace trace)
         => trace.SessionId is { } sessionId
@@ -556,4 +635,87 @@ else
     }
 
     private sealed record TraceStep(int StationId, string Code, string Name, bool IsConfigured, CollectRecord? Record);
+
+    /// <summary>时序上的一行：这一站的记录、它距上一站完成的间隔，以及该间隔占全链路的比例。</summary>
+    private sealed record TimelineRow(
+        TraceStep Step,
+        IReadOnlyList<CollectRecord> Records,
+        TimeSpan? Transit,
+        double Share);
+
+    /// <summary>
+    /// 按工艺顺序铺开时序，并逐站算出与上一站之间的间隔。
+    /// </summary>
+    /// <remarks>
+    /// 间隔取自"上一站的完成时刻 → 这一站的触发时刻"，缺站的站不推进基准 ——
+    /// 于是跨过缺站的那一段会如实变长，正好是排查"这件为什么慢了"要看的地方。
+    /// 比例只算一次全链路总时长，逐行复用，避免每行都去扫一遍记录。
+    /// </remarks>
+    private IReadOnlyList<TimelineRow> Timeline(CollectSessionTrace trace)
+    {
+        var total = TotalSpan(trace);
+        DateTime? previousComplete = null;
+        var rows = new List<TimelineRow>();
+        foreach (var step in RouteSteps(trace))
+        {
+            var transit = PalletTimeline.Transit(previousComplete, step.Record?.TriggerTime);
+            rows.Add(new TimelineRow(
+                step,
+                RecordsForStep(step, trace),
+                transit,
+                PalletTimeline.Share(transit, total)));
+            if (step.Record is { } record)
+            {
+                previousComplete = record.CompleteTime == default ? record.TriggerTime : record.CompleteTime;
+            }
+        }
+
+        return rows;
+    }
+
+    /// <summary>整条链路时长：首站触发到末站完成。少于两站或时刻缺失时为 null。</summary>
+    private static TimeSpan? TotalSpan(CollectSessionTrace trace)
+    {
+        if (trace.Session?.StartTime is not { } start || trace.Records.Count == 0)
+        {
+            return null;
+        }
+
+        var lastComplete = trace.Records
+            .Where(record => record.CompleteTime != default)
+            .Select(record => record.CompleteTime)
+            .DefaultIfEmpty()
+            .Max();
+        return lastComplete == default ? null : PalletTimeline.Total(start, lastComplete);
+    }
+
+    private static string SessionEndText(CollectSessionTrace trace)
+        => trace.Session?.EndTime is { } end
+            ? $"{end:yyyy-MM-dd HH:mm:ss}"
+            : trace.Session is null
+                ? "会话关联缺失，无法判定"
+                : "尚未结束";
+
+    /// <summary>时序终点那一句：推没推出去、试了几次、上次为什么没成。</summary>
+    private string MesText()
+    {
+        if (!_mesLoaded)
+        {
+            return "读取中…";
+        }
+
+        if (_mesOutbox is not { } outbox)
+        {
+            return "没有出站记录（MES 可能未启用，或这件还没入队）";
+        }
+
+        var attempts = outbox.AttemptCount > 0 ? $"，已尝试 {outbox.AttemptCount} 次" : "";
+        var lastAttempt = outbox.LastAttemptAt is { } at ? $"，上次 {at:HH:mm:ss}" : "";
+        return outbox.Status switch
+        {
+            MesOutboxStatus.Succeeded => $"已推送{(outbox.LastAttemptAt is { } successAt ? $"（{successAt:HH:mm:ss}）" : "")}{attempts}",
+            MesOutboxStatus.Failed => $"推送失败{attempts}{lastAttempt}{(string.IsNullOrWhiteSpace(outbox.LastError) ? "" : $"：{outbox.LastError}")}",
+            _ => $"排队等待推送{attempts}{lastAttempt}"
+        };
+    }
 }

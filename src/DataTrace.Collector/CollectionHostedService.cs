@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using DataTrace.Application.Configuration;
 using DataTrace.Application.Realtime;
 using DataTrace.Domain.Constants;
@@ -17,15 +18,26 @@ using Microsoft.Extensions.Logging;
 
 namespace DataTrace.Collector;
 
-public sealed class CollectionHostedService : BackgroundService
+public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
 {
+    /// <summary>
+    /// 一轮干完到下一轮开始之间至少留出的时间（毫秒）。
+    /// </summary>
+    /// <remarks>
+    /// 按周期调度要扣掉已用的时间，扣到 0 就成了紧密循环。留 1 毫秒既不影响
+    /// 最小扫描间隔（20ms）下的准点，又能避免一轮异常快时把 CPU 攥住不放。
+    /// </remarks>
+    private const int MinLoopIdleMs = 1;
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IPlcDriverFactory _driverFactory;
     private readonly StationCollectPipeline _pipeline;
     private readonly IRuntimeStatusHub _status;
+    private readonly ICollectorDiagnostics _diagnostics;
     private readonly ILogger<CollectionHostedService> _logger;
     private readonly ConcurrentDictionary<int, byte> _busy = new();
-    private readonly Dictionary<int, PlcRequestQueue> _queues = new();
+    // 并发字典：采集循环在改（配置变更时重建连接），试读从外部读 —— 普通 Dictionary 在并发读写会抛。
+    private readonly ConcurrentDictionary<int, PlcRequestQueue> _queues = new();
     private readonly Dictionary<int, HeartbeatState> _heartbeats = new();
     private readonly Dictionary<int, string> _signatures = new();
     private readonly WarningThrottle _warnings = new();
@@ -37,16 +49,43 @@ public sealed class CollectionHostedService : BackgroundService
         IPlcDriverFactory driverFactory,
         StationCollectPipeline pipeline,
         IRuntimeStatusHub status,
+        ICollectorDiagnostics diagnostics,
         ILogger<CollectionHostedService> logger)
     {
         _scopeFactory = scopeFactory;
         _driverFactory = driverFactory;
         _pipeline = pipeline;
         _status = status;
+        _diagnostics = diagnostics;
         _logger = logger;
     }
 
     internal IReadOnlyDictionary<int, PlcRequestQueue> Queues => _queues;
+
+    /// <summary>
+    /// 试读用：取该 PLC 现成的队列 —— 队列是这台 PLC 的唯一连接收口，自己新建一个会和扫描抢连接。
+    /// </summary>
+    /// <remarks>
+    /// 取不到是常态而非异常：采集关闭时主循环直接 continue，压根不会建队列。
+    /// 所以这里给出可读原因，让页面把按钮禁掉并说清为什么，而不是点下去才失败。
+    /// </remarks>
+    public bool TryGetTrialQueue(int plcConnectionId, out PlcRequestQueue queue, out string? reason)
+    {
+        if (_queues.TryGetValue(plcConnectionId, out var found))
+        {
+            queue = found;
+            reason = null;
+            return true;
+        }
+
+        queue = null!;
+        reason = _snapshot is null
+            ? "采集尚未读到配置，请稍后再试。"
+            : !_snapshot.Settings.CollectEnabled
+                ? "采集已关闭：PLC 连接未建立，无法试读。请先开启采集。"
+                : "该工站所属的 PLC 尚未建立连接，无法试读。";
+        return false;
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -54,6 +93,13 @@ public sealed class CollectionHostedService : BackgroundService
         await NgStreakStartup.EnsureAsync(_scopeFactory, _status, _logger, stoppingToken).ConfigureAwait(false);
         while (!stoppingToken.IsCancellationRequested)
         {
+            var roundSw = Stopwatch.StartNew();
+            // 这一轮"干活"花了多久，不含随后的等待。null 表示还没记（异常轮次由 catch 补记）。
+            long? workMs = null;
+            var scanMs = 0L;
+            var heartbeatMs = 0L;
+            var stats = ScanStats.None;
+            var timing = false;
             try
             {
                 _status.NoteCollectorTick();
@@ -78,10 +124,29 @@ public sealed class CollectionHostedService : BackgroundService
                     continue;
                 }
 
+                timing = true;
                 await EnsureQueuesAsync(snapshot, stoppingToken).ConfigureAwait(false);
-                await ScanTriggersAsync(snapshot, stoppingToken).ConfigureAwait(false);
+
+                var scan = Stopwatch.StartNew();
+                stats = await ScanTriggersAsync(snapshot, stoppingToken).ConfigureAwait(false);
+                scanMs = scan.ElapsedMilliseconds;
+
+                var heartbeat = Stopwatch.StartNew();
                 await WriteHeartbeatsAsync(snapshot, stoppingToken).ConfigureAwait(false);
-                await Task.Delay(Math.Max(20, snapshot.Settings.ScanIntervalMs), stoppingToken).ConfigureAwait(false);
+                heartbeatMs = heartbeat.ElapsedMilliseconds;
+
+                // 先取读数，再等。以前是在 finally 里读秒表，而 finally 跑在等待之后 ——
+                // 于是"每轮工作耗时"恒等于扫描间隔（实测：平均 200ms、配置 200ms、28 轮超时，
+                // 而同一页上扫描与心跳都是 0ms，那 200ms 就是等待本身），
+                // "超时"因此永远在报，这一页也就失去了意义。
+                workMs = roundSw.ElapsedMilliseconds;
+
+                // 扫描间隔是**周期**（见 HelpTexts.ScanInterval：轮询 PLC 的周期）：扣掉这一轮已经
+                // 花掉的时间，而不是干完活再整个等一遍。后者会让实际周期变成"工作 + 间隔"，
+                // 工作量一涨，采样就悄悄变慢，而设置页上的数字还写着原值。
+                var interval = Math.Max(SettingsLimits.MinScanIntervalMs, snapshot.Settings.ScanIntervalMs);
+                var idleMs = Math.Max(interval - workMs.Value, MinLoopIdleMs);
+                await Task.Delay(TimeSpan.FromMilliseconds(idleMs), stoppingToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -89,10 +154,79 @@ public sealed class CollectionHostedService : BackgroundService
             }
             catch (Exception ex)
             {
+                // 记在 1 秒重试等待之前：否则这一轮的工作量会把那 1 秒一起算进去。
+                workMs = roundSw.ElapsedMilliseconds;
                 _logger.LogError(ex, "采集扫描循环异常");
                 await Task.Delay(1000, stoppingToken).ConfigureAwait(false);
             }
+            finally
+            {
+                // 放在 finally 里：抛异常的那一轮同样要留痕 —— 恰恰是它最需要被看见。
+                // 采集关闭或还没读到配置的轮次不算（timing=false）：那时"这一轮没干活"是设计如此，
+                // 记进去会把诊断页的均值拉低，看着像采集变快了。
+                if (timing && workMs is { } spent && _snapshot is { } current)
+                {
+                    PublishDiagnostics(current, spent, scanMs, heartbeatMs, stats);
+                }
+            }
         }
+    }
+
+    /// <summary>把这一轮的耗时与各 PLC 的请求流水交给诊断页。</summary>
+    private void PublishDiagnostics(
+        AppConfigurationSnapshot snapshot,
+        long workMs,
+        long scanMs,
+        long heartbeatMs,
+        ScanStats stats)
+    {
+        static PlcExchangeView Map(PlcExchange exchange) => new(
+            exchange.At,
+            exchange.Kind == PlcExchangeKind.Write,
+            exchange.Address,
+            exchange.WordCount,
+            exchange.DurationMs,
+            exchange.Ok,
+            exchange.Error,
+            exchange.Values);
+
+        foreach (var plc in snapshot.PlcConnections.Where(x => x.Enabled))
+        {
+            if (!_queues.TryGetValue(plc.Id, out var queue))
+            {
+                continue;
+            }
+
+            var traffic = queue.Traffic.Snapshot();
+            _diagnostics.PublishPlcTraffic(new PlcTrafficView(
+                plc.Id,
+                plc.Name,
+                traffic.TotalCount,
+                traffic.FailureCount,
+                traffic.LastDurationMs,
+                traffic.MaxDurationMs,
+                traffic.LastSuccessAt,
+                traffic.Recent.Select(Map).ToList(),
+                // 失败另存的那一份：否则几十条流水一冲，标题里的"失败 N"就再没有下文。
+                traffic.RecentFailures.Select(Map).ToList()));
+        }
+
+        _diagnostics.PublishLoopTick(new CollectorLoopTick(
+            DateTime.Now,
+            snapshot.Settings.ScanIntervalMs,
+            workMs,
+            scanMs,
+            heartbeatMs,
+            _queues.Count,
+            stats.Triggered,
+            stats.CoolingDownPlcs,
+            stats.SkippedStations));
+    }
+
+    /// <summary>一轮扫描里"该触发但没触发"的分布。数字本身比日志更能说明问题出在哪一类。</summary>
+    private readonly record struct ScanStats(int Triggered, int CoolingDownPlcs, int SkippedStations)
+    {
+        public static ScanStats None { get; } = new(0, 0, 0);
     }
 
     private async Task EnsureQueuesAsync(AppConfigurationSnapshot snapshot, CancellationToken cancellationToken)
@@ -122,13 +256,15 @@ public sealed class CollectionHostedService : BackgroundService
         // 只重建需要换的连接：其余连接保持原样，不会因为"改了一个点位"就全体断线重连。
         foreach (var id in obsolete)
         {
-            if (_queues.Remove(id, out var queue))
+            if (_queues.TryRemove(id, out var queue))
             {
                 await queue.DisposeAsync().ConfigureAwait(false);
             }
 
             _heartbeats.Remove(id);
             _signatures.Remove(id);
+            // 连接没了就把它的流水一起撤掉，否则诊断页会一直挂着一台已经不存在的 PLC。
+            _diagnostics.ForgetPlc(id);
         }
 
         // 需要新建的：还没有队列的连接。签名已记录说明上一轮建过（可能失败），不重复重试。
@@ -209,6 +345,8 @@ public sealed class CollectionHostedService : BackgroundService
                 LastError = previous?.LastError,
                 LastMonthKey = previous?.LastMonthKey,
                 LastRecordId = previous?.LastRecordId,
+                LastWriteBackAttempts = previous?.LastWriteBackAttempts ?? 0,
+                LastWriteBackOk = previous?.LastWriteBackOk ?? false,
                 LastTags = previous?.LastTags ?? [],
                 LastCurves = previous?.LastCurves ?? []
             });
@@ -256,8 +394,12 @@ public sealed class CollectionHostedService : BackgroundService
         }
     }
 
-    private async Task ScanTriggersAsync(AppConfigurationSnapshot snapshot, CancellationToken cancellationToken)
+    private async Task<ScanStats> ScanTriggersAsync(AppConfigurationSnapshot snapshot, CancellationToken cancellationToken)
     {
+        var triggered = 0;
+        var coolingDown = 0;
+        var skipped = 0;
+
         foreach (var plc in snapshot.PlcConnections.Where(x => x.Enabled))
         {
             if (!_queues.TryGetValue(plc.Id, out var queue))
@@ -269,6 +411,7 @@ public sealed class CollectionHostedService : BackgroundService
             {
                 // 刚怀疑断过线：冷却期内不再发起请求，否则每轮都要付出重连超时的代价，
                 // 把整条扫描循环拖到远慢于 ScanIntervalMs，其他工站跟着一起慢。
+                coolingDown++;
                 continue;
             }
 
@@ -283,6 +426,7 @@ public sealed class CollectionHostedService : BackgroundService
             {
                 if (!queue.Driver.TryParseAddress(station.TriggerAddress, out var addr))
                 {
+                    skipped++;
                     WarnSkipped($"t_parse_{station.Id}",
                         $"工站 {station.Code} 的触发地址「{station.TriggerAddress}」解析失败，本轮不参与触发判定");
                     continue;
@@ -291,6 +435,7 @@ public sealed class CollectionHostedService : BackgroundService
                 if (addr.IsBit)
                 {
                     // 位地址进不了读计划（只收字地址），以前这里会静默跳过：工站从不触发，现场看不出原因。
+                    skipped++;
                     WarnSkipped($"t_bit_{station.Id}",
                         $"工站 {station.Code} 的触发地址「{station.TriggerAddress}」是位地址，读计划只收字地址，" +
                         "该工站不会被触发；请改用字地址（如 D100，非 0 即触发）");
@@ -301,6 +446,7 @@ public sealed class CollectionHostedService : BackgroundService
                 {
                     // 历史脏配置的兜底：触发值等于回写码时，写完响应码寄存器仍等于触发值，
                     // 会一个扫描周期采一次同一托盘。宁可跳过并说清楚，也不能让它无限循环。
+                    skipped++;
                     WarnSkipped($"t_value_{station.Id}",
                         $"工站 {station.Code} 的触发值 {station.TriggerValue} 落在回写码区间" +
                         $"（2–{ResultCodes.ArchiveFailed}），触发位永远不会被清掉，该工站已被跳过；" +
@@ -343,6 +489,7 @@ public sealed class CollectionHostedService : BackgroundService
                 {
                     if (!plan.Items.ContainsKey($"t_{station.Id}"))
                     {
+                        skipped++;
                         WarnSkipped($"t_plan_{station.Id}",
                             $"工站 {station.Code} 的触发地址未进入读计划，本轮跳过；请检查触发地址配置");
                         continue;
@@ -356,9 +503,11 @@ public sealed class CollectionHostedService : BackgroundService
 
                     if (!_busy.TryAdd(station.Id, 0))
                     {
+                        // 上一件还在跑：不计入"跳过"，它不是配置问题，是节拍本身跟不上。
                         continue;
                     }
 
+                    triggered++;
                     _ = Task.Run(async () =>
                     {
                         try
@@ -389,6 +538,8 @@ public sealed class CollectionHostedService : BackgroundService
                 });
             }
         }
+
+        return new ScanStats(triggered, coolingDown, skipped);
     }
 
     private async Task WriteHeartbeatsAsync(AppConfigurationSnapshot snapshot, CancellationToken cancellationToken)

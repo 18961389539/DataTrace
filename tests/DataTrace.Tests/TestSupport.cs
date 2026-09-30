@@ -1,5 +1,6 @@
 using DataTrace.Application.Alarms;
 using DataTrace.Application.Configuration;
+using DataTrace.Application.Realtime;
 using DataTrace.Application.Reporting;
 using DataTrace.Application.Runtime;
 using DataTrace.Collector;
@@ -135,6 +136,8 @@ internal sealed class CollectHarness : IAsyncDisposable
         services.AddDataTraceInfrastructure(root);
         services.AddDataTracePlc();
         services.AddSingleton<StationCollectPipeline>();
+        // 采集侧运行时观测：与 AddDataTraceCollector 里的注册保持一致。
+        services.AddSingleton<ICollectorDiagnostics, CollectorDiagnostics>();
         var provider = services.BuildServiceProvider();
 
         using (var seedScope = provider.CreateScope())

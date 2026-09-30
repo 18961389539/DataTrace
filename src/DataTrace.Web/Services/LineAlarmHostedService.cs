@@ -8,6 +8,8 @@ using DataTrace.Collector;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
+using DataTrace.Infrastructure.Backup;
+using DataTrace.Shared;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -26,6 +28,7 @@ public sealed class LineAlarmHostedService : BackgroundService
     private readonly IRuntimeStatusHub _status;
     private readonly ILineAlarmBoard _board;
     private readonly IHttpClientFactory _http;
+    private readonly DataRootPaths _paths;
     private readonly ILogger<LineAlarmHostedService> _logger;
     private readonly Dictionary<string, DateTime> _lastSent = new(StringComparer.Ordinal);
     private string? _rejectedUrl;
@@ -35,12 +38,14 @@ public sealed class LineAlarmHostedService : BackgroundService
         IRuntimeStatusHub status,
         ILineAlarmBoard board,
         IHttpClientFactory http,
+        DataRootPaths paths,
         ILogger<LineAlarmHostedService> logger)
     {
         _scopeFactory = scopeFactory;
         _status = status;
         _board = board;
         _http = http;
+        _paths = paths;
         _logger = logger;
     }
 
@@ -110,7 +115,8 @@ public sealed class LineAlarmHostedService : BackgroundService
                 _status.DriftNotices,
                 snapshot.Stations.SelectMany(station => station.Tags)
                     .ToDictionary(tag => (tag.StationId, tag.Id), tag => tag.SpcRuleMask)),
-            openSessions);
+            openSessions,
+            DiskSpace.FreeMegabytesOf(_paths.Root));
         var incidents = scope.ServiceProvider.GetRequiredService<IAlarmIncidents>();
         var attention = await incidents.ApplyAsync(active.Alarms, now, cancellationToken).ConfigureAwait(false);
         var calling = attention

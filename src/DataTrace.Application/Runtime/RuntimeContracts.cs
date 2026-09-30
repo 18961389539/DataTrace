@@ -398,12 +398,69 @@ public interface ICollectArchiveStore
 /// <summary>还没补传入库的缓存件数，以及最早一笔的写入时间。</summary>
 public readonly record struct SpoolBacklog(int Count, DateTime? OldestAt);
 
+/// <summary>
+/// 补传队列里的一条。
+/// </summary>
+/// <remarks>
+/// 光有件数不足以排查"为什么一直补不进去"：得看到底是哪几件、试了几次、上一次失败的具体原因。
+/// <paramref name="Attempts"/> 与 <paramref name="LastError"/> 来自补传失败时写的旁车文件，
+/// 补传成功（文件被删）时一起消失。
+/// </remarks>
+public sealed record SpoolEntry(
+    string FileName,
+    DateTime CreatedAt,
+    string MonthKey,
+    string StationCode,
+    string PalletCode,
+    string SerialNo,
+    DateTime TriggerTime,
+    short ResultCode,
+    int Attempts,
+    DateTime? LastAttemptAt,
+    string? LastError);
+
+/// <summary>手动补传一条的结果。</summary>
+public sealed record SpoolReplayResult(bool Ok, string? Error)
+{
+    public static SpoolReplayResult Success { get; } = new(true, null);
+}
+
 public interface ISpoolStore
 {
-    Task SaveAsync(CollectSaveRequest request, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// 把一次落库失败的采集请求缓存到本地。
+    /// </summary>
+    /// <returns>缓存文件名。</returns>
+    /// <remarks>
+    /// 返回文件名是为了让调用方把它写进日志：光有"工站 ST020 写库失败"这一行，
+    /// 与之后那行"补传成功 datatrace_..._xxx.spool.json"之间没有任何共同字段，
+    /// 事后只能靠时间戳手工比对。文件名是这两端天然的交汇点。
+    /// </remarks>
+    Task<string> SaveAsync(CollectSaveRequest request, CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<(string FileName, CollectSaveRequest Request)>> ListAsync(CancellationToken cancellationToken = default);
     Task DeleteAsync(string fileName, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// 按文件名读回一条缓存；文件不在（多半刚被补传成功或清理）或读不出来时返回 null。
+    /// </summary>
+    /// <remarks>
+    /// 手动补传单条走这里，而不是 <see cref="ListAsync"/>：队列大起来之后，
+    /// 为找一条而把整队反序列化一遍，点击的代价会随队列长度增长。
+    /// </remarks>
+    Task<CollectSaveRequest?> ReadOneAsync(string fileName, CancellationToken cancellationToken = default);
+
     /// <summary>只数文件、不读内容。看板和报警轮询用它，避免把每条缓存反序列化一遍。</summary>
     Task<SpoolBacklog> DescribeAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>带失败记录的清单。会反序列化每条缓存，只给诊断页按需调用。</summary>
+    Task<IReadOnlyList<SpoolEntry>> ListEntriesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 记下一次补传失败：尝试次数加一，并把原因写进旁车文件。
+    /// </summary>
+    /// <remarks>
+    /// 不写旁车就只能靠翻日志 —— 而日志是滚动且有限量的，等你要查"昨天为什么补不进去"时它可能已经被滚掉了。
+    /// </remarks>
+    Task NoteFailureAsync(string fileName, string error, CancellationToken cancellationToken = default);
 }

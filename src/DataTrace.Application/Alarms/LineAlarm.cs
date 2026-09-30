@@ -11,7 +11,10 @@ public enum LineAlarmKind
     SessionSuperseded = 6,
     ConsecutiveWarning = 7,
     ProcessDrift = 8,
-    OpenSession = 9
+    OpenSession = 9,
+
+    /// <summary>数据盘剩余空间不足。不看采集开关：产线停下磁盘照样会被备份与归档吃掉。</summary>
+    DiskLow = 10
 }
 
 /// <summary>同一工站上分开计的两串连续不合格。</summary>

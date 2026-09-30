@@ -1,21 +1,18 @@
-using DataTrace.Application.Configuration;
-using DataTrace.Application.Runtime;
-using Microsoft.Extensions.DependencyInjection;
+using DataTrace.Domain.Constants;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace DataTrace.Collector;
 
+/// <summary>周期性把写库失败的缓存补传进去。真正的重放逻辑在 <see cref="SpoolReplayRunner"/>（与手动补传共用）。</summary>
 public sealed class SpoolReplayService : BackgroundService
 {
-    private readonly IServiceScopeFactory _scopeFactory;
-    private readonly ISpoolStore _spool;
+    private readonly SpoolReplayRunner _runner;
     private readonly ILogger<SpoolReplayService> _logger;
 
-    public SpoolReplayService(IServiceScopeFactory scopeFactory, ISpoolStore spool, ILogger<SpoolReplayService> logger)
+    public SpoolReplayService(SpoolReplayRunner runner, ILogger<SpoolReplayService> logger)
     {
-        _scopeFactory = scopeFactory;
-        _spool = spool;
+        _runner = runner;
         _logger = logger;
     }
 
@@ -25,33 +22,29 @@ public sealed class SpoolReplayService : BackgroundService
         {
             try
             {
-                var items = await _spool.ListAsync(stoppingToken).ConfigureAwait(false);
-                if (items.Count > 0)
+                var done = await _runner.ReplayAllAsync(stoppingToken).ConfigureAwait(false);
+                if (done > 0)
                 {
-                    await using var scope = _scopeFactory.CreateAsyncScope();
-                    var runtime = scope.ServiceProvider.GetRequiredService<ICollectWriter>();
-                    foreach (var (file, request) in items)
-                    {
-                        try
-                        {
-                            await runtime.SaveAsync(request, stoppingToken).ConfigureAwait(false);
-                            await _spool.DeleteAsync(file, stoppingToken).ConfigureAwait(false);
-                            _logger.LogInformation("补传成功 {File}", file);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "补传失败 {File}，稍后重试", file);
-                            break;
-                        }
-                    }
+                    _logger.LogInformation("本轮补传入库 {Count} 条", done);
                 }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "补传循环异常");
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken).ConfigureAwait(false);
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(SystemDefaults.SpoolReplaySeconds), stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
     }
 }

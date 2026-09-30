@@ -26,7 +26,7 @@ public class VisualRegressionE2ETests : E2ETestBase
     [
         "/", "/query", "/reports", "/curve-baseline", "/logs",
         "/config/plc", "/config/stations", "/config/recipes",
-        "/config/settings", "/simulate", "/users"
+        "/config/settings", "/simulate", "/diagnostics", "/users"
     ];
 
     public VisualRegressionE2ETests(WebAppFixture app, BrowserFixture browser)

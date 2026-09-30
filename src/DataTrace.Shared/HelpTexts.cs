@@ -178,7 +178,7 @@ public static class HelpTexts
 
     public static readonly HelpTopic ScanInterval = new(
         "扫描间隔",
-        "采集端轮询 PLC 的周期。调小只是更频繁地问，不代表数据会更准。",
+        "采集端轮询 PLC 的周期，从上一轮开始算；调小只是更频繁地问，不代表数据会更准。",
         $"范围 {SettingsLimits.MinScanIntervalMs}–{SettingsLimits.MaxScanIntervalMs} 毫秒；太小常表现为通讯超时或丢点。");
 
     public static readonly HelpTopic WriteRetry = new(
@@ -203,8 +203,30 @@ public static class HelpTexts
 
     public static readonly HelpTopic AlarmCall = new(
         "异常呼叫",
-        $"心跳、故障、补传、连续 {SystemDefaults.ConsecutiveNgAlarmCount} 件预警或不合格、漂移、在制超时都会响铃，直到有人接手。",
-        "待接手前会响并重复通知；接手后停铃。托盘被盖掉同样要接手。");
+        $"心跳、故障、磁盘不足、补传、连续 {SystemDefaults.ConsecutiveNgAlarmCount} 件预警或不合格、漂移、在制超时都会响铃，直到有人接手。",
+        $"待接手前会响并重复通知；接手后停铃。托盘被盖掉同样要接手。数据盘剩余不足 {SystemDefaults.MinDiskFreeMegabytes} MB 也会呼叫。");
+
+    // ---------- 诊断页 ----------
+    public static readonly HelpTopic CollectorLoop = new(
+        "采集循环",
+        "一轮扫描的耗时：读触发位、下发采集、写心跳，不含随后的等待间隔。",
+        $"超过配置扫描间隔即记一次超时；近期最多留 {SystemDefaults.CollectorLoopHistory} 轮，重启即清空。");
+
+    public static readonly HelpTopic PlcTraffic = new(
+        "PLC 通信",
+        "每台 PLC 的每次读/写：地址、字数、耗时、成败与前几个字的值。",
+        $"只留最近 {SystemDefaults.PlcTrafficCapacity} 条，其中失败另留 {SystemDefaults.PlcTrafficFailureCapacity} 条，免得被成功请求挤掉。");
+
+    public static readonly HelpTopic SpoolQueue = new(
+        "补传队列",
+        $"写库失败的件先落本地缓存，每 {SystemDefaults.SpoolReplaySeconds} 秒重试一次，成功即出队。",
+        "手工补传与后台共用一把锁，不会写两遍；丢弃之后无法恢复。");
+
+    public static readonly HelpTopic PalletTransit = new(
+        "托盘时序",
+        "从首站触发到末站完成；每站标出与上一站的间隔和本站采集耗时。",
+        "缺站时那段间隔是跨过缺站的真实时间；MES 那一节说的是上报，不是判定。");
+
 
     // ---------- 工站配置 ----------
 
@@ -412,7 +434,7 @@ public static class HelpTexts
         return path switch
         {
             "" => [YieldRate, TodayScope, JudgementThreeState, LimitThreeTiers, StaleData, Cadence, ShiftShortfall, NgSource, PieceGap, FirstNgStation, SpecClearance],
-            "query" => [RangeScope, MatchMode, ExportLimit, ResultCode, RecipeScope, JudgementThreeState],
+            "query" => [RangeScope, MatchMode, ExportLimit, ResultCode, RecipeScope, JudgementThreeState, PalletTransit],
             "reports" => [YieldRate, AverageYield, ShiftWindow, ShiftShortfall, NgSource, RecipeScope, IssueShare, LimitThreeTiers, TrendSampleLimit, Capability, SegmentAsterisk, FirstNgStation, SpecClearance, MissingPoint],
             "curve-baseline" => [BaselineSampleCounts, RecipeMismatch, DeviationThresholds, OnlineBaseline, CriterionDisabled, CurveFeatureAxis],
             "logs" => [LogTimeRange, LogTimestamp, LogEntityKey, LogChange, LogKeyword],
@@ -421,6 +443,7 @@ public static class HelpTexts
             "config/recipes" => [RecipeCode, RecipeEnabled, RecipeCopy, LimitMergeRule, TargetValue, LimitEffect, CoverablePoints],
             "config/settings" => [SaveToDispatch, ScanInterval, WriteRetry, ShiftWindow, ConfigSource, Retention, MesOutbox, AlarmCall],
             "alarms" => [AlarmCall],
+            "diagnostics" => [CollectorLoop, PlcTraffic, SpoolQueue],
             "simulate" => [SimAutoRun, SimPalletInterval, SimNgPercent, SimRunLine, SimLastWriteBack],
             "users" => [Lockout, RoleScope, DeleteUser, UserNameImmutable, DisplayName],
             "record" => [LimitThreeTiers, JudgementThreeState, LimitColumns, OverTolerance, CurvePointCount, DeviationThresholds, RecipeScope],
@@ -452,6 +475,27 @@ public static class HelpTexts
                     "顶栏右侧的大屏按钮会隐藏菜单与顶栏、放大看板字号，适合车间常亮屏。开关按浏览器记忆，换一台设备或换一个浏览器要各自设置一次。",
                     "大屏期间「最近采集」面板不可展开，右下角会保留一个「退出大屏」按钮，停在任意页面都能退出。")
             ],
+            "diagnostics" =>
+            [
+                Section("系统健康",
+                    "顶部一行是与 /healthz 同一份判据的探活：配置库连不连得上、数据盘与运行目录写不写得进去、磁盘还剩多少、采集服务心跳还新不新鲜。每项给出正常或异常，异常项附上原因。",
+                    "这一块每 15 秒复查一次，比页面其余部分的 2 秒刷新慢 —— 探活要写探测文件、查配置库、读磁盘余量，跟着 2 秒跑就成了观测手段自己在制造 IO。任何一项异常都意味着采集可能已经不可靠。"),
+                Section("页面用途",
+                    "诊断页把一个采集进程的内部活动摊开看：系统健康、最近每一轮扫描花了多久、每台 PLC 最近发了哪些请求、写库失败的件还堵在哪一条。它按打开它的人自己刷新，也可以随时「暂停刷新」把这一屏冻成快照慢慢读，恢复时立即取一轮。",
+                    "它回答的是「现在还能不能干活、为什么变慢了、为什么没采上」，不回答「这一件为什么判废」—— 后者去数据查询和记录明细。观测数据只活在内存里，重启即清空；需要长期留痕的证据看滚动日志。"),
+                Section("采集循环怎么读",
+                    "曲线把最近每轮总耗时与当时的扫描间隔画在一起 —— 偶发尖峰在平均值里看不见、在曲线上藏不住；间隔被改过会看到台阶。表格逐行列同一批数据：总耗时，其中的扫描与心跳耗时，参与扫描的 PLC 数，触发数，冷却跳过的 PLC，配置问题跳过的工站。总耗时超过扫描间隔标成超时。",
+                    "先看「最后扫描」距今多久：循环一旦停住，这一页上的平均值与超时数会一直停在最后一轮的样子，比「一切正常」还像正常，只有这一项能戳破它。它与顶部「采集服务心跳」判的不是一件事：心跳只表示服务主循环还在打点（60 秒口径，采集被停用时照样新鲜），而「最后扫描」才表示扫描真的在推进（约 5 倍扫描间隔就会报警），所以同屏出现「心跳正常 + 循环已停」并不矛盾，页面会把该往哪儿查看的话写出来。触发数长期为 0 而跳过数很大时，先去工站配置查触发地址；PLC 冷却数不为 0 说明有连接正在断线重试。心跳与扫描共用同一条串行队列，心跳周期调得很短时它也会把整轮拖长。"),
+                Section("PLC 通信怎么看",
+                    "每台 PLC 一行汇总（总请求、失败数、上次成功距今、最近与最长耗时），展开是逐条流水：读还是写、地址、字数、耗时、成败、错误，以及读回来或写下去的头几个字。它覆盖触发扫描、点位读取、响应码回写与心跳写入。失败记录另存一份，列在流水之前。",
+                    "标题里的请求/失败/最长耗时是服务启动以来的累计值，流水与失败明细只留最近若干条，页面上写出了具体条数；「上次成功」是断线判读最快的一项 —— 失败数看不出已经断了多久，它可以。难得失败一次时，几十条流水几秒就被成功请求冲干净，失败另存那一份因此往往是唯一还留着证据的地方，「失败 N」也不会成为一个点进去看不到任何一条的死数字。耗时是驱动调用本身的时间，不含排队：「流水里每条都很快、但循环总耗时很高」说明瓶颈在排队（PLC 太多或心跳太密），而不是某一次通讯慢。失败连片报同一个错误时，先查网线与 PLC 是否还在运行，再看是否已进入冷却期。"),
+                Section("补传队列与手工处理",
+                    "写库失败的件会落成一条缓存，后台按固定间隔重试；本页把它列出来，连同试了几次、上一次为什么失败，以及最早一笔已经等了多久（超过设定分钟数会进报警页）。单条可以点立即补传；整队补一遍时按钮上会显示已补进去多少条，随时可以叫停。确认这条数据不再需要时点丢弃，缓存文件即被删除。",
+                    "大队列叫停时，正在写的那一条会写完再停 —— 半途丢下会在库里留一份、缓存又还留在盘上，下一轮补传就会把它写第二遍；已补进去的不会回退，剩下的留在队列里。补传失败几乎都是同一个原因（盘满、月库被锁、目录权限），所以整队补传到第一个失败就停，免得把失败次数平摊到每一条上、让「试了几次」失去意义。提示「这条缓存已经不在了」多半是后台刚补传成功，不是出错。丢弃不可恢复，动手前先确认这条记录真的可以不要。队首明细每 10 秒重读一次、件数变化时立即重读，所以「尝试次数」可能比标题数字晚几秒。"),
+                Section("把这一屏带出去",
+                    "顶部的「复制诊断摘要」把系统健康、采集循环、每台 PLC 与补传队列的读数整理成一段纯文本，可以直接贴进工单或群里；「审计日志」打开配置变更与登录记录，用来核对采集有没有被人停用、参数是谁改的。",
+                    "摘要取的是当前内存里的读数，与页面可能差一个刷新节拍；它不含点位值与曲线，那些属于「这一件为什么判废」，去记录明细看。")
+            ],
             "query" =>
             [
                 Section("页面用途",
@@ -459,7 +503,8 @@ public static class HelpTexts
                     "文本输入停止约 400 毫秒后会自动查询；日期和下拉条件变化也会触发查询。筛选条件、页码和页大小保存在 URL 中，可复制链接或刷新后继续查看。"),
                 Section("产品追溯",
                     "输入完整流水号后，系统会在各月份运行库中精确查找，并按月份键和会话 ID 分组，展示工站顺序、采集结果、判定和时间；同一条流水号关联多个会话时必须先选择。缺少会话关联的旧记录会单独列出，无法保证履历完整。",
-                    "工站履历中的缺站提示依据当前启用工站配置，历史期间若调整过路线，提示仅供参考。点采集记录的「明细」可查看完整点位、曲线及原始数据。"),
+                    "工站履历是一条从进首站到末站完成的时序：每站标出它的触发时刻、与上一站完成的间隔、本站采集耗时，末尾接上会话结束与 MES 推送两节。间隔明显偏大的那一段就是这件慢下来的地方，再对照该站的采集信息与点位判断是工艺节拍还是流转等待。",
+                    "工站履历中的缺站提示依据当前启用工站配置，历史期间若调整过路线，提示仅供参考。间隔只算实际发生的那一段，缺站时那一段会如实变长，不代表该站耗时。点采集记录的「明细」可查看完整点位、曲线及原始数据。"),
                 Section("筛选与结果",
                     "起止日期都包含整日。托盘码和流水号采用包含匹配，不是前缀匹配；工站、判定、结果码及具体型号按所选值筛选。型号「全部」不限制型号，「未选型号」只找型号为空的记录。",
                     "命中数是分页前的总数，翻页不会改变它；结果按触发时间从新到旧排列。点击记录行或明细入口可打开完整快照。"),
@@ -558,7 +603,10 @@ public static class HelpTexts
                     "规格限参与 OK/NG 判定，预警带用于提前提示而不单独判废，目标值用于中心线或分析参考。型号覆盖值按字段与点位默认值合并；保存后新的配置版本由采集端后续快照读取，已落库历史记录不会重算。"),
                 Section("曲线与变更风险",
                     "曲线配置要指定序列地址、类型、单位和采样点数；XY 序列应成对设置。点数越多，读取和存储负担越高。波形判据需要绑定存在的序列并设置有效阈值；停用判据会移除该条当前规则。",
-                    "删除工站会删除其点位和曲线定义，删除曲线可能使对应波形基线失效；历史记录本身不会因此重算。修改握手地址、点位来源或限值后，建议用单件仿真/试采集核对结果码、原始值和判定。")
+                    "删除工站会删除其点位和曲线定义，删除曲线可能使对应波形基线失效；历史记录本身不会因此重算。修改握手地址、点位来源或限值后，先用「试读一次」核对这份配置的原始值与判定，再用单件仿真/试采集核对结果码与上报。"),
+                Section("试读（保存前只读核对）",
+                    "点「试读一次」会按页面上当前这份配置（含未保存改动）把该工站的数据只读读一遍，并排列出触发值对照、托盘码、产品位、各点位的原始字与解码值，以及曲线字块是否读齐。地址写错、字序配错、限值不符都能在这里先看出来。",
+                    "试读不落库、不写回、不建会话、不取流水号、不推 MES、不归档文件，也不计入运行状态，所以它替代不了首件确认——回写与上报仍须在停线窗口用一件试件真采一次。采集关闭时该 PLC 没有连接，按钮不可用。")
             ],
             "config/recipes" =>
             [

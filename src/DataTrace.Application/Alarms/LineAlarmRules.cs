@@ -20,7 +20,8 @@ public static class LineAlarmRules
         DateTime? spoolOldestAt = null,
         IReadOnlyList<TagWarningStreak>? warningStreaks = null,
         IReadOnlyList<TagDriftNotice>? drifts = null,
-        IReadOnlyList<OpenSessionNotice>? openSessions = null)
+        IReadOnlyList<OpenSessionNotice>? openSessions = null,
+        long? diskFreeMegabytes = null)
     {
         var alarms = new List<LineAlarm>();
 
@@ -30,6 +31,17 @@ public static class LineAlarmRules
                 "heartbeat",
                 LineAlarmKind.HeartbeatStale,
                 $"采集心跳已停止，超过 {SystemDefaults.StaleHeartbeatSeconds} 秒没有刷新。"));
+        }
+
+        // 磁盘刻意不受 collectEnabled 约束：产线停下来检修时，备份、归档与日志照样在吃盘，
+        // 而"停了就不叫"恰好会让它在最需要看着磁盘的时候安静。
+        // 读不到剩余空间（null）不叫 —— 那是探活该报的"不知道"，不是这里该报的"确实不够"。
+        if (diskFreeMegabytes is { } freeMegabytes && freeMegabytes < SystemDefaults.MinDiskFreeMegabytes)
+        {
+            alarms.Add(new LineAlarm(
+                "disk",
+                LineAlarmKind.DiskLow,
+                $"数据盘只剩 {freeMegabytes} MB，低于 {SystemDefaults.MinDiskFreeMegabytes} MB；写满后采集会开始落库失败。"));
         }
 
         if (collectEnabled)

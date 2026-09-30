@@ -57,6 +57,68 @@ public class LineAlarmTests
         Assert.Empty(snapshot.Alarms);
     }
 
+    /// <summary>
+    /// 磁盘不足要叫人，而且采集关着的时候照样叫。
+    /// </summary>
+    /// <remarks>
+    /// 产线停下来检修时，备份、归档与日志仍然在吃盘。若跟着 collectEnabled 一起静音，
+    /// 它恰好会在最需要看着磁盘的那段时间闭上嘴 —— 等再开机就是一堆落库失败。
+    /// </remarks>
+    [Fact]
+    public void Low_disk_calls_even_while_collection_is_stopped()
+    {
+        var snapshot = LineAlarmRules.Evaluate(
+            collectEnabled: false,
+            lastCollectorAt: default,
+            mesEnabled: false,
+            mesPendingCount: 0,
+            mesOldestPendingAt: null,
+            ngStreaks: [],
+            Now,
+            diskFreeMegabytes: SystemDefaults.MinDiskFreeMegabytes - 1);
+
+        var alarm = Assert.Single(snapshot.Alarms);
+        Assert.Equal(LineAlarmKind.DiskLow, alarm.Kind);
+        Assert.Equal("disk", alarm.Key);
+    }
+
+    [Fact]
+    public void Disk_at_the_threshold_does_not_call()
+    {
+        var snapshot = LineAlarmRules.Evaluate(
+            collectEnabled: true,
+            lastCollectorAt: Now,
+            mesEnabled: false,
+            mesPendingCount: 0,
+            mesOldestPendingAt: null,
+            ngStreaks: [],
+            Now,
+            diskFreeMegabytes: SystemDefaults.MinDiskFreeMegabytes);
+
+        Assert.Empty(snapshot.Alarms);
+    }
+
+    /// <summary>
+    /// 读不到剩余空间（null）不叫 —— "不知道"归探活报，报警只对"确实不够"响。
+    /// </summary>
+    /// <remarks>
+    /// 否则网络盘一次瞬时抖动就会在全厂响铃，而现场除了等它自己恢复什么都做不了。
+    /// </remarks>
+    [Fact]
+    public void Unknown_disk_free_does_not_call()
+    {
+        var snapshot = LineAlarmRules.Evaluate(
+            collectEnabled: true,
+            lastCollectorAt: Now,
+            mesEnabled: false,
+            mesPendingCount: 0,
+            mesOldestPendingAt: null,
+            ngStreaks: [],
+            Now);
+
+        Assert.Empty(snapshot.Alarms);
+    }
+
     [Fact]
     public void Stale_heartbeat_calls_only_while_collection_is_enabled()
     {

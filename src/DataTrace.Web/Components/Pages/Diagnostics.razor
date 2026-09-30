@@ -1,0 +1,918 @@
+@page "/diagnostics"
+@attribute [Authorize(Roles = "Administrator,Engineer")]
+@using System.Text
+@using DataTrace.Application.Realtime
+@using DataTrace.Application.Runtime
+@using DataTrace.Collector
+@using DataTrace.Domain.Constants
+@using DataTrace.Shared
+@implements IDisposable
+@inject ICollectorDiagnostics Diag
+@inject IHealthProbe Probe
+@inject ISpoolStore Spool
+@inject SpoolReplayRunner Runner
+@inject IDialogService Dialogs
+@inject DtToast Toast
+@inject IJSRuntime Js
+
+@* 这一页的职责是回答"为什么变慢了、为什么没采上"，不是"这一件为什么判废"。
+   所以三块内容都只读、只活在内存里，不参与看板的实时推送 —— 观测手段不该反过来成为负担。 *@
+<PageHeader Title="运行诊断" HelpRoute="diagnostics" Busy="@_busy"
+            Description="看采集进程这一会儿在干什么：扫描慢在哪、PLC 在发什么、写库失败的件还堵在哪。数据只在内存里，重启即清空。">
+    <Actions>
+        <MudText Typo="Typo.caption" Class="dt-muted">@RefreshCaption</MudText>
+        <MudButton Size="Size.Small" Variant="Variant.Text"
+                   StartIcon="@(_paused ? Icons.Material.Filled.PlayArrow : Icons.Material.Filled.Pause)"
+                   OnClick="TogglePauseAsync">@(_paused ? "继续刷新" : "暂停刷新")</MudButton>
+        @* 现场排障的最后一公里是"把看到的东西带出去"：截图不能检索、也不能粘贴。 *@
+        <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ContentCopy"
+                   OnClick="CopyDigestAsync">复制诊断摘要</MudButton>
+        <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.History"
+                   Href="/logs">审计日志</MudButton>
+    </Actions>
+</PageHeader>
+
+@if (_loadError is not null)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-3">
+        <div class="d-flex align-center flex-wrap gap-2">
+            <span>@_loadError</span>
+            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Refresh"
+                       OnClick="@(() => RefreshAsync(showBusy: true))">重试</MudButton>
+        </div>
+    </MudAlert>
+}
+
+@* 与 /healthz 同一份判据：这一页要回答"现在还能不能干活"，
+   而其中一半（配置库、数据盘、磁盘余量、采集服务心跳）原本要另开一个标签页才看得到。 *@
+@if (_health is { } health)
+{
+    <MudPaper Class="pa-2 mb-3 dt-diag-health">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
+            <MudText Typo="Typo.subtitle2">系统健康</MudText>
+            <MudChip T="string" Size="Size.Small"
+                     Color="@(health.Status == "healthy" ? Color.Success : Color.Error)"
+                     Variant="Variant.Filled">
+                @(health.Status == "healthy" ? "全部正常" : "有异常项")
+            </MudChip>
+            <MudText Typo="Typo.caption" Class="dt-muted">
+                与 /healthz 同一份判据 · 每 @(HealthTickMs / 1000) 秒复查 · 版本 @health.Version · 已运行 @UptimeText(health.UptimeSeconds)
+            </MudText>
+        </MudStack>
+        <div class="dt-diag-health-grid">
+            @foreach (var check in health.Checks)
+            {
+                <div class="dt-diag-health-item">
+                    <span class="@(check.Healthy ? "dt-diag-health-ok" : "dt-diag-health-bad")">
+                        @(check.Healthy ? "正常" : "异常")
+                    </span>
+                    <span>@HealthName(check.Name)</span>
+                    <span class="dt-muted">@check.Detail</span>
+                </div>
+            }
+        </div>
+        @if (_healthError is { } healthError)
+        {
+            <MudText Typo="Typo.caption" Color="Color.Warning" Class="mt-1">@healthError</MudText>
+        }
+    </MudPaper>
+}
+
+<MudText Typo="Typo.subtitle1" Class="mb-2">
+    采集循环 <InfoHint Topic="HelpTexts.CollectorLoop" />
+</MudText>
+@if (_loop.Ticks.Count == 0)
+{
+    <MudText Typo="Typo.body2" Class="dt-muted mb-4">
+        还没有采集循环记录。采集关闭时不会有记录（这时上方「采集服务心跳」仍显示正常，那是服务在打点，不是在扫描）；刚启动则需要等下一轮扫描。
+    </MudText>
+}
+else
+{
+    <MudStack Row="true" Spacing="2" Class="mb-2 flex-wrap">
+        @* 判活要放在第一位：循环一旦停住，Ticks 就不再更新，后面的平均值/最长/超时数
+           会一直停在最后一轮的样子，比"一切正常"还像正常。 *@
+        <MudChip T="string" Size="Size.Small"
+                 Color="@(LoopStale ? Color.Error : Color.Default)"
+                 Variant="@(LoopStale ? Variant.Filled : Variant.Outlined)">
+            最后扫描 @SinceText(SinceLastTick)
+        </MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">近期 @_loop.Ticks.Count 轮</MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">平均 @_loop.AverageWorkMs ms</MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">最长 @_loop.MaxWorkMs ms</MudChip>
+        <MudChip T="string" Size="Size.Small"
+                 Color="@(_loop.OverrunCount > 0 ? Color.Warning : Color.Default)"
+                 Variant="@(_loop.OverrunCount > 0 ? Variant.Filled : Variant.Outlined)">
+            超时 @_loop.OverrunCount 轮
+        </MudChip>
+    </MudStack>
+    @if (LoopStale)
+    {
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true" Class="mb-2">
+            采集循环已停止推进：最后一轮是 @SinceText(SinceLastTick)。下面这些数字是它停下之前的旧记录，
+            不代表现在还在采 —— @LoopStopAdvice
+        </MudAlert>
+    }
+    @* 形状优先于平均：偶发 200 ms 的抖动在"平均 5 ms"里直接消失，在曲线上藏不住。 *@
+    <div class="mb-3">
+        <LineChart Series="LoopSeries" Height="200" ShowPoints="false"
+                   SeriesAxisName="轮次" XStartText="@LoopStartText" XEndText="@LoopEndText"
+                   EmptyText="还没有采集循环记录" />
+    </div>
+    <MudTable Items="_loop.Ticks" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm"
+              FixedHeader="true" Height="320px" Class="mb-4">
+        <HeaderContent>
+            <MudTh>时间</MudTh>
+            <MudTh Class="dt-num">总耗时</MudTh>
+            <MudTh Class="dt-num">扫描</MudTh>
+            <MudTh Class="dt-num">心跳</MudTh>
+            <MudTh Class="dt-num">PLC</MudTh>
+            <MudTh Class="dt-num">触发</MudTh>
+            <MudTh Class="dt-num">冷却跳过</MudTh>
+            <MudTh Class="dt-num">工站跳过</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="时间">@context.At.ToString("HH:mm:ss")</MudTd>
+            <MudTd DataLabel="总耗时" Class="dt-num dt-nowrap">
+                <span class="@(context.Overran ? "dt-diag-overrun" : null)">@context.WorkMs ms</span>
+                @if (context.Overran)
+                {
+                    <MudText Typo="Typo.caption" Class="dt-muted">超过设置的 @context.ConfiguredIntervalMs ms</MudText>
+                }
+            </MudTd>
+            <MudTd DataLabel="扫描" Class="dt-num dt-nowrap">@context.ScanMs ms</MudTd>
+            <MudTd DataLabel="心跳" Class="dt-num dt-nowrap">@context.HeartbeatMs ms</MudTd>
+            <MudTd DataLabel="PLC" Class="dt-num">@context.PlcCount</MudTd>
+            <MudTd DataLabel="触发" Class="dt-num">@context.TriggeredCount</MudTd>
+            <MudTd DataLabel="冷却跳过" Class="dt-num">@context.CoolingDownPlcCount</MudTd>
+            <MudTd DataLabel="工站跳过" Class="dt-num">@context.SkippedStationCount</MudTd>
+        </RowTemplate>
+    </MudTable>
+}
+
+<MudText Typo="Typo.subtitle1" Class="mb-2">
+    PLC 通信 <InfoHint Topic="HelpTexts.PlcTraffic" />
+</MudText>
+@if (_traffic.Count == 0)
+{
+    <MudText Typo="Typo.body2" Class="dt-muted mb-4">还没有 PLC 通信记录。没有启用的 PLC 连接时这里会是空的。</MudText>
+}
+else
+{
+    @* 累计与最近是两种口径，写在最前面：不标的话，"最长 6000 ms"会被当成刚才那一次，
+       而它可能是几小时前的那一回。 *@
+    <MudText Typo="Typo.caption" Class="dt-muted mb-1">
+        标题里的请求数、失败数与最长耗时是采集服务启动以来的累计值（进程重启即清零）；
+        展开后流水只留最近 @SystemDefaults.PlcTrafficCapacity 条，失败明细只留 @SystemDefaults.PlcTrafficFailureCapacity 条。
+    </MudText>
+    <MudExpansionPanels Class="mb-4" Elevation="1" Dense="true">
+        @foreach (var plc in _traffic)
+        {
+            <MudExpansionPanel Class="dt-diag-plc">
+                <TitleContent>
+                    <div class="dt-diag-plc-title">
+                        <MudText Typo="Typo.subtitle2" Class="mb-0">@plc.Name</MudText>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">请求 @plc.TotalCount</MudChip>
+                        <MudChip T="string" Size="Size.Small"
+                                 Color="@(plc.FailureCount > 0 ? Color.Error : Color.Default)"
+                                 Variant="@(plc.FailureCount > 0 ? Variant.Filled : Variant.Outlined)">
+                            失败 @plc.FailureCount
+                        </MudChip>
+                        @* 断线时最快的判读：失败数只是累计值，看不出来已经断了多久。 *@
+                        <MudChip T="string" Size="Size.Small"
+                                 Color="@(NeverSucceeded(plc) ? Color.Error : Color.Default)"
+                                 Variant="@(NeverSucceeded(plc) ? Variant.Filled : Variant.Outlined)">
+                            @SuccessSinceText(plc)
+                        </MudChip>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">最近 @plc.LastDurationMs ms</MudChip>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">最长 @plc.MaxDurationMs ms</MudChip>
+                    </div>
+                </TitleContent>
+                <ChildContent>
+                    @if (plc.Recent.Count == 0)
+                    {
+                        <MudText Typo="Typo.body2" Class="dt-muted">这台 PLC 还没有发过请求。</MudText>
+                    }
+                    else
+                    {
+                        @* 失败另存的那一份排在最前：标题里的"失败 N"如果点进去看不到任何一条，
+                           那个数字就成了死数 —— 高频请求下几十条流水只覆盖几秒。 *@
+                        @if (HiddenFailures(plc) is { Count: > 0 } hidden)
+                        {
+                            @* 说明写明"最多留几条"：上面那个"失败 N"是累计值，这里列不出 N 条是正常的，
+                               不写清楚的话，它看起来像一个对不上的数字。 *@
+                            <MudText Typo="Typo.caption" Class="dt-muted mb-1">
+                                另有 @hidden.Count 条失败已被流水挤掉；失败明细最多保留最近 @SystemDefaults.PlcTrafficFailureCapacity 条，更早的只计入上面的累计失败数：
+                            </MudText>
+                            <div class="dt-diag-failures">
+                                @foreach (var failure in hidden)
+                                {
+                                    <div class="dt-diag-failure">
+                                        <span>@failure.At.ToString("HH:mm:ss.fff")</span>
+                                        <span class="dt-diag-failure-addr">@failure.Address</span>
+                                        <span class="dt-diag-failure-error">@failure.Error</span>
+                                    </div>
+                                }
+                            </div>
+                        }
+                        <MudTable Items="plc.Recent" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm"
+                                  Class="dt-diag-traffic">
+                            <HeaderContent>
+                                <MudTh>时间</MudTh>
+                                <MudTh>方向</MudTh>
+                                <MudTh>地址</MudTh>
+                                <MudTh Class="dt-num">字数</MudTh>
+                                <MudTh Class="dt-num">耗时</MudTh>
+                                <MudTh>结果</MudTh>
+                                <MudTh>值</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="时间">@context.At.ToString("HH:mm:ss.fff")</MudTd>
+                                <MudTd DataLabel="方向">@(context.IsWrite ? "写" : "读")</MudTd>
+                                <MudTd DataLabel="地址" Class="dt-nowrap">@context.Address</MudTd>
+                                <MudTd DataLabel="字数" Class="dt-num">@context.WordCount</MudTd>
+                                <MudTd DataLabel="耗时" Class="dt-num dt-nowrap">@context.DurationMs ms</MudTd>
+                                <MudTd DataLabel="结果">
+                                    @if (context.Ok)
+                                    {
+                                        <span>成功</span>
+                                    }
+                                    else
+                                    {
+                                        <MudText Typo="Typo.caption" Color="Color.Error">@context.Error</MudText>
+                                    }
+                                </MudTd>
+                                <MudTd DataLabel="值" Class="dt-nowrap">@ValueText(context)</MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                    }
+                </ChildContent>
+            </MudExpansionPanel>
+        }
+    </MudExpansionPanels>
+}
+
+<MudText Typo="Typo.subtitle1" Class="mb-2">
+    补传队列 <InfoHint Topic="HelpTexts.SpoolQueue" />
+</MudText>
+@if (_spoolCount == 0)
+{
+    <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true" Class="mb-4">
+        补传队列是空的：没有写库失败等待补传的件。
+    </MudAlert>
+}
+else
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mb-2">
+        <div class="d-flex align-center flex-wrap gap-2">
+            <span>
+                @_spoolCount 件写库失败等待补传@(_spoolOldest is { } oldest ? $"，最早一笔 {oldest:MM-dd HH:mm:ss}（已等待 {WaitText(DateTime.Now - oldest)}；超过 {SystemDefaults.SpoolBacklogWarnMinutes} 分钟就会进报警页）" : "")。
+            </span>
+            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@(_replayingAll ? Icons.Material.Filled.Sync : Icons.Material.Filled.CloudUpload)"
+                       Disabled="_replayingAll || _workingFile is not null"
+                       OnClick="ReplayAllAsync">
+                @(_replayingAll ? $"补传中…已 {_replayDone} 条" : "整队补传")
+            </MudButton>
+            @* 大队列一次补几分钟：既要知道走到哪了，也要停得下来。 *@
+            @if (_replayingAll)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="CancelReplayAll">取消</MudButton>
+            }
+        </div>
+    </MudAlert>
+
+    @if (_spoolTruncated)
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Dense="true" Class="mb-2">
+            <div class="d-flex align-center flex-wrap gap-2">
+                <span>队列有 @_spoolCount 条，超过 @SpoolDetailLimit 条就不再自动列明细 —— 读一遍要把每条缓存整块反序列化，这么多条不值得自动做。</span>
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="ListDetailOnceAsync">列出明细</MudButton>
+            </div>
+        </MudAlert>
+    }
+    else
+    {
+        <MudText Typo="Typo.caption" Class="dt-muted mb-1">
+            明细读取于 @(_entriesAt is { } readAt ? readAt.ToString("HH:mm:ss") : "—")：
+            件数每 @(DiagTickMs / 1000) 秒更新，明细每 @(SpoolDetailTickMs / 1000) 秒重读，件数变化时立即重读。
+        </MudText>
+        <MudTable Items="_entries" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-4">
+            <HeaderContent>
+                <MudTh>入队时间</MudTh>
+                <MudTh>工站</MudTh>
+                <MudTh>托盘码</MudTh>
+                <MudTh>流水号</MudTh>
+                <MudTh>月份</MudTh>
+                <MudTh Class="dt-num">尝试</MudTh>
+                <MudTh>上次失败</MudTh>
+                <MudTh>操作</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="入队时间" Class="dt-nowrap">@context.CreatedAt.ToString("MM-dd HH:mm:ss")</MudTd>
+                <MudTd DataLabel="工站">@context.StationCode</MudTd>
+                <MudTd DataLabel="托盘码">@context.PalletCode</MudTd>
+                <MudTd DataLabel="流水号">@context.SerialNo</MudTd>
+                <MudTd DataLabel="月份">@context.MonthKey</MudTd>
+                <MudTd DataLabel="尝试" Class="dt-num">
+                    @context.Attempts
+                    @if (context.LastAttemptAt is { } lastAt)
+                    {
+                        <MudText Typo="Typo.caption" Class="dt-muted">@lastAt.ToString("HH:mm:ss")</MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="上次失败">
+                    @if (string.IsNullOrEmpty(context.LastError))
+                    {
+                        <span>还没试过</span>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption" Color="Color.Error">@context.LastError</MudText>
+                    }
+                </MudTd>
+                <MudTd DataLabel="操作">
+                    <MudStack Row="true" Spacing="1">
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                   Disabled="_workingFile is not null || _replayingAll"
+                                   StartIcon="@(_workingFile == context.FileName ? Icons.Material.Filled.Sync : null)"
+                                   OnClick="@(() => ReplayOneAsync(context))">
+                            @(_workingFile == context.FileName ? "补传中…" : "立即补传")
+                        </MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                                   Disabled="_workingFile is not null || _replayingAll"
+                                   OnClick="@(() => DiscardAsync(context))">丢弃</MudButton>
+                    </MudStack>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+}
+
+@code {
+    /// <summary>页面自己的刷新节拍。这一页是拉模式，不订阅任何推送。</summary>
+    private const int DiagTickMs = 2000;
+
+    /// <summary>超过这个条数就不再自动读每条缓存的内容。</summary>
+    private const int SpoolDetailLimit = 200;
+
+    /// <summary>诊断摘要里每台 PLC 带上的最新失败条数：够对方看出"最近在报什么错"即可。</summary>
+    private const int DigestFailureLines = 3;
+
+    /// <summary>
+    /// 补传明细（尝试次数、上次失败原因）的重读节拍。
+    /// </summary>
+    /// <remarks>
+    /// 比页面的 2 秒刷新慢得多：读一遍明细要把队列里每条缓存和它的旁车都反序列化一次，
+    /// 而"试了几次、上次为什么失败"本来就不是秒级变化的东西。件数与最早时间仍跟着主刷新走；
+    /// 件数变了（有人补传成功、又堵进来新件）则立即重读，不用等这一拍。
+    /// </remarks>
+    private const int SpoolDetailTickMs = 10_000;
+
+    /// <summary>
+    /// 探活的复查节拍。
+    /// </summary>
+    /// <remarks>
+    /// 刻意比页面的 2 秒刷新慢得多：探活要写探测文件、查配置库、读磁盘余量，
+    /// 每两秒做一遍就成了"观测手段自己制造 IO"。而这几项（能不能写、还剩多少）
+    /// 本来也不是秒级变化的东西。
+    /// </remarks>
+    private const int HealthTickMs = 15_000;
+
+    private HealthReport? _health;
+    private DateTime? _healthAt;
+    private string? _healthError;
+
+    private CollectorLoopView _loop = CollectorLoopView.Empty(CollectorDiagnostics.LoopCapacity);
+    private IReadOnlyList<PlcTrafficView> _traffic = [];
+    private IReadOnlyList<SpoolEntry> _entries = [];
+    private int _spoolCount;
+    private DateTime? _spoolOldest;
+    private int _entriesCount;
+    private DateTime? _entriesAt;
+    private bool _spoolTruncated;
+    private bool _forceSpoolDetail;
+    private string? _loadError;
+    private DateTime? _refreshedAt;
+    private bool _busy;
+    private bool _refreshing;
+    private bool _refetchRequested;
+    private bool _paused;
+    private bool _replayingAll;
+    private int _replayDone;
+    private CancellationTokenSource? _replayCts;
+    private string? _workingFile;
+    private Timer? _timer;
+
+    /// <summary>
+    /// 采集循环的趋势线：每轮总耗时，对照当时的扫描间隔。
+    /// </summary>
+    /// <remarks>
+    /// Ticks 是倒序（最新在前），折线要从左往右走时间，所以这里反转。
+    /// 间隔画成第二条线而不是一条基准线，是因为间隔本身可能被改过 —— 每轮用它自己的值，
+    /// 改过间隔的地方图上会看得见台阶。
+    /// </remarks>
+    private LineSeries[] LoopSeries => _loop.Ticks.Count == 0
+        ? []
+        :
+        [
+            new LineSeries
+            {
+                Name = "每轮耗时",
+                Values = _loop.Ticks.Select(t => (float)t.WorkMs).Reverse().ToArray(),
+                Color = ChartColors.Primary,
+                Unit = "ms"
+            },
+            new LineSeries
+            {
+                Name = "扫描间隔",
+                Values = _loop.Ticks.Select(t => (float)t.ConfiguredIntervalMs).Reverse().ToArray(),
+                Color = ChartColors.Secondary,
+                Unit = "ms"
+            }
+        ];
+
+    /// <summary>折线首尾的时间标注。Ticks 倒序：末位是最早一轮，首位是最新一轮。</summary>
+    private string LoopStartText => _loop.Ticks.Count == 0 ? "" : _loop.Ticks[^1].At.ToString("HH:mm:ss");
+
+    private string LoopEndText => _loop.Ticks.Count == 0 ? "" : _loop.Ticks[0].At.ToString("HH:mm:ss");
+
+    /// <summary>最后一轮采集采样距今。Ticks 是倒序（最新在前）。</summary>
+    private TimeSpan? SinceLastTick => _loop.Ticks.Count > 0 ? DateTime.Now - _loop.Ticks[0].At : null;
+
+    /// <summary>页头右侧那行字：暂停时说清这是哪一刻的快照，运行时说明刷新节拍。</summary>
+    private string RefreshCaption => _paused
+        ? $"已暂停{(_refreshedAt is { } snapshotAt ? $" · 显示 {snapshotAt:HH:mm:ss} 的快照" : "")}"
+        : $"{(_refreshedAt is { } at ? $"{at:HH:mm:ss} 更新 · " : "")}每 {DiagTickMs / 1000} 秒自动刷新";
+
+    /// <summary>
+    /// 采集循环是不是已经停了。
+    /// </summary>
+    /// <remarks>
+    /// 阈值取"配置间隔的 5 倍"（下限 2 秒）：单轮偶尔慢一下不算停，
+    /// 但连续五轮都没出记录，那就不是"慢"而是"停了"。
+    /// </remarks>
+    private bool LoopStale => _loop.Ticks.Count > 0
+        && SinceLastTick is { } gap
+        && gap.TotalMilliseconds > Math.Max(_loop.Ticks[0].ConfiguredIntervalMs * 5, 2000);
+
+    /// <summary>探活里"采集服务心跳"这一项的结论；报告里没有它（探活没读成）时为 null。</summary>
+    private bool? ServiceHeartbeatHealthy
+        => _health?.Checks.FirstOrDefault(check => check.Name == "collector")?.Healthy;
+
+    /// <summary>
+    /// "循环停了"往下该怎么查 —— 结合探活里那条"采集服务心跳"给出方向。
+    /// </summary>
+    /// <remarks>
+    /// 两条判据不是一回事：心跳按 60 秒判，只表示采集服务的主循环还在打点 ——
+    /// 采集被停用时它照样新鲜；这里的"停止推进"按 5×扫描间隔判（下限 2 秒），说的是扫描真的不再推进。
+    /// 两边阈值差得远，同屏出现"心跳正常 + 已停止推进"是正常的，所以要把这层区别说出来。
+    /// </remarks>
+    private string LoopStopAdvice => ServiceHeartbeatHealthy switch
+    {
+        true => "采集服务心跳还是新鲜的，说明服务在跑、停的是扫描本身：先确认采集有没有被停用（设置页的采集开关），再看日志里是不是每轮都停在配置读取那一步。",
+        false => "连采集服务心跳也停了，请确认采集服务是否仍在运行。",
+        _ => "请确认采集服务是否仍在运行。"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync(showBusy: true);
+        _timer = new Timer(_ => _ = InvokeAsync(TickAsync), null, DiagTickMs, DiagTickMs);
+    }
+
+    /// <summary>
+    /// 定时跳：取一轮数，然后显式重画。
+    /// </summary>
+    /// <remarks>
+    /// 定时器不是事件回调，框架不会替这一跳调 StateHasChanged。少了这一句，
+    /// 字段每 2 秒都在更新，页面却一直停在打开时的样子 —— "自动刷新"就成了一句空话。
+    /// </remarks>
+    private async Task TickAsync()
+    {
+        // 暂停期间连重画一起停：页面冻成一份可以慢慢读（选文本、对照日志）的快照。
+        if (_paused)
+        {
+            return;
+        }
+
+        await RefreshAsync();
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// 暂停/继续自动刷新。
+    /// </summary>
+    /// <remarks>
+    /// 暂停只停这一页的取数：补传、丢弃这些用户动作仍然即时生效 —— 它们是有人等着的操作，
+    /// 不属于"自动刷新"。继续时立即补一轮，不然要干等一整拍，看着像点了没反应。
+    /// </remarks>
+    private async Task TogglePauseAsync()
+    {
+        _paused = !_paused;
+        if (!_paused)
+        {
+            await RefreshAsync();
+        }
+    }
+
+    /// <summary>
+    /// 取一轮数。
+    /// </summary>
+    /// <param name="showBusy">
+    /// 这次取数要不要点亮页头的忙碌指示。只为有人在等的取数点亮（首屏、重试、列出明细）：
+    /// 定时轮询每 2 秒路过一次，次次点亮的话，进度圈与压淡的统计就成了常态噪声。
+    /// </param>
+    private async Task RefreshAsync(bool showBusy = false)
+    {
+        if (_refreshing)
+        {
+            // 正在取数：记一笔，让那一轮结束后立即再取一轮，而不是把这次请求丢掉 ——
+            // 补传/丢弃之后的收尾刷新正好撞上 2 秒一跳的轮询时，页面会停在旧数据上。
+            _refetchRequested = true;
+            return;
+        }
+
+        _refreshing = true;
+        _busy = showBusy;
+        try
+        {
+            do
+            {
+                _refetchRequested = false;
+                await RefreshOnceAsync();
+            }
+            while (_refetchRequested);
+        }
+        finally
+        {
+            _refreshing = false;
+            _busy = false;
+        }
+    }
+
+    /// <summary>一轮取数的实体：读数写进字段；读失败只留提示，保留上一次读到的内容。</summary>
+    private async Task RefreshOnceAsync()
+    {
+        try
+        {
+            _loop = Diag.Loop;
+            _traffic = Diag.PlcTraffic;
+
+            // 探活按自己的节拍来（见 HealthTickMs），不跟着 2 秒的主刷新跑。
+            if (_health is null || _healthAt is not { } checkedAt
+                || (DateTime.Now - checkedAt).TotalMilliseconds >= HealthTickMs)
+            {
+                try
+                {
+                    _health = await Probe.CheckAsync();
+                    _healthAt = DateTime.Now;
+                    _healthError = null;
+                }
+                catch (Exception ex)
+                {
+                    // 探活自己出问题不该把整页拖红：保留上一份读数，只说明这次没读成。
+                    _healthError = $"健康检查未能完成：{ex.Message}";
+                }
+            }
+
+            var backlog = await Spool.DescribeAsync();
+            _spoolCount = backlog.Count;
+            _spoolOldest = backlog.OldestAt;
+
+            // 空队列与超量队列都不去读内容：前者没得读，后者读一遍要把每条缓存
+            // 反序列化一次，会把磁盘和 CPU 拖成诊断页自己的问题。
+            // 其余情况还要过一道明细节拍（见 SpoolDetailTickMs）：件数没变就不跟着 2 秒一跳重读。
+            if (backlog.Count == 0)
+            {
+                _entries = [];
+                _entriesCount = 0;
+                _entriesAt = null;
+                _spoolTruncated = false;
+            }
+            else if (backlog.Count > SpoolDetailLimit && !_forceSpoolDetail)
+            {
+                _entries = [];
+                // 明细缓存一并作废：队列缩回阈值以内时立即重读，而不是先空着等慢节拍。
+                _entriesAt = null;
+                _spoolTruncated = true;
+            }
+            else if (_forceSpoolDetail || DetailsDue(backlog.Count))
+            {
+                _entries = await Spool.ListEntriesAsync();
+                _entriesCount = backlog.Count;
+                _entriesAt = DateTime.Now;
+                _spoolTruncated = false;
+            }
+            else
+            {
+                _spoolTruncated = false;
+            }
+
+            _forceSpoolDetail = false;
+            _loadError = null;
+            _refreshedAt = DateTime.Now;
+        }
+        catch (Exception ex)
+        {
+            // 与报警页同样的取舍：出错时保留上一次读到的内容，只加一条错误提示。
+            // 清空之后"补传队列是空的"会和错误提示同屏出现，把一次读取故障说成"确实没有积压"。
+            _loadError = $"诊断数据读取失败：{ex.Message}";
+        }
+    }
+
+    /// <summary>超量时由用户显式要求列一次明细：只在这一次刷新里读，之后回到摘要。</summary>
+    private async Task ListDetailOnceAsync()
+    {
+        _forceSpoolDetail = true;
+        await RefreshAsync(showBusy: true);
+    }
+
+    /// <summary>明细该不该重读了：从没读过、件数变了、或距上次读过一会儿。</summary>
+    private bool DetailsDue(int count)
+        => _entriesAt is not { } at
+           || count != _entriesCount
+           || (DateTime.Now - at).TotalMilliseconds >= SpoolDetailTickMs;
+
+    /// <summary>
+    /// 把这一屏浓缩成一段能贴进工单/群的纯文本。
+    /// </summary>
+    /// <remarks>
+    /// 现场排障的最后一公里是"把看到的东西带出去"：截图不能检索、也不能粘贴，
+    /// 所以按页面三块各给一两行摘要，PLC 只带上最新几条失败 —— 够对方判断方向即可。
+    /// 内容取当前内存里的读数，可能与页面差一个刷新节拍；这比让用户自己去拼更好。
+    /// </remarks>
+    private string BuildDigest()
+    {
+        var text = new StringBuilder();
+        text.AppendLine("DataTrace 运行诊断摘要");
+        text.AppendLine($"生成时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+
+        if (_health is { } health)
+        {
+            text.AppendLine($"系统健康：{health.Status} · 版本 {health.Version} · 已运行 {UptimeText(health.UptimeSeconds)}");
+            foreach (var check in health.Checks)
+            {
+                text.AppendLine($"  {HealthName(check.Name)}：{(check.Healthy ? "正常" : "异常")} {check.Detail}");
+            }
+        }
+        else
+        {
+            text.AppendLine("系统健康：这次没读到");
+        }
+
+        text.AppendLine(_loop.Ticks.Count == 0
+            ? "采集循环：没有记录（采集关闭时不会有记录）"
+            : $"采集循环：最后扫描 {SinceText(SinceLastTick)} · 近期 {_loop.Ticks.Count} 轮 · 平均 {_loop.AverageWorkMs} ms · 最长 {_loop.MaxWorkMs} ms · 超时 {_loop.OverrunCount} 轮");
+
+        if (_traffic.Count == 0)
+        {
+            text.AppendLine("PLC 通信：没有记录");
+        }
+
+        foreach (var plc in _traffic)
+        {
+            text.AppendLine(
+                $"PLC {plc.Name}：请求 {plc.TotalCount} · 失败 {plc.FailureCount} · 最近 {plc.LastDurationMs} ms · 最长 {plc.MaxDurationMs} ms · {SuccessSinceText(plc)}");
+            foreach (var failure in plc.RecentFailures.Take(DigestFailureLines))
+            {
+                text.AppendLine($"  {failure.At:HH:mm:ss.fff} {failure.Address} {failure.Error}");
+            }
+        }
+
+        if (_spoolCount == 0)
+        {
+            text.AppendLine("补传队列：空");
+        }
+        else
+        {
+            text.AppendLine($"补传队列：{_spoolCount} 件"
+                + (_spoolOldest is { } oldest
+                    ? $"，最早一笔 {oldest:MM-dd HH:mm:ss}（已等待 {WaitText(DateTime.Now - oldest)}）"
+                    : ""));
+
+            // 明细里有失败原因就带上最近一条 —— 这是"为什么一直补不进去"的直接答案。
+            if (_entries.LastOrDefault(entry => !string.IsNullOrEmpty(entry.LastError))?.LastError is { } lastError)
+            {
+                text.AppendLine($"  最近一条补传失败：{lastError}");
+            }
+        }
+
+        return text.ToString();
+    }
+
+    private async Task CopyDigestAsync()
+    {
+        try
+        {
+            var copied = await Js.InvokeAsync<bool>("dtCopy", BuildDigest());
+            // 与查询页同一取舍：浏览器拒绝剪贴板时不能照样报"已复制"。
+            Toast.Add(copied ? "诊断摘要已复制" : "复制失败：浏览器不允许写入剪贴板，请手动选中复制",
+                copied ? Severity.Success : Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"复制失败：{ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task ReplayAllAsync()
+    {
+        _replayingAll = true;
+        _replayDone = 0;
+        _replayCts = new CancellationTokenSource();
+        try
+        {
+            var done = await Runner.ReplayAllAsync(_replayCts.Token, NoteReplayProgress);
+            if (_replayCts.IsCancellationRequested)
+            {
+                Toast.Add($"已取消补传，本次成功 {done} 条", Severity.Warning);
+            }
+            else if (done > 0)
+            {
+                Toast.Add($"已补传 {done} 条", Severity.Success);
+            }
+            else
+            {
+                Toast.Add("没有补传成功的记录，队列里最早那条仍然失败", Severity.Warning);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Toast.Add($"已取消补传，本次成功 {_replayDone} 条", Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"整队补传失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _replayCts?.Dispose();
+            _replayCts = null;
+            _replayingAll = false;
+            await RefreshAsync();
+        }
+    }
+
+    /// <summary>
+    /// 补传进度回调：按钮上的"已 N 条"。
+    /// </summary>
+    /// <remarks>
+    /// 回调发生在执行器的循环里（线程不再是渲染调度线程），所以要经 InvokeAsync 回到调度线程上改状态、重画。
+    /// </remarks>
+    private void NoteReplayProgress(int done)
+        => _ = InvokeAsync(() =>
+        {
+            _replayDone = done;
+            StateHasChanged();
+        });
+
+    /// <summary>叫停整队补传：正在写的那一条让它写完，后面的不再动。</summary>
+    private void CancelReplayAll() => _replayCts?.Cancel();
+
+    private async Task ReplayOneAsync(SpoolEntry entry)
+    {
+        _workingFile = entry.FileName;
+        try
+        {
+            var result = await Runner.ReplayOneAsync(entry.FileName);
+            if (result.Ok)
+            {
+                Toast.Add($"{entry.SerialNo} 已补传入库", Severity.Success);
+            }
+            else
+            {
+                Toast.Add($"补传失败：{result.Error}", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"补传失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _workingFile = null;
+            await RefreshAsync();
+        }
+    }
+
+    private async Task DiscardAsync(SpoolEntry entry)
+    {
+        var confirmed = await Dialogs.ConfirmDangerAsync(
+            "丢弃这条缓存",
+            $"{entry.SerialNo}（托盘 {entry.PalletCode}，工站 {entry.StationCode}）写库失败后一直没能补传。丢弃即删除本地缓存文件，这条采集记录不会进入数据库。",
+            "我了解这条记录将无法恢复",
+            yesText: "仍要丢弃");
+        if (!confirmed)
+        {
+            return;
+        }
+
+        _workingFile = entry.FileName;
+        try
+        {
+            await Spool.DeleteAsync(entry.FileName);
+            Toast.Add($"{entry.SerialNo} 的缓存已丢弃", Severity.Info);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"丢弃失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _workingFile = null;
+            await RefreshAsync();
+        }
+    }
+
+    /// <summary>
+    /// 已经被流水窗口挤掉的失败。
+    /// </summary>
+    /// <remarks>
+    /// 两份列表会重叠，重叠多少取决于失败有多密：断线时 <c>Recent</c> 里本来就全是失败，
+    /// 那一份没有额外信息；偶发故障时它才是唯一还留着证据的地方。
+    /// 所以这里只取"早于流水最早一条"的，避免同一行看两遍。
+    /// </remarks>
+    private static IReadOnlyList<PlcExchangeView> HiddenFailures(PlcTrafficView plc)
+        => plc.Recent.Count == 0
+            ? plc.RecentFailures
+            : plc.RecentFailures.Where(failure => failure.At < plc.Recent[^1].At).ToList();
+
+    /// <summary>探活项的中文名。码名留给 /healthz 的机器判读，页面上说人话。</summary>
+    /// <remarks>
+    /// "collector" 写成"采集服务心跳"而不是"采集心跳"：它判的是服务主循环还活着（60 秒口径），
+    /// 采集被停用时照样新鲜 —— 与"采集循环"那一块判的"扫描有没有在推进"是两件事。
+    /// </remarks>
+    private static string HealthName(string name) => name switch
+    {
+        "config-db" => "配置库",
+        "data-root" => "数据盘",
+        "runtime-dir" => "运行目录",
+        "disk-free" => "磁盘余量",
+        "collector" => "采集服务心跳",
+        _ => name
+    };
+
+    /// <summary>把"距今多久"写成现场能念出来的一句话。</summary>
+    private static string SinceText(TimeSpan? gap)
+        => gap is not { } value
+            ? "—"
+            : value.TotalSeconds < 1
+                ? $"{value.TotalMilliseconds:0} 毫秒前"
+                : value.TotalSeconds < 60
+                    ? $"{(int)value.TotalSeconds} 秒前"
+                    : value.TotalMinutes < 60
+                        ? $"{(int)value.TotalMinutes} 分钟前"
+                        : value.TotalHours < 24
+                            ? $"{(int)value.TotalHours} 小时 {value.Minutes} 分前"
+                            : $"{(int)value.TotalDays} 天前";
+
+    /// <summary>
+    /// "上次成功"那句话。
+    /// </summary>
+    /// <remarks>
+    /// 从来没成功过要单独说：显示成"上次成功 0 秒前"或一个 0 时刻都会把"一直没通"讲成"刚刚还通着"。
+    /// </remarks>
+    private static string SuccessSinceText(PlcTrafficView plc)
+        => plc.LastSuccessAt is { } at
+            ? $"上次成功 {SinceText(DateTime.Now - at)}"
+            : plc.TotalCount == 0
+                ? "还没有请求"
+                : "从未成功";
+
+    /// <summary>发过请求却一次都没成功：标题上出红的那个条件。</summary>
+    private static bool NeverSucceeded(PlcTrafficView plc)
+        => plc.TotalCount > 0 && plc.LastSuccessAt is null;
+
+    /// <summary>把运行时长写成人话：从"几分钟"到"几天几小时"。</summary>
+    private static string UptimeText(double seconds)
+    {
+        var span = TimeSpan.FromSeconds(seconds);
+        return span.TotalDays >= 1
+            ? $"{(int)span.TotalDays} 天 {span.Hours} 小时"
+            : span.TotalHours >= 1
+                ? $"{(int)span.TotalHours} 小时 {span.Minutes} 分"
+                : span.TotalMinutes >= 1
+                    ? $"{(int)span.TotalMinutes} 分钟"
+                    : $"{Math.Max(1, (int)span.TotalSeconds)} 秒";
+    }
+
+    /// <summary>把"等了多久"写成人话。句子是"已等待 X"，所以不带"前"。</summary>
+    private static string WaitText(TimeSpan span)
+        => span.TotalMinutes < 1
+            ? "不到 1 分钟"
+            : span.TotalMinutes < 60
+                ? $"{(int)span.TotalMinutes} 分钟"
+                : span.TotalHours < 24
+                    ? $"{(int)span.TotalHours} 小时 {span.Minutes} 分"
+                    : $"{(int)span.TotalDays} 天 {span.Hours} 小时";
+
+    private static string ValueText(PlcExchangeView exchange)
+        => exchange.Values.Count == 0
+            ? "—"
+            : string.Join(' ', exchange.Values.Select(value => value.ToString())) +
+              (exchange.WordCount > exchange.Values.Count ? " …" : "");
+
+    public void Dispose() => _timer?.Dispose();
+}
