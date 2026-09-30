@@ -107,6 +107,45 @@ public class DiagnosticsPageTests : WebTestBase
     }
 
     /// <summary>
+    /// 摘要把页面自身的状态也带上：暂停时读数只是快照。
+    /// </summary>
+    /// <remarks>
+    /// 只写"生成时间：现在"而不标快照，拿到摘要的人会把它当成最新数据。
+    /// </remarks>
+    [Fact]
+    public async Task Copy_digest_marks_the_snapshot_when_paused()
+    {
+        var spool = new FakeSpool();
+        var (cut, _, _) = Render(spool);
+
+        await cut.FindAll("button").Single(button => button.TextContent.Contains("暂停刷新")).ClickAsync(new());
+
+        var copy = Context.JSInterop.Setup<bool>("dtCopy", _ => true).SetResult(true);
+        await cut.FindAll("button").Single(button => button.TextContent.Contains("复制诊断摘要")).ClickAsync(new());
+
+        var text = Assert.IsType<string>(Assert.Single(copy.Invocations).Arguments[0]);
+        Assert.Contains("页面状态：已暂停", text);
+        Assert.Contains("快照", text);
+    }
+
+    /// <summary>
+    /// 页面读不到数时，摘要里也要把这件事写出来 —— 它恰恰是最该随读数一起带出去的。
+    /// </summary>
+    [Fact]
+    public async Task Copy_digest_reports_a_failed_read()
+    {
+        var spool = new FakeSpool { FailNextDescribe = true };
+        var (cut, _, _) = Render(spool);
+        Assert.Contains("诊断数据读取失败", cut.Markup);
+
+        var copy = Context.JSInterop.Setup<bool>("dtCopy", _ => true).SetResult(true);
+        await cut.FindAll("button").Single(button => button.TextContent.Contains("复制诊断摘要")).ClickAsync(new());
+
+        var text = Assert.IsType<string>(Assert.Single(copy.Invocations).Arguments[0]);
+        Assert.Contains("读取状态：诊断数据读取失败", text);
+    }
+
+    /// <summary>
     /// 发过请求却一次都没成功：标题上要直接写"从未成功"，不能只给一个红着的失败数。
     /// </summary>
     [Fact]
@@ -415,6 +454,54 @@ public class DiagnosticsPageTests : WebTestBase
     }
 
     /// <summary>
+    /// 暂停期间的重画不能把好着的采集循环说成"已停止推进"。
+    /// </summary>
+    /// <remarks>
+    /// 判活用"最后扫描距今"算，而页面暂停后读数是冻着的 —— 不按快照时刻算的话，
+    /// 停够一个判活窗口（≥5×扫描间隔、下限 2 秒）再随便点个按钮，就会弹出一条假警报。
+    /// </remarks>
+    [Fact]
+    public async Task Pause_does_not_raise_a_false_loop_stall_alarm()
+    {
+        var spool = new FakeSpool();
+        var (cut, _, _) = Render(spool, seed: diag => diag.PublishLoopTick(new CollectorLoopTick(
+            DateTime.Now, ConfiguredIntervalMs: 50, WorkMs: 5, ScanMs: 3, HeartbeatMs: 1,
+            PlcCount: 1, TriggeredCount: 0, CoolingDownPlcCount: 0, SkippedStationCount: 0)));
+
+        await cut.FindAll("button").Single(button => button.TextContent.Contains("暂停刷新")).ClickAsync(new());
+        // 分区说明也要跟着停：不能让"每 15 秒复查"与页头的"已暂停"打架。
+        Assert.Contains("复查已暂停", cut.Markup);
+
+        // 跨过判活窗口之后再重画一次：这一跳只可能来自页面自己，不该判出"停了"。
+        await Task.Delay(2600);
+        cut.Render();
+
+        Assert.DoesNotContain("采集循环已停止推进", cut.Markup);
+    }
+
+    /// <summary>
+    /// 队列在点击前被后台补空时，别说成"补传失败"。
+    /// </summary>
+    /// <remarks>
+    /// 执行器只回条数，0 条既可能是"没人可补"也可能是"第一条就补不动" ——
+    /// 提示放在收尾刷新之后，才分得清这两种。
+    /// </remarks>
+    [Fact]
+    public async Task Replay_all_says_the_queue_is_empty_when_it_drained_first()
+    {
+        var spool = new FakeSpool();
+        spool.Entries.Add(Entry("a.spool.json", "P900", attempts: 1, error: "disk full"));
+        var (cut, _, _) = Render(spool);
+        Assert.Contains("1 件写库失败等待补传", cut.Markup);
+
+        // 页面刷新之后这条被后台补传掉了：点下去时队列其实已经空了。
+        spool.Entries.Clear();
+        await cut.FindAll("button").Single(button => button.TextContent.Contains("整队补传")).ClickAsync(new());
+
+        Assert.Contains(Toast.Messages, message => message.Contains("队列已经空了"));
+    }
+
+    /// <summary>
     /// 取数进行中来的刷新请求不能被守卫丢掉。
     /// </summary>
     /// <remarks>
@@ -649,6 +736,9 @@ public class DiagnosticsPageTests : WebTestBase
         /// <summary>设了它，DescribeAsync 就会挂住直到测试放行 —— 用来观察"取数进行中"的页面状态。</summary>
         public TaskCompletionSource? Gate { get; set; }
 
+        /// <summary>设了它，下一次 DescribeAsync 抛错 —— 用来观察读取失败时的页面与摘要。</summary>
+        public bool FailNextDescribe { get; set; }
+
         public int DescribeCalls { get; private set; }
 
         public int ListEntriesCalls { get; private set; }
@@ -692,6 +782,12 @@ public class DiagnosticsPageTests : WebTestBase
         public Task<SpoolBacklog> DescribeAsync(CancellationToken cancellationToken = default)
         {
             DescribeCalls++;
+            if (FailNextDescribe)
+            {
+                FailNextDescribe = false;
+                throw new IOException("配置库打不开");
+            }
+
             if (Gate is { } gate)
             {
                 return DescribeAfterGateAsync(gate);

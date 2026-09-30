@@ -57,7 +57,7 @@
                 @(health.Status == "healthy" ? "全部正常" : "有异常项")
             </MudChip>
             <MudText Typo="Typo.caption" Class="dt-muted">
-                与 /healthz 同一份判据 · 每 @(HealthTickMs / 1000) 秒复查 · 版本 @health.Version · 已运行 @UptimeText(health.UptimeSeconds)
+                与 /healthz 同一份判据 · @HealthCadenceText · 版本 @health.Version · 已运行 @UptimeText(health.UptimeSeconds)
             </MudText>
         </MudStack>
         <div class="dt-diag-health-grid">
@@ -267,7 +267,7 @@ else
     <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mb-2">
         <div class="d-flex align-center flex-wrap gap-2">
             <span>
-                @_spoolCount 件写库失败等待补传@(_spoolOldest is { } oldest ? $"，最早一笔 {oldest:MM-dd HH:mm:ss}（已等待 {WaitText(DateTime.Now - oldest)}；超过 {SystemDefaults.SpoolBacklogWarnMinutes} 分钟就会进报警页）" : "")。
+                @_spoolCount 件写库失败等待补传@(_spoolOldest is { } oldest ? $"，最早一笔 {oldest:MM-dd HH:mm:ss}（已等待 {WaitText(AgeReference - oldest)}；超过 {SystemDefaults.SpoolBacklogWarnMinutes} 分钟就会进报警页）" : "")。
             </span>
             <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
                        StartIcon="@(_replayingAll ? Icons.Material.Filled.Sync : Icons.Material.Filled.CloudUpload)"
@@ -295,8 +295,7 @@ else
     else
     {
         <MudText Typo="Typo.caption" Class="dt-muted mb-1">
-            明细读取于 @(_entriesAt is { } readAt ? readAt.ToString("HH:mm:ss") : "—")：
-            件数每 @(DiagTickMs / 1000) 秒更新，明细每 @(SpoolDetailTickMs / 1000) 秒重读，件数变化时立即重读。
+            明细读取于 @(_entriesAt is { } readAt ? readAt.ToString("HH:mm:ss") : "—")：@DetailCadenceText。
         </MudText>
         <MudTable Items="_entries" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-4">
             <HeaderContent>
@@ -438,13 +437,30 @@ else
 
     private string LoopEndText => _loop.Ticks.Count == 0 ? "" : _loop.Ticks[0].At.ToString("HH:mm:ss");
 
-    /// <summary>最后一轮采集采样距今。Ticks 是倒序（最新在前）。</summary>
-    private TimeSpan? SinceLastTick => _loop.Ticks.Count > 0 ? DateTime.Now - _loop.Ticks[0].At : null;
+    /// <summary>
+    /// 算"距今多久"时用的当前时刻：暂停时取快照时刻。
+    /// </summary>
+    /// <remarks>
+    /// 页面暂停后读数冻着，再用真实时钟去老化它们，就会把好着的循环说成"已停止推进" ——
+    /// 停够一个判活窗口（≥5×扫描间隔、下限 2 秒）后随便点个按钮触发重画，假警报就出来了。
+    /// </remarks>
+    private DateTime AgeReference => _paused && _refreshedAt is { } snapshotAt ? snapshotAt : DateTime.Now;
+
+    /// <summary>最后一轮采集采样距今（暂停时按快照时刻算）。Ticks 是倒序（最新在前）。</summary>
+    private TimeSpan? SinceLastTick => _loop.Ticks.Count > 0 ? AgeReference - _loop.Ticks[0].At : null;
 
     /// <summary>页头右侧那行字：暂停时说清这是哪一刻的快照，运行时说明刷新节拍。</summary>
     private string RefreshCaption => _paused
         ? $"已暂停{(_refreshedAt is { } snapshotAt ? $" · 显示 {snapshotAt:HH:mm:ss} 的快照" : "")}"
         : $"{(_refreshedAt is { } at ? $"{at:HH:mm:ss} 更新 · " : "")}每 {DiagTickMs / 1000} 秒自动刷新";
+
+    /// <summary>健康块的复查说明：暂停时不再复查，别让分区说明与页头的"已暂停"打架。</summary>
+    private string HealthCadenceText => _paused ? "复查已暂停" : $"每 {HealthTickMs / 1000} 秒复查";
+
+    /// <summary>补传明细的刷新说明：暂停时自动重读停了，只在恢复或做动作之后更新。</summary>
+    private string DetailCadenceText => _paused
+        ? "页面已暂停，这些读数不会自动更新"
+        : $"件数每 {DiagTickMs / 1000} 秒更新，明细每 {SpoolDetailTickMs / 1000} 秒重读，件数变化时立即重读";
 
     /// <summary>
     /// 采集循环是不是已经停了。
@@ -649,6 +665,17 @@ else
         text.AppendLine("DataTrace 运行诊断摘要");
         text.AppendLine($"生成时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}");
 
+        // 页面自己的状态先写：正在读失败、已暂停这些恰恰是最该跟读数一起带出去的信息。
+        if (_loadError is not null)
+        {
+            text.AppendLine($"读取状态：{_loadError}");
+        }
+
+        if (_paused)
+        {
+            text.AppendLine($"页面状态：已暂停，读数为 {(_refreshedAt is { } snapshotAt ? snapshotAt.ToString("HH:mm:ss") : "—")} 的快照");
+        }
+
         if (_health is { } health)
         {
             text.AppendLine($"系统健康：{health.Status} · 版本 {health.Version} · 已运行 {UptimeText(health.UptimeSeconds)}");
@@ -688,8 +715,9 @@ else
         else
         {
             text.AppendLine($"补传队列：{_spoolCount} 件"
+                + (_spoolTruncated ? $"（明细超过 {SpoolDetailLimit} 条，未自动读取）" : "")
                 + (_spoolOldest is { } oldest
-                    ? $"，最早一笔 {oldest:MM-dd HH:mm:ss}（已等待 {WaitText(DateTime.Now - oldest)}）"
+                    ? $"，最早一笔 {oldest:MM-dd HH:mm:ss}（已等待 {WaitText(AgeReference - oldest)}）"
                     : ""));
 
             // 明细里有失败原因就带上最近一条 —— 这是"为什么一直补不进去"的直接答案。
@@ -722,29 +750,21 @@ else
         _replayingAll = true;
         _replayDone = 0;
         _replayCts = new CancellationTokenSource();
+        var done = 0;
+        var canceled = false;
+        string? failure = null;
         try
         {
-            var done = await Runner.ReplayAllAsync(_replayCts.Token, NoteReplayProgress);
-            if (_replayCts.IsCancellationRequested)
-            {
-                Toast.Add($"已取消补传，本次成功 {done} 条", Severity.Warning);
-            }
-            else if (done > 0)
-            {
-                Toast.Add($"已补传 {done} 条", Severity.Success);
-            }
-            else
-            {
-                Toast.Add("没有补传成功的记录，队列里最早那条仍然失败", Severity.Warning);
-            }
+            done = await Runner.ReplayAllAsync(_replayCts.Token, NoteReplayProgress);
+            canceled = _replayCts.IsCancellationRequested;
         }
         catch (OperationCanceledException)
         {
-            Toast.Add($"已取消补传，本次成功 {_replayDone} 条", Severity.Warning);
+            canceled = true;
         }
         catch (Exception ex)
         {
-            Toast.Add($"整队补传失败：{ex.Message}", Severity.Error);
+            failure = ex.Message;
         }
         finally
         {
@@ -752,6 +772,30 @@ else
             _replayCts = null;
             _replayingAll = false;
             await RefreshAsync();
+        }
+
+        // 结果提示放在刷新之后：只有刷新过的件数才分得清"0 条"是没人可补、还是第一条就补不动。
+        // 进度回调是异步贴回来的，可能还差最后一两条，所以取两者中大的那个。
+        var succeeded = Math.Max(done, _replayDone);
+        if (failure is not null)
+        {
+            Toast.Add($"整队补传失败：{failure}", Severity.Error);
+        }
+        else if (canceled)
+        {
+            Toast.Add($"已取消补传，本次成功 {succeeded} 条", Severity.Warning);
+        }
+        else if (succeeded > 0)
+        {
+            Toast.Add($"已补传 {succeeded} 条", Severity.Success);
+        }
+        else if (_spoolCount == 0)
+        {
+            Toast.Add("队列已经空了（多半刚被后台补传完）", Severity.Info);
+        }
+        else
+        {
+            Toast.Add("没有补传成功的记录，队列里最早那条仍然失败", Severity.Warning);
         }
     }
 
@@ -874,9 +918,9 @@ else
     /// <remarks>
     /// 从来没成功过要单独说：显示成"上次成功 0 秒前"或一个 0 时刻都会把"一直没通"讲成"刚刚还通着"。
     /// </remarks>
-    private static string SuccessSinceText(PlcTrafficView plc)
+    private string SuccessSinceText(PlcTrafficView plc)
         => plc.LastSuccessAt is { } at
-            ? $"上次成功 {SinceText(DateTime.Now - at)}"
+            ? $"上次成功 {SinceText(AgeReference - at)}"
             : plc.TotalCount == 0
                 ? "还没有请求"
                 : "从未成功";
