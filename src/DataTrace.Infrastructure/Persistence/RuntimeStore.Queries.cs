@@ -108,6 +108,24 @@ partial class RuntimeStore
             .ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// 补传重放前的幂等查重。库不存在就是"没有"，不去新建 —— 这条路径只做判断，
+    /// 不该因为一次重放就在数据盘上凭空多出一个月份库。
+    /// </summary>
+    public async Task<bool> ExistsBySerialAsync(string monthKey, string serialNo, CancellationToken cancellationToken = default)
+    {
+        if (!_factory.Exists(monthKey))
+        {
+            return false;
+        }
+
+        await using var db = _factory.Open(monthKey);
+        return await db.CollectRecords
+            .AsNoTracking()
+            .AnyAsync(x => x.SerialNo == serialNo, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public async Task<PalletSession?> GetSessionAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default)
     {
         if (!_factory.Exists(monthKey))

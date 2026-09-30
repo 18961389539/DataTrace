@@ -163,6 +163,23 @@ builder.Services.AddAuthorization(options =>
 
 var app = builder.Build();
 
+// 同一数据目录只允许一个实例：采集、补传、备份都按独占 DataRoot 设计，双开会让同一件
+// 被两个进程各采一次（各拿一个流水号、入库两份）、补传队列互相抢，两边日志还各记各的。
+// 拿不到锁就明确报错退出，而不是让一个"半功能"的实例继续跑 —— 它造成的重复数据
+// 事后只能靠人工从库里一条条分辨。
+using var instanceGuard = SingleInstanceGuard.TryAcquire(dataRoot);
+if (instanceGuard is null)
+{
+    var holder = SingleInstanceGuard.ReadHolderPid(dataRoot);
+    app.Logger.LogCritical(
+        "已有 DataTrace 实例正在使用数据目录 {DataRoot}（进程号 {HolderPid}），本进程退出。"
+        + "请先停掉它（服务：sc stop DataTrace；控制台：deploy\\stop.ps1）后重试。",
+        dataRoot,
+        holder is { } pid ? pid.ToString() : "未知");
+    Environment.ExitCode = 1;
+    return;
+}
+
 var branding = app.Services.GetRequiredService<CustomerBrandingStore>();
 branding.ResolvedDataRoot = dataRoot;
 branding.BindUrl = builder.Configuration["Kestrel:Endpoints:Http:Url"]

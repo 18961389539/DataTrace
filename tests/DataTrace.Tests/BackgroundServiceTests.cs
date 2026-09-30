@@ -170,6 +170,27 @@ public class SpoolReplayServiceTests
         }
     };
 
+    /// <summary>
+    /// 带托盘会话的请求：真库上记录必须挂在一条会话上（外键），采集侧落库时就是这么建的。
+    /// 只与假存储打交道的用例不需要它，走真库的用例需要。
+    /// </summary>
+    private static CollectSaveRequest RequestWithSession(string palletCode)
+    {
+        var request = Request(palletCode);
+        return new CollectSaveRequest
+        {
+            MonthKey = request.MonthKey,
+            Record = request.Record,
+            UpsertSession = new PalletSession
+            {
+                SerialNo = request.Record.SerialNo,
+                PalletCode = palletCode,
+                StartTime = request.Record.TriggerTime,
+                Status = SessionStatus.Open
+            }
+        };
+    }
+
     [Fact]
     public async Task ReplaysEveryPendingRequestThenClearsSpool()
     {
@@ -262,6 +283,39 @@ public class SpoolReplayServiceTests
 
         Assert.False(missing.Ok);
         Assert.Contains("已经不在了", missing.Error);
+    }
+
+    /// <summary>
+    /// 写库成功但缓存没删掉（提交后进程被杀、删文件被占用）留下的缓存件：
+    /// 重放必须认出来"记录已在库"，按成功收尾并删缓存，而不是撞流水号唯一索引后
+    /// 永远失败 —— 失败即止会把后面所有件一直堵在它后面。
+    /// </summary>
+    [Fact]
+    public async Task ReplaySkipsRecordsAlreadyStoredAndKeepsGoing()
+    {
+        await using var ctx = await InfrastructureContext.CreateAsync();
+        var writer = ctx.Provider.GetRequiredService<ICollectWriter>();
+        var spool = ctx.Provider.GetRequiredService<ISpoolStore>();
+
+        // 先把 P001 真写进库，再让它以"没删掉的缓存件"出现；P002 是正常积压。
+        await writer.SaveAsync(RequestWithSession("P001"));
+        await spool.SaveAsync(RequestWithSession("P001"));
+        await spool.SaveAsync(RequestWithSession("P002"));
+
+        var done = await ReplayRunner(ctx, spool).ReplayAllAsync();
+
+        // 跳过算成功、队列继续走：两条缓存都被清掉，而不是卡在第一条上。
+        Assert.Equal(2, done);
+        Assert.Empty(Directory.GetFiles(ctx.Workspace.Path("spool"), "*.spool.json"));
+
+        var query = ctx.Provider.GetRequiredService<ICollectQuery>();
+        Assert.True(await query.ExistsBySerialAsync(RuntimeDbFactory.MonthKey(DateTime.Now), "SN-P001"));
+        var result = await query.QueryAsync(new CollectQueryRequest
+        {
+            From = DateTime.Now.AddDays(-1),
+            To = DateTime.Now.AddDays(1)
+        });
+        Assert.Equal(2, result.Total);
     }
 
     /// <summary>后台补传服务现在只是执行器的一层壳，测试按生产一致的装配方式构造。</summary>

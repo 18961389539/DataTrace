@@ -236,6 +236,10 @@ internal class FakeRuntimeStore : IRuntimeStore
         => Task.FromResult<DataTrace.Domain.Entities.CollectRecord?>(
             Records.FirstOrDefault(x => x.MonthKey == monthKey && x.Record.Id == recordId).Record);
 
+    public Task<bool> ExistsBySerialAsync(string monthKey, string serialNo, CancellationToken cancellationToken = default)
+        => Task.FromResult(Records.Any(x =>
+            x.MonthKey == monthKey && string.Equals(x.Record.SerialNo, serialNo, StringComparison.Ordinal)));
+
     public Task<DataTrace.Domain.Entities.PalletSession?> GetSessionAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default)
         => Task.FromResult<DataTrace.Domain.Entities.PalletSession?>(null);
 

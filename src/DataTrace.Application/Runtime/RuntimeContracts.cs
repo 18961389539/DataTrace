@@ -194,6 +194,13 @@ public interface ICollectQuery
 {
     Task<CollectQueryResult> QueryAsync(CollectQueryRequest request, CancellationToken cancellationToken = default);
     Task<CollectRecord?> GetRecordAsync(string monthKey, long recordId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 某个月库里是否已有这个流水号。补传重放用它做幂等判断：写库成功但缓存没删掉
+    /// （删文件被占用、提交后进程被杀）留下的缓存件，直接重放会撞流水号唯一索引而永远失败，
+    /// 把整条补传队列堵死在最前面一条上；命中查重就按"已入库"收尾，把缓存删掉让队列继续走。
+    /// </summary>
+    Task<bool> ExistsBySerialAsync(string monthKey, string serialNo, CancellationToken cancellationToken = default);
     Task<PalletSession?> GetSessionAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<CollectRecord>> GetSessionRecordsAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesBySerialNoAsync(string serialNo, CancellationToken cancellationToken = default);

@@ -137,7 +137,14 @@ set Kestrel__Endpoints__Http__Url=http://0.0.0.0:5100
 `data/archive/` 文件源工站读到的原始 JSON 归档  
 `data/spool/` 写库失败补传  
 `data/logs/` 日志（单文件上限 32 MB、最多留 30 份，可用 `Logging:File:FileSizeLimitMb`
-与 `Logging:File:RetainedFileCount` 覆盖；日志总量封顶在两者相乘以内，避免异常风暴把数据盘写满）
+与 `Logging:File:RetainedFileCount` 覆盖；日志总量封顶在两者相乘以内，避免异常风暴把数据盘写满）  
+`data/.datatrace.instance.lock` 单实例锁
+
+同一数据目录**只允许一个实例**：启动时对这个锁文件加独占，拿不到就写一行日志
+（带占用者 pid）并以退出码 1 退出。防的是"服务 + 手工 exe"这类双开 —— 两个进程同时采
+同一台 PLC，同一件会各拿一个流水号、入库两份，补传队列也会互相抢。要再起一个就先把
+在跑的那个停掉（服务：`sc stop DataTrace`；控制台：`deploy\stop.ps1`）。
+需要同机跑多个实例（多客户）时，各自配不同的 `DataRoot` 即可，互不影响。
 
 `DataRoot` 可以指到别的盘（相对路径按 exe 目录解析），**日志也一起跟着走**——
 装在 `C:\Program Files` 下时服务对安装目录通常没有写权限。
