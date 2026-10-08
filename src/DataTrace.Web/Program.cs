@@ -108,6 +108,8 @@ builder.Services.Configure<BackupOptions>(builder.Configuration.GetSection(Backu
 builder.Services.AddSingleton<CustomerBrandingStore>();
 
 builder.Services.AddDataTraceInfrastructure(dataRoot);
+builder.Services.AddScoped<DataTrace.Application.Quality.IQualityIncidentActorProvider,
+    DataTrace.Web.Services.QualityIncidentActorProvider>();
 builder.Services.AddDataTracePlc();
 builder.Services.AddIoTClientDrivers();
 builder.Services.AddDataTraceCollector();

@@ -1,3 +1,4 @@
+using DataTrace.Domain.Entities;
 using DataTrace.Infrastructure.Persistence;
 using DataTrace.Infrastructure.Seeding;
 using Microsoft.EntityFrameworkCore;
@@ -7,6 +8,54 @@ namespace DataTrace.Tests;
 
 public class DatabaseSeederTests
 {
+    [Fact]
+    public async Task Quality_incident_tables_are_recreated_for_an_existing_config_database()
+    {
+        await using var context = await InfrastructureContext.CreateAsync();
+
+        using (var scope = context.Provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
+            await db.Database.ExecuteSqlRawAsync("DROP TABLE \"QualityIncidentActivities\"");
+            await db.Database.ExecuteSqlRawAsync("DROP TABLE \"QualityIncidentEvidence\"");
+            await db.Database.ExecuteSqlRawAsync("DROP TABLE \"QualityIncidents\"");
+        }
+
+        using (var scope = context.Provider.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<DatabaseSeeder>().SeedAsync();
+        }
+
+        using (var scope = context.Provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
+            db.QualityIncidents.Add(new QualityIncident
+            {
+                RequestId = Guid.NewGuid(),
+                IncidentNumber = "QI-20261008-0001",
+                Title = "压力超限",
+                Description = "重启后核查旧库补表",
+                CreatedBy = "engineer",
+                CreatedAt = DateTime.Now,
+                UpdatedAt = DateTime.Now
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using (var scope = context.Provider.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<DatabaseSeeder>().SeedAsync();
+        }
+
+        using (var scope = context.Provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
+            Assert.Equal("QI-20261008-0001", (await db.QualityIncidents.SingleAsync()).IncidentNumber);
+            Assert.Empty(await db.QualityIncidentEvidence.ToListAsync());
+            Assert.Empty(await db.QualityIncidentActivities.ToListAsync());
+        }
+    }
+
     [Fact]
     public async Task ExistingDemoSimulatorIsExpandedToSixStationsOnlyOnce()
     {

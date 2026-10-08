@@ -13,6 +13,8 @@ public class RouteE2ETests : E2ETestBase
     [InlineData("/", "实时看板")]
     [InlineData("/logs", "审计日志")]
     [InlineData("/query", "数据查询")]
+    [InlineData("/quality/incidents", "质量异常处置台")]
+    [InlineData("/quality/incidents/new", "新建质量异常单")]
     [InlineData("/reports", "报表")]
     [InlineData("/curve-baseline", "波形基线")]
     [InlineData("/config/plc", "PLC")]

@@ -53,6 +53,7 @@ public sealed partial class DatabaseSeeder
         await _db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;", cancellationToken).ConfigureAwait(false);
         await EnsureAuditLogSchemaAsync(cancellationToken).ConfigureAwait(false);
         await EnsureAlarmSchemaAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureQualityIncidentSchemaAsync(cancellationToken).ConfigureAwait(false);
         await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "SimulatorAutoRun",
             "ALTER TABLE SystemSettings ADD COLUMN SimulatorAutoRun INTEGER NOT NULL DEFAULT 1", cancellationToken).ConfigureAwait(false);
         await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "SimulatorIntervalMs",

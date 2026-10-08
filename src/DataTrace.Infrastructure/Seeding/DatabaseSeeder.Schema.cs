@@ -81,6 +81,92 @@ partial class DatabaseSeeder
             cancellationToken).ConfigureAwait(false);
     }
 
+    private async Task EnsureQualityIncidentSchemaAsync(CancellationToken cancellationToken)
+    {
+        await _db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE TABLE IF NOT EXISTS "QualityIncidents" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_QualityIncidents" PRIMARY KEY AUTOINCREMENT,
+                "RequestId" TEXT NOT NULL,
+                "IncidentNumber" TEXT NOT NULL,
+                "Title" TEXT NOT NULL,
+                "Description" TEXT NOT NULL,
+                "Severity" INTEGER NOT NULL,
+                "Status" INTEGER NOT NULL,
+                "StationId" INTEGER NULL,
+                "StationCode" TEXT NOT NULL,
+                "RecipeCode" TEXT NOT NULL,
+                "SourceAlarmId" INTEGER NULL,
+                "ScopeFrom" TEXT NULL,
+                "ScopeTo" TEXT NULL,
+                "CreatedBy" TEXT NOT NULL,
+                "Owner" TEXT NULL,
+                "CreatedAt" TEXT NOT NULL,
+                "UpdatedAt" TEXT NOT NULL,
+                "Version" INTEGER NOT NULL
+            )
+            """,
+            cancellationToken).ConfigureAwait(false);
+        await _db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE TABLE IF NOT EXISTS "QualityIncidentEvidence" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_QualityIncidentEvidence" PRIMARY KEY AUTOINCREMENT,
+                "IncidentId" INTEGER NOT NULL,
+                "MonthKey" TEXT NOT NULL,
+                "RecordId" INTEGER NOT NULL,
+                "Purpose" INTEGER NOT NULL,
+                "SerialNo" TEXT NOT NULL,
+                "PalletCode" TEXT NOT NULL,
+                "StationCode" TEXT NOT NULL,
+                "RecipeCode" TEXT NOT NULL,
+                "TriggerTime" TEXT NOT NULL,
+                "Judgement" INTEGER NOT NULL,
+                "ResultCode" INTEGER NOT NULL,
+                "TagSnapshotJson" TEXT NOT NULL,
+                CONSTRAINT "FK_QualityIncidentEvidence_QualityIncidents_IncidentId"
+                    FOREIGN KEY ("IncidentId") REFERENCES "QualityIncidents" ("Id") ON DELETE CASCADE
+            )
+            """,
+            cancellationToken).ConfigureAwait(false);
+        await _db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE TABLE IF NOT EXISTS "QualityIncidentActivities" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_QualityIncidentActivities" PRIMARY KEY AUTOINCREMENT,
+                "IncidentId" INTEGER NOT NULL,
+                "Kind" INTEGER NOT NULL,
+                "FromStatus" INTEGER NULL,
+                "ToStatus" INTEGER NULL,
+                "CauseCategory" TEXT NULL,
+                "ActionTaken" TEXT NULL,
+                "VerificationResult" TEXT NULL,
+                "Comment" TEXT NULL,
+                "Actor" TEXT NOT NULL,
+                "CreatedAt" TEXT NOT NULL,
+                CONSTRAINT "FK_QualityIncidentActivities_QualityIncidents_IncidentId"
+                    FOREIGN KEY ("IncidentId") REFERENCES "QualityIncidents" ("Id") ON DELETE CASCADE
+            )
+            """,
+            cancellationToken).ConfigureAwait(false);
+        await _db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_QualityIncidents_IncidentNumber"
+                ON "QualityIncidents" ("IncidentNumber");
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_QualityIncidents_RequestId"
+                ON "QualityIncidents" ("RequestId");
+            CREATE INDEX IF NOT EXISTS "IX_QualityIncidents_Status_UpdatedAt"
+                ON "QualityIncidents" ("Status", "UpdatedAt");
+            CREATE INDEX IF NOT EXISTS "IX_QualityIncidents_Owner_Status"
+                ON "QualityIncidents" ("Owner", "Status");
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_QualityIncidentEvidence_IncidentId_MonthKey_RecordId"
+                ON "QualityIncidentEvidence" ("IncidentId", "MonthKey", "RecordId");
+            CREATE INDEX IF NOT EXISTS "IX_QualityIncidentEvidence_MonthKey_RecordId"
+                ON "QualityIncidentEvidence" ("MonthKey", "RecordId");
+            CREATE INDEX IF NOT EXISTS "IX_QualityIncidentActivities_IncidentId_CreatedAt"
+                ON "QualityIncidentActivities" ("IncidentId", "CreatedAt");
+            """,
+            cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// 点位不再有编码。老库把空名称补成原来的编码，重名的加上后缀，然后删掉 Code 列。
     /// 新库由模型直接建出 (工站, 名称) 唯一索引，这里看到没有 Code 列就跳过。

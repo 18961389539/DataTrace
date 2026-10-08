@@ -1,0 +1,731 @@
+@page "/quality/incidents/{Id:long}"
+@attribute [Authorize]
+@using System.Globalization
+@using System.Text.Json
+@using DataTrace.Application.Identity
+@using DataTrace.Application.Quality
+@using DataTrace.Application.Runtime
+@using DataTrace.Domain.Constants
+@using DataTrace.Domain.Entities
+@using DataTrace.Domain.Enums
+@inject IQualityIncidentService Incidents
+@inject IQualityIncidentActorProvider Actors
+@inject IUserAdministration Users
+@inject DtToast Toast
+@inject NavigationManager Nav
+
+@if (_loading)
+{
+    <PageHeader Title="质量异常详情" />
+    <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="220px" />
+}
+else if (_loadError is not null)
+{
+    <PageHeader Title="质量异常详情">
+        <Actions>
+            <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Href="/quality/incidents">返回处置台</MudButton>
+        </Actions>
+    </PageHeader>
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
+            <span>@_loadError</span>
+            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="LoadAsync">重试</MudButton>
+        </MudStack>
+    </MudAlert>
+}
+else if (_details is null)
+{
+    <PageHeader Title="质量异常详情">
+        <Actions>
+            <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Href="/quality/incidents">返回处置台</MudButton>
+        </Actions>
+    </PageHeader>
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">质量异常单不存在或已被清理。</MudAlert>
+}
+else
+{
+    <PageHeader Title="@_details.Incident.IncidentNumber" Description="质量异常的证据、处理过程与复核结论。">
+        <ChildContent>
+            <MudChip T="string" Size="Size.Small" Color="@StatusColor(_details.Incident.Status)" Variant="Variant.Outlined">
+                @StatusText(_details.Incident.Status)
+            </MudChip>
+            <MudChip T="string" Size="Size.Small" Color="@SeverityColor(_details.Incident.Severity)">
+                @SeverityText(_details.Incident.Severity)
+            </MudChip>
+        </ChildContent>
+        <Actions>
+            <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Href="/quality/incidents">返回列表</MudButton>
+        </Actions>
+    </PageHeader>
+
+    @if (_notice is not null)
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-3">@_notice</MudAlert>
+    }
+
+    <MudPaper Class="pa-4 mb-3">
+        <MudGrid>
+            <MudItem xs="12" md="7">
+                <MudText Typo="Typo.h6">@_details.Incident.Title</MudText>
+                <MudText Typo="Typo.body2" Class="mt-1">@_details.Incident.Description</MudText>
+            </MudItem>
+            <MudItem xs="6" sm="4" md="2">
+                <MudText Typo="Typo.caption" Class="dt-muted">工站</MudText>
+                <MudText Typo="Typo.body2">@(string.IsNullOrWhiteSpace(_details.Incident.StationCode) ? "全部工站" : _details.Incident.StationCode)</MudText>
+            </MudItem>
+            <MudItem xs="6" sm="4" md="3">
+                <MudText Typo="Typo.caption" Class="dt-muted">产品型号</MudText>
+                <MudText Typo="Typo.body2">@(string.IsNullOrWhiteSpace(_details.Incident.RecipeCode) ? "未指定" : _details.Incident.RecipeCode)</MudText>
+            </MudItem>
+            <MudItem xs="6" sm="4" md="3">
+                <MudText Typo="Typo.caption" Class="dt-muted">创建人 / 时间</MudText>
+                <MudText Typo="Typo.body2">@_details.Incident.CreatedBy · @_details.Incident.CreatedAt.ToString("yyyy-MM-dd HH:mm")</MudText>
+            </MudItem>
+            <MudItem xs="6" sm="4" md="3">
+                <MudText Typo="Typo.caption" Class="dt-muted">负责人</MudText>
+                <MudText Typo="Typo.body2">@(string.IsNullOrWhiteSpace(_details.Incident.Owner) ? "待接手" : _details.Incident.Owner)</MudText>
+            </MudItem>
+            @if (_details.Incident.ScopeFrom is { } scopeFrom && _details.Incident.ScopeTo is { } scopeTo)
+            {
+                <MudItem xs="12" sm="8">
+                    <MudText Typo="Typo.caption" Class="dt-muted">排查范围</MudText>
+                    <MudText Typo="Typo.body2">@scopeFrom.ToString("yyyy-MM-dd HH:mm") 至 @scopeTo.ToString("yyyy-MM-dd HH:mm")</MudText>
+                </MudItem>
+            }
+            @if (_details.Incident.SourceAlarmId is { } alarmId)
+            {
+                <MudItem xs="12" sm="4">
+                    <MudText Typo="Typo.caption" Class="dt-muted">关联报警</MudText>
+                    <MudText Typo="Typo.body2">#@alarmId · 报警解除与异常单关闭互不影响</MudText>
+                </MudItem>
+            }
+        </MudGrid>
+    </MudPaper>
+
+    <MudPaper Class="pa-4 mb-3">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap mb-2">
+            <MudText Typo="Typo.subtitle1">关联证据</MudText>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Text">@_details.Evidence.Count 条记录</MudChip>
+            <MudText Typo="Typo.caption" Class="dt-muted">每条快照保留采集当时的判定和限值，不随配置修改重算。</MudText>
+        </MudStack>
+        <MudTable Items="_details.Evidence" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+            <HeaderContent>
+                <MudTh>用途</MudTh>
+                <MudTh>触发时间</MudTh>
+                <MudTh>流水号 / 托盘</MudTh>
+                <MudTh>工站 / 型号</MudTh>
+                <MudTh>判定</MudTh>
+                <MudTh>关键参数快照</MudTh>
+                <MudTh></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="用途"><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@EvidenceColor(context.Purpose)">@EvidencePurposeText(context.Purpose)</MudChip></MudTd>
+                <MudTd DataLabel="触发时间" Class="dt-nowrap">@context.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+                <MudTd DataLabel="流水号 / 托盘">@context.SerialNo<MudText Typo="Typo.caption" Class="dt-muted">@context.PalletCode</MudText></MudTd>
+                <MudTd DataLabel="工站 / 型号">@context.StationCode<MudText Typo="Typo.caption" Class="dt-muted">@(string.IsNullOrWhiteSpace(context.RecipeCode) ? "未指定型号" : context.RecipeCode)</MudText></MudTd>
+                <MudTd DataLabel="判定"><MudText Color="@JudgementColor(context.Judgement)">@DisplayLabels.JudgementTextLong(context.Judgement)</MudText></MudTd>
+                <MudTd DataLabel="关键参数快照">@TagSnapshotSummary(context.TagSnapshotJson)</MudTd>
+                <MudTd DataLabel="记录">
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Href="@($"/query/{context.MonthKey}/{context.RecordId}")" Target="_blank" rel="noopener">
+                        查看明细
+                    </MudButton>
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    </MudPaper>
+
+    @if (HasScope)
+    {
+        <MudPaper Class="pa-4 mb-3">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap mb-1">
+                <MudText Typo="Typo.subtitle1">潜在影响范围候选</MudText>
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_candidateTotal 条符合范围</MudChip>
+                <MudText Typo="Typo.caption" Class="dt-muted">候选记录不等于已确认不良；请逐条判断并登记，托盘码不作为产品唯一标识。</MudText>
+            </MudStack>
+            @if (_candidateError is not null)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="my-2">
+                    @_candidateError
+                    <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="LoadCandidatesAsync">重试</MudButton>
+                </MudAlert>
+            }
+            <MudTable Items="_candidates" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_candidateLoading" Class="mt-2">
+                <HeaderContent>
+                    <MudTh>触发时间</MudTh>
+                    <MudTh>流水号</MudTh>
+                    <MudTh>托盘码</MudTh>
+                    <MudTh>判定</MudTh>
+                    <MudTh>关联状态</MudTh>
+                    <MudTh></MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="触发时间" Class="dt-nowrap">@context.Record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+                    <MudTd DataLabel="流水号">@context.Record.SerialNo</MudTd>
+                    <MudTd DataLabel="托盘码">@context.Record.PalletCode</MudTd>
+                    <MudTd DataLabel="判定"><MudText Color="@JudgementColor(context.Record.Judgement)">@DisplayLabels.JudgementTextLong(context.Record.Judgement)</MudText></MudTd>
+                    <MudTd DataLabel="关联状态">@(ExistingPurpose(context) is { } purpose ? EvidencePurposeText(purpose) : "未登记")</MudTd>
+                    <MudTd DataLabel="操作">
+                        <MudStack Row="true" Spacing="1" Class="flex-wrap">
+                            <MudButton Size="Size.Small" Variant="Variant.Text" Href="@($"/query/{context.MonthKey}/{context.Record.Id}")" Target="_blank" rel="noopener">查看</MudButton>
+                            @if (_canWork && _details.Incident.Status is QualityIncidentStatus.Open or QualityIncidentStatus.InProgress && ExistingPurpose(context) is null)
+                            {
+                                <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_working"
+                                           OnClick="@(() => AddAffectedAsync(context))">列为潜在影响</MudButton>
+                            }
+                            @if (_canWork && _details.Incident.Status == QualityIncidentStatus.InProgress
+                                 && ExistingPurpose(context) is null or QualityEvidencePurpose.Verification)
+                            {
+                                <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_working"
+                                           OnClick="@(() => SelectVerificationRecord(context))">选作验证</MudButton>
+                            }
+                        </MudStack>
+                    </MudTd>
+                </RowTemplate>
+                <NoRecordsContent>
+                    <div class="dt-empty-hint"><MudText Typo="Typo.body2" Class="dt-muted py-2">排查范围内没有记录。</MudText></div>
+                </NoRecordsContent>
+            </MudTable>
+            @if (_candidateTotal > CandidatePageSize)
+            {
+                <MudStack Row="true" Justify="Justify.FlexEnd" Spacing="1" Class="mt-2">
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_candidateLoading || _candidatePage == 0" OnClick="PreviousCandidatesAsync">上一页</MudButton>
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_candidateLoading || (_candidatePage + 1) * CandidatePageSize >= _candidateTotal" OnClick="NextCandidatesAsync">下一页</MudButton>
+                </MudStack>
+            }
+        </MudPaper>
+    }
+    else
+    {
+        <MudAlert Severity="Severity.Info" Variant="Variant.Outlined" Class="mb-3">此异常单未指定排查时间范围，因此不自动推断潜在影响记录。</MudAlert>
+    }
+
+    @if (_canWork && _details.Incident.Status is QualityIncidentStatus.Open or QualityIncidentStatus.InProgress)
+    {
+        <MudPaper Class="pa-4 mb-3">
+            <MudText Typo="Typo.subtitle1" Class="mb-2">处置操作</MudText>
+            @if (string.IsNullOrWhiteSpace(_details.Incident.Owner) || string.Equals(_details.Incident.Owner, _actor?.UserName, StringComparison.OrdinalIgnoreCase) || _canManage)
+            {
+                @if (_details.Incident.Status == QualityIncidentStatus.Open)
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.AssignmentInd"
+                               Disabled="_working" OnClick="TakeAsync">接手处理</MudButton>
+                }
+                <MudGrid Class="dt-filters mt-2">
+                    <MudItem xs="12" md="8">
+                        <MudTextField T="string" @bind-Value="_noteAction" Label="本次处置措施" Lines="2" MaxLength="2000" />
+                    </MudItem>
+                    <MudItem xs="12" md="4">
+                        <MudTextField T="string" @bind-Value="_noteComment" Label="补充说明" Lines="2" MaxLength="2000" />
+                    </MudItem>
+                </MudGrid>
+                <MudStack Row="true" Spacing="2" Class="mt-2 flex-wrap">
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.NoteAdd" Disabled="_working || string.IsNullOrWhiteSpace(_noteAction)" OnClick="AddWorkNoteAsync">记录措施</MudButton>
+                </MudStack>
+                @if (_details.Incident.Status == QualityIncidentStatus.InProgress)
+                {
+                    <MudDivider Class="my-4" />
+                    <MudText Typo="Typo.subtitle2" Class="mb-2">提交复核所需信息</MudText>
+                    <MudGrid Class="dt-filters">
+                        <MudItem xs="12" sm="4">
+                            <MudSelect T="string" @bind-Value="_causeCategory" Label="原因分类" Dense="true">
+                                @foreach (var cause in CauseCategories)
+                                {
+                                    <MudSelectItem T="string" Value="@cause">@cause</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="12" sm="8">
+                            <MudTextField T="string" @bind-Value="_reviewAction" Label="最终处置措施" MaxLength="2000" />
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudTextField T="string" @bind-Value="_verificationResult" Label="验证结论" Lines="2" MaxLength="2000" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField T="string" @bind-Value="_verificationMonth" Label="验证记录月份" Placeholder="yyyyMM" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudNumericField T="long?" @bind-Value="_verificationRecordId" Label="验证记录 ID" Min="1"
+                                             HelperText="在上方候选表选择，或从采集明细复制记录 ID" />
+                        </MudItem>
+                    </MudGrid>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-2"
+                               Disabled="_working || string.IsNullOrWhiteSpace(_causeCategory)
+                                         || string.IsNullOrWhiteSpace(_reviewAction)
+                                         || string.IsNullOrWhiteSpace(_verificationResult)
+                                         || string.IsNullOrWhiteSpace(_verificationMonth)
+                                         || _verificationRecordId is not > 0"
+                               OnClick="SubmitForReviewAsync">提交复核</MudButton>
+                }
+            }
+            else
+            {
+                <MudAlert Severity="Severity.Info" Dense="true">此异常单由 @_details.Incident.Owner 负责；请联系负责人，或由工程师重新指派。</MudAlert>
+            }
+        </MudPaper>
+    }
+
+    @if (_canManage && _details.Incident.Status is QualityIncidentStatus.Open or QualityIncidentStatus.InProgress)
+    {
+        <MudPaper Class="pa-4 mb-3">
+            <MudText Typo="Typo.subtitle1" Class="mb-2">负责人指派</MudText>
+            @if (_assignableUsers.Count == 0)
+            {
+                <MudText Typo="Typo.body2" Class="dt-muted">没有可指派的操作员、工程师或管理员账号。</MudText>
+            }
+            else
+            {
+                <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
+                    <MudSelect T="string" @bind-Value="_assignOwner" Label="选择负责人" Dense="true" Style="min-width: 260px">
+                        @foreach (var user in _assignableUsers)
+                        {
+                            <MudSelectItem T="string" Value="@user.UserName">@(string.IsNullOrWhiteSpace(user.DisplayName) ? user.UserName : $"{user.DisplayName} ({user.UserName})")</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.PersonAdd" Disabled="_working || string.IsNullOrWhiteSpace(_assignOwner)" OnClick="AssignAsync">指派</MudButton>
+                </MudStack>
+            }
+        </MudPaper>
+    }
+
+    @if (_canManage && _details.Incident.Status == QualityIncidentStatus.PendingReview)
+    {
+        <MudPaper Class="pa-4 mb-3">
+            <MudText Typo="Typo.subtitle1" Class="mb-2">复核结论</MudText>
+            <MudTextField T="string" @bind-Value="_reviewComment" Label="复核意见或退回原因" Lines="2" MaxLength="2000" />
+            <MudStack Row="true" Spacing="2" Class="mt-2 flex-wrap">
+                <MudButton Variant="Variant.Filled" Color="Color.Success" StartIcon="@Icons.Material.Filled.CheckCircle"
+                           Disabled="_working || string.IsNullOrWhiteSpace(_reviewComment)" OnClick="@(() => ReviewAsync(approved: true))">通过并关闭</MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Warning" StartIcon="@Icons.Material.Filled.Undo"
+                           Disabled="_working || string.IsNullOrWhiteSpace(_reviewComment)" OnClick="@(() => ReviewAsync(approved: false))">退回处理中</MudButton>
+            </MudStack>
+        </MudPaper>
+    }
+
+    @if (_canManage && _details.Incident.Status == QualityIncidentStatus.Closed)
+    {
+        <MudPaper Class="pa-4 mb-3">
+            <MudText Typo="Typo.subtitle1" Class="mb-2">重新打开</MudText>
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
+                <MudTextField T="string" @bind-Value="_reopenReason" Label="重新打开原因" MaxLength="2000" />
+                <MudText Typo="Typo.caption" Class="dt-muted">需说明新发现的证据或未解决问题。</MudText>
+                <MudButton Variant="Variant.Outlined" Color="Color.Warning" StartIcon="@Icons.Material.Filled.Replay"
+                           Disabled="_working || string.IsNullOrWhiteSpace(_reopenReason)" OnClick="ReopenAsync">重新打开</MudButton>
+            </MudStack>
+        </MudPaper>
+    }
+
+    <MudPaper Class="pa-4">
+        <MudText Typo="Typo.subtitle1" Class="mb-3">处置时间线</MudText>
+        @if (_details.Activities.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Class="dt-muted">暂无处置记录。</MudText>
+        }
+        else
+        {
+            <MudTable Items="_details.Activities" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+                <HeaderContent>
+                    <MudTh>时间</MudTh>
+                    <MudTh>操作</MudTh>
+                    <MudTh>状态变化</MudTh>
+                    <MudTh>操作人</MudTh>
+                    <MudTh>记录</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="时间" Class="dt-nowrap">@context.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+                    <MudTd DataLabel="操作">@ActivityText(context.Kind)</MudTd>
+                    <MudTd DataLabel="状态变化">@StatusTransition(context)</MudTd>
+                    <MudTd DataLabel="操作人">@context.Actor</MudTd>
+                    <MudTd DataLabel="记录">
+                        @if (!string.IsNullOrWhiteSpace(context.CauseCategory))
+                        {
+                            <MudText Typo="Typo.body2">原因：@context.CauseCategory</MudText>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(context.ActionTaken))
+                        {
+                            <MudText Typo="Typo.body2">措施：@context.ActionTaken</MudText>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(context.VerificationResult))
+                        {
+                            <MudText Typo="Typo.body2">验证：@context.VerificationResult</MudText>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(context.Comment))
+                        {
+                            <MudText Typo="Typo.body2">@context.Comment</MudText>
+                        }
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    </MudPaper>
+}
+
+@code {
+    private const int CandidatePageSize = 25;
+    private static readonly string[] CauseCategories = ["设备故障", "工艺参数", "原材料", "操作偏差", "测量系统", "其他"];
+    [Parameter] public long Id { get; set; }
+
+    private QualityIncidentDetails? _details;
+    private QualityIncidentActor? _actor;
+    private IReadOnlyList<UserAccount> _assignableUsers = [];
+    private IReadOnlyList<CollectRecordListItem> _candidates = [];
+    private int _candidateTotal;
+    private int _candidatePage;
+    private bool _loading = true;
+    private bool _working;
+    private bool _candidateLoading;
+    private bool _canWork;
+    private bool _canManage;
+    private string? _loadError;
+    private string? _candidateError;
+    private string? _notice;
+    private string? _assignOwner;
+    private string? _noteAction;
+    private string? _noteComment;
+    private string? _causeCategory;
+    private string? _reviewAction;
+    private string? _verificationResult;
+    private string? _verificationMonth;
+    private long? _verificationRecordId;
+    private string? _reviewComment;
+    private string? _reopenReason;
+    private bool HasScope => _details?.Incident.ScopeFrom is not null && _details.Incident.ScopeTo is not null;
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _loadError = null;
+        try
+        {
+            _actor = await Actors.GetCurrentAsync();
+            _canWork = _actor.IsInRole(AppRoles.Administrator)
+                       || _actor.IsInRole(AppRoles.Engineer)
+                       || _actor.IsInRole(AppRoles.Operator);
+            _canManage = _actor.IsInRole(AppRoles.Administrator) || _actor.IsInRole(AppRoles.Engineer);
+            _details = await Incidents.GetAsync(Id);
+            _notice = null;
+            if (_details is null)
+            {
+                _candidates = [];
+                _candidateTotal = 0;
+                return;
+            }
+
+            _assignOwner = _details.Incident.Owner;
+            if (_canManage)
+            {
+                try
+                {
+                    _assignableUsers = (await Users.ListAsync())
+                        .Where(user => !user.IsLocked
+                                       && user.Roles.Any(role => role == AppRoles.Administrator
+                                                              || role == AppRoles.Engineer
+                                                              || role == AppRoles.Operator))
+                        .OrderBy(user => user.DisplayName, StringComparer.OrdinalIgnoreCase)
+                        .ThenBy(user => user.UserName, StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                }
+                catch (Exception ex)
+                {
+                    _assignableUsers = [];
+                    _notice = $"负责人列表加载失败：{ex.Message}";
+                }
+            }
+
+            if (HasScope)
+            {
+                await LoadCandidatesAsync();
+            }
+            else
+            {
+                _candidates = [];
+                _candidateTotal = 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            _details = null;
+            _loadError = $"质量异常单加载失败：{ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadCandidatesAsync()
+    {
+        if (_details is null || !HasScope || _candidateLoading)
+        {
+            return;
+        }
+
+        _candidateLoading = true;
+        _candidateError = null;
+        try
+        {
+            var result = await Incidents.SearchAffectedCandidatesAsync(
+                Id, _candidatePage * CandidatePageSize, CandidatePageSize);
+            if (_candidatePage > 0 && _candidatePage * CandidatePageSize >= result.Total)
+            {
+                _candidatePage = Math.Max(0, (int)Math.Ceiling(result.Total / (double)CandidatePageSize) - 1);
+                result = await Incidents.SearchAffectedCandidatesAsync(
+                    Id, _candidatePage * CandidatePageSize, CandidatePageSize);
+            }
+
+            _candidates = result.Items;
+            _candidateTotal = result.Total;
+        }
+        catch (Exception ex)
+        {
+            _candidateError = $"潜在影响候选加载失败：{ex.Message}";
+        }
+        finally
+        {
+            _candidateLoading = false;
+        }
+    }
+
+    private async Task PreviousCandidatesAsync()
+    {
+        if (_candidatePage > 0)
+        {
+            _candidatePage--;
+            await LoadCandidatesAsync();
+        }
+    }
+
+    private async Task NextCandidatesAsync()
+    {
+        if ((_candidatePage + 1) * CandidatePageSize < _candidateTotal)
+        {
+            _candidatePage++;
+            await LoadCandidatesAsync();
+        }
+    }
+
+    private async Task TakeAsync()
+    {
+        if (_details is null || _actor is null) return;
+        await MutateAsync(() => Incidents.TakeAsync(Id, _details.Incident.Version, _actor));
+    }
+
+    private async Task AssignAsync()
+    {
+        if (_details is null || _actor is null || string.IsNullOrWhiteSpace(_assignOwner)) return;
+        await MutateAsync(() => Incidents.AssignAsync(Id, _assignOwner, _details.Incident.Version, _actor));
+    }
+
+    private async Task AddWorkNoteAsync()
+    {
+        if (_details is null || _actor is null || string.IsNullOrWhiteSpace(_noteAction)) return;
+        var command = new QualityIncidentActionCommand { ActionTaken = _noteAction, Comment = _noteComment };
+        if (await MutateAsync(() => Incidents.AddWorkNoteAsync(Id, command, _details.Incident.Version, _actor)))
+        {
+            _noteAction = null;
+            _noteComment = null;
+        }
+    }
+
+    private async Task AddAffectedAsync(CollectRecordListItem item)
+    {
+        if (_details is null || _actor is null) return;
+        await MutateAsync(() => Incidents.LinkEvidenceAsync(Id, item.MonthKey, item.Record.Id,
+            QualityEvidencePurpose.Affected, _details.Incident.Version, _actor));
+    }
+
+    private async Task SubmitForReviewAsync()
+    {
+        if (_details is null || _actor is null || _verificationRecordId is not > 0
+            || string.IsNullOrWhiteSpace(_verificationMonth))
+        {
+            Toast.Add("请填写验证记录月份和记录 ID。", Severity.Warning);
+            return;
+        }
+
+        var command = new QualityIncidentReviewSubmission
+        {
+            CauseCategory = _causeCategory ?? "",
+            ActionTaken = _reviewAction ?? "",
+            VerificationResult = _verificationResult ?? "",
+            MonthKey = _verificationMonth.Trim(),
+            RecordId = _verificationRecordId.Value
+        };
+        await MutateAsync(() => Incidents.SubmitForReviewAsync(Id, command, _details.Incident.Version, _actor));
+    }
+
+    private void SelectVerificationRecord(CollectRecordListItem item)
+    {
+        _verificationMonth = item.MonthKey;
+        _verificationRecordId = item.Record.Id;
+        _verificationResult ??= item.Record.Judgement == Judgement.Ok ? "复测合格" : "复测结果待说明";
+        Toast.Add($"已选择验证记录 {item.Record.SerialNo}", Severity.Info);
+    }
+
+    private async Task ReviewAsync(bool approved)
+    {
+        if (_details is null || _actor is null || string.IsNullOrWhiteSpace(_reviewComment)) return;
+        var command = new QualityIncidentReviewCommand { Approved = approved, Comment = _reviewComment };
+        if (await MutateAsync(() => Incidents.ReviewAsync(Id, command, _details.Incident.Version, _actor)))
+        {
+            _reviewComment = null;
+        }
+    }
+
+    private async Task ReopenAsync()
+    {
+        if (_details is null || _actor is null || string.IsNullOrWhiteSpace(_reopenReason)) return;
+        if (await MutateAsync(() => Incidents.ReopenAsync(Id, _reopenReason, _details.Incident.Version, _actor)))
+        {
+            _reopenReason = null;
+        }
+    }
+
+    private async Task<bool> MutateAsync(Func<Task> operation)
+    {
+        if (_working) return false;
+        _working = true;
+        try
+        {
+            await operation();
+            Toast.Add("处置记录已保存", Severity.Success);
+            await LoadAsync();
+            return true;
+        }
+        catch (QualityIncidentConflictException ex)
+        {
+            Toast.Add(ex.Message, Severity.Warning);
+            await LoadAsync();
+            return false;
+        }
+        catch (QualityIncidentOperationException ex)
+        {
+            Toast.Add(ex.Message, Severity.Warning);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"操作失败：{ex.Message}", Severity.Error);
+            return false;
+        }
+        finally
+        {
+            _working = false;
+        }
+    }
+
+    private QualityEvidencePurpose? ExistingPurpose(CollectRecordListItem candidate)
+        => _details?.Evidence.FirstOrDefault(evidence => evidence.MonthKey == candidate.MonthKey
+                                                        && evidence.RecordId == candidate.Record.Id)?.Purpose;
+
+    private static string TagSnapshotSummary(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var issueNames = document.RootElement.EnumerateArray()
+                .Where(item => item.TryGetProperty("IsOutOfLimit", out var ng) && ng.GetBoolean()
+                               || item.TryGetProperty("IsWarning", out var warning) && warning.GetBoolean())
+                .Select(item =>
+                {
+                    var name = item.TryGetProperty("TagName", out var tagName) ? tagName.GetString() : null;
+                    var value = item.TryGetProperty("NumericValue", out var numeric) && numeric.ValueKind != JsonValueKind.Null
+                        ? numeric.ToString()
+                        : item.TryGetProperty("TextValue", out var text) ? text.GetString() : null;
+                    var limits = item.TryGetProperty("LowerLimit", out var lower) && lower.ValueKind != JsonValueKind.Null
+                                 || item.TryGetProperty("UpperLimit", out var upper) && upper.ValueKind != JsonValueKind.Null
+                        ? $" [{JsonValue(item, "LowerLimit")}–{JsonValue(item, "UpperLimit")}]"
+                        : "";
+                    return $"{name}: {value}{limits}";
+                })
+                .Take(4)
+                .ToArray();
+            return issueNames.Length == 0 ? "无超限/预警点" : string.Join("；", issueNames);
+        }
+        catch (JsonException)
+        {
+            return "历史快照不可读取";
+        }
+    }
+
+    private static string JsonValue(JsonElement item, string property)
+        => item.TryGetProperty(property, out var value) && value.ValueKind != JsonValueKind.Null ? value.ToString() : "—";
+
+    private static string EvidencePurposeText(QualityEvidencePurpose purpose) => purpose switch
+    {
+        QualityEvidencePurpose.Source => "源证据",
+        QualityEvidencePurpose.Affected => "潜在影响",
+        QualityEvidencePurpose.Verification => "验证证据",
+        _ => "未知"
+    };
+
+    private static string ActivityText(QualityIncidentActivityKind kind) => kind switch
+    {
+        QualityIncidentActivityKind.Created => "创建异常单",
+        QualityIncidentActivityKind.Assigned => "接手 / 指派",
+        QualityIncidentActivityKind.ActionRecorded => "记录处置措施",
+        QualityIncidentActivityKind.EvidenceLinked => "登记潜在影响",
+        QualityIncidentActivityKind.SubmittedForReview => "提交复核",
+        QualityIncidentActivityKind.ReviewRejected => "复核退回",
+        QualityIncidentActivityKind.Closed => "复核通过并关闭",
+        QualityIncidentActivityKind.Reopened => "重新打开",
+        _ => "更新"
+    };
+
+    private static string StatusText(QualityIncidentStatus status) => status switch
+    {
+        QualityIncidentStatus.Open => "待处理",
+        QualityIncidentStatus.InProgress => "处理中",
+        QualityIncidentStatus.PendingReview => "待复核",
+        QualityIncidentStatus.Closed => "已关闭",
+        _ => "未知"
+    };
+
+    private static string StatusText(QualityIncidentStatus? status) => status is null ? "—" : StatusText(status.Value);
+
+    private static string StatusTransition(QualityIncidentActivity activity)
+        => activity.FromStatus == activity.ToStatus
+            ? StatusText(activity.ToStatus)
+            : $"{StatusText(activity.FromStatus)} → {StatusText(activity.ToStatus)}";
+
+    private static string SeverityText(QualityIncidentSeverity severity) => severity switch
+    {
+        QualityIncidentSeverity.Low => "低",
+        QualityIncidentSeverity.Medium => "中",
+        QualityIncidentSeverity.High => "高",
+        QualityIncidentSeverity.Critical => "紧急",
+        _ => "未知"
+    };
+
+    private static Color StatusColor(QualityIncidentStatus status) => status switch
+    {
+        QualityIncidentStatus.Open => Color.Warning,
+        QualityIncidentStatus.InProgress => Color.Info,
+        QualityIncidentStatus.PendingReview => Color.Secondary,
+        QualityIncidentStatus.Closed => Color.Success,
+        _ => Color.Default
+    };
+
+    private static Color SeverityColor(QualityIncidentSeverity severity) => severity switch
+    {
+        QualityIncidentSeverity.High or QualityIncidentSeverity.Critical => Color.Error,
+        QualityIncidentSeverity.Medium => Color.Warning,
+        _ => Color.Default
+    };
+
+    private static Color EvidenceColor(QualityEvidencePurpose purpose) => purpose switch
+    {
+        QualityEvidencePurpose.Source => Color.Error,
+        QualityEvidencePurpose.Affected => Color.Warning,
+        QualityEvidencePurpose.Verification => Color.Success,
+        _ => Color.Default
+    };
+
+    private static Color JudgementColor(Judgement judgement) => judgement switch
+    {
+        Judgement.Ok => Color.Success,
+        Judgement.Ng => Color.Error,
+        _ => Color.Default
+    };
+}

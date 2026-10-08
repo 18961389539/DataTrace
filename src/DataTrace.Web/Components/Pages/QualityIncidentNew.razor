@@ -1,0 +1,429 @@
+@page "/quality/incidents/new"
+@attribute [Authorize]
+@using System.Globalization
+@using DataTrace.Application.Alarms
+@using DataTrace.Application.Quality
+@using DataTrace.Application.Runtime
+@using DataTrace.Domain.Entities
+@using DataTrace.Domain.Enums
+@inject IQualityIncidentService Incidents
+@inject IQualityIncidentActorProvider Actors
+@inject ICollectQuery Collect
+@inject IAlarmIncidents AlarmIncidents
+@inject DtToast Toast
+@inject NavigationManager Nav
+
+<PageHeader Title="新建质量异常单">
+    <Actions>
+        <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack"
+                   Href="/quality/incidents">返回处置台</MudButton>
+    </Actions>
+</PageHeader>
+
+@if (!_loaded)
+{
+    <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="220px" />
+}
+else if (_source is null && _sourceAlarm is not null)
+{
+    <MudPaper Class="pa-4">
+        <MudText Typo="Typo.subtitle1" Class="mb-2">关联质量报警</MudText>
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-3">
+            @_sourceAlarm.Message · @_sourceAlarm.RaisedAt.ToString("yyyy-MM-dd HH:mm:ss")
+        </MudAlert>
+        @if (_loadError is not null)
+        {
+            <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">@_loadError</MudAlert>
+        }
+        <MudText Typo="Typo.body2" Class="dt-muted mb-2">请指定一条源采集记录作为产品证据；报警不会替代产品记录。</MudText>
+        <MudGrid Class="dt-filters">
+            <MudItem xs="12" sm="6">
+                <MudTextField T="string" @bind-Value="_sourceMonthInput" Label="记录月份" Placeholder="yyyyMM" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudNumericField T="long?" @bind-Value="_sourceRecordIdInput" Label="采集记录 ID" Min="1" />
+            </MudItem>
+        </MudGrid>
+        <MudStack Row="true" Spacing="2" Class="mt-3 flex-wrap">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Search"
+                       Disabled="_loading || _sourceRecordIdInput is not > 0" OnClick="LoadAlarmSourceAsync">载入源记录</MudButton>
+            <MudButton Variant="Variant.Text" Href="/alarms">返回报警</MudButton>
+        </MudStack>
+    </MudPaper>
+}
+else if (_source is null)
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
+            <span>@(_loadError ?? "请从采集记录明细进入，选择一条记录作为异常单的源证据。")</span>
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" Href="/query">打开数据查询</MudButton>
+        </MudStack>
+    </MudAlert>
+}
+else if (!_canWork)
+{
+    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+        当前账号只有查看权限，不能创建质量异常单。源记录 @_source.SerialNo · @_source.StationCode。
+    </MudAlert>
+}
+else
+{
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-3">@_error</MudAlert>
+    }
+
+    <MudGrid>
+        <MudItem xs="12" lg="7">
+            <MudPaper Class="pa-4">
+                <MudText Typo="Typo.subtitle1" Class="mb-3">异常信息</MudText>
+                <form @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+                    <MudGrid Class="dt-filters">
+                        <MudItem xs="12" sm="8">
+                            <MudTextField T="string" @bind-Value="_title" Label="异常标题" Required="true" MaxLength="120"
+                                          Immediate="true" HelperText="简短描述异常现象" />
+                        </MudItem>
+                        <MudItem xs="12" sm="4">
+                            <MudSelect T="QualityIncidentSeverity" @bind-Value="_severity" Label="严重度" Dense="true">
+                                @foreach (var severity in Enum.GetValues<QualityIncidentSeverity>())
+                                {
+                                    <MudSelectItem T="QualityIncidentSeverity" Value="@severity">@SeverityText(severity)</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudTextField T="string" @bind-Value="_description" Label="异常描述" Required="true"
+                                          Lines="4" MaxLength="2000" Immediate="true" />
+                        </MudItem>
+                    </MudGrid>
+
+                    <MudDivider Class="my-4" />
+                    <MudText Typo="Typo.subtitle1" Class="mb-2">排查范围</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted mb-2">
+                        不指定时间范围时，只关联源证据；指定后可在详情页检索同工站、同型号的潜在影响记录。
+                    </MudText>
+                    <MudGrid Class="dt-filters">
+                        <MudItem xs="12" sm="6">
+                            <MudTextField T="string" @bind-Value="_scopeFromText" Label="开始时间" Placeholder="yyyy-MM-dd HH:mm"
+                                          Immediate="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.CalendarToday" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6">
+                            <MudTextField T="string" @bind-Value="_scopeToText" Label="结束时间" Placeholder="yyyy-MM-dd HH:mm"
+                                          Immediate="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.CalendarToday" />
+                        </MudItem>
+                    </MudGrid>
+
+                    <MudStack Row="true" Spacing="2" Class="mt-4 flex-wrap">
+                        <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
+                                   Disabled="_submitting" StartIcon="@(_submitting ? Icons.Material.Filled.Sync : Icons.Material.Filled.Save)">
+                            @(_submitting ? "创建中…" : "创建异常单")
+                        </MudButton>
+                        <MudButton Variant="Variant.Text" Href="/quality/incidents">取消</MudButton>
+                    </MudStack>
+                </form>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" lg="5">
+            <MudPaper Class="pa-4">
+                <MudText Typo="Typo.subtitle1" Class="mb-3">源证据</MudText>
+                <MudGrid>
+                    <MudItem xs="6">
+                        <MudText Typo="Typo.caption" Class="dt-muted">工站</MudText>
+                        <MudText Typo="Typo.body1">@_source.StationCode</MudText>
+                    </MudItem>
+                    <MudItem xs="6">
+                        <MudText Typo="Typo.caption" Class="dt-muted">判定</MudText>
+                        <MudText Typo="Typo.body1" Color="@JudgementColor(_source.Judgement)">@DisplayLabels.JudgementTextLong(_source.Judgement)</MudText>
+                    </MudItem>
+                    <MudItem xs="6">
+                        <MudText Typo="Typo.caption" Class="dt-muted">流水号</MudText>
+                        <MudText Typo="Typo.body1">@_source.SerialNo</MudText>
+                    </MudItem>
+                    <MudItem xs="6">
+                        <MudText Typo="Typo.caption" Class="dt-muted">托盘</MudText>
+                        <MudText Typo="Typo.body1">@_source.PalletCode</MudText>
+                    </MudItem>
+                    <MudItem xs="6">
+                        <MudText Typo="Typo.caption" Class="dt-muted">产品型号</MudText>
+                        <MudText Typo="Typo.body1">@(string.IsNullOrWhiteSpace(_source.RecipeCode) ? "未指定" : _source.RecipeCode)</MudText>
+                    </MudItem>
+                    <MudItem xs="6">
+                        <MudText Typo="Typo.caption" Class="dt-muted">采集时间</MudText>
+                        <MudText Typo="Typo.body1">@_source.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss")</MudText>
+                    </MudItem>
+                </MudGrid>
+                @if (_sourceAlarm is not null)
+                {
+                    <MudAlert Severity="Severity.Warning" Dense="true" Class="mt-3">
+                        关联质量报警 #@_sourceAlarm.Id：@_sourceAlarm.Message
+                    </MudAlert>
+                }
+                <MudButton Size="Size.Small" Variant="Variant.Text" Class="mt-2"
+                           Href="@($"/query/{MonthKey}/{RecordId}")" Target="_blank" rel="noopener">
+                    查看完整记录与曲线
+                </MudButton>
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "month")]
+    public string? MonthKey { get; set; }
+
+    [SupplyParameterFromQuery(Name = "recordId")]
+    public long? RecordId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "alarmId")]
+    public long? AlarmId { get; set; }
+
+    private CollectRecord? _source;
+    private AlarmIncidentDraft? _sourceAlarm;
+    private bool _loaded;
+    private bool _loading;
+    private bool _submitting;
+    private bool _canWork;
+    private string? _loadError;
+    private string? _error;
+    private string _title = "";
+    private string _description = "";
+    private string _scopeFromText = "";
+    private string _scopeToText = "";
+    private string _sourceMonthInput = "";
+    private long? _sourceRecordIdInput;
+    private QualityIncidentSeverity _severity = QualityIncidentSeverity.Medium;
+    private Guid _requestId = Guid.NewGuid();
+    private string? _sourceKey;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var sourceKey = $"{MonthKey}/{RecordId}/{AlarmId}";
+        if (!string.Equals(_sourceKey, sourceKey, StringComparison.Ordinal))
+        {
+            _sourceKey = sourceKey;
+            _requestId = Guid.NewGuid();
+            _title = "";
+            _description = "";
+            _scopeFromText = "";
+            _scopeToText = "";
+            _sourceMonthInput = "";
+            _sourceRecordIdInput = null;
+            _severity = QualityIncidentSeverity.Medium;
+        }
+
+        _loaded = false;
+        _source = null;
+        _sourceAlarm = null;
+        _loadError = null;
+        _error = null;
+        if (AlarmId is > 0)
+        {
+            await LoadQualityAlarmAsync(AlarmId.Value);
+            _sourceMonthInput = DateTime.Now.ToString("yyyyMM", CultureInfo.InvariantCulture);
+        }
+
+        if (RecordId is not > 0 || !IsValidMonthKey(MonthKey))
+        {
+            _loaded = true;
+            return;
+        }
+
+        try
+        {
+            _source = await Collect.GetRecordAsync(MonthKey!, RecordId.Value);
+            if (_source is null)
+            {
+                _loadError = "源采集记录不存在或已按保留策略清理，无法创建异常单。";
+            }
+            else
+            {
+                await RefreshCanWorkAsync();
+                _title = $"{_source.StationCode}质量异常";
+            }
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"源采集记录加载失败：{ex.Message}";
+        }
+        finally
+        {
+            _loaded = true;
+        }
+    }
+
+    private async Task SubmitAsync()
+    {
+        if (_source is null || _submitting)
+        {
+            return;
+        }
+
+        if (!TryReadScope(out var scopeFrom, out var scopeTo, out var scopeError))
+        {
+            _error = scopeError;
+            return;
+        }
+
+        _submitting = true;
+        _error = null;
+        try
+        {
+            var actor = await Actors.GetCurrentAsync();
+            var sourceMonthKey = IsValidMonthKey(MonthKey) ? MonthKey! : _sourceMonthInput;
+            var sourceRecordId = RecordId ?? _sourceRecordIdInput;
+            if (sourceRecordId is not > 0 || !IsValidMonthKey(sourceMonthKey))
+            {
+                throw new QualityIncidentOperationException("请先指定有效的源采集记录。");
+            }
+
+            var id = await Incidents.CreateAsync(new CreateQualityIncidentRequest
+            {
+                RequestId = _requestId,
+                MonthKey = sourceMonthKey,
+                RecordId = sourceRecordId.Value,
+                Title = _title,
+                Description = _description,
+                Severity = _severity,
+                StationId = _source.StationId,
+                StationCode = _source.StationCode,
+                RecipeCode = _source.RecipeCode,
+                SourceAlarmId = _sourceAlarm?.Id,
+                ScopeFrom = scopeFrom,
+                ScopeTo = scopeTo
+            }, actor);
+
+            Toast.Add("质量异常单已创建", Severity.Success);
+            Nav.NavigateTo($"/quality/incidents/{id}");
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            Toast.Add($"创建异常单失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+
+    private async Task LoadQualityAlarmAsync(long alarmId)
+    {
+        try
+        {
+            var alarm = (await AlarmIncidents.ListAttentionAsync())
+                .FirstOrDefault(item => item.Id == alarmId);
+            alarm ??= (await AlarmIncidents.ListRecentClosedAsync(100))
+                .FirstOrDefault(item => item.Id == alarmId);
+            if (alarm is null || alarm.Kind != LineAlarmKind.ConsecutiveNg)
+            {
+                _loadError = "该报警不存在，或不是可关联的连续 NG 质量报警。";
+                return;
+            }
+
+            _sourceAlarm = alarm;
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"报警加载失败：{ex.Message}";
+        }
+    }
+
+    private async Task LoadAlarmSourceAsync()
+    {
+        if (_sourceAlarm is null || _sourceRecordIdInput is not > 0 || !IsValidMonthKey(_sourceMonthInput))
+        {
+            _loadError = "请输入有效的记录月份和采集记录 ID。";
+            return;
+        }
+
+        _loading = true;
+        _loadError = null;
+        try
+        {
+            _source = await Collect.GetRecordAsync(_sourceMonthInput, _sourceRecordIdInput.Value);
+            if (_source is null)
+            {
+                _loadError = "源采集记录不存在或已按保留策略清理。";
+                return;
+            }
+
+            await RefreshCanWorkAsync();
+            _title = $"{_source.StationCode}质量异常";
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"源采集记录加载失败：{ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task RefreshCanWorkAsync()
+    {
+        var actor = await Actors.GetCurrentAsync();
+        _canWork = actor.IsInRole(DataTrace.Domain.Constants.AppRoles.Administrator)
+                   || actor.IsInRole(DataTrace.Domain.Constants.AppRoles.Engineer)
+                   || actor.IsInRole(DataTrace.Domain.Constants.AppRoles.Operator);
+    }
+
+    private bool TryReadScope(out DateTime? from, out DateTime? to, out string? error)
+    {
+        from = null;
+        to = null;
+        error = null;
+        var hasFrom = !string.IsNullOrWhiteSpace(_scopeFromText);
+        var hasTo = !string.IsNullOrWhiteSpace(_scopeToText);
+        if (hasFrom != hasTo)
+        {
+            error = "排查范围必须同时填写开始和结束时间。";
+            return false;
+        }
+
+        if (!hasFrom)
+        {
+            return true;
+        }
+
+        const string format = "yyyy-MM-dd HH:mm";
+        if (!DateTime.TryParseExact(_scopeFromText.Trim(), format, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeLocal, out var parsedFrom)
+            || !DateTime.TryParseExact(_scopeToText.Trim(), format, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeLocal, out var parsedTo))
+        {
+            error = "时间格式应为 yyyy-MM-dd HH:mm。";
+            return false;
+        }
+
+        if (parsedFrom > parsedTo)
+        {
+            error = "排查范围开始时间不能晚于结束时间。";
+            return false;
+        }
+
+        from = parsedFrom;
+        to = parsedTo;
+        return true;
+    }
+
+    private static bool IsValidMonthKey(string? monthKey)
+        => DateTime.TryParseExact(monthKey, "yyyyMM", CultureInfo.InvariantCulture, DateTimeStyles.None, out _);
+
+    private static string SeverityText(QualityIncidentSeverity severity) => severity switch
+    {
+        QualityIncidentSeverity.Low => "低",
+        QualityIncidentSeverity.Medium => "中",
+        QualityIncidentSeverity.High => "高",
+        QualityIncidentSeverity.Critical => "紧急",
+        _ => "未知"
+    };
+
+    private static Color JudgementColor(Judgement judgement) => judgement switch
+    {
+        Judgement.Ok => Color.Success,
+        Judgement.Ng => Color.Error,
+        _ => Color.Default
+    };
+}

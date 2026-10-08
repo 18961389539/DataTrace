@@ -68,6 +68,13 @@ else
                         @(_workingId == context.Id ? "接手中…" : "接手")
                     </MudButton>
                 }
+                    @if (_canTake && context.Kind == LineAlarmKind.ConsecutiveNg)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning"
+                                   StartIcon="@Icons.Material.Filled.ReportProblem" Href="@CreateQualityIncidentUrl(context.Id)">
+                            创建质量异常
+                        </MudButton>
+                    }
             </MudTd>
         </RowTemplate>
     </MudTable>
@@ -89,6 +96,7 @@ else
             <MudTh>类型</MudTh>
             <MudTh>内容</MudTh>
             <MudTh>接手</MudTh>
+            <MudTh>处置</MudTh>
         </HeaderContent>
         <RowTemplate>
             <MudTd DataLabel="发生时间">@When(context.RaisedAt)</MudTd>
@@ -96,6 +104,15 @@ else
             <MudTd DataLabel="类型">@KindText(context.Kind)</MudTd>
             <MudTd DataLabel="内容">@context.Message</MudTd>
             <MudTd DataLabel="接手">@OwnerText(context)</MudTd>
+            <MudTd DataLabel="处置">
+                @if (_canTake && context.Kind == LineAlarmKind.ConsecutiveNg)
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning"
+                               StartIcon="@Icons.Material.Filled.ReportProblem" Href="@CreateQualityIncidentUrl(context.Id)">
+                        创建质量异常
+                    </MudButton>
+                }
+            </MudTd>
         </RowTemplate>
     </MudTable>
 }
@@ -203,6 +220,8 @@ else
             item.Key,
             item.Kind,
             item.StillActive ? item.Message : item.Message + "（已恢复，仍待接手）");
+
+    private static string CreateQualityIncidentUrl(long alarmId) => $"/quality/incidents/new?alarmId={alarmId}";
 
     private static string KindText(LineAlarmKind kind) => kind switch
     {

@@ -24,7 +24,7 @@ public class VisualRegressionE2ETests : E2ETestBase
 
     private static readonly string[] Routes =
     [
-        "/", "/query", "/reports", "/curve-baseline", "/logs",
+        "/", "/query", "/quality/incidents", "/quality/incidents/new", "/reports", "/curve-baseline", "/logs",
         "/config/plc", "/config/stations", "/config/recipes",
         "/config/settings", "/simulate", "/diagnostics", "/users"
     ];
@@ -50,7 +50,7 @@ public class VisualRegressionE2ETests : E2ETestBase
     {
         await Page.SetViewportSizeAsync(TabletWidth, 932);
 
-        foreach (var path in new[] { "/", "/query", "/reports", "/config/settings", "/users" })
+        foreach (var path in new[] { "/", "/query", "/quality/incidents", "/quality/incidents/new", "/reports", "/config/settings", "/users" })
         {
             await OpenAsync(path);
             await WaitForAsync(".mud-layout");

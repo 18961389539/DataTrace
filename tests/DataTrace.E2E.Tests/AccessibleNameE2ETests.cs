@@ -17,7 +17,7 @@ public class AccessibleNameE2ETests : E2ETestBase
 
     private static readonly string[] Routes =
     [
-        "/", "/query", "/reports", "/curve-baseline", "/logs",
+        "/", "/query", "/quality/incidents", "/quality/incidents/new", "/reports", "/curve-baseline", "/logs",
         "/config/plc", "/config/stations", "/config/recipes",
         "/config/settings", "/simulate", "/diagnostics", "/users"
     ];

@@ -1,0 +1,246 @@
+@page "/quality/incidents"
+@attribute [Authorize]
+@using DataTrace.Application.Configuration
+@using DataTrace.Application.Quality
+@using DataTrace.Domain.Constants
+@using DataTrace.Domain.Enums
+@inject IQualityIncidentService Incidents
+@inject IQualityIncidentActorProvider Actors
+@inject IConfigRepository Config
+@inject DtToast Toast
+@inject NavigationManager Nav
+
+<PageHeader Title="质量异常处置台" Description="从异常证据到复核关闭的处置记录。">
+    <Actions>
+        @if (_canWork)
+        {
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                       Href="/quality/incidents/new">新建异常单</MudButton>
+        }
+    </Actions>
+</PageHeader>
+
+<MudPaper Class="dt-filter-card mb-3">
+    <MudGrid Class="dt-filters">
+        <MudItem xs="12" sm="6" md="3">
+            <MudSelect T="QualityIncidentStatus?" @bind-Value="_status" Label="状态" HelperText="默认显示未关闭异常" Clearable="true" Dense="true">
+                @foreach (var status in Enum.GetValues<QualityIncidentStatus>())
+                {
+                    <MudSelectItem T="QualityIncidentStatus?" Value="@((QualityIncidentStatus?)status)">@StatusText(status)</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudSelect T="int?" @bind-Value="_stationId" Label="工站" Clearable="true" Dense="true">
+                @foreach (var station in _stations)
+                {
+                    <MudSelectItem T="int?" Value="@((int?)station.Id)">@station.Code @station.Name</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudTextField T="string" @bind-Value="_owner" Label="负责人" Clearable="true" Immediate="true" />
+        </MudItem>
+        <MudItem xs="12" sm="6" md="3">
+            <MudTextField T="string" @bind-Value="_keyword" Label="单号或关键字" Clearable="true" Immediate="true"
+                          OnKeyDown="OnSearchKeyDown" />
+        </MudItem>
+    </MudGrid>
+    <MudStack Row="true" Spacing="2" Class="mt-2 flex-wrap">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Search"
+                   Disabled="_loading" OnClick="SearchAsync">查询</MudButton>
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.RestartAlt"
+                   Disabled="_loading" OnClick="ResetAsync">重置</MudButton>
+        <MudText Typo="Typo.caption" Class="dt-muted align-self-center">共 @_total 张</MudText>
+    </MudStack>
+</MudPaper>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-3">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
+            <span>@_error</span>
+            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" OnClick="LoadAsync">重试</MudButton>
+        </MudStack>
+    </MudAlert>
+}
+else
+{
+    <MudTable Items="_items" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading" FixedHeader="true"
+              Height="var(--dt-grid-height)" Class="dt-clickable">
+        <HeaderContent>
+            <MudTh>单号</MudTh>
+            <MudTh>异常</MudTh>
+            <MudTh>等级</MudTh>
+            <MudTh>工站 / 型号</MudTh>
+            <MudTh>负责人</MudTh>
+            <MudTh>状态</MudTh>
+            <MudTh>证据</MudTh>
+            <MudTh>最近更新</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="单号" Class="dt-nowrap">
+                <MudLink Href="@($"/quality/incidents/{context.Id}")">@context.IncidentNumber</MudLink>
+            </MudTd>
+            <MudTd DataLabel="异常">@context.Title</MudTd>
+            <MudTd DataLabel="等级"><MudChip T="string" Size="Size.Small" Color="@SeverityColor(context.Severity)">@SeverityText(context.Severity)</MudChip></MudTd>
+            <MudTd DataLabel="工站 / 型号">
+                <span>@(string.IsNullOrWhiteSpace(context.StationCode) ? "全部工站" : context.StationCode)</span>
+                @if (!string.IsNullOrWhiteSpace(context.RecipeCode))
+                {
+                    <MudText Typo="Typo.caption" Class="dt-muted">@context.RecipeCode</MudText>
+                }
+            </MudTd>
+            <MudTd DataLabel="负责人">@(string.IsNullOrWhiteSpace(context.Owner) ? "待接手" : context.Owner)</MudTd>
+            <MudTd DataLabel="状态"><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@StatusColor(context.Status)">@StatusText(context.Status)</MudChip></MudTd>
+            <MudTd DataLabel="证据">@context.EvidenceCount 条</MudTd>
+            <MudTd DataLabel="最近更新" Class="dt-nowrap">@context.UpdatedAt.ToString("yyyy-MM-dd HH:mm")</MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <div class="dt-empty-hint">
+                <MudText Typo="Typo.body2" Class="dt-muted py-3">没有符合条件的质量异常单。</MudText>
+            </div>
+        </NoRecordsContent>
+    </MudTable>
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mt-2 flex-wrap">
+        <MudText Typo="Typo.caption" Class="dt-muted">第 @_page / @PageCount 页</MudText>
+        <MudStack Row="true" Spacing="1">
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_loading || _page <= 1" OnClick="PreviousPageAsync">上一页</MudButton>
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_loading || _page >= PageCount" OnClick="NextPageAsync">下一页</MudButton>
+        </MudStack>
+    </MudStack>
+}
+
+@code {
+    private const int PageSize = 25;
+    private IReadOnlyList<QualityIncidentListItem> _items = [];
+    private IReadOnlyList<DataTrace.Domain.Entities.Station> _stations = [];
+    private QualityIncidentStatus? _status;
+    private int? _stationId;
+    private string? _owner;
+    private string? _keyword;
+    private int _page = 1;
+    private int _total;
+    private bool _loading;
+    private bool _canWork;
+    private string? _error;
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(_total / (double)PageSize));
+
+    protected override async Task OnInitializedAsync()
+    {
+        var actor = await Actors.GetCurrentAsync();
+        _canWork = actor.IsInRole(AppRoles.Administrator)
+                   || actor.IsInRole(AppRoles.Engineer)
+                   || actor.IsInRole(AppRoles.Operator);
+        _stations = await Config.GetStationsAsync();
+        await LoadAsync();
+    }
+
+    private Task SearchAsync()
+    {
+        _page = 1;
+        return LoadAsync();
+    }
+
+    private async Task ResetAsync()
+    {
+        _status = null;
+        _stationId = null;
+        _owner = null;
+        _keyword = null;
+        _page = 1;
+        await LoadAsync();
+    }
+
+    private Task PreviousPageAsync()
+    {
+        _page--;
+        return LoadAsync();
+    }
+
+    private Task NextPageAsync()
+    {
+        _page++;
+        return LoadAsync();
+    }
+
+    private async Task OnSearchKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            await SearchAsync();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        if (_loading)
+        {
+            return;
+        }
+
+        _loading = true;
+        try
+        {
+            var result = await Incidents.ListAsync(new QualityIncidentQuery
+            {
+                Status = _status,
+                StationId = _stationId,
+                Owner = _owner,
+                Keyword = _keyword,
+                Skip = (_page - 1) * PageSize,
+                Take = PageSize
+            });
+            _items = result.Items;
+            _total = result.Total;
+            if (_page > PageCount)
+            {
+                _page = PageCount;
+            }
+            _error = null;
+        }
+        catch (Exception ex)
+        {
+            _error = $"质量异常单加载失败：{ex.Message}";
+            Toast.Add(_error, Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static string StatusText(QualityIncidentStatus status) => status switch
+    {
+        QualityIncidentStatus.Open => "待处理",
+        QualityIncidentStatus.InProgress => "处理中",
+        QualityIncidentStatus.PendingReview => "待复核",
+        QualityIncidentStatus.Closed => "已关闭",
+        _ => "未知"
+    };
+
+    private static string SeverityText(QualityIncidentSeverity severity) => severity switch
+    {
+        QualityIncidentSeverity.Low => "低",
+        QualityIncidentSeverity.Medium => "中",
+        QualityIncidentSeverity.High => "高",
+        QualityIncidentSeverity.Critical => "紧急",
+        _ => "未知"
+    };
+
+    private static Color StatusColor(QualityIncidentStatus status) => status switch
+    {
+        QualityIncidentStatus.Open => Color.Warning,
+        QualityIncidentStatus.InProgress => Color.Info,
+        QualityIncidentStatus.PendingReview => Color.Secondary,
+        QualityIncidentStatus.Closed => Color.Success,
+        _ => Color.Default
+    };
+
+    private static Color SeverityColor(QualityIncidentSeverity severity) => severity switch
+    {
+        QualityIncidentSeverity.High or QualityIncidentSeverity.Critical => Color.Error,
+        QualityIncidentSeverity.Medium => Color.Warning,
+        _ => Color.Default
+    };
+}

@@ -5,6 +5,7 @@ using DataTrace.Application.Evaluation;
 using DataTrace.Application.Mes;
 using DataTrace.Application.Realtime;
 using DataTrace.Application.Reporting;
+using DataTrace.Application.Quality;
 using DataTrace.Application.Runtime;
 using DataTrace.Infrastructure.Evaluation;
 using DataTrace.Infrastructure.Identity;
@@ -101,6 +102,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IUserAdministration, UserAdministration>();
         services.AddScoped<IAuditLogger, AuditLogger>();
         services.AddScoped<IAlarmIncidents, AlarmIncidentStore>();
+        services.AddScoped<IQualityIncidentService, QualityIncidentStore>();
         services.AddScoped<AuditRetentionArchiveService>();
         services.AddScoped<IAuditRetention>(sp => sp.GetRequiredService<AuditRetentionArchiveService>());
         services.AddScoped<IActiveSessionStore, ActiveSessionStore>();

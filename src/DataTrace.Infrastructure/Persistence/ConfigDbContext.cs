@@ -26,6 +26,9 @@ public sealed class ConfigDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<ConfigVersion> ConfigVersions => Set<ConfigVersion>();
     public DbSet<MesOutboxItem> MesOutbox => Set<MesOutboxItem>();
     public DbSet<AlarmIncident> AlarmIncidents => Set<AlarmIncident>();
+    public DbSet<QualityIncident> QualityIncidents => Set<QualityIncident>();
+    public DbSet<QualityIncidentEvidence> QualityIncidentEvidence => Set<QualityIncidentEvidence>();
+    public DbSet<QualityIncidentActivity> QualityIncidentActivities => Set<QualityIncidentActivity>();
     public DbSet<Recipe> Recipes => Set<Recipe>();
     public DbSet<RecipeLimit> RecipeLimits => Set<RecipeLimit>();
 
@@ -73,6 +76,34 @@ public sealed class ConfigDbContext : IdentityDbContext<ApplicationUser>
         builder.Entity<Recipe>(e =>
         {
             e.HasIndex(x => x.Code).IsUnique();
+        });
+
+        builder.Entity<QualityIncident>(e =>
+        {
+            e.HasIndex(x => x.IncidentNumber).IsUnique();
+            e.HasIndex(x => x.RequestId).IsUnique();
+            e.HasIndex(x => new { x.Status, x.UpdatedAt });
+            e.HasIndex(x => new { x.Owner, x.Status });
+            e.Property(x => x.Version).IsConcurrencyToken();
+        });
+
+        builder.Entity<QualityIncidentEvidence>(e =>
+        {
+            e.HasIndex(x => new { x.IncidentId, x.MonthKey, x.RecordId }).IsUnique();
+            e.HasIndex(x => new { x.MonthKey, x.RecordId });
+            e.HasOne(x => x.Incident)
+                .WithMany(x => x.Evidence)
+                .HasForeignKey(x => x.IncidentId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<QualityIncidentActivity>(e =>
+        {
+            e.HasIndex(x => new { x.IncidentId, x.CreatedAt });
+            e.HasOne(x => x.Incident)
+                .WithMany(x => x.Activities)
+                .HasForeignKey(x => x.IncidentId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<RecipeLimit>(e =>

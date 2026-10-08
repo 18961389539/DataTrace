@@ -55,6 +55,13 @@ else
             <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Href="@BackUrl">返回查询</MudButton>
             <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.History"
                        Href="@PalletHistoryUrl()">同托盘近 30 天</MudButton>
+            @if (_canCreateQualityIncident)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning"
+                           StartIcon="@Icons.Material.Filled.ReportProblem" Href="@QualityIncidentUrl()">
+                    创建质量异常
+                </MudButton>
+            }
             @if (_canExport)
             {
                 <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="Export" Disabled="_exporting"
@@ -279,6 +286,7 @@ else
     private CollectRecord? _record;
     private bool _loaded;
     private bool _canExport;
+    private bool _canCreateQualityIncident;
     private readonly Dictionary<long, CurvePayload> _curvePayloads = [];
     /// <summary>读不出来的曲线：曲线 Id → 界面提示。损坏与缺失的说明不同。</summary>
     private readonly Dictionary<long, string> _curveErrors = [];
@@ -294,6 +302,9 @@ else
     {
         var auth = await Auth.GetAuthenticationStateAsync();
         _canExport = auth.User.IsInRole(AppRoles.Administrator) || auth.User.IsInRole(AppRoles.Engineer);
+        _canCreateQualityIncident = auth.User.IsInRole(AppRoles.Administrator)
+                        || auth.User.IsInRole(AppRoles.Engineer)
+                        || auth.User.IsInRole(AppRoles.Operator);
     }
 
     protected override async Task OnParametersSetAsync()
@@ -357,6 +368,9 @@ else
         var pallet = _record?.PalletCode ?? "";
         return $"/query?pallet={Uri.EscapeDataString(pallet)}&days=30";
     }
+
+    private string QualityIncidentUrl()
+        => $"/quality/incidents/new?month={Uri.EscapeDataString(MonthKey)}&recordId={RecordId}";
 
     private static string Display(TagValue value)
         => value.TextValue ?? value.NumericValue?.ToString("0.####", CultureInfo.InvariantCulture) ?? "-";
