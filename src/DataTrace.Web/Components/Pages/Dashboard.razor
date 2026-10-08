@@ -208,14 +208,36 @@
 }
 else
 {
-    <MudGrid Class="dt-station-grid">
-        @foreach (var station in _orderedStations)
+    var visibleStations = VisibleStations;
+    <div class="dt-station-toolbar">
+        <div class="dt-station-toolbar-heading">
+            <h2>工站</h2>
+            <span class="dt-station-toolbar-count">显示 @visibleStations.Count / @_stations.Count 台</span>
+        </div>
+        @if (!ShopFloor)
         {
-            <MudItem xs="12" md="6" lg="4">
-                <StationCard Station="station" />
-            </MudItem>
+            <MudTextField T="string" @bind-Value="_stationSearch" Label="查找工站"
+                          Placeholder="编号或名称" Immediate="true" Clearable="true"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search" Class="dt-station-search"
+                          aria-label="按工站编号或名称查找" />
         }
-    </MudGrid>
+    </div>
+    @if (visibleStations.Count == 0)
+    {
+        <div class="dt-station-empty" role="status">@StationEmptyText</div>
+    }
+    else
+    {
+        <MudGrid Class="dt-station-grid">
+            @foreach (var station in visibleStations)
+            {
+                <MudItem xs="12" md="6" lg="4">
+                    <StationCard Station="station" />
+                </MudItem>
+            }
+        </MudGrid>
+    }
 }
 
 
@@ -321,6 +343,7 @@ else
     private IReadOnlyList<StationRuntimeStatus> _stations = [];
     /// <summary>渲染用的工站顺序：异常在前，同级按工艺顺序（见 <see cref="SeverityRank"/>）。</summary>
     private IReadOnlyList<StationRuntimeStatus> _orderedStations = [];
+    private string _stationSearch = "";
     private IReadOnlyList<CollectFeedItem> _recent = [];
     private IReadOnlyList<CollectFeedItem> _recentPreview = [];
     private bool _collectEnabled = true;
@@ -613,6 +636,23 @@ else
     private string PaceText => CurrentPace?.Text ?? "—";
 
     private string PaceHint => CurrentPace?.Hint ?? "还没有相邻的两件";
+
+    private IReadOnlyList<StationRuntimeStatus> VisibleStations
+    {
+        get
+        {
+            var query = ShopFloor ? "" : _stationSearch.Trim();
+            return query.Length == 0
+                ? _orderedStations
+                : _orderedStations.Where(station =>
+                    station.StationCode.Contains(query, StringComparison.OrdinalIgnoreCase)
+                    || station.StationName.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+    }
+
+    private string StationEmptyText => string.IsNullOrWhiteSpace(_stationSearch)
+        ? "当前没有可显示的工站"
+        : $"没有找到“{_stationSearch.Trim()}”对应的工站";
 
     /// <summary>
     /// 工站严重度：故障 → NG → 采集中 → 空闲 → 停用。看板上最该被看见的工位排在最前，
