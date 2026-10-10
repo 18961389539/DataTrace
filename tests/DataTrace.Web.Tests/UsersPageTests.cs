@@ -21,7 +21,7 @@ namespace DataTrace.Web.Tests;
 /// 要验的恰恰是"UserManager 回来的东西怎么呈现"和"守卫是否拦在写入之前"，
 /// 把 UserManager 替掉之后，剩下的就只有页面自己那几个 if 了。
 /// </remarks>
-public class UsersPageTests : WebTestBase, IDisposable
+public class UsersPageTests : WebTestBase
 {
     private const string DbFileName = "config.db";
 
@@ -50,9 +50,9 @@ public class UsersPageTests : WebTestBase, IDisposable
     }
 
     /// <summary>临时配置库跟着用例一起删掉。</summary>
-    void IDisposable.Dispose()
+    public override async Task DisposeAsync()
     {
-        base.Dispose();
+        await base.DisposeAsync();
         try
         {
             Directory.Delete(_dbDir, recursive: true);
@@ -257,14 +257,14 @@ public class UsersPageTests : WebTestBase, IDisposable
     private IRenderedComponent<DataTrace.Web.Components.Pages.Users> RenderUsers()
     {
         RenderPopoverHost();
-        return Context.RenderComponent<DataTrace.Web.Components.Pages.Users>();
+        return Context.Render<DataTrace.Web.Components.Pages.Users>();
     }
 
     /// <summary>对话框宿主。必须先于页面渲染好，DialogService 才知道往哪儿放对话框。</summary>
     private IRenderedComponent<MudDialogProvider> RenderDialogHost()
     {
         RenderPopoverHost();
-        var provider = Context.RenderComponent<MudDialogProvider>();
+        var provider = Context.Render<MudDialogProvider>();
         provider.Render();
         return provider;
     }

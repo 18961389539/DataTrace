@@ -19,7 +19,7 @@ public class SettingsPageTests : WebTestBase
         Config.Snapshot = new AppConfigurationSnapshot { Settings = settings, Version = 1 };
 
         RenderPopoverHost();
-        var cut = Context.RenderComponent<Settings>();
+        var cut = Context.Render<Settings>();
         cut.WaitForState(() => !cut.Markup.Contains("mud-skeleton"));
         return cut;
     }
@@ -31,7 +31,7 @@ public class SettingsPageTests : WebTestBase
 
         Assert.Contains("扫描间隔", cut.Markup);
         Assert.DoesNotContain("系统设置读取失败", cut.Markup);
-        Assert.Single(Config.Calls.Where(c => c == nameof(Config.GetSnapshotAsync)));
+        Assert.Single(Config.Calls, c => c == nameof(Config.GetSnapshotAsync));
     }
 
     [Fact]
@@ -82,7 +82,7 @@ public class SettingsPageTests : WebTestBase
         Config.FailWith = () => new InvalidOperationException("配置库损坏");
 
         RenderPopoverHost();
-        var cut = Context.RenderComponent<Settings>();
+        var cut = Context.Render<Settings>();
 
         // 读配置在 await 之后：首帧还是骨架，降级态要等下一轮渲染。
         cut.WaitForState(() => cut.Markup.Contains("系统配置读取失败，请刷新页面重试。"));

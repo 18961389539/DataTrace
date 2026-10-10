@@ -54,8 +54,8 @@ public class AddressValidationPageTests : WebTestBase
 
     private IRenderedComponent<Stations> RenderStations()
     {
-        Context.RenderComponent<MudBlazor.MudPopoverProvider>();
-        return Context.RenderComponent<Stations>();
+        Context.Render<MudBlazor.MudPopoverProvider>();
+        return Context.Render<Stations>();
     }
 
     private void SeedStationPage(PlcConnection? plc = null, params Station[] extraStations)
@@ -274,8 +274,8 @@ public class AddressValidationPageTests : WebTestBase
     [Fact]
     public void New_plc_connection_starts_without_a_heartbeat_address()
     {
-        Context.RenderComponent<MudBlazor.MudPopoverProvider>();
-        var cut = Context.RenderComponent<PlcConfig>();
+        Context.Render<MudBlazor.MudPopoverProvider>();
+        var cut = Context.Render<PlcConfig>();
 
         ClickButton(cut, "新增连接");
 

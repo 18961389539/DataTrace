@@ -199,6 +199,7 @@ public class JsonSourceTests
         var db = ctx.Scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
 
         await db.Database.ExecuteSqlRawAsync("DROP TABLE \"__EFMigrationsHistory\"");
+        await ConfigMigrationTestSupport.RewindMesOutboxDeliveryStateAsync(db);
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE Tags DROP COLUMN Source");
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE Stations DROP COLUMN DataFilePath");
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE Stations DROP COLUMN DataFileFormat");
@@ -238,6 +239,7 @@ public class JsonSourceTests
         var original = await db.AuditLogs.SingleAsync(x => x.Action == "Update");
 
         await db.Database.ExecuteSqlRawAsync("DROP TABLE \"__EFMigrationsHistory\"");
+        await ConfigMigrationTestSupport.RewindMesOutboxDeliveryStateAsync(db);
         await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "AuditLogs" DROP COLUMN "Outcome" """);
         await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "AuditLogs" DROP COLUMN "Source" """);
         await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "AuditLogs" DROP COLUMN "SourceIp" """);
@@ -267,6 +269,7 @@ public class JsonSourceTests
         var db = services.GetRequiredService<ConfigDbContext>();
 
         await db.Database.ExecuteSqlRawAsync("DROP TABLE \"__EFMigrationsHistory\"");
+        await ConfigMigrationTestSupport.RewindMesOutboxDeliveryStateAsync(db);
         await db.Database.ExecuteSqlRawAsync("""DROP TABLE "AuditLogs" """);
         await services.GetRequiredService<DatabaseSeeder>().SeedAsync();
         var columns = await ColumnNamesAsync(db, "AuditLogs");

@@ -44,7 +44,6 @@ public sealed class CollectSessionCoordinator
         var serials = scope.ServiceProvider.GetRequiredService<ISerialNumberGenerator>();
         var writer = scope.ServiceProvider.GetRequiredService<ICollectWriter>();
         var query = scope.ServiceProvider.GetRequiredService<ICollectQuery>();
-        var mes = scope.ServiceProvider.GetRequiredService<IMesPublisher>();
 
         string serialNo;
         string monthKey;
@@ -194,6 +193,30 @@ public sealed class CollectSessionCoordinator
             active.LastActivityAt = record.CompleteTime;
         }
 
+        MesOutboxIntent? mesOutbox = null;
+        if (station.IsLastStation && config.Settings.MesEnabled
+            && result is ResultCodes.Success or ResultCodes.QualityRejected)
+        {
+            var rejects = await RejectsAsync(query, monthKey, record, cancellationToken).ConfigureAwait(false);
+            mesOutbox = new MesOutboxIntent
+            {
+                EventId = Guid.NewGuid().ToString("N"),
+                MonthKey = monthKey,
+                PalletSessionId = record.PalletSessionId,
+                SerialNo = serialNo,
+                PalletCode = palletCode,
+                CreatedAt = record.CompleteTime,
+                PayloadJson = MesPayload.Build(
+                    serialNo,
+                    palletCode,
+                    station.Code,
+                    record.RecipeCode,
+                    recordJudgement.ToString(),
+                    record.CompleteTime,
+                    rejects)
+            };
+        }
+
         var save = new CollectSaveRequest
         {
             MonthKey = monthKey,
@@ -201,6 +224,7 @@ public sealed class CollectSessionCoordinator
             CloseSession = close,
             Record = record,
             Curves = assessment.Curves,
+            MesOutbox = mesOutbox,
             ActiveSession = active,
             RemoveActiveSession = removeActive
         };
@@ -236,22 +260,6 @@ public sealed class CollectSessionCoordinator
             return new PersistedCollect(record, assessment.Curves, monthKey);
         }
 
-        if (station.IsLastStation && config.Settings.MesEnabled
-            && result is ResultCodes.Success or ResultCodes.QualityRejected)
-        {
-            var rejects = await RejectsAsync(query, monthKey, record, cancellationToken).ConfigureAwait(false);
-            var payload = MesPayload.Build(
-                serialNo,
-                palletCode,
-                station.Code,
-                record.RecipeCode,
-                recordJudgement.ToString(),
-                record.CompleteTime,
-                rejects);
-            await mes.EnqueueSessionAsync(monthKey, record.PalletSessionId, serialNo, palletCode, payload, cancellationToken)
-                .ConfigureAwait(false);
-        }
-
         return new PersistedCollect(record, assessment.Curves, monthKey);
     }
 
@@ -269,6 +277,11 @@ public sealed class CollectSessionCoordinator
                     .ConfigureAwait(false);
                 if (history.Count > 0)
                 {
+                    if (!history.Any(item => item.StationId == record.StationId && item.TriggerTime == record.TriggerTime))
+                    {
+                        history = history.Append(record).ToList();
+                    }
+
                     return MesPayload.FromRecords(history);
                 }
             }

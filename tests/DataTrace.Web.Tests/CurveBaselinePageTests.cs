@@ -45,8 +45,8 @@ public class CurveBaselinePageTests : WebTestBase
         Context.Services.AddSingleton(_templates.Object);
         Context.Services.AddSingleton(_cache.Object);
         // MudSelect 的浮层要一个 provider：真实应用由 MainLayout 提供。
-        Context.RenderComponent<MudBlazor.MudPopoverProvider>();
-        return Context.RenderComponent<CurveBaseline>();
+        Context.Render<MudBlazor.MudPopoverProvider>();
+        return Context.Render<CurveBaseline>();
     }
 
     private static CurveBaselineReport Report(string curveCode, string recipeCode = "") => new()

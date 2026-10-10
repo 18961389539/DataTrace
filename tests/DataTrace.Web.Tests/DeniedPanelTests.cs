@@ -16,7 +16,7 @@ public class DeniedPanelTests
         var ctx = new TestContext();
         ctx.Services.AddMudServices();
 
-        return ctx.RenderComponent<DeniedPanel>(parameters => parameters
+        return ctx.Render<DeniedPanel>(parameters => parameters
             .Add(p => p.UserName, userName)
             .Add(p => p.RequestedPath, requestedPath));
     }

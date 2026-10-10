@@ -47,7 +47,7 @@ public class SimulatePageTests : WebTestBase
 
         // 页面上有 ⓘ（MudTooltip）——浮层宿主由基类统一补。
         RenderPopoverHost();
-        return Context.RenderComponent<Simulate>();
+        return Context.Render<Simulate>();
     }
 
     [Fact]

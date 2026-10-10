@@ -29,7 +29,7 @@ public class AlarmsPageTests : WebTestBase
         Context.Services.AddSingleton<IAlarmIncidents>(incidents);
         Context.Services.AddSingleton<ILineAlarmBoard>(new LineAlarmBoard());
 
-        var cut = Context.RenderComponent<Alarms>();
+        var cut = Context.Render<Alarms>();
         cut.WaitForAssertion(() => Assert.Contains("待接手", cut.Markup));
         ClickButton(cut, "接手");
 
@@ -60,7 +60,7 @@ public class AlarmsPageTests : WebTestBase
         Context.Services.AddSingleton<IAlarmIncidents>(incidents);
         Context.Services.AddSingleton<ILineAlarmBoard>(new LineAlarmBoard());
 
-        var cut = Context.RenderComponent<Alarms>();
+        var cut = Context.Render<Alarms>();
 
         cut.WaitForAssertion(() => Assert.Contains("只能查看，不能接手", cut.Markup));
         Assert.DoesNotContain("接手</button>", cut.Markup, StringComparison.OrdinalIgnoreCase);
@@ -97,7 +97,7 @@ public class AlarmsPageTests : WebTestBase
         Context.Services.AddSingleton<IAlarmIncidents>(incidents);
         Context.Services.AddSingleton<ILineAlarmBoard>(new LineAlarmBoard());
 
-        var cut = Context.RenderComponent<Alarms>();
+        var cut = Context.Render<Alarms>();
 
         Assert.Contains("待接手 1", cut.Markup);
         Assert.Contains("已接手，尚未解除 1", cut.Markup);

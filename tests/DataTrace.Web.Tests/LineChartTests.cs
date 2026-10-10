@@ -18,7 +18,7 @@ public class LineChartTests
         ctx.Services.AddMudServices();
         SetupJs(ctx);
 
-        return ctx.RenderComponent<LineChart>(parameters => parameters
+        return ctx.Render<LineChart>(parameters => parameters
             .Add(p => p.Series, new[] { new LineSeries { Name = "压力", Values = values } })
             .Add(p => p.MaxPoints, maxPoints)
             .Add(p => p.ShowLegend, true));
@@ -69,7 +69,7 @@ public class LineChartTests
         var ctx = new TestContext();
         ctx.Services.AddMudServices();
         SetupJs(ctx);
-        var cut = ctx.RenderComponent<LineChart>(parameters => parameters
+        var cut = ctx.Render<LineChart>(parameters => parameters
             .Add(p => p.Series, new[] { new LineSeries { Name = "压力", Values = new[] { 1f, 2f } } })
             .Add(p => p.ShowAxis, false)
             .Add(p => p.ShowLegend, false)

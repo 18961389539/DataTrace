@@ -61,7 +61,7 @@ public class RecipeLimitDialogTests : WebTestBase
         Context.Services.AddSingleton<IDialogService, DialogService>();
         // 对话框里现在有 ⓘ（MudTooltip）——浮层宿主由基类统一补。
         RenderPopoverHost();
-        var provider = Context.RenderComponent<MudDialogProvider>();
+        var provider = Context.Render<MudDialogProvider>();
         var dialogs = Context.Services.GetRequiredService<IDialogService>();
         await dialogs.ShowAsync<RecipeLimitDialog>("型号限值", new DialogParameters
         {
@@ -91,7 +91,7 @@ public class RecipeLimitDialogTests : WebTestBase
 
         Context.Services.AddSingleton<IDialogService, DialogService>();
         RenderPopoverHost();
-        var provider = Context.RenderComponent<MudDialogProvider>();
+        var provider = Context.Render<MudDialogProvider>();
         await Context.Services.GetRequiredService<IDialogService>().ShowAsync<RecipeLimitDialog>("型号限值", new DialogParameters
         {
             ["Recipe"] = recipe,

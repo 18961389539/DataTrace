@@ -19,7 +19,7 @@ public class RecipesPageTests : WebTestBase
         Context.Services.AddSingleton<IConfigurationChanges>(_changes.Object);
         Context.Services.AddSingleton<IRuntimeStatusHub>(_status.Object);
         RenderPopoverHost();
-        return Context.RenderComponent<Recipes>();
+        return Context.Render<Recipes>();
     }
 
     [Fact]

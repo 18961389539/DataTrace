@@ -20,7 +20,7 @@ using AngleSharp.Dom;
 namespace DataTrace.Web.Tests;
 
 /// <summary>给 bUnit 装配本应用页面所需的服务替身。</summary>
-public abstract class WebTestBase : IDisposable
+public abstract class WebTestBase : IAsyncLifetime
 {
     protected TestContext Context { get; }
 
@@ -89,7 +89,7 @@ public abstract class WebTestBase : IDisposable
         // 页面里有 @inject AuthenticationStateProvider 与 <AuthorizeView>；后者只认级联的
         // Task<AuthenticationState>，所以用 bUnit 的测试授权（它把服务与级联值一起备齐）。
         // 默认管理员；要按角色分档的用例自己再注册一个 AuthenticationStateProvider，后注册的生效。
-        Context.AddTestAuthorization().SetAuthorized("admin").SetRoles(AppRoles.Administrator);
+        Context.AddAuthorization().SetAuthorized("admin").SetRoles(AppRoles.Administrator);
         // <AuthorizeView> 还要策略提供者与授权服务，否则它自己就构造不出来。
         Context.Services.AddAuthorizationCore();
         // DtToast 只做"按严重度分档 + 同文案去重"，这里用真身，顺带把它对 ISnackbar 的用法一起测了。
@@ -149,7 +149,7 @@ public abstract class WebTestBase : IDisposable
             return;
         }
 
-        Context.RenderComponent<MudPopoverProvider>();
+        Context.Render<MudPopoverProvider>();
         _popoverHostRendered = true;
     }
 
@@ -218,5 +218,7 @@ public abstract class WebTestBase : IDisposable
         switches[index].Change(value);
     }
 
-    public void Dispose() => Context.Dispose();
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public virtual async Task DisposeAsync() => await Context.DisposeAsync();
 }

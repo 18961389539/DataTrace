@@ -59,7 +59,7 @@ public class StationsTrialTests : WebTestBase
         };
 
         RenderPopoverHost();
-        return Context.RenderComponent<Stations>();
+        return Context.Render<Stations>();
     }
 
     [Fact]

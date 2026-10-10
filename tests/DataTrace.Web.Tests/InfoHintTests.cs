@@ -17,7 +17,7 @@ public class InfoHintTests : WebTestBase
     public void Renders_a_focusable_button_named_after_the_concept()
     {
         RenderPopoverHost();
-        var cut = Context.RenderComponent<InfoHint>(p => p.Add(x => x.Topic, HelpTexts.YieldRate));
+        var cut = Context.Render<InfoHint>(p => p.Add(x => x.Topic, HelpTexts.YieldRate));
 
         var button = cut.Find("button");
         // 前缀固定为「说明：」：E2E 用 GetByRole(Button, Name=…) 点真按钮，
@@ -36,7 +36,7 @@ public class InfoHintTests : WebTestBase
                      HelpTexts.DeleteUser, HelpTexts.SaveToDispatch
                  })
         {
-            var cut = Context.RenderComponent<InfoHint>(p => p.Add(x => x.Topic, topic));
+            var cut = Context.Render<InfoHint>(p => p.Add(x => x.Topic, topic));
             var label = cut.Find("button").GetAttribute("aria-label") ?? "";
 
             Assert.StartsWith("说明：", label);
@@ -50,7 +50,7 @@ public class InfoHintTests : WebTestBase
     public void Renders_nothing_at_all_when_there_is_no_topic()
     {
         // 调用方常直接传一个可能为空的字段，组件得自己兜住：不能留一枚点不出东西的图标。
-        var cut = Context.RenderComponent<InfoHint>();
+        var cut = Context.Render<InfoHint>();
 
         Assert.Empty(cut.FindAll("button"));
         Assert.DoesNotContain("mud-tooltip", cut.Markup);
@@ -60,7 +60,7 @@ public class InfoHintTests : WebTestBase
     public void Screen_readers_get_the_whole_explanation_not_just_the_title()
     {
         RenderPopoverHost();
-        var cut = Context.RenderComponent<InfoHint>(p => p.Add(x => x.Topic, HelpTexts.Lockout));
+        var cut = Context.Render<InfoHint>(p => p.Add(x => x.Topic, HelpTexts.Lockout));
 
         var describedBy = cut.Find("button").GetAttribute("aria-describedby");
         Assert.False(string.IsNullOrWhiteSpace(describedBy));
@@ -77,8 +77,8 @@ public class InfoHintTests : WebTestBase
     public void Each_hint_carries_its_own_description_id()
     {
         RenderPopoverHost();
-        var first = Context.RenderComponent<InfoHint>(p => p.Add(x => x.Topic, HelpTexts.YieldRate));
-        var second = Context.RenderComponent<InfoHint>(p => p.Add(x => x.Topic, HelpTexts.RoleScope));
+        var first = Context.Render<InfoHint>(p => p.Add(x => x.Topic, HelpTexts.YieldRate));
+        var second = Context.Render<InfoHint>(p => p.Add(x => x.Topic, HelpTexts.RoleScope));
 
         // 同一页往往有十来枚 ⓘ，id 撞了就会把人指到别人的说明上。
         Assert.NotEqual(
@@ -90,7 +90,7 @@ public class InfoHintTests : WebTestBase
     public void Dynamic_extra_line_is_read_aloud_as_well()
     {
         RenderPopoverHost();
-        var cut = Context.RenderComponent<InfoHint>(p => p
+        var cut = Context.Render<InfoHint>(p => p
             .Add(x => x.Topic, HelpTexts.Lockout)
             .Add(x => x.Extra, "连续失败 3 次，锁定到 14:05"));
 
@@ -104,7 +104,7 @@ public class InfoHintTests : WebTestBase
     [Fact]
     public void Help_content_renders_the_three_parts_in_order()
     {
-        var cut = Context.RenderComponent<HelpContent>(p => p.Add(x => x.Topic, HelpTexts.YieldRate));
+        var cut = Context.Render<HelpContent>(p => p.Add(x => x.Topic, HelpTexts.YieldRate));
 
         Assert.Contains(HelpTexts.YieldRate.Title, cut.Markup);
         Assert.Contains(HelpTexts.YieldRate.How, cut.Markup);
@@ -120,7 +120,7 @@ public class InfoHintTests : WebTestBase
     {
         // 锁定状态、某个角色的权限范围这类随数据变化的内容走 Extra，
         // 它必须排在三段之前 —— 先看"现在什么情况"，再看"这个概念是什么"。
-        var cut = Context.RenderComponent<HelpContent>(p => p
+        var cut = Context.Render<HelpContent>(p => p
             .Add(x => x.Topic, HelpTexts.Lockout)
             .Add(x => x.Extra, "连续失败 3 次，锁定到 14:05"));
 
@@ -135,7 +135,7 @@ public class InfoHintTests : WebTestBase
     [Fact]
     public void Help_content_is_silent_without_a_topic()
     {
-        var cut = Context.RenderComponent<HelpContent>();
+        var cut = Context.Render<HelpContent>();
 
         Assert.Equal("", cut.Markup.Trim());
     }

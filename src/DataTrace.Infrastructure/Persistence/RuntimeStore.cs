@@ -84,6 +84,12 @@ public sealed partial class RuntimeStore : IRuntimeStore
             db.CollectRecords.Add(request.Record);
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
 
+            if (request.MesOutbox is not null)
+            {
+                request.MesOutbox.PalletSessionId = request.Record.PalletSessionId;
+                db.MesOutboxIntents.Add(request.MesOutbox);
+            }
+
             if (request.CloseSession && request.Record.PalletSessionId != 0)
             {
                 var session = await db.PalletSessions.FindAsync([request.Record.PalletSessionId], cancellationToken)

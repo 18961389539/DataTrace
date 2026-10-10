@@ -77,15 +77,21 @@ public static class VisualGolden
     /// 比对（或录制）一张截图。失败信息里直接给出怎么重录，省得回头翻代码。
     /// </summary>
     /// <param name="fingerprint">见 <see cref="Fingerprint"/>，只在 <c>update</c> 与 <c>auto</c> 下参与判断。</param>
-    public static void Verify(string name, byte[] png, string fingerprint)
+    public static string Verify(string name, byte[] png, string fingerprint)
     {
         // off 只关掉像素比对，截图本身仍然要成功：区域不存在、被折叠成 0 高度、
         // 或者渲染成一张空白，都得在这里红，而不是整条用例静默不做事。
         // auto 在没有可用基线时也落到这条上，一行不改，只是多了一句说明。
-        if (Mode is "off" || (Mode == "auto" && !BaselineUsable(name, fingerprint)))
+        if (Mode == "off")
         {
             Assert.True(png.Length > 1024, $"{name} 截出来的图只有 {png.Length} 字节，区域大概没渲染出来");
-            return;
+            return "capture-only: pixel comparison disabled";
+        }
+
+        if (Mode == "auto" && !BaselineUsable(name, fingerprint))
+        {
+            Assert.True(png.Length > 1024, $"{name} 截出来的图只有 {png.Length} 字节，区域大概没渲染出来");
+            return CaptureOnlyReason(name);
         }
 
         var path = FullPath(name);
@@ -95,7 +101,7 @@ public static class VisualGolden
             Directory.CreateDirectory(GoldenDirectory);
             File.WriteAllBytes(path, png);
             WriteEnvironment(fingerprint);
-            return;
+            return "updated";
         }
 
         if (!File.Exists(path))
@@ -126,6 +132,8 @@ public static class VisualGolden
                     $"基线 {name} 对不上：{ratio:P2} 的像素不同（阈值 {MaxDiffRatio:P2}，最大通道差 {worstDelta}）。"
                     + $"样式真变了就用 {ModeVariable}=update 重录并检查 golden/{name}.png。");
             }
+
+                    return "compared";
         }
         finally
         {
@@ -154,6 +162,21 @@ public static class VisualGolden
         {
             return false;
         }
+    }
+
+    private static string CaptureOnlyReason(string name)
+    {
+        if (!File.Exists(FullPath(name)))
+        {
+            return "capture-only: baseline missing";
+        }
+
+        if (!File.Exists(EnvironmentFile))
+        {
+            return "capture-only: environment fingerprint missing";
+        }
+
+        return "capture-only: environment fingerprint differs";
     }
 
     private static void WriteEnvironment(string fingerprint)

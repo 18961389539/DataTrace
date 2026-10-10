@@ -18,7 +18,7 @@ dotnet build DataTrace.slnx -c Release
 数据库模型变更要提交 EF Core migration，不要把新库结构只加到模型或 Seeder 补列脚本中。工具版本与 EF Core 保持一致：
 
 ```bat
-dotnet tool install --global dotnet-ef --version 8.0.11
+dotnet tool install --global dotnet-ef --version 8.0.31
 dotnet ef migrations add AddConfigChange --project src\DataTrace.Infrastructure --startup-project src\DataTrace.Infrastructure --context ConfigDbContext --output-dir Persistence\Migrations\Config
 dotnet ef migrations add AddRuntimeChange --project src\DataTrace.Infrastructure --startup-project src\DataTrace.Infrastructure --context RuntimeDbContext --output-dir Persistence\Migrations\Runtime
 ```
@@ -181,6 +181,12 @@ set Kestrel__Endpoints__Http__Url=http://0.0.0.0:5100
 ## PLC 品牌
 
 模拟器、三菱 MC 3E、西门子 S7、Modbus TCP、欧姆龙 FINS（后四者经 IoTClient）。Float 字序可配，字符串 ASCII。
+
+## MES 出站投递
+
+末站采集记录与 MES 出站意图在同一个月库事务中提交；后台转运到配置库 Outbox 后再发送。失败项按指数退避重试（上限 5 分钟），不会占住后续已到期的消息。每条消息携带稳定的 `Idempotency-Key` 请求头，跨重启与补传保持不变。
+
+MES 接收端应按 `Idempotency-Key` 去重：相同键只执行一次业务写入，并对重复请求返回同一处理结果。若接收端不实现去重，传输仍是至少一次语义，网络超时后可能收到重复请求。
 
 ## 平台说明
 

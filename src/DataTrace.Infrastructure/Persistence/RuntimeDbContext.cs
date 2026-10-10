@@ -15,6 +15,7 @@ public sealed class RuntimeDbContext : DbContext
     public DbSet<TagValue> TagValues => Set<TagValue>();
     public DbSet<CurveRecord> CurveRecords => Set<CurveRecord>();
     public DbSet<CurveFeature> CurveFeatures => Set<CurveFeature>();
+    public DbSet<MesOutboxIntent> MesOutboxIntents => Set<MesOutboxIntent>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -55,5 +56,10 @@ public sealed class RuntimeDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
         builder.Entity<ProductRecord>(e => e.HasIndex(x => x.CollectRecordId));
+        builder.Entity<MesOutboxIntent>(e =>
+        {
+            e.HasIndex(x => x.EventId).IsUnique();
+            e.HasIndex(x => new { x.PublishedAt, x.CreatedAt });
+        });
     }
 }

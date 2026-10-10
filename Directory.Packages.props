@@ -23,14 +23,12 @@
     <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="8.10.0" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="8.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
-    <!--
-      EF Core 与 Identity 刻意停在 8.0.11 而不是追到 8.0.x 线尾：持久化层依赖 SQLite 的
-      PRAGMA、WAL 与 RETURNING 行为，升这两包要单独跑一遍分库/备份/恢复的回归。
-      真要升时改这一处即可，但请单独开一次变更。
-    -->
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.11" />
-    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.11" />
-    <PackageVersion Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="8.0.11" />
+    <!-- 维持 net8.0 目标时跟进 .NET 8 支持线的最新 EF/Identity 补丁。 -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.31" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.31" />
+    <PackageVersion Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="8.0.31" />
+    <!-- EF SQLite 的默认传递版本仍落在有漏洞的 2.1.11；显式提升到修复版。 -->
+    <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.13" />
     <PackageVersion Include="CsvHelper" Version="33.1.0" />
     <PackageVersion Include="System.IO.Hashing" Version="8.0.0" />
     <PackageVersion Include="Quartz.Extensions.Hosting" Version="3.22.4" />
@@ -42,10 +40,10 @@
 
   <ItemGroup Label="测试">
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
-    <PackageVersion Include="xunit" Version="2.5.3" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="2.5.3" />
     <PackageVersion Include="coverlet.collector" Version="6.0.0" />
-    <PackageVersion Include="bunit" Version="1.40.0" />
+    <PackageVersion Include="bunit" Version="2.11.3" />
     <PackageVersion Include="Moq" Version="4.20.72" />
     <PackageVersion Include="Microsoft.Playwright" Version="1.60.0" />
     <PackageVersion Include="System.Drawing.Common" Version="8.0.10" />

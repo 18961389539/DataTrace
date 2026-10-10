@@ -38,7 +38,7 @@ public class DashboardFilterTests : WebTestBase
         Context.Services.AddSingleton(reports.Object);
         Context.Services.AddSingleton(spool.Object);
         RenderPopoverHost();
-        return Context.RenderComponent<Dashboard>(parameters => parameters.AddCascadingValue("ShopFloor", shopFloor));
+        return Context.Render<Dashboard>(parameters => parameters.AddCascadingValue("ShopFloor", shopFloor));
     }
 
     private static StationRuntimeStatus Station(int id, StationRuntimeState state, Judgement judgement = Judgement.None) => new()

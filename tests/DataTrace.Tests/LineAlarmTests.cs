@@ -173,7 +173,7 @@ public class LineAlarmTests
             [alarm, new LineAlarm("mes", LineAlarmKind.MesBacklog, "积压")],
             sent,
             Now,
-            TimeSpan.FromMinutes(SystemDefaults.AlarmRepeatMinutes)).Where(a => a.Key == "mes")).Key);
+            TimeSpan.FromMinutes(SystemDefaults.AlarmRepeatMinutes)), a => a.Key == "mes").Key);
     }
 
     [Fact]

@@ -59,9 +59,9 @@ public class QueryPageTests : WebTestBase
         Context.Services.AddSingleton(_audit.Object);
         Context.Services.AddSingleton<AuthenticationStateProvider>(new StubAuthenticationStateProvider(_role));
         // MudSelect 的浮层要一个 provider：真实应用由 MainLayout 提供。
-        Context.RenderComponent<MudPopoverProvider>();
+        Context.Render<MudPopoverProvider>();
 
-        return Context.RenderComponent<Query>();
+        return Context.Render<Query>();
     }
 
     /// <summary>

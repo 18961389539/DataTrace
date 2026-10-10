@@ -352,7 +352,14 @@ public abstract class E2ETestBase : IAsyncLifetime
     protected async Task OpenAsync(string relativePath)
     {
         await Page.GotoAsync($"{App.BaseUrl}{relativePath}");
-        await WaitForCircuitReadyAsync();
+        try
+        {
+            await WaitForCircuitReadyAsync();
+        }
+        catch (TimeoutException ex)
+        {
+            throw new TimeoutException($"{ex.Message}{Environment.NewLine}DataTrace.Web output:{Environment.NewLine}{App.Output}", ex);
+        }
     }
 
     /// <summary>

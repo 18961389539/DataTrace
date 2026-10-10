@@ -116,6 +116,9 @@ public sealed class InfoHintE2ETests : E2ETestBase
 
             // 页头的「本页说明」必须涵盖这一页上的每一枚 ⓘ：
             // 两处口径走岔时，新人会从同一个页面拿到两个不一致的清单。
+            await Page.Mouse.MoveAsync(0, 0);
+            await Page.WaitForFunctionAsync(
+                "() => ![...document.querySelectorAll('.mud-tooltip.mud-popover-open')].some(t => (t.innerText || '').trim().length > 0)");
             var helpButton = Page.Locator("button[aria-label='本页说明']");
             Assert.Equal(1, await helpButton.CountAsync());
             await helpButton.ClickAsync();

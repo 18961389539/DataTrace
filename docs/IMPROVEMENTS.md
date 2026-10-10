@@ -325,3 +325,45 @@ bUnit 能证明"点了会渲染面板"，证明不了面板里的值真是从 PL
 - 新增的查重让 `SpoolReplayRunner` 依赖 `ICollectQuery`，诊断页的 bUnit 用例原先只注册了 `ICollectWriter` 替身 —— 全量跑出的唯一一处 Web 失败即由此而来（已补注册替身，返"库里没有"）。生产 DI 里两者本就都注册，行为不变。
 - 全量首跑时 `CollectionHostedServiceTests.Loop_work_time_excludes_the_scan_interval_wait` 偶发红一次（工作耗时 246ms > 间隔 200ms，机器当时刚跑过冒烟、负载偏高）；隔离重跑 3 次与全量重跑均通过。与本文件此前记录过的时序敏感用例同类。
 
+## 后续实施：MES 出站可靠性、CI 诊断与依赖维护（2026-10）
+
+### MES 出站可靠性
+
+- 末站记录和 `MesOutboxIntent` 在月库同一个事务提交，消除“记录已提交、进程在配置库入队前退出”的漏推窗口。
+- 后台 Relay 将月库意图幂等转入配置库 Outbox；配置库按稳定 `EventId` 唯一约束去重。若转运后、月库标记前退出，下一轮安全重放。
+- 已有 Outbox 查询先过滤 `NextAttemptAt` 再应用批量上限；退避时间写入数据库，前面的失败项不会占住后续到期消息。
+- 发送携带 `Idempotency-Key`。这只提供接收端可用的稳定去重键；MES 服务必须持久化该键并保证重复请求只产生一次业务效果。未实现该协议时仍是至少一次投递。
+- 文件补传保留 MES 意图，并与恢复出的记录在同一个月库事务提交。
+- 为配置库和运行库新增 EF migration；升级旧库时可空 `EventId` 兼容既有 Outbox 记录。
+
+### CI 与依赖
+
+- CI 固定 `windows-2022`，使用 `Microsoft.Playwright` 锁定的 Chromium，不再依赖 runner 上滚动更新的 Edge。
+- 三套测试产出 TRX；E2E 视觉用例逐目标记录 `compared`、`capture-only`、`updated` 或 `failed`，并保存 PNG 与 Playwright trace。Actions 汇总比对状态并保留 7 天产物。
+- E2E trace 暴露 `/quality/incidents/new` 被两个 Razor 页面重复声明，已移除未使用旧页面的路由；完整路由切片现为 14/14。
+- 帮助提示 E2E 曾因悬浮 tooltip 覆盖页头按钮而超时；测试现在先移开鼠标并等待浮层关闭，`InfoHintE2ETests` 5/5 通过。
+- EF Core / Identity 从 8.0.11 更新到 8.0.31；SQLitePCLRaw 更新到 2.1.13，xUnit 更新到 2.9.3，bUnit 更新到 2.11.3（含修复版 AngleSharp）。依赖漏洞审计结果：解决方案无已知漏洞。
+- bUnit 2 迁移包括统一 `Render<T>` API、测试授权 API、参数更新 API 和异步释放；完整组件套件验证通过。
+
+### .NET 10 迁移门槛
+
+本轮未改各工程的 `net8.0` 目标和客户运行时要求。微软支持政策显示 .NET 8 支持于 **2026-11-10** 结束，.NET 10 LTS 支持至 **2028-11-14**。建议在 .NET 8 EOL 前完成独立迁移：
+
+1. 全工程切换 `TargetFramework`，更新 Windows 服务安装/升级检查与客户机运行时前置条件。
+2. 用真实旧配置库、多个历史月库验证 migration 与 RuntimeSchema 补丁；覆盖整库备份、校验、恢复和回滚。
+3. 在干净 Windows Server/工控机验证框架依赖发布、服务启动、证书 HTTPS、PLC 驱动、MES 幂等重试及数据保留任务。
+4. 为新 TFM 建立固定版本 Chromium 视觉基线，确认 CI 报告是实际像素比对而非 `capture-only`。
+
+### 验证记录
+
+| 项 | 结果 |
+|---|---|
+| 全解决方案 Release 构建 | 0 警告、0 错误 |
+| `tests/DataTrace.Tests` | 1377 项全部通过（首跑 2 个 Modbus loopback 超时，隔离与全量复跑均通过） |
+| `tests/DataTrace.Web.Tests` | 305 项全部通过（全量重跑；中途 1 次时序用例超时，隔离通过后全量复跑通过） |
+| `tests/DataTrace.E2E.Tests` 定向切片 | 路由 14/14、视觉 4/4、帮助提示 5/5 全部通过 |
+| MES 投递处理器聚焦测试 | 9 项全部通过（含首次退避 2 秒） |
+| EF 8.0.31 migration model check | ConfigDbContext、RuntimeDbContext 均无 pending model changes |
+| NuGet vulnerability audit | 解决方案所有项目均无已知漏洞 |
+| `tests/DataTrace.E2E.Tests` 全量 | 最近一次**完整结束**运行（最终 E2E 测试源码辅助方法修复前的已编译版本）为 106/108。重复路由、帮助提示浮层遮挡已修复；路由 14/14、视觉 4/4、帮助提示 5/5 通过。剩余：ECharts 悬停 tooltip 未出现（单项复跑亦失败）；账号锁定用例全量时等待导航超时、单项复跑通过。之后修复并重新构建了 E2E 测试源码，查询筛选与限值对话框两个共享辅助方法用例 2/2 通过；最新源码的完整 E2E 尚未重新完整结束，需在 CI 固定 Chromium 环境确认 |
+

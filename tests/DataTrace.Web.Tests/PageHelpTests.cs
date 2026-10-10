@@ -12,14 +12,14 @@ public sealed class PageHelpTests : WebTestBase
     {
         Context.Services.AddSingleton<IDialogService, DialogService>();
         RenderPopoverHost();
-        return Context.RenderComponent<MudDialogProvider>();
+        return Context.Render<MudDialogProvider>();
     }
 
     [Fact]
     public void Opens_topic_dialog_and_switches_the_single_detail()
     {
         var provider = RenderDialogProvider();
-        var pageHelp = Context.RenderComponent<PageHelp>(p => p.Add(x => x.Route, "/"));
+        var pageHelp = Context.Render<PageHelp>(p => p.Add(x => x.Route, "/"));
 
         pageHelp.Find("button[aria-label='本页说明']").Click();
         provider.Render();
@@ -41,7 +41,7 @@ public sealed class PageHelpTests : WebTestBase
     public void Filters_topics_when_the_page_has_many()
     {
         var provider = RenderDialogProvider();
-        var pageHelp = Context.RenderComponent<PageHelp>(p => p.Add(x => x.Route, "reports"));
+        var pageHelp = Context.Render<PageHelp>(p => p.Add(x => x.Route, "reports"));
 
         pageHelp.Find("button[aria-label='本页说明']").Click();
         provider.Render();
@@ -58,7 +58,7 @@ public sealed class PageHelpTests : WebTestBase
     [Fact]
     public void Hides_entry_when_the_route_has_no_help_topics()
     {
-        var pageHelp = Context.RenderComponent<PageHelp>(p => p.Add(x => x.Route, "not-a-page"));
+        var pageHelp = Context.Render<PageHelp>(p => p.Add(x => x.Route, "not-a-page"));
 
         Assert.Empty(pageHelp.FindAll("button[aria-label='本页说明']"));
     }

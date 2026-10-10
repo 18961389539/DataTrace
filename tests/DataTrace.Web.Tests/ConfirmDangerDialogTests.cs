@@ -21,7 +21,7 @@ public class ConfirmDangerDialogTests : WebTestBase
     {
         Context.Services.AddSingleton<IDialogService, DialogService>();
         RenderPopoverHost();
-        var provider = Context.RenderComponent<MudDialogProvider>();
+        var provider = Context.Render<MudDialogProvider>();
         return (provider, Context.Services.GetRequiredService<IDialogService>());
     }
 

@@ -230,7 +230,7 @@ internal sealed class FakeHttpMessageHandler : HttpMessageHandler
 
     public FakeHttpMessageHandler(Func<int> statusProvider) => _statusProvider = statusProvider;
 
-    public List<(HttpMethod Method, Uri? Uri, string Body)> Requests { get; } = [];
+    public List<(HttpMethod Method, Uri? Uri, string Body, string? IdempotencyKey)> Requests { get; } = [];
 
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
@@ -239,10 +239,13 @@ internal sealed class FakeHttpMessageHandler : HttpMessageHandler
         var body = request.Content is null
             ? ""
             : await request.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var idempotencyKey = request.Headers.TryGetValues("Idempotency-Key", out var keys)
+            ? keys.SingleOrDefault()
+            : null;
 
         lock (Requests)
         {
-            Requests.Add((request.Method, request.RequestUri, body));
+            Requests.Add((request.Method, request.RequestUri, body, idempotencyKey));
         }
 
         return new HttpResponseMessage((System.Net.HttpStatusCode)_statusProvider());

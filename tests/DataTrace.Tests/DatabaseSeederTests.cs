@@ -20,6 +20,37 @@ public class DatabaseSeederTests
     }
 
     [Fact]
+    public async Task Mes_outbox_migration_accepts_legacy_database_without_previous_queue_index()
+    {
+        await using var context = await InfrastructureContext.CreateAsync();
+        using (var scope = context.Provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
+            await db.Database.ExecuteSqlRawAsync("DROP TABLE \"__EFMigrationsHistory\"");
+            await ConfigMigrationTestSupport.RewindMesOutboxDeliveryStateAsync(db);
+            await db.Database.ExecuteSqlRawAsync("DROP INDEX \"IX_MesOutbox_Status_CreatedAt\"");
+        }
+
+        using (var scope = context.Provider.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<DatabaseSeeder>().SeedAsync();
+        }
+
+        using (var scope = context.Provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
+            var columns = await db.Database
+                .SqlQueryRaw<string>("SELECT name AS Value FROM pragma_table_info('MesOutbox')")
+                .ToListAsync();
+            Assert.Contains("EventId", columns);
+            Assert.Contains("NextAttemptAt", columns);
+            Assert.Contains(
+                await db.Database.GetAppliedMigrationsAsync(),
+                migration => migration.EndsWith("_AddMesOutboxDeliveryState", StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
     public async Task Quality_incident_tables_are_recreated_for_an_existing_config_database()
     {
         await using var context = await InfrastructureContext.CreateAsync();
@@ -28,6 +59,7 @@ public class DatabaseSeederTests
         {
             var db = scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
             await db.Database.ExecuteSqlRawAsync("DROP TABLE \"__EFMigrationsHistory\"");
+            await ConfigMigrationTestSupport.RewindMesOutboxDeliveryStateAsync(db);
             await db.Database.ExecuteSqlRawAsync("DROP TABLE \"QualityIncidentActivities\"");
             await db.Database.ExecuteSqlRawAsync("DROP TABLE \"QualityIncidentEvidence\"");
             await db.Database.ExecuteSqlRawAsync("DROP TABLE \"QualityIncidents\"");

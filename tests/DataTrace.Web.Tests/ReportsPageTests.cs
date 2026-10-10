@@ -92,7 +92,7 @@ public class ReportsPageTests : WebTestBase
         Context.Services.AddSingleton(_audit.Object);
         Context.Services.AddSingleton<AuthenticationStateProvider>(new StubAuthenticationStateProvider(_role));
         // MudSelect 的浮层要一个 provider：真实应用由 MainLayout 提供。
-        Context.RenderComponent<MudPopoverProvider>();
+        Context.Render<MudPopoverProvider>();
 
         var navigation = Context.Services.GetRequiredService<NavigationManager>();
         navigation.NavigateTo(navigation.BaseUri);
@@ -106,7 +106,7 @@ public class ReportsPageTests : WebTestBase
             navigation.NavigateTo(navigation.GetUriWithQueryParameter("to", to));
         }
 
-        return Context.RenderComponent<Reports>();
+        return Context.Render<Reports>();
     }
 
     /// <summary>
@@ -263,7 +263,7 @@ public class ReportsPageTests : WebTestBase
         _store.Verify(
             s => s.ListFinishedPiecesAsync(detailFrom, detailTo, null, It.IsAny<CancellationToken>()),
             Times.Once);
-        var traceLink = Assert.Single(cut.FindAll("a").Where(link => link.TextContent.Contains("查看履历")));
+        var traceLink = Assert.Single(cut.FindAll("a"), link => link.TextContent.Contains("查看履历"));
         Assert.Contains("query?view=trace&trace=SERIAL-10&sessionMonth=202609&sessionId=10", traceLink.GetAttribute("href"));
     }
 

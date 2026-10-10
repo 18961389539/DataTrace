@@ -62,7 +62,7 @@ public class QualityIncidentPageTests : WebTestBase
         UseRole(role);
         RenderPopoverHost();
 
-        var cut = Context.RenderComponent<QualityIncidents>();
+        var cut = Context.Render<QualityIncidents>();
 
         Assert.Equal(visible, cut.FindAll("a[href='/quality/incidents/new']").Count == 1);
         Assert.Contains("QI-20261008-000007", cut.Markup);
@@ -75,7 +75,7 @@ public class QualityIncidentPageTests : WebTestBase
         RegisterServices();
         RenderPopoverHost();
 
-        var cut = Context.RenderComponent<QualityIncidentNew>();
+        var cut = Context.Render<QualityIncidentNew>();
 
         Assert.Contains("请从采集记录明细进入", cut.Markup);
         Assert.DoesNotContain("创建异常单", cut.Markup);
@@ -101,7 +101,7 @@ public class QualityIncidentPageTests : WebTestBase
             });
 
             NavigateToNewIncident($"month={monthKey}&recordId={recordId}");
-            var cut = Context.RenderComponent<QualityIncidentNew>();
+            var cut = Context.Render<QualityIncidentNew>();
 
         Assert.Contains("只有查看权限", cut.Markup);
         Assert.DoesNotContain("创建异常单", cut.Markup);
@@ -129,7 +129,7 @@ public class QualityIncidentPageTests : WebTestBase
         RenderPopoverHost();
 
         NavigateToNewIncident($"alarmId={alarmId}");
-        var cut = Context.RenderComponent<QualityIncidentNew>();
+        var cut = Context.Render<QualityIncidentNew>();
 
         Assert.Contains("关联质量报警", cut.Markup);
         Assert.Contains("ST020 连续 3 件 NG", cut.Markup);
@@ -162,7 +162,7 @@ public class QualityIncidentPageTests : WebTestBase
             .ReturnsAsync(42);
 
         NavigateToNewIncident($"month={monthKey}&recordId={recordId}");
-        var cut = Context.RenderComponent<QualityIncidentNew>();
+        var cut = Context.Render<QualityIncidentNew>();
         TypeInto(cut, "异常标题", "ST020压力超限");
         TypeInto(cut, "异常描述", "记录详情创建的处置单");
         TypeInto(cut, "开始时间", "2026-10-08 09:00");

@@ -224,7 +224,7 @@ public class CollectPipelineTests
 
         var pressure = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, record.Id);
         Assert.NotNull(pressure);
-        var tag = Assert.Single(pressure!.TagValues.Where(t => t.TagName == "压力"));
+        var tag = Assert.Single(pressure!.TagValues, t => t.TagName == "压力");
         Assert.True(tag.IsOutOfLimit);
         Assert.Equal(999d, tag.NumericValue);
     }
@@ -326,7 +326,7 @@ public class CollectPipelineTests
     }
 
     [Fact]
-    public async Task Mes_outbox_is_enqueued_only_for_successful_last_station()
+    public async Task Mes_outbox_intent_is_saved_only_for_successful_last_station()
     {
         await using var harness = await CollectHarness.CreateAsync(configureMes: true);
 
@@ -336,14 +336,14 @@ public class CollectPipelineTests
             await harness.RunAsync(station);
         }
 
-        using var scope = harness.Provider.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
-        var outbox = await db.MesOutbox.ToListAsync();
+        var factory = harness.Provider.GetRequiredService<RuntimeDbFactory>();
+        await using var db = factory.Open(RuntimeDbFactory.MonthKey(DateTime.Now));
+        var outbox = await db.MesOutboxIntents.ToListAsync();
 
         var item = Assert.Single(outbox);
-        Assert.Equal(MesOutboxStatus.Pending, item.Status);
         Assert.Equal("P0005", item.PalletCode);
-        Assert.Equal(0, item.AttemptCount);
+        Assert.Null(item.PublishedAt);
+        Assert.False(string.IsNullOrWhiteSpace(item.EventId));
         Assert.Contains(item.SerialNo, item.PayloadJson);
     }
 
@@ -357,9 +357,9 @@ public class CollectPipelineTests
         Load(harness, stations[1], "P0006", injectNg: true, seed: 3);
         await harness.RunAsync(stations[1]);
 
-        using var scope = harness.Provider.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
-        Assert.Empty(await db.MesOutbox.ToListAsync());
+        var factory = harness.Provider.GetRequiredService<RuntimeDbFactory>();
+        await using var db = factory.Open(RuntimeDbFactory.MonthKey(DateTime.Now));
+        Assert.Empty(await db.MesOutboxIntents.ToListAsync());
     }
 
     [Fact]
@@ -471,7 +471,7 @@ public class CollectPipelineTests
 
         var item = Assert.Single((await harness.QueryAsync("P0013")).Items);
         var record = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
-        var pressure = Assert.Single(record!.TagValues.Where(t => t.TagName == "压力"));
+        var pressure = Assert.Single(record!.TagValues, t => t.TagName == "压力");
         Assert.Equal(19d, pressure.NumericValue!.Value, precision: 4);
         Assert.False(pressure.IsOutOfLimit);
 
@@ -670,13 +670,13 @@ public class CollectPipelineTests
         Assert.Equal(Judgement.Ok, item.Record.Judgement);
 
         var full = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
-        var pressure = Assert.Single(full!.TagValues.Where(t => t.TagName == "压力"));
+        var pressure = Assert.Single(full!.TagValues, t => t.TagName == "压力");
         Assert.True(pressure.IsWarning);
         Assert.False(pressure.IsOutOfLimit);
         Assert.Equal(19d, pressure.NumericValue!.Value, precision: 3);
 
         // 看板拿到的实时状态同样要带出预警标记（黄区样式据此渲染）。
-        var live = Assert.Single(Assert.Single(harness.StatusHub.Stations).LastTags.Where(t => t.Name == "压力"));
+        var live = Assert.Single(Assert.Single(harness.StatusHub.Stations).LastTags, t => t.Name == "压力");
         Assert.True(live.Warning);
         Assert.False(live.OutOfLimit);
     }
@@ -695,7 +695,7 @@ public class CollectPipelineTests
 
         var item = Assert.Single((await harness.QueryAsync("P0042")).Items);
         var full = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
-        var pressure = Assert.Single(full!.TagValues.Where(t => t.TagName == "压力"));
+        var pressure = Assert.Single(full!.TagValues, t => t.TagName == "压力");
         Assert.True(pressure.IsOutOfLimit);
         Assert.False(pressure.IsWarning);
     }
@@ -722,7 +722,7 @@ public class CollectPipelineTests
 
         var item = Assert.Single((await harness.QueryAsync("P0041")).Items);
         var full = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
-        var model = Assert.Single(full!.TagValues.Where(t => t.TagName == "产品型号"));
+        var model = Assert.Single(full!.TagValues, t => t.TagName == "产品型号");
         Assert.Equal("OK", model.TextValue);
         Assert.False(model.IsOutOfLimit);
         Assert.False(model.IsWarning);
@@ -835,7 +835,7 @@ public class CollectPipelineTests
 
         var item = Assert.Single((await harness.QueryAsync("P0053")).Items);
         var full = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
-        var temperature = Assert.Single(full!.TagValues.Where(t => t.TagName == "工站温度"));
+        var temperature = Assert.Single(full!.TagValues, t => t.TagName == "工站温度");
         Assert.True(temperature.IsWarning);
         Assert.False(temperature.IsOutOfLimit);
     }
@@ -859,7 +859,7 @@ public class CollectPipelineTests
 
         var item = Assert.Single((await harness.QueryAsync("P0054")).Items);
         var full = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
-        var pressure = Assert.Single(full!.TagValues.Where(t => t.TagName == "压力"));
+        var pressure = Assert.Single(full!.TagValues, t => t.TagName == "压力");
 
         Assert.NotNull(tagDefaultUpper);
         Assert.Equal(16d, pressure.UpperLimit!.Value, precision: 3);
@@ -883,7 +883,7 @@ public class CollectPipelineTests
         var key = (item.MonthKey, item.Record.Id);
 
         var before = await harness.RuntimeStore.GetRecordAsync(key.Item1, key.Item2);
-        var recorded = Assert.Single(before!.TagValues.Where(t => t.TagName == "压力"));
+        var recorded = Assert.Single(before!.TagValues, t => t.TagName == "压力");
         Assert.Equal(18d, recorded.WarningUpperLimit!.Value, precision: 3);
 
         // 工程师事后把限值改了：已经落库的那条记录不能被重新解释，
@@ -892,7 +892,7 @@ public class CollectPipelineTests
         station.Tags.Single(t => t.Name == "压力").UpperLimit = 999;
 
         var after = await harness.RuntimeStore.GetRecordAsync(key.Item1, key.Item2);
-        var unchanged = Assert.Single(after!.TagValues.Where(t => t.TagName == "压力"));
+        var unchanged = Assert.Single(after!.TagValues, t => t.TagName == "压力");
         Assert.Equal(18d, unchanged.WarningUpperLimit!.Value, precision: 3);
         Assert.Equal(20d, unchanged.UpperLimit!.Value, precision: 3);
     }

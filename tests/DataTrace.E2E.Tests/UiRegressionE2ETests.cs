@@ -15,37 +15,31 @@ public class UiRegressionE2ETests : E2ETestBase
     {
     }
 
-    /// <param name="exact">
-    /// 按名字全等匹配。默认子串匹配：查询页现在同时有模式切换按钮「记录查询」和表单提交按钮「查询」，
-    /// 按 "查询" 找会一次命中两个，Playwright 直接抛 strict mode violation —— 四条用例同一个根因。
-    /// </param>
-    private Task ClickAsync(string name, bool exact = false)
-        => Page.GetByRole(AriaRole.Button, new() { Name = name, Exact = exact }).ClickAsync();
-
-    /// <summary>
-    /// 点开一个对话框，必要时重试。
-    /// 按钮文字在静态预渲染的 HTML 里就有了，但点击要等 SignalR circuit 接管之后才会真的
-    /// 走到 Blazor 事件处理 —— 只点一次会时好时坏，而且失败方式往往是"什么都没发生"，
-    /// 于是后续断言空过，测试报绿却什么都没证明。
-    /// </summary>
-    private async Task OpenDialogAsync(ILocator button, int attempts = 10)
+    /// <summary>按可访问名称点击按钮；需要时启用全名匹配以避开同名按钮。</summary>
+    private async Task ClickAsync(string text, bool exact = false)
     {
-        for (var i = 0; i < attempts; i++)
+        await WaitForCircuitReadyAsync();
+        await Page.GetByRole(AriaRole.Button, new() { Name = text, Exact = exact }).ClickAsync();
+    }
+
+    private async Task OpenDialogAsync(ILocator trigger)
+    {
+        await WaitForCircuitReadyAsync();
+        for (var attempt = 0; attempt < 10; attempt++)
         {
-            await button.ClickAsync();
+            await trigger.ClickAsync();
             try
             {
-                await button.Page.WaitForSelectorAsync(
-                    ".mud-dialog", new() { Timeout = 2000, State = WaitForSelectorState.Visible });
+                await Page.Locator(".mud-dialog").WaitForAsync(new() { Timeout = 1500 });
                 return;
             }
             catch (TimeoutException)
             {
-                await Task.Delay(400);
+                await Task.Delay(250);
             }
         }
 
-        throw new TimeoutException($"点了 {attempts} 次仍未打开对话框。");
+        throw new TimeoutException("重复点击后仍未打开对话框。");
     }
 
     /// <summary>等结果行出现。首条采集记录要等模拟器跑完一轮，机器忙时会晚几秒。</summary>
@@ -255,7 +249,6 @@ public class UiRegressionE2ETests : E2ETestBase
         var chart = Page.Locator(".dt-chart canvas").First;
         await chart.WaitForAsync();
         await chart.ScrollIntoViewIfNeededAsync();
-
         var box = await chart.BoundingBoxAsync();
         Assert.NotNull(box);
         await Page.Mouse.MoveAsync(box.X + box.Width / 2, box.Y + box.Height / 2);

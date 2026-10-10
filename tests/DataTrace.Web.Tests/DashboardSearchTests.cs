@@ -40,7 +40,7 @@ public class DashboardSearchTests : WebTestBase
         Context.Services.AddSingleton(reports.Object);
         Context.Services.AddSingleton(spool.Object);
         RenderPopoverHost();
-        return Context.RenderComponent<Dashboard>();
+        return Context.Render<Dashboard>();
     }
 
     [Fact]

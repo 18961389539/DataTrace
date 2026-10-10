@@ -10,7 +10,7 @@ public class SmokeTests : WebTestBase
     [Fact]
     public void RendersLoginPage()
     {
-        var cut = Context.RenderComponent<Login>();
+        var cut = Context.Render<Login>();
 
         Assert.Contains("登录 DataTrace", cut.Markup);
         Assert.Contains("login-btn", cut.Markup);
@@ -36,7 +36,7 @@ public class SmokeTests : WebTestBase
         // 查询参数只能从 NavigationManager 进来：bUnit 会直接拒绝把它当普通参数传（见其异常提示）。
         Context.Services.GetRequiredService<NavigationManager>().NavigateTo("/login?remember=1");
 
-        var cut = Context.RenderComponent<Login>();
+        var cut = Context.Render<Login>();
 
         Assert.True(cut.Find("input[name=RememberMe]").HasAttribute("checked"));
     }

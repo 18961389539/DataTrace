@@ -125,6 +125,10 @@ public sealed class ConfigDbContext : IdentityDbContext<ApplicationUser>
         builder.Entity<SerialCounter>(e => e.HasIndex(x => x.DayKey).IsUnique());
         builder.Entity<AuditLog>(e => e.HasIndex(x => x.Time));
         builder.Entity<AlarmIncident>(e => e.HasIndex(x => x.RaisedAt));
-        builder.Entity<MesOutboxItem>(e => e.HasIndex(x => new { x.Status, x.CreatedAt }));
+        builder.Entity<MesOutboxItem>(e =>
+        {
+            e.HasIndex(x => new { x.Status, x.NextAttemptAt, x.CreatedAt });
+            e.HasIndex(x => x.EventId).IsUnique();
+        });
     }
 }

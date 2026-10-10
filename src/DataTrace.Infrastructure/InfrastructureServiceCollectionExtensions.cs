@@ -9,7 +9,6 @@ using DataTrace.Application.Quality;
 using DataTrace.Application.Runtime;
 using DataTrace.Infrastructure.Evaluation;
 using DataTrace.Infrastructure.Identity;
-using DataTrace.Infrastructure.Mes;
 using DataTrace.Infrastructure.Persistence;
 using DataTrace.Infrastructure.Realtime;
 using DataTrace.Infrastructure.Reporting;
@@ -96,6 +95,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddSingleton<ICollectArchiveStore>(_ => new CollectArchiveFileStore(archivePath));
         services.AddSingleton<ISpoolStore>(_ => new FileSpoolStore(spoolPath));
         services.AddSingleton<IMesOutboxQueue, MesOutboxQueue>();
+        services.AddSingleton<IMesOutboxRelay, MesOutboxRelay>();
         // 基线缓存必须是单例：后台服务写、采集流水线读，两边看到的必须是同一份。
         services.AddSingleton<ICurveBaselineCache, CurveBaselineCache>();
 
@@ -121,7 +121,6 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IReportService, ReportService>();
         services.AddScoped<ISpcService, SpcService>();
         services.AddScoped<ICurveTemplateService, CurveTemplateService>();
-        services.AddScoped<IMesPublisher, MesPublisher>();
         services.AddScoped<DatabaseSeeder>();
 
         services.AddSingleton<RuntimeStatusHub>();

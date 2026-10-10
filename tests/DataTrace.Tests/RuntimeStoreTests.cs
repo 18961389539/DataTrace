@@ -6,6 +6,7 @@ using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
 using DataTrace.Infrastructure.Persistence;
 using DataTrace.Infrastructure.Storage;
+using Microsoft.EntityFrameworkCore;
 
 namespace DataTrace.Tests;
 
@@ -246,7 +247,7 @@ public class RuntimeStoreTests
         };
     }
 
-    private static CollectSaveRequest FirstStation(string monthKey, string palletCode, string serialNo, DateTime triggerTime, Judgement judgement = Judgement.Ok, bool withCurve = false, bool removeActiveSession = false)
+    private static CollectSaveRequest FirstStation(string monthKey, string palletCode, string serialNo, DateTime triggerTime, Judgement judgement = Judgement.Ok, bool withCurve = false, bool removeActiveSession = false, MesOutboxIntent? mesOutbox = null)
         => new()
         {
             MonthKey = monthKey,
@@ -254,6 +255,7 @@ public class RuntimeStoreTests
             ActiveSession = new ActiveSessionIndex { PalletCode = palletCode, SerialNo = serialNo, MonthKey = monthKey, StartTime = triggerTime },
             RemoveActiveSession = removeActiveSession,
             Record = BuildRecord(palletCode, serialNo, triggerTime, judgement),
+            MesOutbox = mesOutbox,
             Curves = withCurve
                 ?
                 [
@@ -367,6 +369,64 @@ public class RuntimeStoreTests
         var persisted = await env.Store.GetRecordAsync("202609", request.Record.Id);
         Assert.NotNull(persisted);
         Assert.Equal(relativePath, Assert.Single(persisted!.Curves).RelativePath);
+    }
+
+    [Fact]
+    public async Task Mes_intent_is_committed_with_the_collect_record_and_generated_session_id()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        var request = FirstStation("202609", "P0001", "S1", Day1, mesOutbox: new MesOutboxIntent
+        {
+            EventId = "event-1",
+            MonthKey = "202609",
+            SerialNo = "S1",
+            PalletCode = "P0001",
+            CreatedAt = Day1,
+            PayloadJson = "{}"
+        });
+
+        await env.Store.SaveAsync(request);
+
+        await using var db = env.Factory.Open("202609");
+        var intent = await db.MesOutboxIntents.SingleAsync();
+        Assert.Equal(request.Record.PalletSessionId, intent.PalletSessionId);
+        Assert.Equal("event-1", intent.EventId);
+        Assert.Equal("S1", intent.SerialNo);
+        Assert.Equal(1, await db.CollectRecords.CountAsync());
+    }
+
+    [Fact]
+    public async Task Mes_intent_conflict_rolls_back_the_collect_record()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        var first = FirstStation("202609", "P0001", "S1", Day1, mesOutbox: new MesOutboxIntent
+        {
+            EventId = "duplicate-event",
+            MonthKey = "202609",
+            SerialNo = "S1",
+            PalletCode = "P0001",
+            CreatedAt = Day1,
+            PayloadJson = "{}"
+        });
+        await env.Store.SaveAsync(first);
+
+        var duplicate = FirstStation("202609", "P0002", "S2", Day1.AddMinutes(1), mesOutbox: new MesOutboxIntent
+        {
+            EventId = "duplicate-event",
+            MonthKey = "202609",
+            SerialNo = "S2",
+            PalletCode = "P0002",
+            CreatedAt = Day1.AddMinutes(1),
+            PayloadJson = "{}"
+        });
+
+        await Assert.ThrowsAsync<DbUpdateException>(() => env.Store.SaveAsync(duplicate));
+
+        var records = await env.Store.QueryAsync(Query(serial: "S2"));
+        Assert.Empty(records.Items);
+        await using var db = env.Factory.Open("202609");
+        Assert.Single(await db.MesOutboxIntents.ToListAsync());
+        Assert.Equal(1, await db.CollectRecords.CountAsync());
     }
 
     [Fact]

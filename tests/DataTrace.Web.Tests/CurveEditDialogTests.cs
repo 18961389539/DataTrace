@@ -50,7 +50,7 @@ public class CurveEditDialogTests : WebTestBase
     {
         Context.Services.AddSingleton<IDialogService, DialogService>();
         RenderPopoverHost();
-        var provider = Context.RenderComponent<MudDialogProvider>();
+        var provider = Context.Render<MudDialogProvider>();
         var dialogs = Context.Services.GetRequiredService<IDialogService>();
         var reference = await dialogs.ShowAsync<CurveEditDialog>("曲线", new DialogParameters
         {

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using DataTrace.Application.Configuration;
 using DataTrace.Application.Evaluation;
+using DataTrace.Application.Mes;
 using DataTrace.Application.Runtime;
 using DataTrace.Collector;
 using DataTrace.Domain.Entities;
@@ -551,12 +552,13 @@ public class MesOutboxProcessorTests
         var http = new FakeHttpClientFactory(new FakeHttpMessageHandler(200));
 
         await ctx.RunAsync(
-            new MesOutboxProcessor(ctx.ScopeFactory, http, ctx.Logger<MesOutboxProcessor>()),
+            CreateMesProcessor(ctx, http),
             () => ReadStatus(ctx, id) == MesOutboxStatus.Succeeded);
 
         var request = Assert.Single(http.Handler.Requests);
         Assert.Equal(HttpMethod.Post, request.Method);
         Assert.Equal("http://mes.local/push", request.Uri!.ToString());
+        Assert.Equal("event-SN-0001", request.IdempotencyKey);
 
         // JsonContent.Create 走 web 默认，属性名是 camelCase，MES 侧收到的就是这个形状。
         using var json = JsonDocument.Parse(request.Body);
@@ -581,11 +583,14 @@ public class MesOutboxProcessorTests
         var http = new FakeHttpClientFactory(new FakeHttpMessageHandler(503));
 
         await ctx.RunAsync(
-            new MesOutboxProcessor(ctx.ScopeFactory, http, ctx.Logger<MesOutboxProcessor>()),
+            CreateMesProcessor(ctx, http),
             () => ReadLastError(ctx, id) == "HTTP 503");
 
         Assert.Equal(MesOutboxStatus.Pending, ReadStatus(ctx, id));
         Assert.Equal(1, ReadAttempts(ctx, id));
+        var failed = ReadItem(ctx, id);
+        Assert.NotNull(failed.LastAttemptAt);
+        Assert.Equal(failed.LastAttemptAt.Value.AddSeconds(2), failed.NextAttemptAt);
     }
 
     [Fact]
@@ -597,7 +602,7 @@ public class MesOutboxProcessorTests
 
         // MesEnabled 默认 false：这一轮应当直接跳过，不产生任何出站请求。
         await ctx.RunAsync(
-            new MesOutboxProcessor(ctx.ScopeFactory, http, ctx.Logger<MesOutboxProcessor>()),
+            CreateMesProcessor(ctx, http),
             () => true);
 
         Assert.Empty(http.Handler.Requests);
@@ -615,7 +620,7 @@ public class MesOutboxProcessorTests
         var http = new FakeHttpClientFactory(new FakeHttpMessageHandler(200));
 
         await ctx.RunAsync(
-            new MesOutboxProcessor(ctx.ScopeFactory, http, ctx.Logger<MesOutboxProcessor>()),
+            CreateMesProcessor(ctx, http),
             () => true);
 
         Assert.Empty(http.Handler.Requests);
@@ -638,7 +643,7 @@ public class MesOutboxProcessorTests
         var http = new FakeHttpClientFactory(new FakeHttpMessageHandler(200));
 
         await ctx.RunAsync(
-            new MesOutboxProcessor(ctx.ScopeFactory, http, ctx.Logger<MesOutboxProcessor>()),
+            CreateMesProcessor(ctx, http),
             () => ReadStatus(ctx, ids[19]) == MesOutboxStatus.Succeeded);
 
         // 单轮批量远大于这里的 25 条，一轮就该按排队顺序全部推完（停机恢复后要能追上积压）。
@@ -664,7 +669,7 @@ public class MesOutboxProcessorTests
         var http = new FakeHttpClientFactory(new FakeHttpMessageHandler(200));
 
         await ctx.RunAsync(
-            new MesOutboxProcessor(ctx.ScopeFactory, http, ctx.Logger<MesOutboxProcessor>()),
+            CreateMesProcessor(ctx, http),
             () => ReadStatus(ctx, id) == MesOutboxStatus.Succeeded);
 
         var client = Assert.Single(http.Clients);
@@ -681,6 +686,13 @@ public class MesOutboxProcessorTests
         await repo.SaveSettingsAsync(settings);
     }
 
+    private static MesOutboxProcessor CreateMesProcessor(InfrastructureContext ctx, FakeHttpClientFactory http)
+        => new(
+            ctx.ScopeFactory,
+            http,
+            ctx.Provider.GetRequiredService<IMesOutboxRelay>(),
+            ctx.Logger<MesOutboxProcessor>());
+
     private async Task<long> AddPendingAsync(
         InfrastructureContext ctx,
         string serialNo,
@@ -693,6 +705,7 @@ public class MesOutboxProcessorTests
         var item = new MesOutboxItem
         {
             MonthKey = RuntimeDbFactory.MonthKey(createdAt ?? DateTime.Now),
+            EventId = $"event-{serialNo}",
             PalletSessionId = 1,
             SerialNo = serialNo,
             PalletCode = palletCode,
@@ -700,6 +713,7 @@ public class MesOutboxProcessorTests
             Status = MesOutboxStatus.Pending,
             AttemptCount = attempts,
             LastAttemptAt = lastAttemptAt,
+            NextAttemptAt = lastAttemptAt?.AddSeconds(Math.Min(300, Math.Pow(2, attempts))),
             CreatedAt = createdAt ?? DateTime.Now
         };
 

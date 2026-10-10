@@ -21,9 +21,9 @@ public class DateRangeFilterTests : WebTestBase
 
         // MudDatePicker 要往 MudPopoverProvider 里挂浮层；真实应用由 MainLayout 提供，
         // 这里单独渲染裸组件就得自己补一个，否则初始化直接抛。
-        Context.RenderComponent<MudPopoverProvider>();
+        Context.Render<MudPopoverProvider>();
 
-        return Context.RenderComponent<DateRangeFilter>(parameters => parameters
+        return Context.Render<DateRangeFilter>(parameters => parameters
             .Add(p => p.From, from)
             .Add(p => p.FromChanged, v => _from = v)
             .Add(p => p.To, to)
@@ -126,7 +126,7 @@ public class PageHeaderTests : WebTestBase
     [Fact]
     public void TitleIsTheFocusTargetContract()
     {
-        var cut = Context.RenderComponent<PageHeader>(parameters => parameters
+        var cut = Context.Render<PageHeader>(parameters => parameters
             .Add(p => p.Title, "数据查询"));
 
         var title = cut.Find("h5");
@@ -138,7 +138,7 @@ public class PageHeaderTests : WebTestBase
     [Fact]
     public void DescriptionAndActionsHaveTheirOwnSlots()
     {
-        var cut = Context.RenderComponent<PageHeader>(parameters => parameters
+        var cut = Context.Render<PageHeader>(parameters => parameters
             .Add(p => p.Title, "报表")
             .Add(p => p.Description, "按天统计")
             .Add(p => p.Actions, (RenderFragment)(builder => builder.AddMarkupContent(0, "<span>共 7 条</span>")))

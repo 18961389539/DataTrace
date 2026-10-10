@@ -101,7 +101,7 @@ public class QualityIncidentStoreTests
         var afterAffected = await store.GetAsync(id);
         Assert.Equal(QualityIncidentStatus.InProgress, afterAffected!.Incident.Status);
         Assert.Equal("operator", afterAffected.Incident.Owner);
-        Assert.Single(afterAffected.Evidence.Where(item => item.Purpose == QualityEvidencePurpose.Affected));
+        Assert.Single(afterAffected.Evidence, item => item.Purpose == QualityEvidencePurpose.Affected);
         await store.LinkEvidenceAsync(id, "202610", affected.Id, QualityEvidencePurpose.Affected, 1, operatorActor);
         await Assert.ThrowsAsync<QualityIncidentOperationException>(() =>
             store.LinkEvidenceAsync(id, "202610", source.Id, QualityEvidencePurpose.Affected, 1, operatorActor));

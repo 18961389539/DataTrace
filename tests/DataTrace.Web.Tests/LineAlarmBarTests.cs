@@ -18,7 +18,7 @@ public class LineAlarmBarTests : WebTestBase
         ]));
         Context.Services.AddSingleton<ILineAlarmBoard>(board);
 
-        var cut = Context.RenderComponent<LineAlarmBar>();
+        var cut = Context.Render<LineAlarmBar>();
 
         Assert.Contains("采集心跳已停止", cut.Markup);
         Assert.Contains("去接手", cut.Markup);
@@ -38,7 +38,7 @@ public class LineAlarmBarTests : WebTestBase
                 .ToList()));
         Context.Services.AddSingleton<ILineAlarmBoard>(board);
 
-        var cut = Context.RenderComponent<LineAlarmBar>();
+        var cut = Context.Render<LineAlarmBar>();
 
         // 前 4 条照铺，第 5 条起收起——但必须自报还剩几条：
         // 只砍不报，接手完眼前 4 条就会被当成全处理完了。
@@ -52,7 +52,7 @@ public class LineAlarmBarTests : WebTestBase
     {
         Context.Services.AddSingleton<ILineAlarmBoard>(new LineAlarmBoard());
 
-        var cut = Context.RenderComponent<LineAlarmBar>();
+        var cut = Context.Render<LineAlarmBar>();
 
         Assert.Empty(cut.FindAll("button"));
         Assert.DoesNotContain("静音", cut.Markup);

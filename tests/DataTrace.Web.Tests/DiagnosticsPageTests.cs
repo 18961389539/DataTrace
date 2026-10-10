@@ -730,7 +730,7 @@ public class DiagnosticsPageTests : WebTestBase
         // 顺序不能反：渲染宿主会初始化服务提供者，之后再注册服务会被 bUnit 直接拒绝。
         RenderPopoverHost();
 
-        var cut = Context.RenderComponent<Diagnostics>();
+        var cut = Context.Render<Diagnostics>();
         return (cut, spool, diag);
     }
 

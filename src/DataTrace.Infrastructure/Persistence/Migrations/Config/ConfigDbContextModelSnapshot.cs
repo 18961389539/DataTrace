@@ -349,6 +349,9 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Config
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("EventId")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime?>("LastAttemptAt")
                         .HasColumnType("TEXT");
 
@@ -357,6 +360,9 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Config
 
                     b.Property<string>("MonthKey")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("NextAttemptAt")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("PalletCode")
@@ -379,7 +385,10 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Config
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Status", "CreatedAt");
+                    b.HasIndex("EventId")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "NextAttemptAt", "CreatedAt");
 
                     b.ToTable("MesOutbox");
                 });

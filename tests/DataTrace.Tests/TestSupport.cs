@@ -81,6 +81,19 @@ internal static class TestDatabase
     }
 }
 
+internal static class ConfigMigrationTestSupport
+{
+    public static async Task RewindMesOutboxDeliveryStateAsync(ConfigDbContext db)
+    {
+        await db.Database.ExecuteSqlRawAsync("DROP INDEX IF EXISTS \"IX_MesOutbox_EventId\"");
+        await db.Database.ExecuteSqlRawAsync("DROP INDEX IF EXISTS \"IX_MesOutbox_Status_NextAttemptAt_CreatedAt\"");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"MesOutbox\" DROP COLUMN \"EventId\"");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"MesOutbox\" DROP COLUMN \"NextAttemptAt\"");
+        await db.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX \"IX_MesOutbox_Status_CreatedAt\" ON \"MesOutbox\" (\"Status\", \"CreatedAt\")");
+    }
+}
+
 /// <summary>测试用的上下文工厂：直接按给定 options 造 context，不走 DI 池化。</summary>
 internal sealed class TestConfigDbContextFactory(DbContextOptions<ConfigDbContext> options)
     : IDbContextFactory<ConfigDbContext>

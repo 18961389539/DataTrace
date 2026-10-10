@@ -213,6 +213,51 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Runtime
                     b.ToTable("CurveRecords");
                 });
 
+            modelBuilder.Entity("DataTrace.Domain.Entities.MesOutboxIntent", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EventId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MonthKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PalletCode")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("PalletSessionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("PublishedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SerialNo")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EventId")
+                        .IsUnique();
+
+                    b.HasIndex("PublishedAt", "CreatedAt");
+
+                    b.ToTable("MesOutboxIntents");
+                });
+
             modelBuilder.Entity("DataTrace.Domain.Entities.PalletSession", b =>
                 {
                     b.Property<long>("Id")

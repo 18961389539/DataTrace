@@ -71,8 +71,8 @@ public class CurvePageTests : WebTestBase
             PlcConnections = [Plc(brand)],
             Stations = [station]
         };
-        Context.RenderComponent<MudPopoverProvider>();
-        return Context.RenderComponent<Stations>();
+        Context.Render<MudPopoverProvider>();
+        return Context.Render<Stations>();
     }
 
     private static void OpenCurveTab(IRenderedFragment cut)

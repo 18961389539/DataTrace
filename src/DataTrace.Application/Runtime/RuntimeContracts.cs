@@ -12,7 +12,7 @@ public sealed class CollectSaveRequest
     public bool CloseSession { get; init; }
     public required CollectRecord Record { get; init; }
     public IReadOnlyList<CurvePayloadWrite> Curves { get; init; } = [];
-    public MesOutboxItem? MesOutbox { get; init; }
+    public MesOutboxIntent? MesOutbox { get; init; }
     public ActiveSessionIndex? ActiveSession { get; init; }
     public bool RemoveActiveSession { get; init; }
 }

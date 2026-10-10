@@ -191,22 +191,98 @@ public class VisualRegressionE2ETests : E2ETestBase
     public async Task ScreenshotsMatchTheirBaseline(string target, string path, string selector)
     {
         await Page.SetViewportSizeAsync(DesktopWidth, DesktopHeight);
-        await OpenAsync(path);
-
-        var masks = GoldenMasks.TryGetValue(target, out var selectors)
-            ? selectors.Select(selector => Page.Locator(selector)).ToArray()
-            : [];
-
-        var png = selector.Length == 0
-            ? await Page.ScreenshotAsync(new PageScreenshotOptions
+        var artifactsDirectory = Environment.GetEnvironmentVariable("DATATRACE_E2E_ARTIFACTS_DIR");
+        var artifactsEnabled = !string.IsNullOrWhiteSpace(artifactsDirectory);
+        var screenshotPath = artifactsEnabled ? Path.Combine(artifactsDirectory!, $"{target}.png") : null;
+        var tracePath = artifactsEnabled ? Path.Combine(artifactsDirectory!, $"{target}.zip") : null;
+        if (artifactsEnabled)
+        {
+            Directory.CreateDirectory(artifactsDirectory!);
+            await Context.Tracing.StartAsync(new TracingStartOptions
             {
-                FullPage = true,
-                Animations = ScreenshotAnimations.Disabled,
-                Mask = masks
-            })
-            : await ScreenshotRegionAsync(selector, masks);
+                Screenshots = true,
+                Snapshots = true,
+                Sources = true
+            });
+        }
 
-        VisualGolden.Verify(target, png, VisualGolden.Fingerprint(Browser.Version));
+        Exception? failure = null;
+        try
+        {
+            await OpenAsync(path);
+
+            var masks = GoldenMasks.TryGetValue(target, out var selectors)
+                ? selectors.Select(selector => Page.Locator(selector)).ToArray()
+                : [];
+
+            var png = selector.Length == 0
+                ? await Page.ScreenshotAsync(new PageScreenshotOptions
+                {
+                    FullPage = true,
+                    Animations = ScreenshotAnimations.Disabled,
+                    Mask = masks
+                })
+                : await ScreenshotRegionAsync(selector, masks);
+
+            if (screenshotPath is not null)
+            {
+                await File.WriteAllBytesAsync(screenshotPath, png);
+            }
+
+            var fingerprint = VisualGolden.Fingerprint(Browser.Version);
+            var status = VisualGolden.Verify(target, png, fingerprint);
+            WriteVisualReport(artifactsDirectory, target, status, fingerprint);
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+            if (screenshotPath is not null && !File.Exists(screenshotPath))
+            {
+                try
+                {
+                    await File.WriteAllBytesAsync(screenshotPath, await Page.ScreenshotAsync());
+                }
+                catch
+                {
+                }
+            }
+
+            WriteVisualReport(artifactsDirectory, target, "failed", VisualGolden.Fingerprint(Browser.Version), ex.ToString());
+            throw;
+        }
+        finally
+        {
+            if (tracePath is not null)
+            {
+                try
+                {
+                    await Context.Tracing.StopAsync(new TracingStopOptions { Path = tracePath });
+                }
+                catch when (failure is not null)
+                {
+                }
+            }
+        }
+    }
+
+    private static void WriteVisualReport(string? directory, string target, string status, string fingerprint, string? error = null)
+    {
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            return;
+        }
+
+        var report = new
+        {
+            target,
+            status,
+            mode = Environment.GetEnvironmentVariable("DATATRACE_E2E_GOLDEN") ?? "compare",
+            fingerprint,
+            error
+        };
+        File.WriteAllText(
+            Path.Combine(directory, $"{target}.json"),
+            JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
     }
 
     /// <summary>

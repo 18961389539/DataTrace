@@ -87,8 +87,8 @@ public class JsonSourcePageTests : WebTestBase
             PlcConnections = [Mitsubishi()],
             Stations = [target]
         };
-        Context.RenderComponent<MudPopoverProvider>();
-        return Context.RenderComponent<Stations>();
+        Context.Render<MudPopoverProvider>();
+        return Context.Render<Stations>();
     }
 
     /// <summary>点位清单在「点位」页签里：MudTabs 默认只渲染当前页签的内容。</summary>

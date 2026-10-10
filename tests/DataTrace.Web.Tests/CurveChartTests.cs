@@ -25,7 +25,7 @@ public class CurveChartTests : WebTestBase
     };
 
     private IRenderedComponent<CurveChart> Render(string auditKey = "202609/7/ST010_PD")
-        => Context.RenderComponent<CurveChart>(parameters => parameters
+        => Context.Render<CurveChart>(parameters => parameters
             .Add(p => p.Payload, Payload())
             .Add(p => p.AuditKey, auditKey));
 
@@ -82,7 +82,7 @@ public class CurveChartTests : WebTestBase
     [Fact]
     public void Export_is_refused_when_there_is_no_paired_data()
     {
-        var cut = Context.RenderComponent<CurveChart>(parameters => parameters
+        var cut = Context.Render<CurveChart>(parameters => parameters
             .Add(p => p.Payload, new CurvePayload
             {
                 PointCount = 2,

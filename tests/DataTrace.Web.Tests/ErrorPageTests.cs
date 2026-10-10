@@ -46,5 +46,5 @@ public class ErrorPageTests : WebTestBase
     }
 
     private IRenderedComponent<Error> RenderError(HttpContext http)
-        => Context.RenderComponent<Error>(parameters => parameters.AddCascadingValue<HttpContext>(http));
+        => Context.Render<Error>(parameters => parameters.AddCascadingValue<HttpContext>(http));
 }
