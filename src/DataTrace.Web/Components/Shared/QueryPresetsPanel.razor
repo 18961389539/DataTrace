@@ -1,0 +1,152 @@
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Components.Authorization
+@inject AuthenticationStateProvider Auth
+@inject IJSRuntime Js
+@inject IDialogService Dialogs
+@inject DtToast Toast
+
+<div class="mb-3" aria-label="常用查询方案">
+    <MudStack Row="true" Spacing="1" Class="flex-wrap align-center">
+        @foreach (var preset in _presets)
+        {
+            <div class="dt-query-preset">
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Bookmark"
+                       Disabled="@(Disabled || _busy)" OnClick="@(() => Apply.InvokeAsync(preset.Resolve(DateTime.Now, StartHour, LengthHours)))">@preset.Name</MudButton>
+            <MudTooltip Text="@($"删除方案 {preset.Name}")">
+                <MudIconButton Size="Size.Small" Icon="@Icons.Material.Filled.DeleteOutline" Disabled="@(Disabled || _busy)"
+                               aria-label="@($"删除方案 {preset.Name}")" OnClick="@(() => DeleteAsync(preset))" />
+            </MudTooltip>
+            </div>
+        }
+        <MudTooltip Text="仅保存在当前浏览器，按登录账号分开">
+            <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.BookmarkAdd"
+                       Disabled="@(Disabled || _busy || !_ready)" OnClick="OpenSave">保存查询方案</MudButton>
+        </MudTooltip>
+    </MudStack>
+    @if (_editing)
+    {
+        <MudGrid Class="mt-1">
+            <MudItem xs="12" sm="6" md="5">
+                <MudTextField T="string" @bind-Value="_name" Label="方案名称" MaxLength="40" Immediate="true" Disabled="_busy" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4">
+                <MudSelect T="string" @bind-Value="_range" Label="方案日期规则" Disabled="_busy">
+                    @foreach (var range in QueryPreset.Ranges)
+                    {
+                        <MudSelectItem T="string" Value="@range.Key">@range.Label</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="12" md="3" Class="d-flex align-center flex-wrap gap-2">
+                <MudButton StartIcon="@Icons.Material.Filled.Save" Variant="Variant.Filled" Color="Color.Primary"
+                           Disabled="@(Disabled || _busy || string.IsNullOrWhiteSpace(_name))" OnClick="SaveAsync">保存方案</MudButton>
+                <MudIconButton Icon="@Icons.Material.Filled.Close" aria-label="取消保存方案" Disabled="_busy" OnClick="@(() => _editing = false)" />
+            </MudItem>
+        </MudGrid>
+    }
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error" Dense="true" Class="mt-2">@_error</MudAlert>
+    }
+</div>
+
+@code {
+    [Parameter] public string Url { get; set; } = "query";
+    [Parameter] public DateTime? From { get; set; }
+    [Parameter] public DateTime? To { get; set; }
+    [Parameter] public int StartHour { get; set; }
+    [Parameter] public int LengthHours { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public EventCallback<string> Apply { get; set; }
+    private List<QueryPreset> _presets = [];
+    private string? _account;
+    private string? _name;
+    private string _range = "today";
+    private string? _error;
+    private bool _ready;
+    private bool _editing;
+    private bool _busy;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var user = (await Auth.GetAuthenticationStateAsync()).User;
+        _account = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.Identity?.Name;
+        if (string.IsNullOrEmpty(_account)) return;
+        try
+        {
+            var stored = await Js.InvokeAsync<QueryPreset[]?>("dtQueryPresets.get", _account);
+            _presets = (stored ?? []).Where(preset => preset is not null && !string.IsNullOrWhiteSpace(preset.Name)
+                && RecordListNavigation.IsListUrl(preset.Url) && QueryPreset.Ranges.Any(range => range.Key == preset.Range))
+                .DistinctBy(preset => preset.Name).Take(30).ToList();
+            _ready = true;
+        }
+        catch (JSException) { _error = "无法读取本机查询方案，请检查浏览器存储权限后刷新。"; }
+        StateHasChanged();
+    }
+
+    private void OpenSave()
+    {
+        _range = QueryPreset.DetectRange(From, To, DateTime.Now, StartHour, LengthHours);
+        _editing = !_editing;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_busy || Disabled || !_ready || string.IsNullOrWhiteSpace(_name)) return;
+        _busy = true;
+        try
+        {
+            var name = _name.Trim();
+            if (_presets.Any(preset => preset.Name == name)
+                && await Dialogs.ConfirmDangerAsync("覆盖查询方案", $"替换「{name}」的筛选条件与日期规则？",
+                    acknowledge: "我了解原方案将被替换", yesText: "覆盖方案") != true) return;
+            if (_presets.Count >= 30 && _presets.All(preset => preset.Name != name))
+            {
+                _error = "最多保存 30 个方案，请先删除不再使用的方案。";
+                return;
+            }
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(Url.Contains('?') ? Url[Url.IndexOf('?')..] : "");
+            query["from"] = DateRangeFilter.QueryStart(From).ToString("O");
+            query["to"] = (To ?? DateTime.Today).ToString("O");
+            var preset = new QueryPreset(name, Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString("query", query), _range);
+            var next = _presets.Where(item => item.Name != name).Append(preset).ToList();
+            if (await PersistAsync(next))
+            {
+                _editing = false;
+                _name = null;
+                Toast.Add("查询方案已保存", Severity.Success);
+            }
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task DeleteAsync(QueryPreset preset)
+    {
+        if (_busy || Disabled) return;
+        _busy = true;
+        try
+        {
+            if (await Dialogs.ConfirmDangerAsync("删除查询方案", $"删除「{preset.Name}」？采集记录不会被删除。",
+                acknowledge: "我了解该方案将从本机删除", yesText: "删除方案") == true)
+                await PersistAsync(_presets.Where(item => item != preset).ToList());
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task<bool> PersistAsync(List<QueryPreset> next)
+    {
+        try
+        {
+            if (!await Js.InvokeAsync<bool>("dtQueryPresets.set", _account, next)) throw new JSException("storage unavailable");
+            _presets = next;
+            _error = null;
+            return true;
+        }
+        catch (JSException)
+        {
+            _error = "查询方案未保存：浏览器存储不可用，原有方案未改变。";
+            return false;
+        }
+    }
+}

@@ -35,7 +35,7 @@ public abstract class WebAppHost : IDisposable
     public string AppDirectory { get; private set; } = "";
 
     /// <summary>数据目录：夹具退出时整个删掉。</summary>
-    protected string DataRoot => _dataRoot ?? "";
+    public string DataRoot => _dataRoot ?? "";
 
     /// <summary>
     /// 进程的工作目录。默认跟应用同目录（相当于 `cd 安装目录 && 启动`），

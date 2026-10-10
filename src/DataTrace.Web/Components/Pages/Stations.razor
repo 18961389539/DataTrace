@@ -16,6 +16,7 @@
 @inject DtToast Toast
 @inject IDialogService DialogService
 @inject IJsonFileDialog FileDialog
+@inject IJSRuntime Js
 @using System.Text.Json
 @using System.Text.Json.Serialization
 
@@ -100,18 +101,35 @@
                         @(_busy ? "保存中…" : $"保存 {_current.Code}")
                     </MudButton>
                 </MudStack>
+                @if (_showValidationSummary && ValidationIssues.Count > 0)
+                {
+                    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-3" role="alert">
+                        <MudText Typo="Typo.subtitle2">工站未保存：@ValidationIssues.Count 项需要修正</MudText>
+                        <ul class="ma-0 pl-4">
+                            @foreach (var issue in ValidationIssues)
+                            {
+                                <li>
+                                    <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Text"
+                                               EndIcon="@Icons.Material.Filled.MyLocation" OnClick="@(() => FocusIssue(issue))">
+                                        @issue.Label：@issue.Error
+                                    </MudButton>
+                                </li>
+                            }
+                        </ul>
+                    </MudAlert>
+                }
                 <MudGrid Class="mb-2">
                     <MudItem xs="12" sm="6" md="3">
                         <MudTextField @bind-Value="_current.Code" @bind-Value:after="ValidateStation" Label="编码"
-                                      Immediate="true" Error="@(_codeError is not null)" ErrorText="@_codeError" />
+                                      data-dt-validation="code" Immediate="true" Error="@(_codeError is not null)" ErrorText="@_codeError" />
                     </MudItem>
                     <MudItem xs="12" sm="6" md="3">
                         <MudTextField @bind-Value="_current.Name" @bind-Value:after="ValidateStation" Label="工站名称"
-                                      Immediate="true" Error="@(_nameError is not null)" ErrorText="@_nameError" />
+                                      data-dt-validation="name" Immediate="true" Error="@(_nameError is not null)" ErrorText="@_nameError" />
                     </MudItem>
                     <MudItem xs="12" sm="6" md="3">
                         <MudSelect T="int" @bind-Value="_current.PlcConnectionId" @bind-Value:after="ValidateStation" Label="所属 PLC"
-                                   Error="@(_plcError is not null)" ErrorText="@_plcError">
+                                   data-dt-validation="plc" Error="@(_plcError is not null)" ErrorText="@_plcError">
                             @foreach (var plc in _plcs)
                             {
                                 <MudSelectItem T="int" Value="plc.Id">@plc.Name</MudSelectItem>
@@ -121,7 +139,7 @@
                     <MudItem xs="12" sm="6" md="3">
                         <MudNumericField @bind-Value="_current.Sequence" @bind-Value:after="ValidateStation" Label="产线顺序"
                                          Immediate="true" HelperText="决定前后站与跳站判定，必须互不相同"
-                                         Error="@(_sequenceError is not null)" ErrorText="@_sequenceError" />
+                                         data-dt-validation="sequence" Error="@(_sequenceError is not null)" ErrorText="@_sequenceError" />
                     </MudItem>
                 </MudGrid>
                 @if (_lineWarnings.Count > 0)
@@ -248,12 +266,12 @@
                                 <MudTextField @bind-Value="_current.TriggerAddress" @bind-Value:after="ValidateStation"
                                               Label="触发 / 回写地址" Immediate="true"
                                               HelperText="@AddressHelper"
-                                              Error="@(_triggerError is not null)" ErrorText="@_triggerError" />
+                                              data-dt-validation="trigger" Error="@(_triggerError is not null)" ErrorText="@_triggerError" />
                             </MudItem>
                             <MudItem xs="12" md="6">
                                 <MudNumericField @bind-Value="_current.TriggerValue" @bind-Value:after="ValidateStation"
                                                  Label="触发值" Immediate="true" HelperText="约定为 1；2 起是回写码，不能用作触发值"
-                                                 Error="@(_triggerValueError is not null)" ErrorText="@_triggerValueError" />
+                                                 data-dt-validation="triggerValue" Error="@(_triggerValueError is not null)" ErrorText="@_triggerValueError" />
                                 <InfoHint Topic="HelpTexts.TriggerValue" />
                             </MudItem>
                         </MudGrid>
@@ -272,13 +290,13 @@
                             <MudItem xs="12" md="3">
                                 <MudTextField @bind-Value="_current.PalletCodeAddress" @bind-Value:after="ValidateStation"
                                               Label="托盘码地址" Immediate="true"
-                                              Error="@(_palletError is not null)" ErrorText="@_palletError" />
+                                              data-dt-validation="pallet" Error="@(_palletError is not null)" ErrorText="@_palletError" />
                             </MudItem>
                             <MudItem xs="6" md="3">
                                 <MudNumericField @bind-Value="_current.PalletCodeLength" @bind-Value:after="ValidateStation"
                                                  Label="托盘码长度" Immediate="true" Min="1" Max="@StationConfigLimits.MaxPalletCodeLength"
                                                  HelperText="字符数"
-                                                 Error="@(_palletLengthError is not null)" ErrorText="@_palletLengthError" />
+                                                 data-dt-validation="palletLength" Error="@(_palletLengthError is not null)" ErrorText="@_palletLengthError" />
                             </MudItem>
                             <MudItem xs="6" md="3">
                                 <MudSelect T="PlcDataType" @bind-Value="_current.PalletCodeDataType" Label="托盘码类型"
@@ -292,7 +310,7 @@
                                 <MudTextField @bind-Value="_occupiedAddress" @bind-Value:after="ValidateStation"
                                               Label="有料地址" Immediate="true"
                                               HelperText="留空 = 恒为有料"
-                                              Error="@(_occupiedError is not null)" ErrorText="@_occupiedError" />
+                                              data-dt-validation="occupied" Error="@(_occupiedError is not null)" ErrorText="@_occupiedError" />
                             </MudItem>
                         </MudGrid>
                         <MudText Typo="Typo.caption" Class="dt-muted">
@@ -307,9 +325,9 @@
                         </MudText>
                         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="4" Class="flex-wrap">
                             <MudSwitch @bind-Value="_current.IsFirstStation" @bind-Value:after="ValidateStation"
-                                       Label="首站" Color="Color.Primary" />
+                                       data-dt-validation="first" Label="首站" Color="Color.Primary" />
                             <MudSwitch @bind-Value="_current.IsLastStation" @bind-Value:after="ValidateStation"
-                                       Label="末站" Color="Color.Primary" />
+                                       data-dt-validation="last" Label="末站" Color="Color.Primary" />
                             <InfoHint Topic="HelpTexts.FirstLastStation" />
                             <MudSwitch @bind-Value="_current.Enabled" @bind-Value:after="ValidateStation"
                                        Label="启用" Color="Color.Primary" />
@@ -332,7 +350,7 @@
                                     <MudTextField @bind-Value="_current.DataFilePath" @bind-Value:after="ValidateStation"
                                                   Label="数据文件路径" Immediate="true"
                                                   HelperText="可手填，也可点右侧「选择」；点位都来自 PLC 时可留空"
-                                                  Error="@(_dataPathError is not null)" ErrorText="@_dataPathError" />
+                                                  data-dt-validation="dataPath" Error="@(_dataPathError is not null)" ErrorText="@_dataPathError" />
                                     <button type="button" class="dt-path-pick" aria-label="选择数据文件"
                                             disabled="@_busy" @onclick="PickDataFile">
                                         <MudIcon Icon="@Icons.Material.Filled.FolderOpen" Size="Size.Small" />
@@ -611,6 +629,41 @@
     private string? _dataPathWarning;
     private string? _firstError;
     private string? _lastError;
+    private bool _showValidationSummary;
+    private string? _pendingFocus;
+    private int _focusAttempts;
+    private sealed record ValidationIssue(string Field, string Label, string Error, int Tab);
+    private IReadOnlyList<ValidationIssue> ValidationIssues => new (string Field, string Label, string? Error, int Tab)[]
+    {
+        ("code", "编码", _codeError, -1), ("name", "工站名称", _nameError, -1),
+        ("plc", "所属 PLC", _plcError, -1), ("sequence", "产线顺序", _sequenceError, -1),
+        ("trigger", "触发 / 回写地址", _triggerError, 0), ("triggerValue", "触发值", _triggerValueError, 0),
+        ("pallet", "托盘码地址", _palletError, 0), ("palletLength", "托盘码长度", _palletLengthError, 0),
+        ("occupied", "有料地址", _occupiedError, 0), ("first", "首站", _firstError, 0),
+        ("last", "末站", _lastError, 0), ("dataPath", "数据文件路径", _dataPathError, 1)
+    }.Where(issue => issue.Error is not null).Select(issue => new ValidationIssue(issue.Field, issue.Label, issue.Error!, issue.Tab)).ToList();
+
+    private void FocusIssue(ValidationIssue issue)
+    {
+        if (issue.Tab >= 0) _tab = issue.Tab;
+        _pendingFocus = issue.Field;
+        _focusAttempts = 0;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_pendingFocus is not { } field) return;
+        _pendingFocus = null;
+        try
+        {
+            if (!await Js.InvokeAsync<bool>("dtFocusValidation", field) && _focusAttempts++ < 1)
+            {
+                _pendingFocus = field;
+                StateHasChanged();
+            }
+        }
+        catch (JSException) { }
+    }
 
     /// <summary>整条线的拓扑问题（缺首站/末站、顺序冲突），保存后重算，只提示不拦截保存。</summary>
     private IReadOnlyList<string> _lineWarnings = [];
@@ -1211,6 +1264,8 @@
     /// <summary>换工站或重新加载后，上一台的校验残留必须清掉，否则会错标在新工站上。</summary>
     private void ClearErrors()
     {
+        _showValidationSummary = false;
+        _pendingFocus = null;
         _codeError = _nameError = _plcError = _sequenceError = null;
         _triggerError = _triggerValueError = _palletError = _palletLengthError = _occupiedError = null;
         _dataPathError = _dataPathWarning = null;
@@ -1294,17 +1349,8 @@
         if (_current is null) return;
         if (!StationValid)
         {
-            // 「触发 / 回写地址」和「托盘码地址」都在握手页签里，报错时把那页切出来，
-            // 否则用户看不到红字长在哪，只觉得按钮点了没反应。
-            if (_triggerError is not null || _palletError is not null)
-            {
-                _tab = 0;
-            }
-            else if (_dataPathError is not null)
-            {
-                _tab = 1;
-            }
-
+            _showValidationSummary = true;
+            FocusIssue(ValidationIssues[0]);
             return;
         }
 

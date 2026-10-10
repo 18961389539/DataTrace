@@ -1,9 +1,20 @@
 @* 时间区间筛选：预设按钮 + 起止日期，全站共用一套语义与一套选中态。
    不用 MudGrid 的 12 栏切宽度：日期控件被压到 168px 时 "2026/9/21" 会裁成 "2026/9/2"。 *@
+@using DataTrace.Domain
+@using DataTrace.Domain.Constants
+@using System.Globalization
+
 <div class="dt-range">
     <div class="dt-range-presets">
         <MudText Typo="Typo.caption" Class="dt-muted">快捷区间</MudText>
         <div class="dt-range-buttons">
+            @if (IncludeShifts)
+            {
+                <MudButton Size="Size.Small" Variant="@(IsShiftSelected(CurrentShift) ? Variant.Filled : Variant.Outlined)"
+                           Color="Color.Primary" Disabled="Disabled" OnClick="@(() => SelectShiftAsync(CurrentShift))">本班次</MudButton>
+                <MudButton Size="Size.Small" Variant="@(IsShiftSelected(PreviousShift) ? Variant.Filled : Variant.Outlined)"
+                           Color="Color.Primary" Disabled="Disabled" OnClick="@(() => SelectShiftAsync(PreviousShift))">上一班次</MudButton>
+            }
             @foreach (var preset in Presets)
             {
                 var range = preset.Range();
@@ -18,8 +29,8 @@
         </div>
     </div>
 
-    <MudDatePicker Class="dt-range-date" Label="开始日期" Date="From" DateChanged="SetFromAsync" Disabled="Disabled" />
-    <MudDatePicker Class="dt-range-date" Label="结束日期" Date="To" DateChanged="SetToAsync"
+    <MudDatePicker Class="dt-range-date" Label="开始日期" Date="From?.Date" DateChanged="SetFromAsync" Disabled="Disabled" />
+    <MudDatePicker Class="dt-range-date" Label="结束日期" Date="To?.Date" DateChanged="SetToAsync"
                    Error="@Invalid" ErrorText="@ReversedRangeMessage" Disabled="Disabled" />
 </div>
 
@@ -43,6 +54,20 @@
     [Parameter] public EventCallback OnRangeChanged { get; set; }
 
     [Parameter] public bool Disabled { get; set; }
+    [Parameter] public bool IncludeShifts { get; set; }
+    [Parameter] public int ShiftStartHour { get; set; } = SystemDefaults.ShiftStartHour;
+    [Parameter] public int ShiftLengthHours { get; set; } = SystemDefaults.ShiftLengthHours;
+
+    private ShiftWindow CurrentShift => ShiftWindow.Containing(DateTime.Now, ShiftStartHour, ShiftLengthHours);
+    private ShiftWindow PreviousShift => ShiftWindow.Containing(CurrentShift.Start.AddTicks(-1), ShiftStartHour, ShiftLengthHours);
+    private bool IsShiftSelected(ShiftWindow shift) => From == shift.Start && To == shift.End.AddTicks(-1);
+
+    private async Task SelectShiftAsync(ShiftWindow shift)
+    {
+        await FromChanged.InvokeAsync(shift.Start);
+        await ToChanged.InvokeAsync(shift.End.AddTicks(-1));
+        await OnRangeChanged.InvokeAsync();
+    }
 
     /// <summary>倒置区间的提示语，唯一出处。</summary>
     public const string ReversedRangeMessage = "开始日期不能晚于结束日期";
@@ -52,7 +77,15 @@
     /// 这句校验曾经在三个页面各抄了一遍。
     /// </summary>
     public static bool IsReversed(DateTime? from, DateTime? to)
-        => from is { } f && to is { } t && f.Date > t.Date;
+        => QueryStart(from) > QueryEnd(to);
+
+    public static DateTime QueryStart(DateTime? value) => value ?? DateTime.Today;
+
+    public static DateTime QueryEnd(DateTime? value)
+        => value is { } time && time.TimeOfDay != TimeSpan.Zero ? time : EndOfInclusive(value);
+
+    public static string UrlValue(DateTime value)
+        => Uri.EscapeDataString(value.ToString(value.TimeOfDay == TimeSpan.Zero ? "yyyy-MM-dd" : "yyyy-MM-dd'T'HH:mm:ss.fffffff", CultureInfo.InvariantCulture));
 
     /// <summary>区间起点（含）。留空取 fallback，fallback 也留空则取今天。</summary>
     public static DateTime StartOf(DateTime? value, DateTime? fallback = null)
@@ -64,12 +97,14 @@
 
     /// <summary>页头统计位上那句 "2026-09-15 ~ 2026-09-21"。</summary>
     public static string Format(DateTime? from, DateTime? to)
-        => $"{StartOf(from):yyyy-MM-dd} ~ {StartOf(to):yyyy-MM-dd}";
+        => from?.TimeOfDay != TimeSpan.Zero && from is not null || to?.TimeOfDay != TimeSpan.Zero && to is not null
+            ? $"{QueryStart(from):yyyy-MM-dd HH:mm} ~ {QueryEnd(to).AddTicks(1):yyyy-MM-dd HH:mm}"
+            : $"{StartOf(from):yyyy-MM-dd} ~ {StartOf(to):yyyy-MM-dd}";
 
     private bool Invalid => IsReversed(From, To);
 
     private bool IsSelected((DateTime From, DateTime To) range)
-        => From?.Date == range.From && To?.Date == range.To;
+        => From == range.From && To == range.To;
 
     private async Task SelectAsync((DateTime From, DateTime To) range)
     {
@@ -80,13 +115,17 @@
 
     private async Task SetFromAsync(DateTime? value)
     {
-        await FromChanged.InvokeAsync(value);
+        if (value?.Date == From?.Date) return;
+        await FromChanged.InvokeAsync(value?.Date);
+        await ToChanged.InvokeAsync(To?.Date);
         await OnRangeChanged.InvokeAsync();
     }
 
     private async Task SetToAsync(DateTime? value)
     {
-        await ToChanged.InvokeAsync(value);
+        if (value?.Date == To?.Date) return;
+        await FromChanged.InvokeAsync(From?.Date);
+        await ToChanged.InvokeAsync(value?.Date);
         await OnRangeChanged.InvokeAsync();
     }
 }

@@ -32,7 +32,8 @@
         <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-2" />
     }
     <form @onsubmit="OnSubmit" @onsubmit:preventDefault="true">
-        <DateRangeFilter @bind-From="_from" @bind-To="_to" OnRangeChanged="Load" />
+        <DateRangeFilter @bind-From="_from" @bind-To="_to" OnRangeChanged="Load" IncludeShifts="true"
+                 ShiftStartHour="_shiftSettings.ShiftStartHour" ShiftLengthHours="_shiftSettings.ShiftLengthHours" />
 
         <MudGrid Class="dt-filters">
             <MudItem xs="12" sm="6" md="4" lg="3">
@@ -699,6 +700,7 @@
     private int? _stationId;
     private int _tagId;
     private IReadOnlyList<Station> _stations = [];
+    private SystemSettings _shiftSettings = new();
     private List<TagDefinition> _tags = [];
     private IReadOnlyList<DailyThroughput> _fpy = [];
     private DateTime? _expandedShiftStart;
@@ -785,6 +787,7 @@ private IssueTopReport _defects = new();
         // 分头调 GetStationsAsync / GetRecipesAsync 等于把同一批表读两遍、后面 SpcService 再读第三遍。
         var snapshot = await Config.GetSnapshotAsync();
         _stations = snapshot.Stations;
+        _shiftSettings = snapshot.Settings;
         _knownRecipes = snapshot.Recipes;
         RefreshTags();
         ApplyTagQuery();
@@ -802,12 +805,12 @@ private IssueTopReport _defects = new();
     {
         if (DateTime.TryParse(FromQuery, out var from))
         {
-            _from = from.Date;
+            _from = from;
         }
 
         if (DateTime.TryParse(ToQuery, out var to))
         {
-            _to = to.Date;
+            _to = to;
         }
 
         if (StationQuery is { } station && station > 0)
@@ -998,8 +1001,8 @@ private async Task OnStationChanged(int? stationId)
     {
         var parts = new List<string>
         {
-            $"from={DateRangeFilter.StartOf(_from):yyyy-MM-dd}",
-            $"to={DateRangeFilter.StartOf(_to):yyyy-MM-dd}",
+            $"from={DateRangeFilter.UrlValue(DateRangeFilter.QueryStart(_from))}",
+            $"to={DateRangeFilter.UrlValue(_to ?? DateTime.Today)}",
             "judge=Ng"
         };
 
@@ -1052,8 +1055,8 @@ private async Task OnStationChanged(int? stationId)
             {
                 _loadPending = false;
 
-                var from = DateRangeFilter.StartOf(_from);
-                var to = DateRangeFilter.EndOfInclusive(_to);
+                var from = DateRangeFilter.QueryStart(_from);
+                var to = DateRangeFilter.QueryEnd(_to);
                 // 型号筛选作用于整份报表：口径一致才不会"选了 A100 却看到全部型号的不良"。
                 var recipeArg = ToRecipeQueryArg();
 
@@ -1135,14 +1138,14 @@ private async Task OnStationChanged(int? stationId)
 
         // 默认区间是"近 7 天"，与 DateRangeFilter 的预设取齐，等于默认值就不写进地址。
         var defaultFrom = DateTime.Today.AddDays(-6);
-        if (_from is { } from && from.Date != defaultFrom)
+        if (_from is { } from && from != defaultFrom)
         {
-            parts.Add($"from={from:yyyy-MM-dd}");
+            parts.Add($"from={DateRangeFilter.UrlValue(from)}");
         }
 
-        if (_to is { } to && to.Date != DateTime.Today)
+        if (_to is { } to && to != DateTime.Today)
         {
-            parts.Add($"to={to:yyyy-MM-dd}");
+            parts.Add($"to={DateRangeFilter.UrlValue(to)}");
         }
 
         if (_stationId is { } station)
@@ -1194,11 +1197,11 @@ private async Task OnStationChanged(int? stationId)
         var version = ++_shiftPiecesLoadVersion;
         _expandedShiftStart = shift.Day;
         _expandedShiftLabel = shift.ShiftLabel;
-        var detailFrom = shift.Day > DateRangeFilter.StartOf(_from)
+        var detailFrom = shift.Day > DateRangeFilter.QueryStart(_from)
             ? shift.Day
-            : DateRangeFilter.StartOf(_from);
+            : DateRangeFilter.QueryStart(_from);
         var shiftEndInclusive = shift.ShiftEnd.AddTicks(-1);
-        var reportEndInclusive = DateRangeFilter.EndOfInclusive(_to);
+        var reportEndInclusive = DateRangeFilter.QueryEnd(_to);
         var detailTo = shiftEndInclusive < reportEndInclusive ? shiftEndInclusive : reportEndInclusive;
         _expandedDetailFrom = detailFrom;
         _expandedDetailTo = detailTo;
@@ -1323,8 +1326,8 @@ private async Task OnStationChanged(int? stationId)
     /// </summary>
     private async Task LoadTrendAsync()
     {
-        var from = DateRangeFilter.StartOf(_from);
-        var to = DateRangeFilter.EndOfInclusive(_to);
+        var from = DateRangeFilter.QueryStart(_from);
+        var to = DateRangeFilter.QueryEnd(_to);
         var recipeArg = ToRecipeQueryArg();
         var tagId = _tagId;
 
@@ -1656,8 +1659,7 @@ private async Task OnStationChanged(int? stationId)
     }
 
     private bool IsDefaultRange
-        => DateRangeFilter.StartOf(_from) == DateTime.Today.AddDays(-6)
-           && DateRangeFilter.StartOf(_to) == DateTime.Today;
+        => _from == DateTime.Today.AddDays(-6) && _to == DateTime.Today;
 
     /// <summary>工站 chip 上的编码；站被删掉时退成 Id，别显示一个空标签。</summary>
     private string StationLabel(int id)

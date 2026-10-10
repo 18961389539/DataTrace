@@ -670,6 +670,9 @@ public class RuntimeStoreTests
 
         Assert.Empty(await env.Store.FindSessionTracesBySerialNoAsync($"{serial}-COP"));
         Assert.Empty(await env.Store.FindSessionTracesBySerialNoAsync(" "));
+        var bySession = await env.Store.FindSessionTracesBySessionIdAsync(september.Record.PalletSessionId);
+        Assert.Contains(bySession, trace => trace.MonthKey == "202609" && trace.Records.Count == 2);
+        Assert.Empty(await env.Store.FindSessionTracesBySessionIdAsync(0));
     }
 
     /// <summary>

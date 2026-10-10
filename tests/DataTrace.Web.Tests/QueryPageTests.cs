@@ -2,10 +2,12 @@ using System.Security.Claims;
 using DataTrace.Application.Configuration;
 using DataTrace.Application.Runtime;
 using DataTrace.Domain.Constants;
+using DataTrace.Domain;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Web.Components.Pages;
 using DataTrace.Web.Components.Shared;
+using DataTrace.Web.Services;
 using DataTrace.Shared;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
@@ -79,6 +81,81 @@ public class QueryPageTests : WebTestBase
         return value!;
     }
 
+    [Fact]
+    public void Saved_shift_scheme_recalculates_dates_and_preserves_filters()
+    {
+        var preset = new QueryPreset("夜班 NG", "query?from=2026-09-01&to=2026-09-01&station=2&judge=Ng&recipe=NEW&alias=OLD&sort=duration&dir=asc&page=4&size=50", "shift");
+        var url = preset.Resolve(new DateTime(2026, 10, 11, 1, 0, 0), 20, 12);
+        var request = RecordListNavigation.ReadRequest(url, 0, 50);
+
+        Assert.Equal(new DateTime(2026, 10, 10, 20, 0, 0), request.From);
+        Assert.Equal(new DateTime(2026, 10, 11, 8, 0, 0).AddTicks(-1), request.To);
+        Assert.Equal(2, request.StationId);
+        Assert.Equal(Judgement.Ng, request.Judgement);
+        Assert.Equal(new[] { "NEW", "OLD" }, request.RecipeCodes);
+        Assert.Equal(CollectSortField.DurationMs, request.SortBy);
+        Assert.False(request.SortDescending);
+        Assert.DoesNotContain("page=", url);
+        Assert.Contains("size=50", url);
+    }
+
+    [Fact]
+    public void Saved_rolling_week_uses_the_day_of_invocation()
+    {
+        var url = new QueryPreset("近七天", "query", "week").Resolve(new DateTime(2026, 10, 11), 20, 12);
+        var request = RecordListNavigation.ReadRequest(url, 0, 20);
+        Assert.Equal(new DateTime(2026, 10, 5), request.From);
+        Assert.Equal(new DateTime(2026, 10, 12).AddTicks(-1), request.To);
+    }
+
+    [Fact]
+    public async Task Applying_a_scheme_queries_its_filters_and_sort()
+    {
+        var cut = Render();
+        await cut.InvokeAsync(() => cut.FindComponent<QueryPresetsPanel>().Instance.Apply.InvokeAsync(
+            "query?station=2&judge=Ng&recipe=NEW&alias=OLD&sort=duration&dir=asc&size=50&from=2026-10-01&to=2026-10-03"));
+        _store.Verify(store => store.QueryAsync(It.Is<CollectQueryRequest>(request => request.StationId == 2
+            && request.Judgement == Judgement.Ng && request.SortBy == CollectSortField.DurationMs
+            && !request.SortDescending && request.Take == 50 && request.RecipeCodes!.Count == 2),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Scheme_save_reports_storage_result_and_uses_account_key(bool success)
+    {
+        Context.JSInterop.Setup<bool>("dtQueryPresets.set", _ => true).SetResult(success);
+        var cut = Render();
+        Assert.Equal("admin", Assert.Single(Context.JSInterop.Invocations["dtQueryPresets.get"]).Arguments[0]);
+        ClickButton(cut, "保存查询方案");
+        await cut.InvokeAsync(() => cut.FindComponents<MudTextField<string>>().Single(field => field.Instance.Label == "方案名称")
+            .Instance.ValueChanged.InvokeAsync("每日 NG"));
+        ClickButton(cut, "保存方案");
+        var save = Assert.Single(Context.JSInterop.Invocations["dtQueryPresets.set"]);
+        Assert.Equal("admin", save.Arguments[0]);
+        var preset = Assert.Single((List<QueryPreset>)save.Arguments[1]!);
+        Assert.Equal("每日 NG", preset.Name);
+        Assert.Equal("today", preset.Range);
+        Assert.Equal(success, Toast.Messages.Any(message => message.Contains("查询方案已保存")));
+        if (!success) Assert.Contains("原有方案未改变", cut.Markup);
+    }
+
+    [Fact]
+    public async Task Scheme_overwrite_can_be_cancelled_without_storage_write()
+    {
+        Context.JSInterop.Setup<QueryPreset[]?>("dtQueryPresets.get", _ => true)
+            .SetResult([new QueryPreset("每日 NG", "query?judge=Ng", "today")]);
+        Dialogs.MessageBoxResult = false;
+        var cut = Render();
+        ClickButton(cut, "保存查询方案");
+        await cut.InvokeAsync(() => cut.FindComponents<MudTextField<string>>().Single(field => field.Instance.Label == "方案名称")
+            .Instance.ValueChanged.InvokeAsync("每日 NG"));
+        ClickButton(cut, "保存方案");
+        Assert.Single(Dialogs.MessageBoxes);
+        Assert.DoesNotContain(Context.JSInterop.Invocations, invocation => invocation.Identifier == "dtQueryPresets.set");
+    }
+
     [Theory]
     [InlineData(AppRoles.Administrator, true)]
     [InlineData(AppRoles.Engineer, true)]
@@ -94,7 +171,7 @@ public class QueryPageTests : WebTestBase
     }
 
     [Fact]
-    public async Task Search_controls_and_export_are_disabled_while_query_is_loading()
+    public async Task Search_controls_remain_enabled_but_export_is_disabled_while_query_is_loading()
     {
         var query = new TaskCompletionSource<CollectQueryResult>();
         _store
@@ -105,7 +182,8 @@ public class QueryPageTests : WebTestBase
 
         var export = cut.FindAll("button").Single(button => button.TextContent.Contains("导出 CSV"));
         Assert.True(export.HasAttribute("disabled"));
-        Assert.True(cut.FindComponent<DateRangeFilter>().Instance.Disabled);
+        Assert.False(cut.FindComponent<DateRangeFilter>().Instance.Disabled);
+        Assert.All(cut.FindComponents<MudTextField<string>>(), field => Assert.False(field.Instance.Disabled));
 
         await cut.InvokeAsync(() => query.SetResult(new CollectQueryResult
         {
@@ -129,6 +207,157 @@ public class QueryPageTests : WebTestBase
         }));
         cut.WaitForAssertion(() => Assert.False(cut.FindAll("button")
             .Single(button => button.TextContent.Contains("导出 CSV")).HasAttribute("disabled")));
+    }
+
+    [Fact]
+    public async Task Input_during_a_pending_query_is_used_by_the_next_query()
+    {
+        var pending = new TaskCompletionSource<CollectQueryResult>();
+        _store.SetupSequence(store => store.QueryAsync(It.IsAny<CollectQueryRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(pending.Task)
+            .ReturnsAsync(new CollectQueryResult { Total = 0, Items = [] });
+        var cut = Render();
+        var input = cut.FindComponents<MudTextField<string>>().Single(field => field.Instance.Label == "托盘码");
+
+        await cut.InvokeAsync(() => input.Instance.ValueChanged.InvokeAsync("SCAN-002"));
+        Assert.False(input.Instance.Disabled);
+        await cut.InvokeAsync(() => pending.SetResult(new CollectQueryResult { Total = 0, Items = [] }));
+
+        cut.WaitForAssertion(() => _store.Verify(store => store.QueryAsync(
+            It.Is<CollectQueryRequest>(request => request.PalletCode == "SCAN-002"),
+            It.IsAny<CancellationToken>()), Times.Once));
+    }
+
+    [Fact]
+    public async Task Superseded_query_results_are_not_displayed_while_the_latest_query_is_pending()
+    {
+        var oldQuery = new TaskCompletionSource<CollectQueryResult>();
+        var latestQuery = new TaskCompletionSource<CollectQueryResult>();
+        _store.SetupSequence(store => store.QueryAsync(It.IsAny<CollectQueryRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(oldQuery.Task)
+            .Returns(latestQuery.Task);
+        var cut = Render();
+        await cut.InvokeAsync(() => cut.FindComponents<MudTextField<string>>()
+            .Single(field => field.Instance.Label == "托盘码").Instance.ValueChanged.InvokeAsync("LATEST"));
+        await cut.InvokeAsync(() => oldQuery.SetResult(new CollectQueryResult
+        {
+            Total = 1,
+            Items = [new CollectRecordListItem { MonthKey = "202610", Record = new CollectRecord { PalletCode = "OBSOLETE" } }]
+        }));
+
+        cut.WaitForAssertion(() => _store.Verify(store => store.QueryAsync(
+            It.Is<CollectQueryRequest>(request => request.PalletCode == "LATEST"), It.IsAny<CancellationToken>()), Times.Once));
+        Assert.DoesNotContain("OBSOLETE", cut.Markup);
+        await cut.InvokeAsync(() => latestQuery.SetResult(new CollectQueryResult { Total = 0, Items = [] }));
+    }
+
+    [Fact]
+    public async Task Failure_of_a_superseded_query_does_not_discard_the_latest_search()
+    {
+        var oldQuery = new TaskCompletionSource<CollectQueryResult>();
+        _store.SetupSequence(store => store.QueryAsync(It.IsAny<CollectQueryRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(oldQuery.Task)
+            .ReturnsAsync(new CollectQueryResult { Total = 0, Items = [] });
+        var cut = Render();
+        await cut.InvokeAsync(() => cut.FindComponents<MudTextField<string>>()
+            .Single(field => field.Instance.Label == "托盘码").Instance.ValueChanged.InvokeAsync("LATEST"));
+        await cut.InvokeAsync(() => oldQuery.SetException(new InvalidOperationException("old request")));
+
+        cut.WaitForAssertion(() => _store.Verify(store => store.QueryAsync(
+            It.Is<CollectQueryRequest>(request => request.PalletCode == "LATEST"), It.IsAny<CancellationToken>()), Times.Once));
+        Assert.DoesNotContain("查询失败", cut.Markup);
+    }
+
+    [Fact]
+    public void Session_deep_link_loads_the_exact_session_without_manual_serial_input()
+    {
+        _store.Setup(store => store.FindSessionTracesBySessionIdAsync(7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([Trace("20260919-000001", Judgement.Ng)]);
+        Context.Services.AddSingleton(_store.Object);
+        RenderPopoverHost();
+
+        var cut = Context.Render<ProductTraceabilityPanel>(parameters => parameters.Add(panel => panel.InitialSessionId, 7));
+
+        _store.Verify(store => store.FindSessionTracesBySessionIdAsync(7, It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Contains("20260919-000001", cut.Markup);
+        Assert.Contains("首因", cut.Markup);
+    }
+
+    [Fact]
+    public void Shift_shortcut_queries_exact_configured_shift_bounds()
+    {
+        var cut = Render();
+        var settings = Config.Snapshot.Settings;
+        var shift = ShiftWindow.Containing(DateTime.Now, settings.ShiftStartHour, settings.ShiftLengthHours);
+
+        ClickButton(cut, "本班次");
+
+        _store.Verify(store => store.QueryAsync(It.Is<CollectQueryRequest>(request => request.From == shift.Start
+            && request.To == shift.End.AddTicks(-1)), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Contains("from=", Context.Services.GetRequiredService<NavigationManager>().Uri);
+        Assert.Contains("to=", Context.Services.GetRequiredService<NavigationManager>().Uri);
+    }
+
+    [Fact]
+    public void Navigation_context_preserves_exact_times_sort_and_recipe_aliases()
+    {
+        var request = RecordListNavigation.ReadRequest(
+            "query?from=2026-10-09T20:00:00&to=2026-10-10T07:59:59.9999999&station=23&judge=Ng&recipe=NEW&alias=OLD&sort=pallet&dir=asc", 19, 3);
+        Assert.Equal(new DateTime(2026, 10, 9, 20, 0, 0), request.From);
+        Assert.Equal(new DateTime(2026, 10, 10, 8, 0, 0).AddTicks(-1), request.To);
+        Assert.Equal(23, request.StationId);
+        Assert.Equal(Judgement.Ng, request.Judgement);
+        Assert.Equal(new[] { "NEW", "OLD" }, request.RecipeCodes);
+        Assert.Equal(CollectSortField.PalletCode, request.SortBy);
+        Assert.False(request.SortDescending);
+    }
+
+    [Fact]
+    public void Navigation_across_a_page_boundary_updates_the_return_page()
+    {
+        var item = new CollectRecordListItem { MonthKey = "202610", Record = new CollectRecord { Id = 23 } };
+        var url = RecordListNavigation.DetailUrl(item, "query?station=23&sort=pallet&dir=asc", 20);
+        Assert.StartsWith("/query/202610/23?", url);
+        Assert.Contains("page%3D2", url);
+        Assert.Contains("position=20", url);
+        Assert.Contains("station%3D23", url);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Record_detail_navigation_checks_the_list_before_moving_across_pages(bool listChanged)
+    {
+        var records = Enumerable.Range(21, 3).Select(id => new CollectRecordListItem
+        {
+            MonthKey = "202610", Record = new CollectRecord { Id = id, PalletCode = "P" + id }
+        }).ToList();
+        _store.Setup(store => store.GetRecordAsync("202610", 22, It.IsAny<CancellationToken>())).ReturnsAsync(records[1].Record);
+        _store.Setup(store => store.QueryAsync(It.IsAny<CollectQueryRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CollectQueryResult { Total = 50, Items = records });
+        if (listChanged)
+            records[1] = new CollectRecordListItem { MonthKey = "202610", Record = new CollectRecord { Id = 99 } };
+        Context.Services.AddSingleton(_store.Object);
+        Context.Services.AddSingleton(new Mock<ICurveFileStore>().Object);
+        Context.Services.AddSingleton(new Mock<ICollectArchiveStore>().Object);
+        RenderPopoverHost();
+        Context.Services.GetRequiredService<NavigationManager>().NavigateTo("/query/202610/22?back=query%3Fstation%3D23%26sort%3Dpallet%26dir%3Dasc&position=19");
+
+        var cut = Context.Render<RecordDetail>(parameters => parameters.Add(page => page.MonthKey, "202610").Add(page => page.RecordId, 22));
+
+        if (listChanged)
+        {
+            Assert.Contains("列表已变化", cut.Find(".mud-alert").TextContent);
+            Assert.True(cut.FindAll("button").Single(button => button.TextContent.Contains("下一条")).HasAttribute("disabled"));
+        }
+        else
+        {
+            var next = cut.FindAll("a").Single(link => link.TextContent.Contains("下一条"));
+            Assert.Contains("/query/202610/23", next.GetAttribute("href"));
+            Assert.Contains("page%3D2", next.GetAttribute("href"));
+        }
+        _store.Verify(store => store.QueryAsync(It.Is<CollectQueryRequest>(request => request.Skip == 18 && request.Take == 3
+            && request.StationId == 23 && request.SortBy == CollectSortField.PalletCode && !request.SortDescending), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -387,6 +616,54 @@ public class QueryPageTests : WebTestBase
     }
 
     /// <summary>按角色发身份：页面只读 Name 与角色声明。</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Export_checks_the_actual_result_for_truncation_and_cancel_does_not_download(bool confirmed)
+    {
+        var cut = Render();
+        _store.Setup(store => store.QueryAsync(It.IsAny<CollectQueryRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CollectQueryResult
+            {
+                Total = SystemDefaults.ExportRowLimit + 1,
+                Items = [new CollectRecordListItem { MonthKey = "202610", Record = new CollectRecord { PalletCode = "P1" } }]
+            });
+        Dialogs.MessageBoxResult = confirmed;
+        ClickButton(cut, "导出 CSV");
+        var dialog = Assert.Single(Dialogs.MessageBoxes);
+        Assert.Equal("确认截断导出", dialog.Title);
+        Assert.Contains("其余记录不会包含", dialog.Message);
+        Assert.Equal(confirmed, Context.JSInterop.Invocations.Any(invocation => invocation.Identifier == "dtDownload"));
+        _audit.Verify(audit => audit.WriteAsync("admin", "Export", "Query", It.IsAny<string>(), null,
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), confirmed ? Times.Once() : Times.Never());
+        Assert.False(cut.FindAll("button").Single(button => button.TextContent.Contains("导出 CSV")).HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public async Task Export_csv_keeps_data_columns_and_carries_complete_query_context()
+    {
+        Config.Snapshot = new AppConfigurationSnapshot { Stations = [new Station { Id = 23, Code = "ST/023", Name = "工站" }] };
+        var cut = Render();
+        await cut.InvokeAsync(() => cut.FindComponent<QueryPresetsPanel>().Instance.Apply.InvokeAsync(
+            "query?station=23&pallet=P&serial=S&judge=Ng&result=11&recipe=NEW&alias=OLD&alias=OLDER&sort=duration&dir=asc&from=2026-10-09T20:00:00&to=2026-10-10T07:59:59.9999999"));
+        ClickButton(cut, "导出 CSV");
+        var download = Assert.Single(Context.JSInterop.Invocations["dtDownload"]);
+        Assert.Contains("ST023_20261009200000-20261010075959", (string)download.Arguments[0]!);
+        var csv = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String((string)download.Arguments[1]!)).TrimStart('\uFEFF');
+        using var reader = new CsvHelper.CsvReader(new StringReader(csv), System.Globalization.CultureInfo.InvariantCulture);
+        Assert.True(reader.Read());
+        reader.ReadHeader();
+        Assert.Equal(new[] { "触发时间", "流水号", "托盘码", "工站", "型号", "判定", "结果码", "结果说明", "耗时(ms)", "查询上下文" }, reader.HeaderRecord);
+        Assert.True(reader.Read());
+        Assert.Equal("P0001", reader.GetField("托盘码"));
+        var summary = reader.GetField("查询上下文");
+        Assert.Contains("2026-10-09 20:00:00.0000000", summary);
+        Assert.Contains("2026-10-10 07:59:59.9999999", summary);
+        Assert.Contains("pallet=P;serial=S;station=23;judge=Ng;result=11;recipe=NEW;aliases=OLD,OLDER;sort=duration;dir=asc", summary);
+        Assert.Contains("导出=1;截断=否", summary);
+        Assert.False(reader.Read());
+    }
+
     private sealed class StubAuthenticationStateProvider(string role) : AuthenticationStateProvider
     {
         public override Task<AuthenticationState> GetAuthenticationStateAsync()

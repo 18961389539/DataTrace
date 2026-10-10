@@ -171,15 +171,25 @@ partial class RuntimeStore
             .ConfigureAwait(false);
     }
 
-    public async Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesBySerialNoAsync(
+    public Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesBySerialNoAsync(
         string serialNo,
         CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(serialNo))
-        {
-            return [];
-        }
+        => string.IsNullOrWhiteSpace(serialNo)
+            ? Task.FromResult<IReadOnlyList<CollectSessionTrace>>([])
+            : FindSessionTracesAsync(serialNo, null, cancellationToken);
 
+    public Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesBySessionIdAsync(
+        long sessionId,
+        CancellationToken cancellationToken = default)
+        => sessionId <= 0
+            ? Task.FromResult<IReadOnlyList<CollectSessionTrace>>([])
+            : FindSessionTracesAsync(null, sessionId, cancellationToken);
+
+    private async Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesAsync(
+        string? serialNo,
+        long? sessionId,
+        CancellationToken cancellationToken)
+    {
         var traces = new List<CollectSessionTrace>();
         foreach (var month in _factory.ListMonthKeys()
                      .Where(RuntimeDbFactory.IsValidMonthKey)
@@ -188,7 +198,7 @@ partial class RuntimeStore
             cancellationToken.ThrowIfCancellationRequested();
             await using var db = _factory.Open(month);
             var records = await db.CollectRecords.AsNoTracking()
-                .Where(x => x.SerialNo == serialNo)
+                .Where(x => sessionId != null ? x.PalletSessionId == sessionId : x.SerialNo == serialNo)
                 .Include(x => x.PalletSession)
                 .Include(x => x.Products)
                 .Include(x => x.TagValues)

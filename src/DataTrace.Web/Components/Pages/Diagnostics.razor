@@ -2,9 +2,11 @@
 @attribute [Authorize(Roles = "Administrator,Engineer")]
 @using System.Text
 @using DataTrace.Application.Realtime
+@using DataTrace.Application.Configuration
 @using DataTrace.Application.Runtime
 @using DataTrace.Collector
 @using DataTrace.Domain.Constants
+@using DataTrace.Domain.Entities
 @using DataTrace.Shared
 @implements IAsyncDisposable
 @inject ICollectorDiagnostics Diag
@@ -14,6 +16,7 @@
 @inject IDialogService Dialogs
 @inject DtToast Toast
 @inject IJSRuntime Js
+@inject IConfigRepository Config
 
 @* 这一页的职责是回答"为什么变慢了、为什么没采上"，不是"这一件为什么判废"。
    所以三块内容都只读、只活在内存里，不参与看板的实时推送 —— 观测手段不该反过来成为负担。 *@
@@ -157,7 +160,14 @@ else
 <MudText Typo="Typo.subtitle1" Class="mb-2">
     PLC 通信 <InfoHint Topic="HelpTexts.PlcTraffic" />
 </MudText>
-@if (_traffic.Count == 0)
+@if (_focusedStation is { } focusedStation)
+{
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap dt-diag-focus">
+        <MudChip T="string" Color="Color.Primary" Variant="Variant.Outlined">工站 @focusedStation.Code @focusedStation.Name</MudChip>
+        <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Clear" Href="/diagnostics">查看全部 PLC</MudButton>
+    </MudStack>
+}
+@if (FocusedTraffic.Count == 0)
 {
     <MudText Typo="Typo.body2" Class="dt-muted mb-4">还没有 PLC 通信记录。没有启用的 PLC 连接时这里会是空的。</MudText>
 }
@@ -170,9 +180,10 @@ else
         展开后流水只留最近 @SystemDefaults.PlcTrafficCapacity 条，失败明细只留 @SystemDefaults.PlcTrafficFailureCapacity 条。
     </MudText>
     <MudExpansionPanels Class="mb-4" Elevation="1" Dense="true">
-        @foreach (var plc in _traffic)
+        @foreach (var plc in FocusedTraffic)
         {
-            <MudExpansionPanel Class="dt-diag-plc">
+            <MudExpansionPanel Class="dt-diag-plc" Expanded="@(_focusedStation is not null && _focusExpanded)"
+                               ExpandedChanged="@(expanded => _focusExpanded = expanded)">
                 <TitleContent>
                     <div class="dt-diag-plc-title">
                         <MudText Typo="Typo.subtitle2" Class="mb-0">@plc.Name</MudText>
@@ -388,6 +399,12 @@ else
 
     private CollectorLoopView _loop = CollectorLoopView.Empty(CollectorDiagnostics.LoopCapacity);
     private IReadOnlyList<PlcTrafficView> _traffic = [];
+    [SupplyParameterFromQuery(Name = "station")]
+    public int? StationQuery { get; set; }
+    private Station? _focusedStation;
+    private bool _focusExpanded = true;
+    private IReadOnlyList<PlcTrafficView> FocusedTraffic => _focusedStation is null
+        ? _traffic : _traffic.Where(plc => plc.PlcConnectionId == _focusedStation.PlcConnectionId).ToList();
     private IReadOnlyList<SpoolEntry> _entries = [];
     private int _spoolCount;
     private DateTime? _spoolOldest;
@@ -503,6 +520,14 @@ else
     {
         await RefreshAsync(showBusy: true);
         _timer = new Timer(_ => _ = InvokeAsync(TickAsync), null, DiagTickMs, DiagTickMs);
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _focusedStation = StationQuery is > 0
+            ? (await Config.GetSnapshotAsync()).Stations.FirstOrDefault(station => station.Id == StationQuery)
+            : null;
+        _focusExpanded = true;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

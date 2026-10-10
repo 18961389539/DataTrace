@@ -1,4 +1,5 @@
 using DataTrace.Web.Components.Shared;
+using DataTrace.Domain;
 using DataTrace.Shared;
 using Microsoft.AspNetCore.Components;
 using MudBlazor;
@@ -15,7 +16,7 @@ public class DateRangeFilterTests : WebTestBase
     private DateTime? _to;
     private int _changed;
 
-    private IRenderedComponent<DateRangeFilter> Render(DateTime? from, DateTime? to)
+    private IRenderedComponent<DateRangeFilter> Render(DateTime? from, DateTime? to, bool includeShifts = false)
     {
         _changed = 0;
 
@@ -28,6 +29,9 @@ public class DateRangeFilterTests : WebTestBase
             .Add(p => p.FromChanged, v => _from = v)
             .Add(p => p.To, to)
             .Add(p => p.ToChanged, v => _to = v)
+            .Add(p => p.IncludeShifts, includeShifts)
+            .Add(p => p.ShiftStartHour, 20)
+            .Add(p => p.ShiftLengthHours, 12)
             .Add(p => p.OnRangeChanged, () => _changed++));
     }
 
@@ -39,6 +43,59 @@ public class DateRangeFilterTests : WebTestBase
         var labels = cut.FindAll(".dt-range-buttons button").Select(b => b.TextContent.Trim()).ToList();
 
         Assert.Equal(["今天", "昨天", "近 7 天", "近 30 天", "本月"], labels);
+    }
+
+    [Fact]
+    public void Current_shift_uses_configured_hours_and_exact_bounds()
+    {
+        var cut = Render(DateTime.Today, DateTime.Today, includeShifts: true);
+        var shift = ShiftWindow.Containing(DateTime.Now, 20, 12);
+
+        cut.FindAll("button").Single(button => button.TextContent.Trim() == "本班次").Click();
+
+        Assert.Equal(shift.Start, _from);
+        Assert.Equal(shift.End.AddTicks(-1), _to);
+        Assert.Equal(_from, DateRangeFilter.QueryStart(_from));
+        Assert.Equal(_to, DateRangeFilter.QueryEnd(_to));
+        Assert.Equal(1, _changed);
+    }
+
+    [Fact]
+    public void Previous_shift_is_the_complete_preceding_shift()
+    {
+        var cut = Render(DateTime.Today, DateTime.Today, includeShifts: true);
+        var current = ShiftWindow.Containing(DateTime.Now, 20, 12);
+        var previous = ShiftWindow.Containing(current.Start.AddTicks(-1), 20, 12);
+
+        cut.FindAll("button").Single(button => button.TextContent.Trim() == "上一班次").Click();
+
+        Assert.Equal(previous.Start, _from);
+        Assert.Equal(current.Start.AddTicks(-1), _to);
+        Assert.Equal(1, _changed);
+    }
+
+    [Fact]
+    public void Overnight_shift_keeps_times_in_its_label_and_query_bounds()
+    {
+        var from = new DateTime(2026, 10, 9, 20, 0, 0);
+        var to = new DateTime(2026, 10, 10, 8, 0, 0).AddTicks(-1);
+        Assert.Equal(from, DateRangeFilter.QueryStart(from));
+        Assert.Equal(to, DateRangeFilter.QueryEnd(to));
+        Assert.Equal("2026-10-09 20:00 ~ 2026-10-10 08:00", DateRangeFilter.Format(from, to));
+        Assert.Contains("20", DateRangeFilter.UrlValue(from));
+    }
+
+    [Fact]
+    public void Shift_selection_does_not_also_mark_a_calendar_day_preset()
+    {
+        var shift = ShiftWindow.Containing(DateTime.Now, 20, 12);
+        var cut = Render(shift.Start, shift.End.AddTicks(-1), includeShifts: true);
+
+        var selected = cut.FindAll(".dt-range-buttons button")
+            .Where(button => button.ClassList.Contains("mud-button-filled"))
+            .Select(button => button.TextContent.Trim()).ToArray();
+
+        Assert.Equal(new[] { "本班次" }, selected);
     }
 
     [Fact]

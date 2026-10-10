@@ -216,6 +216,7 @@ public interface ICollectQuery
     Task<PalletSession?> GetSessionAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<CollectRecord>> GetSessionRecordsAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesBySerialNoAsync(string serialNo, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesBySessionIdAsync(long sessionId, CancellationToken cancellationToken = default);
 }
 
 /// <summary>报表与基线用的窄投影。调用方看不到写入和删库。</summary>

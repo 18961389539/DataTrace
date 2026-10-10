@@ -45,6 +45,23 @@
         content: "页面出现错误，请刷新后重试。"
     }
 
+.dt-query-preset {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.dt-query-preset > .mud-button-root {
+    min-width: 0;
+    max-width: calc(100% - 44px);
+}
+
+.dt-query-preset .mud-button-label {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
 /* ---------- 文本与数值 ---------- */
 
 .dt-muted {
@@ -544,6 +561,8 @@ h5:focus,
 
 .dt-range-presets {
     flex: 0 0 auto;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .dt-range-buttons {
@@ -556,6 +575,74 @@ h5:focus,
 .dt-range-date {
     flex: 0 1 200px;
     min-width: 200px;
+}
+
+@media (pointer: coarse), (max-width: 960px) {
+    .dt-main .mud-button-root,
+    .mud-appbar .mud-button-root {
+        min-width: 44px;
+        min-height: 44px;
+    }
+
+    .dt-main .mud-icon-button,
+    .mud-appbar .mud-icon-button {
+        width: 44px;
+        height: 44px;
+        padding: 10px;
+        flex-shrink: 0;
+    }
+
+    .dt-main .mud-input:has(.mud-input-numeric-spin) {
+        min-height: 48px;
+    }
+
+    .dt-main .mud-input-numeric-spin {
+        display: flex;
+        align-items: center;
+        flex-direction: row !important;
+        width: 88px;
+        min-width: 88px;
+        height: 44px;
+    }
+
+    .dt-main .mud-input-numeric-spin .mud-button-root {
+        width: 44px;
+        min-width: 44px;
+        height: 44px;
+        min-height: 44px;
+        flex: 0 0 44px;
+    }
+
+    .dt-filter-chips .mud-chip {
+        height: auto;
+        min-height: 44px;
+        max-width: 100%;
+    }
+
+    .dt-filter-chips .mud-chip-content {
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+
+    .station-list-item-select {
+        min-height: 44px;
+    }
+}
+
+@media (max-width: 600px) {
+    .mud-appbar .dt-account-label {
+        display: none;
+    }
+
+    .mud-appbar .dt-change-password .mud-button-icon-start,
+    .mud-appbar .dt-logout-form .mud-button-icon-start {
+        margin-inline: 0;
+    }
+
+    .mud-appbar .dt-change-password,
+    .mud-appbar .dt-logout-form .mud-button-root {
+        padding: 10px;
+    }
 }
 
 /* 指标卡：过程能力这类数值密集区，数字必须等宽对齐才看得动 */

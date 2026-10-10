@@ -11,6 +11,7 @@
 @inject DtToast Toast
 @inject IJSRuntime Js
 @inject NavigationManager Nav
+@inject IDialogService DialogService
 @implements IDisposable
 
 <PageHeader Title="数据查询" HelpRoute="query" Busy="_loading">
@@ -49,25 +50,29 @@
 }
 else
 {
+<QueryPresetsPanel Url="@CurrentListUrl()" From="_from" To="_to"
+                   StartHour="_shiftSettings.ShiftStartHour" LengthHours="_shiftSettings.ShiftLengthHours"
+                   Disabled="_exporting" Apply="ApplyPresetAsync" />
 <MudPaper Class="dt-filter-card mb-3">
     <form @onsubmit="OnSubmit" @onsubmit:preventDefault="true">
         <DateRangeFilter @bind-From="_from" @bind-To="_to" OnRangeChanged="Search"
-                 Disabled="@(_loading || _exporting)" />
+                 IncludeShifts="true" ShiftStartHour="_shiftSettings.ShiftStartHour" ShiftLengthHours="_shiftSettings.ShiftLengthHours"
+                 Disabled="_exporting" />
 
         <MudGrid Class="dt-filters">
             <MudItem xs="12" sm="6" md="4" lg="3">
                 <MudTextField T="string" Value="_pallet" ValueChanged="OnPalletChanged" Label="托盘码" Placeholder="支持模糊匹配"
-                                  Immediate="true" Disabled="@(_loading || _exporting)"
+                                  Immediate="true" Disabled="_exporting"
                                   Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.QrCode" />
             </MudItem>
             <MudItem xs="12" sm="6" md="4" lg="3">
                 <MudTextField T="string" Value="_serialNo" ValueChanged="OnSerialChanged" Label="流水号"
-                                  Immediate="true" Disabled="@(_loading || _exporting)"
+                                  Immediate="true" Disabled="_exporting"
                                   Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Tag" />
             </MudItem>
             <MudItem xs="12" sm="6" md="4" lg="3">
                 <MudSelect T="int?" Value="_stationId" ValueChanged="OnStationChanged" Label="工站" Clearable="true"
-                           Disabled="@(_loading || _exporting)">
+                           Disabled="_exporting">
                     @foreach (var s in _stations)
                     {
                         <MudSelectItem T="int?" Value="@s.Id">@s.Code @s.Name</MudSelectItem>
@@ -76,7 +81,7 @@ else
             </MudItem>
             <MudItem xs="12" sm="6" md="4" lg="3">
                 <MudSelect T="Judgement?" Value="_judgement" ValueChanged="OnJudgementChanged" Label="判定" Clearable="true"
-                           Disabled="@(_loading || _exporting)">
+                           Disabled="_exporting">
                     <MudSelectItem T="Judgement?" Value="Judgement.Ok">OK（合格）</MudSelectItem>
                     <MudSelectItem T="Judgement?" Value="Judgement.Ng">NG（不合格）</MudSelectItem>
                     <MudSelectItem T="Judgement?" Value="Judgement.None">未判定</MudSelectItem>
@@ -86,7 +91,7 @@ else
             @* 结果码描述已落库采集记录的处理结果；PLC 通讯失败没有有效产品记录，单独留在审计日志。 *@
             <MudItem xs="12" sm="6" md="4" lg="3">
                 <MudSelect T="short?" Value="_resultCode" ValueChanged="OnResultCodeChanged" Label="结果码" Clearable="true"
-                           Disabled="@(_loading || _exporting)">
+                           Disabled="_exporting">
                     @foreach (var code in ResultCodeOptions)
                     {
                         <MudSelectItem T="short?" Value="@((short?)code)">@ResultCodeLabel(code)</MudSelectItem>
@@ -96,7 +101,7 @@ else
 
                         <MudItem xs="12" sm="6" md="4" lg="3">
                 <MudSelect T="RecipeFilterValue" Value="@ToOptionValue(_recipeFilter)" ValueChanged="OnRecipeFilterChanged"
-                           Label="产品型号" Dense="true" Disabled="@(_loading || _exporting)">
+                           Label="产品型号" Dense="true" Disabled="_exporting">
                     <MudSelectItem T="RecipeFilterValue" Value="@RecipeFilterValue.All">全部型号</MudSelectItem>
                     <MudSelectItem T="RecipeFilterValue" Value="@RecipeFilterValue.NoRecipe">未选型号</MudSelectItem>
                     @foreach (var opt in _recipeOptions)
@@ -109,10 +114,10 @@ else
 
         <MudStack Row="true" Spacing="2" Class="mt-1 mb-2 flex-wrap">
             <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
-                       StartIcon="@Icons.Material.Filled.Search" Disabled="_loading">
+                       StartIcon="@Icons.Material.Filled.Search" Disabled="_exporting">
                 @(_loading ? "查询中…" : "查询")
             </MudButton>
-            <MudButton Variant="Variant.Outlined" OnClick="Reset" Disabled="@(_loading || _exporting)"
+            <MudButton Variant="Variant.Outlined" OnClick="Reset" Disabled="_exporting"
                        StartIcon="@Icons.Material.Filled.RestartAlt">
                 重置
             </MudButton>
@@ -129,6 +134,9 @@ else
                     </ChildContent>
                 </MudTooltip>
                 <InfoHint Topic="HelpTexts.ExportLimit" Extra="@ExportHintExtra" />
+                <MudText Typo="Typo.caption" Class="dt-muted align-self-center" role="status">
+                    导出范围 @DateRangeFilter.Format(_from, _to) · 命中 @_total.ToString("N0") 条 · 单次上限 @SystemDefaults.ExportRowLimit.ToString("N0") 条
+                </MudText>
             }
             <MudText Typo="Typo.caption" Class="dt-muted align-self-center">改任一条件即自动重查，也可点「查询」立刻执行</MudText>
             <InfoHint Topic="HelpTexts.MatchMode" />
@@ -149,11 +157,11 @@ else
                 @filter.Label
                 <MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close"
                                aria-label="@($"移除筛选条件：{filter.Label}")"
-                               Disabled="@(_loading || _exporting)"
+                               Disabled="_exporting"
                                OnClick="@(() => ClearOneAsync(filter.Clear))" />
             </MudChip>
         }
-        <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@(_loading || _exporting)"
+        <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_exporting"
                OnClick="ClearAllFiltersAsync">清空全部</MudButton>
     </div>
 }
@@ -163,7 +171,8 @@ else
 <MudTable Items="_items" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm"
           Loading="@(_loading || _exporting)" LoadingProgressColor="Color.Info"
           FixedHeader="true" Height="var(--dt-grid-height)"
-          Class="dt-clickable" OnRowClick="@((TableRowClickEventArgs<CollectRecordListItem> args) => OnRowClicked(args))">
+          Class="dt-clickable dt-query-results" data-dt-query-key="@CurrentListUrl()"
+          OnRowClick="@((TableRowClickEventArgs<CollectRecordListItem> args) => OnRowClicked(args))">
     <HeaderContent>
         @* 表头即排序入口：服务端分页下只排当前页等于没排，所以点表头是重新查询，
            箭头只画在当前排序列上（见 SortIcon）。 *@
@@ -244,6 +253,7 @@ else
                                    OnClick="@(() => CopyPallet(context.Record.PalletCode))" />
                 </MudTooltip>
                 <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
+                           Disabled="@(_loading || _exporting || _displayedVersion != _queryVersion)"
                            Href="@DetailUrl(context)">明细</MudButton>
             </span>
         </MudTd>
@@ -376,6 +386,7 @@ else
     private string? _recipeFilter;
     private IReadOnlyList<string> _recipeAliases = [];
     private IReadOnlyList<Station> _stations = [];
+    private SystemSettings _shiftSettings = new();
     private IReadOnlyList<CollectRecordListItem> _items = [];
     private int _total;
     private int _page = 1;
@@ -383,6 +394,9 @@ else
     private int _pageSize = 20;
     private bool _loading;
     private bool _loadPending;
+    private int _queryVersion;
+    private int _displayedVersion;
+    private bool _restoreScroll = true;
     /// <summary>
     /// 查询本身失败（不是"查到了 0 条"）。清空结果后若仍走空态文案，
     /// 现场会以为区间里真没数据，转头去放宽一个本来正确的区间。
@@ -472,17 +486,7 @@ else
     public string? DirQuery { get; set; }
 
     /// <summary>排序列的地址栏短名 ↔ 枚举。别名表是唯一真相，写地址栏与读地址栏都走它。</summary>
-    private static readonly (string Key, CollectSortField Field)[] SortKeys =
-    [
-        ("time", CollectSortField.TriggerTime),
-        ("serial", CollectSortField.SerialNo),
-        ("pallet", CollectSortField.PalletCode),
-        ("station", CollectSortField.StationCode),
-        ("recipe", CollectSortField.RecipeCode),
-        ("judge", CollectSortField.Judgement),
-        ("result", CollectSortField.ResultCode),
-        ("duration", CollectSortField.DurationMs)
-    ];
+    private static readonly (string Key, CollectSortField Field)[] SortKeys = RecordListNavigation.SortKeys;
 
     protected override async Task OnInitializedAsync()
     {
@@ -509,12 +513,12 @@ else
         // 显式起止日期覆盖 days，深链接里两者都给时以日期为准。
         if (DateTime.TryParse(FromQuery, out var from))
         {
-            _from = from.Date;
+            _from = from;
         }
 
         if (DateTime.TryParse(ToQuery, out var to))
         {
-            _to = to.Date;
+            _to = to;
         }
 
         if (StationQuery is { } station && station > 0)
@@ -566,7 +570,9 @@ else
 
         // 工站下拉与型号选项都取自同一份配置快照：它按版本号在本电路内缓存，
         // 分头读一次工站图、再读一次型号，等于把同一批表读两遍（与报表页同一套做法）。
-        _stations = (await Config.GetSnapshotAsync()).Stations;
+        var snapshot = await Config.GetSnapshotAsync();
+        _stations = snapshot.Stations;
+        _shiftSettings = snapshot.Settings;
         if (!_traceMode)
         {
             await Load();
@@ -615,8 +621,8 @@ else
 
     private CollectQueryRequest BuildRequest(int skip, int take) => new()
     {
-        From = DateRangeFilter.StartOf(_from),
-        To = DateRangeFilter.EndOfInclusive(_to),
+        From = DateRangeFilter.QueryStart(_from),
+        To = DateRangeFilter.QueryEnd(_to),
         PalletCode = string.IsNullOrWhiteSpace(_pallet) ? null : _pallet.Trim(),
         SerialNo = string.IsNullOrWhiteSpace(_serialNo) ? null : _serialNo.Trim(),
         StationId = _stationId,
@@ -632,36 +638,45 @@ else
         SortDescending = _sortDesc
     };
 
-    private async Task OnSubmit() => await Search();
+    private async Task OnSubmit()
+    {
+        _debounceCts?.Cancel();
+        await Search();
+    }
 
     // 筛选区统一语义：下拉即时重查，文本输入等打字停下再重查。
     // 之前改日期和改型号会立刻查、改其余字段却要点按钮，同一个筛选区里三种做法。
     private async Task OnPalletChanged(string? value)
     {
         _pallet = value;
+        _queryVersion++;
         await DebouncedSearchAsync();
     }
 
     private async Task OnSerialChanged(string? value)
     {
         _serialNo = value;
+        _queryVersion++;
         await DebouncedSearchAsync();
     }
 
     private async Task OnStationChanged(int? value)
     {
+        if (_stationId == value) return;
         _stationId = value;
         await Search();
     }
 
     private async Task OnJudgementChanged(Judgement? value)
     {
+        if (_judgement == value) return;
         _judgement = value;
         await Search();
     }
 
     private async Task OnResultCodeChanged(short? value)
     {
+        if (_resultCode == value) return;
         _resultCode = value;
         await Search();
     }
@@ -691,6 +706,7 @@ else
 
     private async Task Search()
     {
+        _queryVersion++;
         if (DateRangeFilter.IsReversed(_from, _to))
         {
             _items = [];
@@ -708,6 +724,7 @@ else
     private async Task OnPage(int page)
     {
         _page = page;
+        _queryVersion++;
         await Load();
     }
 
@@ -715,6 +732,7 @@ else
     {
         _pageSize = size;
         _page = 1;
+        _queryVersion++;
         await Load();
     }
 
@@ -743,10 +761,30 @@ else
             do
             {
                 _loadPending = false;
+                var version = _queryVersion;
+                if (DateRangeFilter.IsReversed(_from, _to))
+                {
+                    break;
+                }
                 await RefreshRecipeOptionsAsync();
 
-                var result = await Store.QueryAsync(BuildRequest((_page - 1) * _pageSize, _pageSize));
+                CollectQueryResult result;
+                try
+                {
+                    result = await Store.QueryAsync(BuildRequest((_page - 1) * _pageSize, _pageSize));
+                }
+                catch (Exception) when (version != _queryVersion)
+                {
+                    _loadPending = true;
+                    continue;
+                }
+                if (version != _queryVersion)
+                {
+                    _loadPending = true;
+                    continue;
+                }
                 _items = result.Items;
+                _displayedVersion = version;
                 _total = result.Total;
                 _loadFailed = false;
                 _pages = Math.Max(1, (int)Math.Ceiling(_total / (double)_pageSize));
@@ -808,14 +846,14 @@ else
             parts.Add($"serial={Uri.EscapeDataString(_serialNo.Trim())}");
         }
 
-        if (_from is { } from && from.Date != DateTime.Today)
+        if (_from is { } from && from != DateTime.Today)
         {
-            parts.Add($"from={from:yyyy-MM-dd}");
+            parts.Add($"from={DateRangeFilter.UrlValue(from)}");
         }
 
-        if (_to is { } to && to.Date != DateTime.Today)
+        if (_to is { } to && to != DateTime.Today)
         {
-            parts.Add($"to={to:yyyy-MM-dd}");
+            parts.Add($"to={DateRangeFilter.UrlValue(to)}");
         }
 
         if (_stationId is { } station)
@@ -867,6 +905,28 @@ else
         }
 
         return parts.Count == 0 ? "query" : $"query?{string.Join("&", parts)}";
+    }
+
+    private async Task ApplyPresetAsync(string url)
+    {
+        if (_exporting) return;
+        _debounceCts?.Cancel();
+        var request = RecordListNavigation.ReadRequest(url, 0, 20);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(url.Contains('?') ? url[url.IndexOf('?')..] : "");
+        _from = request.From;
+        _to = DateTime.TryParse(query.GetValueOrDefault("to"), System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var to) ? to : DateTime.Today;
+        _pallet = request.PalletCode;
+        _serialNo = request.SerialNo;
+        _stationId = request.StationId;
+        _judgement = request.Judgement;
+        _resultCode = request.ResultCode;
+        _recipeFilter = request.RecipeCodes?.FirstOrDefault() ?? request.RecipeCode;
+        _recipeAliases = request.RecipeCodes?.Skip(1).ToArray() ?? [];
+        _sortBy = request.SortBy;
+        _sortDesc = request.SortDescending;
+        _pageSize = int.TryParse(query.GetValueOrDefault("size"), out var size) && PageSizes.Contains(size) ? size : 20;
+        await Search();
     }
 
     private async Task Reset()
@@ -966,8 +1026,7 @@ else
     }
 
     private bool IsDefaultRange
-        => DateRangeFilter.StartOf(_from) == DateTime.Today
-           && DateRangeFilter.StartOf(_to) == DateTime.Today;
+        => _from == DateTime.Today && _to == DateTime.Today;
 
     /// <summary>工站 chip 上的编码；站被删掉时退成 Id，别显示一个空标签。</summary>
     private string StationCode(int id)
@@ -983,16 +1042,32 @@ else
             : $"导出当前命中的 {_total:N0} 条";
 
     private string DetailUrl(CollectRecordListItem item)
-        => $"/query/{item.MonthKey}/{item.Record.Id}?back={Uri.EscapeDataString(CurrentListUrl())}";
+        => RecordListNavigation.DetailUrl(item, CurrentListUrl(), (_page - 1) * _pageSize + _items.ToList().IndexOf(item));
 
-    private void OnRowClicked(TableRowClickEventArgs<CollectRecordListItem> args)
+    private async Task OnRowClicked(TableRowClickEventArgs<CollectRecordListItem> args)
     {
-        if (args.Item is null)
+        if (args.Item is null || _loading || _exporting || _displayedVersion != _queryVersion)
         {
             return;
         }
 
+        try
+        {
+            await Js.InvokeVoidAsync("dtQueryScroll.save", CurrentListUrl());
+        }
+        catch (JSException) { }
         Nav.NavigateTo(DetailUrl(args.Item));
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_loading || !_restoreScroll || _traceMode) return;
+        _restoreScroll = false;
+        try
+        {
+            await Js.InvokeVoidAsync("dtQueryScroll.restore", CurrentListUrl());
+        }
+        catch (JSException) { }
     }
 
     public void Dispose() => _debounceCts?.Dispose();
@@ -1084,6 +1159,7 @@ else
 
         // 换了次序，原来的第 N 页没有意义了：同一个 _page 在新次序下是另一批记录。
         _page = 1;
+        _queryVersion++;
         await Load();
     }
 
@@ -1095,9 +1171,11 @@ else
 
     private async Task OnRecipeFilterChanged(RecipeFilterValue? value)
     {
+        if (_recipeFilter == value?.Recipe) return;
         _recipeFilter = value?.Recipe;
         _recipeAliases = [];
         _page = 1;
+        _queryVersion++;
         await Load();
     }
 
@@ -1172,7 +1250,7 @@ else
         }
 
         var request = BuildRequest(0, SystemDefaults.ExportRowLimit);
-        var auditKey = $"{(_from ?? DateTime.Today):yyyy-MM-dd}~{(_to ?? DateTime.Today):yyyy-MM-dd}";
+        var auditKey = $"{request.From:yyyy-MM-dd HH:mm:ss.fffffff}~{request.To:yyyy-MM-dd HH:mm:ss.fffffff}";
         var auditFilters = ExportFilterSummary();
         _exporting = true;
         try
@@ -1184,10 +1262,21 @@ else
                 return;
             }
 
+            if (result.Total > result.Items.Count
+                && await DialogService.ConfirmDangerAsync("确认截断导出",
+                    $"区间：{auditKey}\n工站：{(_stationId is { } stationId ? StationCode(stationId) : "全部工站")}\n" +
+                    $"{auditFilters}\n命中 {result.Total:N0} 条，本次只导出按当前排序的前 {result.Items.Count:N0} 条；其余记录不会包含在文件中。",
+                    acknowledge: "我了解此文件不是全部查询结果", yesText: "导出前述记录", cancelText: "取消导出") != true) return;
+
+            var exportedAt = DateTime.Now;
+            var context = $"区间（含起止）={auditKey};工站={(_stationId is { } id ? StationCode(id) : "全部")};" +
+                          $"{auditFilters};导出时间={exportedAt:yyyy-MM-dd HH:mm:ss};命中={result.Total};" +
+                          $"导出={result.Items.Count};截断={(result.Total > result.Items.Count ? "是" : "否")}";
+
             @* 列与表格对齐：表格有耗时列，导出却没有 —— 刚修完 DurationMs 落库，
                导出是唯一一个把节拍带不出去的出口。表头带单位，因为 CSV 里给的是毫秒整数。 *@
             var csv = CsvExporter.Build(
-                ["触发时间", "流水号", "托盘码", "工站", "型号", "判定", "结果码", "结果说明", "耗时(ms)"],
+                ["触发时间", "流水号", "托盘码", "工站", "型号", "判定", "结果码", "结果说明", "耗时(ms)", "查询上下文"],
                 result.Items.Select(item => new[]
                 {
                     item.Record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss"),
@@ -1198,11 +1287,14 @@ else
                     DisplayLabels.JudgementTextLong(item.Record.Judgement),
                     item.Record.ResultCode.ToString(),
                     ResultCodes.Describe(item.Record.ResultCode),
-                    DurationMsText(item.Record.DurationMs)
+                    DurationMsText(item.Record.DurationMs),
+                    context
                 })
             );
 
-            await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName("datatrace_query"), CsvExporter.ToBase64(csv));
+            var stationName = _stationId is { } selectedStation ? StationCode(selectedStation) : "all-stations";
+            var safeStation = new string(stationName.Where(character => char.IsLetterOrDigit(character) || character is '-' or '_').Take(40).ToArray());
+            await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName($"datatrace_query_{safeStation}_{request.From:yyyyMMddHHmmss}-{request.To:yyyyMMddHHmmss}"), CsvExporter.ToBase64(csv));
             var message = result.Total > result.Items.Count
                 ? $"共命中 {result.Total} 条，已导出前 {result.Items.Count} 条"
                 : $"已导出 {result.Items.Count} 条";
@@ -1249,7 +1341,8 @@ else
         };
         return $"pallet={_pallet?.Trim() ?? ""};serial={_serialNo?.Trim() ?? ""};" +
                $"station={_stationId?.ToString() ?? ""};judge={_judgement?.ToString() ?? ""};" +
-               $"result={_resultCode?.ToString() ?? ""};recipe={recipe};aliases={string.Join(",", _recipeAliases)}";
+               $"result={_resultCode?.ToString() ?? ""};recipe={recipe};aliases={string.Join(",", _recipeAliases)};" +
+               $"sort={SortKeyOf(_sortBy)};dir={(_sortDesc ? "desc" : "asc")}";
     }
 
     private async Task WriteExportAuditAsync(int exported, int total, string key, string filters)

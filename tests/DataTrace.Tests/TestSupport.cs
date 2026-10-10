@@ -271,9 +271,19 @@ internal class FakeRuntimeStore : IRuntimeStore
     public Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesBySerialNoAsync(
         string serialNo,
         CancellationToken cancellationToken = default)
+        => FindSessionTracesAsync(serialNo, null);
+
+    public Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesBySessionIdAsync(
+        long sessionId,
+        CancellationToken cancellationToken = default)
+        => FindSessionTracesAsync(null, sessionId);
+
+    private Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesAsync(
+        string? serialNo,
+        long? sessionId)
     {
         var matches = Records
-            .Where(x => string.Equals(x.Record.SerialNo, serialNo, StringComparison.Ordinal))
+            .Where(x => sessionId is not null ? x.Record.PalletSessionId == sessionId : string.Equals(x.Record.SerialNo, serialNo, StringComparison.Ordinal))
             .ToList();
         var traces = matches
             .Where(x => x.Record.PalletSessionId > 0 && x.Record.PalletSession is not null)

@@ -100,6 +100,38 @@ public class AddressValidationPageTests : WebTestBase
     }
 
     [Fact]
+    public void Failed_save_opens_the_error_tab_and_focuses_the_first_invalid_field()
+    {
+        SeedStationPage();
+        Context.JSInterop.Setup<bool>("dtFocusValidation", _ => true).SetResult(true);
+        var cut = RenderStations();
+        TypeInto(cut, "触发 / 回写地址", "M100");
+        cut.FindAll(".mud-tab").Single(tab => tab.TextContent.Contains("曲线")).Click();
+        ClickButton(cut, "保存");
+        Assert.Contains("工站未保存：1 项需要修正", cut.Markup);
+        Assert.Equal(0, cut.FindComponent<MudTabs>().Instance.ActivePanelIndex);
+        Assert.Equal("trigger", Context.JSInterop.Invocations["dtFocusValidation"].Last().Arguments[0]);
+        Assert.DoesNotContain(nameof(IConfigRepository.SaveStationAsync), Config.Calls);
+    }
+
+    [Fact]
+    public void Error_summary_links_focus_the_selected_field_and_disappear_after_correction()
+    {
+        SeedStationPage();
+        Context.JSInterop.Setup<bool>("dtFocusValidation", _ => true).SetResult(true);
+        var cut = RenderStations();
+        TypeInto(cut, "触发 / 回写地址", "M100");
+        TypeInto(cut, "托盘码地址", "M200");
+        ClickButton(cut, "保存");
+        Assert.Contains("工站未保存：2 项需要修正", cut.Markup);
+        cut.FindAll("button").Single(button => button.TextContent.Contains("托盘码地址：")).Click();
+        Assert.Equal("pallet", Context.JSInterop.Invocations["dtFocusValidation"].Last().Arguments[0]);
+        TypeInto(cut, "触发 / 回写地址", "D1000");
+        TypeInto(cut, "托盘码地址", "D1010");
+        Assert.DoesNotContain("工站未保存：", cut.Markup);
+    }
+
+    [Fact]
     public void Bit_pallet_code_address_is_rejected()
     {
         SeedStationPage();

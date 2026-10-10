@@ -2,12 +2,14 @@
 @attribute [Authorize]
 @implements IDisposable
 @using DataTrace.Application.Alarms
+@using DataTrace.Application.Configuration
 @using DataTrace.Domain.Constants
 @using Microsoft.AspNetCore.Components.Authorization
 @inject IAlarmIncidents Incidents
 @inject ILineAlarmBoard Board
 @inject AuthenticationStateProvider Auth
 @inject DtToast Toast
+@inject IConfigRepository Config
 
 <PageHeader Title="报警" HelpRoute="alarms" Busy="@_refreshing" Description="还没人接手的会一直留在这里，并在所有页面顶部响铃。静音只关本机声音。" />
 
@@ -28,6 +30,33 @@
 }
 else
 {
+<MudGrid Class="mb-3">
+    <MudItem xs="12" sm="4">
+        <MudSelect T="int?" @bind-Value="_stationFilter" Label="报警工站" Clearable="true">
+            <MudSelectItem T="int?" Value="@((int?)0)">全线／会话报警</MudSelectItem>
+            @foreach (var station in StationOptions)
+            {
+                <MudSelectItem T="int?" Value="@((int?)station.Id)">@station.Label</MudSelectItem>
+            }
+        </MudSelect>
+    </MudItem>
+    <MudItem xs="12" sm="4">
+        <MudSelect T="LineAlarmKind?" @bind-Value="_kindFilter" Label="报警类型" Clearable="true">
+            @foreach (var kind in Enum.GetValues<LineAlarmKind>())
+            {
+                <MudSelectItem T="LineAlarmKind?" Value="@((LineAlarmKind?)kind)">@KindText(kind)</MudSelectItem>
+            }
+        </MudSelect>
+    </MudItem>
+    <MudItem xs="12" sm="4" Class="d-flex align-center flex-wrap gap-2">
+        <MudCheckBox T="bool" @bind-Value="_mineOnly" Label="我的已接手" />
+        <MudButton StartIcon="@Icons.Material.Filled.FilterAltOff" Size="Size.Small" OnClick="ResetFilters">清空筛选</MudButton>
+    </MudItem>
+</MudGrid>
+@if (FilteredAttention.Count == 0 && _attention.Count > 0)
+{
+    <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">当前筛选没有待处理报警；全部待处理 @_attention.Count 条。</MudAlert>
+}
 @if (_attention.Count == 0)
 {
     <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true" Class="mb-3">
@@ -46,6 +75,7 @@ else
         <MudTable Items="NeedsOwner" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-4">
             <HeaderContent>
                 <MudTh>发生时间</MudTh>
+                <MudTh>持续时间</MudTh>
                 <MudTh>类型</MudTh>
                 <MudTh>内容</MudTh>
                 <MudTh>状态</MudTh>
@@ -55,12 +85,13 @@ else
             </HeaderContent>
             <RowTemplate>
                 <MudTd DataLabel="发生时间">@When(context.RaisedAt)</MudTd>
+                <MudTd DataLabel="持续时间">@DurationText(context, _now)</MudTd>
                 <MudTd DataLabel="类型">@KindText(context.Kind)</MudTd>
                 <MudTd DataLabel="内容">@context.Message</MudTd>
                 <MudTd DataLabel="状态">@StatusText(context)</MudTd>
                 <MudTd DataLabel="接手">@OwnerText(context)</MudTd>
                 <MudTd DataLabel="定位">
-                    @{ var action = ActionFor(context.Kind); }
+                    @{ var action = ActionFor(context); }
                     @if (action.Href is not null)
                     {
                         <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
@@ -99,6 +130,7 @@ else
         <MudTable Items="AcknowledgedOpen" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-4 dt-acknowledged-alarms">
             <HeaderContent>
                 <MudTh>发生时间</MudTh>
+                <MudTh>持续时间</MudTh>
                 <MudTh>类型</MudTh>
                 <MudTh>内容</MudTh>
                 <MudTh>状态</MudTh>
@@ -107,12 +139,13 @@ else
             </HeaderContent>
             <RowTemplate>
                 <MudTd DataLabel="发生时间">@When(context.RaisedAt)</MudTd>
+                <MudTd DataLabel="持续时间">@DurationText(context, _now)</MudTd>
                 <MudTd DataLabel="类型">@KindText(context.Kind)</MudTd>
                 <MudTd DataLabel="内容">@context.Message</MudTd>
                 <MudTd DataLabel="状态">@StatusText(context)</MudTd>
                 <MudTd DataLabel="接手人">@OwnerText(context)</MudTd>
                 <MudTd DataLabel="定位">
-                    @{ var action = ActionFor(context.Kind); }
+                    @{ var action = ActionFor(context); }
                     @if (action.Href is not null)
                     {
                         <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
@@ -138,16 +171,17 @@ else
 @* 两类表的权重刻意不同：待处理是待办，最近结束是归档。
    同一套 Dense/Hover 表头和同样的字重会让扫一眼分不出哪张要动手。 *@
 <MudText Typo="Typo.subtitle1" Class="mb-2 dt-archived-title">最近结束</MudText>
-@if (_recent.Count == 0)
+@if (FilteredRecent.Count == 0)
 {
-    <MudText Typo="Typo.body2" Class="dt-muted">还没有已经接手并解除的报警。</MudText>
+    <MudText Typo="Typo.body2" Class="dt-muted">@(_recent.Count == 0 ? "还没有已经接手并解除的报警。" : "当前筛选没有最近结束的报警。")</MudText>
 }
 else
 {
-    <MudTable Items="_recent" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="dt-archived-table">
+    <MudTable Items="FilteredRecent" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="dt-archived-table">
         <HeaderContent>
             <MudTh>发生时间</MudTh>
             <MudTh>解除时间</MudTh>
+            <MudTh>持续时间</MudTh>
             <MudTh>类型</MudTh>
             <MudTh>内容</MudTh>
             <MudTh>接手</MudTh>
@@ -156,6 +190,7 @@ else
         <RowTemplate>
             <MudTd DataLabel="发生时间">@When(context.RaisedAt)</MudTd>
             <MudTd DataLabel="解除时间">@When(context.ClearedAt)</MudTd>
+            <MudTd DataLabel="持续时间">@DurationText(context, _now)</MudTd>
             <MudTd DataLabel="类型">@KindText(context.Kind)</MudTd>
             <MudTd DataLabel="内容">@context.Message</MudTd>
             <MudTd DataLabel="接手">@OwnerText(context)</MudTd>
@@ -176,8 +211,55 @@ else
 @code {
     private IReadOnlyList<AlarmIncidentDraft> _attention = [];
     private IReadOnlyList<AlarmIncidentDraft> _recent = [];
-    private IReadOnlyList<AlarmIncidentDraft> NeedsOwner => _attention.Where(item => item.NeedsOwner).ToList();
-    private IReadOnlyList<AlarmIncidentDraft> AcknowledgedOpen => _attention.Where(item => !item.NeedsOwner).ToList();
+    private IReadOnlyList<Station> _stations = [];
+    private int? _stationFilter;
+    private LineAlarmKind? _kindFilter;
+    private bool _mineOnly;
+    private string? _actor;
+    private DateTime _now = DateTime.Now;
+    private readonly CancellationTokenSource _durationCts = new();
+    private IReadOnlyList<AlarmIncidentDraft> FilteredAttention => _attention.Where(Matches).ToList();
+    private IReadOnlyList<AlarmIncidentDraft> FilteredRecent => _recent.Where(Matches).ToList();
+    private IReadOnlyList<AlarmIncidentDraft> NeedsOwner => FilteredAttention.Where(item => item.NeedsOwner).ToList();
+    private IReadOnlyList<AlarmIncidentDraft> AcknowledgedOpen => FilteredAttention.Where(item => !item.NeedsOwner).ToList();
+    private IEnumerable<(int Id, string Label)> StationOptions => _stations.Select(station => (station.Id, $"{station.Code} {station.Name}"))
+        .Concat(_attention.Concat(_recent).Select(StationOf).Where(id => id > 0).Distinct()
+            .Where(id => _stations.All(station => station.Id != id)).Select(id => (id, $"历史工站 #{id}")));
+
+    private static int StationOf(AlarmIncidentDraft item)
+    {
+        if (item.Kind is not (LineAlarmKind.ConsecutiveNg or LineAlarmKind.ConsecutiveWarning or LineAlarmKind.ProcessDrift
+            or LineAlarmKind.StationFault or LineAlarmKind.ConsecutiveProcess)) return 0;
+        var parts = item.Key.Split(':');
+        return parts.Length >= 2 && int.TryParse(parts[1], out var id) && id > 0 ? id : 0;
+    }
+
+    private bool Matches(AlarmIncidentDraft item)
+        => (_stationFilter is null || StationOf(item) == _stationFilter)
+           && (_kindFilter is null || item.Kind == _kindFilter)
+           && (!_mineOnly || item.AcknowledgedAt is not null && !string.IsNullOrEmpty(_actor)
+               && string.Equals(item.AcknowledgedBy, _actor, StringComparison.OrdinalIgnoreCase));
+
+    private void ResetFilters() { _stationFilter = null; _kindFilter = null; _mineOnly = false; }
+
+    private static string DurationText(AlarmIncidentDraft item, DateTime now)
+    {
+        var duration = (item.ClearedAt ?? now) - item.RaisedAt;
+        if (duration < TimeSpan.Zero) duration = TimeSpan.Zero;
+        return duration.TotalHours >= 1 ? $"{(long)duration.TotalHours} 小时 {duration.Minutes} 分"
+            : $"{(int)duration.TotalMinutes} 分 {duration.Seconds} 秒";
+    }
+
+    private async Task UpdateDurationAsync()
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+            while (await timer.WaitForNextTickAsync(_durationCts.Token))
+                await InvokeAsync(() => { _now = DateTime.Now; StateHasChanged(); });
+        }
+        catch (OperationCanceledException) { }
+    }
     private string? _loadError;
     private bool _canTake;
     private bool _canDiagnose;
@@ -190,12 +272,16 @@ else
     protected override async Task OnInitializedAsync()
     {
         var user = (await Auth.GetAuthenticationStateAsync()).User;
+        _actor = user.Identity?.Name;
+        try { _stations = (await Config.GetSnapshotAsync()).Stations; }
+        catch (Exception) { _stations = []; }
         _canTake = user.IsInRole(AppRoles.Administrator)
                    || user.IsInRole(AppRoles.Engineer)
                    || user.IsInRole(AppRoles.Operator);
         _canDiagnose = user.IsInRole(AppRoles.Administrator) || user.IsInRole(AppRoles.Engineer);
         Board.Changed += OnChanged;
         await Reload(pushBoard: false);
+        _ = UpdateDurationAsync();
     }
 
     private void OnChanged() => _ = InvokeAsync(() => Reload(pushBoard: false));
@@ -309,20 +395,30 @@ else
     private static string OwnerText(AlarmIncidentDraft item)
         => item.AcknowledgedBy is null ? "—" : $"{item.AcknowledgedBy} {When(item.AcknowledgedAt)}";
 
-    private (string Label, string? Href) ActionFor(LineAlarmKind kind)
+    private (string Label, string? Href) ActionFor(AlarmIncidentDraft item)
     {
+        var kind = item.Kind;
         if (!_canDiagnose && kind is not LineAlarmKind.ConsecutiveNg
             and not LineAlarmKind.ConsecutiveWarning and not LineAlarmKind.ProcessDrift)
         {
             return ("需授权", null);
         }
 
+        var keyParts = item.Key.Split(':');
+        var station = keyParts.Length >= 2 && int.TryParse(keyParts[1], out var stationId) && stationId > 0
+            ? $"&station={stationId}" : "";
+        var tag = keyParts.Length >= 3 && int.TryParse(keyParts[2], out var tagId) && tagId > 0
+            ? $"&tag={tagId}" : "";
+        var range = $"&from={item.RaisedAt.AddDays(-1):yyyy-MM-dd}&to={(item.ClearedAt ?? DateTime.Now):yyyy-MM-dd}";
         return kind switch
         {
             LineAlarmKind.MesBacklog => ("查看 MES 状态", "/config/settings"),
-            LineAlarmKind.ConsecutiveNg => ("查看 NG 记录", "/query?judge=Ng&days=30"),
-            LineAlarmKind.ConsecutiveWarning or LineAlarmKind.ProcessDrift => ("查看过程报表", "/reports"),
-            LineAlarmKind.SessionSuperseded or LineAlarmKind.OpenSession => ("打开产品追溯", "/query?view=trace"),
+            LineAlarmKind.ConsecutiveNg => ("查看 NG 记录", "/query?judge=Ng" + station + range),
+            LineAlarmKind.ConsecutiveWarning or LineAlarmKind.ProcessDrift => ("查看过程报表", "/reports?" + (station + tag + range).TrimStart('&')),
+            LineAlarmKind.SessionSuperseded or LineAlarmKind.OpenSession => ("打开产品追溯",
+                keyParts.Length == 2 && long.TryParse(keyParts[1], out var sessionId) && sessionId > 0
+                    ? $"/query?view=trace&sessionId={sessionId}" : "/query?view=trace"),
+            LineAlarmKind.StationFault or LineAlarmKind.ConsecutiveProcess => ("打开运行诊断", "/diagnostics" + (station.Length > 0 ? "?" + station.TrimStart('&') : "")),
             _ => ("打开运行诊断", "/diagnostics")
         };
     }
@@ -333,5 +429,10 @@ else
     private static string When(DateTime? time)
         => time?.ToString("yyyy-MM-dd HH:mm:ss") ?? "—";
 
-    public void Dispose() => Board.Changed -= OnChanged;
+    public void Dispose()
+    {
+        Board.Changed -= OnChanged;
+        _durationCts.Cancel();
+        _durationCts.Dispose();
+    }
 }

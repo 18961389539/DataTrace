@@ -124,6 +124,18 @@ window.dtCopy = async function (text) {
 
 
 // 系统设置分区锚点滚动（平滑；缺失元素时静默）。
+window.dtFocusValidation = async function (field) {
+    await new Promise(function (resolve) { requestAnimationFrame(function () { requestAnimationFrame(resolve); }); });
+    var root = Array.from(document.querySelectorAll('[data-dt-validation]'))
+        .find(function (element) { return element.getAttribute('data-dt-validation') === field; });
+    if (!root) return false;
+    var input = root.matches('input,button,[tabindex]') ? root : root.querySelector('input,button,[tabindex]');
+    if (!input) return false;
+    root.scrollIntoView({ block: 'center', behavior: 'instant' });
+    input.focus({ preventScroll: true });
+    return document.activeElement === input;
+};
+
 window.dtScrollIntoView = function (id) {
     if (!id) { return false; }
     var el = document.getElementById(id);
@@ -135,6 +147,25 @@ window.dtScrollIntoView = function (id) {
 // 大屏/车间模式：给 body 挂 class，偏好写入 localStorage；退出按钮始终由页面提供。
 
 // Dashboard recent-collect collapse preference; same pattern as shop-floor. Default collapsed when unset.
+window.dtQueryPresets = {
+    get: function (account) {
+        var stored = localStorage.getItem('dt-query-presets:' + account);
+        if (!stored) return [];
+        var presets = JSON.parse(stored);
+        if (!Array.isArray(presets)) throw new Error('Invalid query presets');
+        if (!presets.every(function (preset) {
+            return preset && typeof preset.name === 'string' && typeof preset.url === 'string' && typeof preset.range === 'string';
+        })) throw new Error('Invalid query preset fields');
+        return presets;
+    },
+    set: function (account, presets) {
+        try {
+            localStorage.setItem('dt-query-presets:' + account, JSON.stringify(presets));
+            return true;
+        } catch (error) { return false; }
+    }
+};
+
 window.dtRecentOpen = {
     key: 'dt-recent-open',
     get: function () {
@@ -157,6 +188,34 @@ window.dtLogNotice = {
         return !!on;
     }
 };
+
+window.dtQueryScroll = {
+    key: 'dt-query-scroll',
+    save: function (url) {
+        var table = document.querySelector('.dt-query-results .mud-table-container');
+        try {
+            sessionStorage.setItem(this.key, JSON.stringify({ url: url, top: window.scrollY, table: table ? table.scrollTop : 0 }));
+        } catch (error) { }
+    },
+    restore: function (url) {
+        try {
+            var state = JSON.parse(sessionStorage.getItem(this.key) || 'null');
+            if (!state || state.url !== url) { return; }
+            requestAnimationFrame(function () {
+                var table = document.querySelector('.dt-query-results .mud-table-container');
+                if (table) { table.scrollTop = state.table; }
+                window.scrollTo(0, state.top);
+            });
+            sessionStorage.removeItem(this.key);
+        } catch (error) { }
+    }
+};
+document.addEventListener('click', function (event) {
+    var link = event.target.closest && event.target.closest('.dt-query-results a[href*="/query/"]');
+    if (!link) { return; }
+    var table = link.closest('.dt-query-results');
+    window.dtQueryScroll.save(table.getAttribute('data-dt-query-key'));
+});
 
 window.dtShopFloor = {
     key: 'dt-shopfloor',

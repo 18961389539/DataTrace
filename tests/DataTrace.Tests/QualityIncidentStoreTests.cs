@@ -218,5 +218,8 @@ public class QualityIncidentStoreTests
 
         public Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesBySerialNoAsync(string serialNo, CancellationToken cancellationToken = default)
             => Task.FromResult<IReadOnlyList<CollectSessionTrace>>([]);
+
+        public Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesBySessionIdAsync(long sessionId, CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<CollectSessionTrace>>([]);
     }
 }

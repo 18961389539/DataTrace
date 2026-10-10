@@ -67,6 +67,14 @@ else
         </ChildContent>
         <Actions>
             <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Href="@BackUrl">返回查询</MudButton>
+            <MudTooltip Text="@(_navigationError ?? "按原列表顺序查看上一条")">
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.ChevronLeft"
+                           Disabled="@(_previousUrl is null)" Href="@_previousUrl">上一条</MudButton>
+            </MudTooltip>
+            <MudTooltip Text="@(_navigationError ?? "按原列表顺序查看下一条")">
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" EndIcon="@Icons.Material.Filled.ChevronRight"
+                           Disabled="@(_nextUrl is null)" Href="@_nextUrl">下一条</MudButton>
+            </MudTooltip>
             <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.History"
                        Href="@PalletHistoryUrl()">同托盘近 30 天</MudButton>
             @if (_canCreateQualityIncident)
@@ -85,6 +93,11 @@ else
             }
         </Actions>
     </PageHeader>
+
+    @if (_navigationError is { } navigationError)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">@navigationError</MudAlert>
+    }
 
     <MudPaper Class="pa-4">
         <MudGrid>
@@ -292,10 +305,13 @@ else
     [SupplyParameterFromQuery(Name = "back")]
     public string? BackQuery { get; set; }
 
-    private string BackUrl
-        => !string.IsNullOrWhiteSpace(BackQuery) && BackQuery.StartsWith("query", StringComparison.OrdinalIgnoreCase)
-            ? BackQuery
-            : "query";
+    [SupplyParameterFromQuery(Name = "position")]
+    public int? PositionQuery { get; set; }
+
+    private string BackUrl => RecordListNavigation.IsListUrl(BackQuery) ? BackQuery! : "query";
+    private string? _previousUrl;
+    private string? _nextUrl;
+    private string? _navigationError;
 
     private CollectRecord? _record;
     private bool _loaded;
@@ -326,6 +342,9 @@ else
     {
         _loaded = false;
         _loadError = null;
+        _previousUrl = null;
+        _nextUrl = null;
+        _navigationError = null;
         _curvePayloads.Clear();
         _curveErrors.Clear();
         _archiveText = null;
@@ -384,7 +403,34 @@ else
             }
         }
 
+        await LoadNavigationAsync();
         _loaded = true;
+    }
+
+    private async Task LoadNavigationAsync()
+    {
+        if (PositionQuery is not { } position || position < 0 || position >= int.MaxValue - 2
+            || !RecordListNavigation.IsListUrl(BackQuery)) return;
+        try
+        {
+            var skip = Math.Max(0, position - 1);
+            var result = await Store.QueryAsync(RecordListNavigation.ReadRequest(BackUrl, skip, 3));
+            var current = position - skip;
+            if (result.Items.Count <= current || result.Items[current].MonthKey != MonthKey
+                || result.Items[current].Record.Id != RecordId)
+            {
+                _navigationError = "列表已变化，请返回查询刷新后继续浏览";
+                return;
+            }
+            if (current > 0)
+                _previousUrl = RecordListNavigation.DetailUrl(result.Items[current - 1], BackUrl, position - 1);
+            if (current + 1 < result.Items.Count)
+                _nextUrl = RecordListNavigation.DetailUrl(result.Items[current + 1], BackUrl, position + 1);
+        }
+        catch (Exception)
+        {
+            _navigationError = "相邻记录加载失败，请返回查询重试";
+        }
     }
 
     private Task RetryLoadAsync() => OnParametersSetAsync();

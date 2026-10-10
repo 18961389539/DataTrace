@@ -1,4 +1,9 @@
 using Microsoft.Playwright;
+using DataTrace.Application.Alarms;
+using DataTrace.Domain.Entities;
+using DataTrace.Infrastructure.Persistence;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 
 namespace DataTrace.E2E.Tests;
 
@@ -61,6 +66,194 @@ public class UiRegressionE2ETests : E2ETestBase
         }
 
         throw new TimeoutException($"{timeoutMs}ms 内没有采到可查询的记录。");
+    }
+
+    [Fact]
+    public async Task TouchscreenTargetsStayUsableAtPhoneAndTabletWidths()
+    {
+        foreach (var width in new[] { 430, 820 })
+        {
+            await using var touch = await Browser.NewContextAsync(new() { HasTouch = true, IsMobile = true, ViewportSize = new() { Width = width, Height = 932 } });
+            var page = await touch.NewPageAsync();
+            foreach (var route in new[] { "/query", "/config/stations", "/alarms" })
+            {
+                await page.GotoAsync(App.BaseUrl + route);
+                await page.WaitForFunctionAsync("() => document.activeElement === document.querySelector('h5')");
+                var small = await page.EvaluateAsync<string[]>("""
+                    () => [...document.querySelectorAll('.dt-main .mud-button-root, .dt-main .station-list-item-select')]
+                        .filter(element => { const rect = element.getBoundingClientRect();
+                            return rect.width > 0 && rect.height > 0 && (rect.width < 43.9 || rect.height < 43.9); })
+                        .map(element => element.getAttribute('aria-label') || element.textContent.trim())
+                    """);
+                Assert.Empty(small);
+                var outsideInputs = await page.EvaluateAsync<int>("""
+                    () => [...document.querySelectorAll('.mud-input-numeric-spin button')].filter(button => {
+                        const input = button.closest('.mud-input').getBoundingClientRect();
+                        const rect = button.getBoundingClientRect();
+                        return rect.height > 0 && (rect.top < input.top - 1 || rect.bottom > input.bottom + 1);
+                    }).length
+                    """);
+                Assert.Equal(0, outsideInputs);
+                Assert.True(await page.EvaluateAsync<bool>("() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1"));
+                await TouchScreenshotAsync(page, $"touch-{width}-{route.Trim('/').Replace('/', '-')}.png");
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(430)]
+    [InlineData(820)]
+    public async Task TouchscreenScanningAndDetailNavigationKeepContext(int width)
+    {
+        await using var touch = await Browser.NewContextAsync(new() { HasTouch = true, IsMobile = true, ViewportSize = new() { Width = width, Height = 932 } });
+        var page = await touch.NewPageAsync();
+        await page.GotoAsync(App.BaseUrl + "/query?dir=asc&size=100");
+        await page.WaitForFunctionAsync("() => document.activeElement === document.querySelector('h5')");
+        var rows = page.Locator(".dt-query-results tbody tr").Filter(new() { HasText = "明细" });
+        for (var attempt = 0; await rows.CountAsync() < 3 && attempt < 30; attempt++)
+        {
+            await page.GetByRole(AriaRole.Button, new() { Name = "查询", Exact = true }).TapAsync();
+            await Task.Delay(500);
+        }
+        Assert.True(await rows.CountAsync() >= 3);
+        var pallet = (await rows.First.Locator("td").Nth(2).InnerTextAsync()).Trim();
+        var scanner = page.GetByLabel("托盘码", new() { Exact = true });
+        await scanner.PressSequentiallyAsync(pallet, new() { Delay = 450 });
+        await scanner.PressAsync("Enter");
+        Assert.Equal(pallet, await scanner.InputValueAsync());
+        await page.WaitForFunctionAsync("pallet => location.search.includes('pallet=' + encodeURIComponent(pallet))", pallet);
+        await page.GetByRole(AriaRole.Button, new() { Name = "查询", Exact = true }).WaitForAsync();
+        await page.Locator(".dt-query-results .mud-table-container").EvaluateAsync("element => element.scrollTop = Math.min(160, element.scrollHeight - element.clientHeight)");
+        await page.GetByRole(AriaRole.Link, new() { Name = "明细", Exact = true }).Nth(1).TapAsync();
+        await page.WaitForURLAsync(new System.Text.RegularExpressions.Regex("/query/\\d{6}/\\d+"));
+        await page.GetByRole(AriaRole.Link, new() { Name = "下一条", Exact = true }).WaitForAsync();
+        var original = page.Url;
+        var scroll = await page.EvaluateAsync<double[]>("() => { const state = JSON.parse(sessionStorage.getItem('dt-query-scroll')); return [state.top, state.table]; }");
+        await TouchScreenshotAsync(page, $"touch-{width}-record.png");
+        await page.GetByRole(AriaRole.Link, new() { Name = "下一条", Exact = true }).TapAsync();
+        await page.WaitForFunctionAsync("original => location.href !== original", original);
+        await page.GetByRole(AriaRole.Link, new() { Name = "上一条", Exact = true }).TapAsync();
+        await page.WaitForURLAsync(original);
+        await page.GetByRole(AriaRole.Link, new() { Name = "返回查询", Exact = true }).TapAsync();
+        await page.WaitForFunctionAsync("scroll => { const table = document.querySelector('.dt-query-results .mud-table-container'); return table && Math.abs(table.scrollTop - scroll[1]) < 2 && Math.abs(window.scrollY - scroll[0]) < 2; }", scroll);
+        Assert.Contains("dir=asc", page.Url);
+        Assert.Contains("pallet=" + Uri.EscapeDataString(pallet), page.Url);
+        await TouchScreenshotAsync(page, $"touch-{width}-query-restored.png");
+    }
+
+    [Theory]
+    [InlineData(430)]
+    [InlineData(820)]
+    public async Task TouchscreenAlarmCanBeTakenAndRecordsTheOwner(int width)
+    {
+        var connection = new SqliteConnectionStringBuilder { DataSource = Path.Combine(App.DataRoot, "config.db"), DefaultTimeout = 30 };
+        await using var db = new ConfigDbContext(new DbContextOptionsBuilder<ConfigDbContext>().UseSqlite(connection.ToString()).Options);
+        var marker = "TOUCH-ALARM-" + Guid.NewGuid().ToString("N");
+        var incident = new AlarmIncident { Key = marker, Message = marker, Kind = (int)LineAlarmKind.ConsecutiveNg, RaisedAt = DateTime.Now, ClearedAt = DateTime.Now };
+        db.AlarmIncidents.Add(incident);
+        await db.SaveChangesAsync();
+        try
+        {
+            await using var touch = await Browser.NewContextAsync(new() { HasTouch = true, IsMobile = true, ViewportSize = new() { Width = width, Height = 932 } });
+            var page = await touch.NewPageAsync();
+            await page.GotoAsync(App.BaseUrl + "/alarms");
+            await page.WaitForFunctionAsync("() => document.activeElement === document.querySelector('h5')");
+            var row = page.Locator("tr").Filter(new() { HasText = marker });
+            var take = row.GetByRole(AriaRole.Button, new() { Name = "接手", Exact = true });
+            var rect = await take.BoundingBoxAsync();
+            Assert.NotNull(rect);
+            Assert.True(rect.Width >= 44 && rect.Height >= 44);
+            await take.TapAsync();
+            await page.WaitForFunctionAsync("marker => [...document.querySelectorAll('tr')].some(row => row.textContent.includes(marker) && row.textContent.includes('admin'))", marker);
+            await db.Entry(incident).ReloadAsync();
+            Assert.Equal("admin", incident.AcknowledgedBy);
+            Assert.NotNull(incident.AcknowledgedAt);
+            await TouchScreenshotAsync(page, $"touch-{width}-alarm-taken.png");
+        }
+        finally
+        {
+            db.AlarmIncidents.Remove(incident);
+            await db.SaveChangesAsync();
+        }
+    }
+
+    private static async Task TouchScreenshotAsync(IPage page, string name)
+    {
+        var directory = Path.Combine(AppContext.BaseDirectory, "artifacts");
+        Directory.CreateDirectory(directory);
+        await page.ScreenshotAsync(new() { Path = Path.Combine(directory, name), FullPage = true });
+    }
+
+    [Theory]
+    [InlineData(430)]
+    [InlineData(820)]
+    [InlineData(1440)]
+    public async Task UsabilityQuerySchemesPersistAndExportContext(int width)
+    {
+        await Page.SetViewportSizeAsync(width, 932);
+        await OpenAsync("/query");
+        await WaitForResultRowsAsync();
+        await Page.GetByRole(AriaRole.Button, new() { Name = "时间区间 近 7 天", Exact = true }).ClickAsync();
+        await Page.GetByRole(AriaRole.Button, new() { Name = "保存查询方案", Exact = true }).ClickAsync();
+        var name = "重点工站每班次产品质量异常与采集记录查询方案-" + Guid.NewGuid().ToString("N")[..8];
+        await Page.GetByLabel("方案名称", new() { Exact = true }).FillAsync(name);
+        await TouchScreenshotAsync(Page, $"usability-{width}-scheme-editor.png");
+        Assert.True(await Page.EvaluateAsync<bool>("() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1"));
+        await Page.GetByRole(AriaRole.Button, new() { Name = "保存方案", Exact = true }).ClickAsync();
+        await Page.GetByRole(AriaRole.Button, new() { Name = name, Exact = true }).WaitForAsync();
+        await Page.EvaluateAsync("""
+            () => {
+                const key = Object.keys(localStorage).find(key => key.startsWith('dt-query-presets:'));
+                const presets = JSON.parse(localStorage.getItem(key));
+                const url = new URL(presets[presets.length - 1].url, location.origin);
+                url.searchParams.set('from', '2025-01-01');
+                url.searchParams.set('to', '2025-01-01');
+                presets[presets.length - 1].url = url.pathname.replace(/^\//, '') + url.search;
+                localStorage.setItem(key, JSON.stringify(presets));
+            }
+            """);
+        await OpenAsync("/query");
+        await Page.GetByRole(AriaRole.Button, new() { Name = name, Exact = true }).ClickAsync();
+        await Page.WaitForFunctionAsync("date => location.search.includes(date)", DateTime.Today.AddDays(-6).ToString("yyyy-MM-dd"));
+        await Page.Locator(".dt-query-results tbody tr").Filter(new() { HasText = "明细" }).First.WaitForAsync();
+        var download = await Page.RunAndWaitForDownloadAsync(() => Page.GetByRole(AriaRole.Button, new() { Name = "导出 CSV", Exact = true }).ClickAsync());
+        Assert.Contains("all-stations_", download.SuggestedFilename);
+        var csv = await File.ReadAllTextAsync((await download.PathAsync())!);
+        Assert.Contains("耗时(ms),查询上下文", csv);
+        Assert.Contains("区间（含起止）=", csv);
+        Assert.Contains("sort=time;dir=desc", csv);
+        Assert.Contains("截断=否", csv);
+        Assert.True(await Page.EvaluateAsync<bool>("""
+            () => { dtQueryPresets.set('other-account', [{name: 'Other only', url: 'query', range: 'today'}]);
+                const isolated = dtQueryPresets.get('other-account');
+                return isolated.length === 1 && isolated[0].name === 'Other only'; }
+            """));
+        await TouchScreenshotAsync(Page, $"usability-{width}-scheme-applied.png");
+        await Page.GetByRole(AriaRole.Button, new() { Name = "删除方案 " + name, Exact = true }).ClickAsync();
+        await Page.Locator(".mud-dialog").GetByRole(AriaRole.Checkbox).CheckAsync();
+        await Page.Locator(".mud-dialog").GetByRole(AriaRole.Button, new() { Name = "删除方案", Exact = true }).ClickAsync();
+        await Page.GetByRole(AriaRole.Button, new() { Name = name, Exact = true }).WaitForAsync(new() { State = WaitForSelectorState.Detached });
+    }
+
+    [Theory]
+    [InlineData(430)]
+    [InlineData(1440)]
+    public async Task UsabilityInvalidStationSaveFocusesTheActualInput(int width)
+    {
+        await Page.SetViewportSizeAsync(width, 932);
+        await OpenAsync("/config/stations");
+        await WaitForCircuitReadyAsync();
+        await Page.GetByLabel("触发值", new() { Exact = true }).FillAsync("0");
+        await Page.Locator(".mud-tab").Filter(new() { HasText = "曲线" }).ClickAsync();
+        await Page.GetByRole(AriaRole.Button, new() { NameRegex = new System.Text.RegularExpressions.Regex("^保存 ST") }).ClickAsync();
+        await Page.WaitForFunctionAsync("() => document.querySelector('[data-dt-validation=triggerValue]')?.contains(document.activeElement)");
+        Assert.Contains("工站未保存：", await Page.Locator("body").InnerTextAsync());
+        var input = await Page.GetByLabel("触发值", new() { Exact = true }).BoundingBoxAsync();
+        Assert.NotNull(input);
+        Assert.True(input.Y >= 0 && input.Y + input.Height <= 932);
+        Assert.True(await Page.EvaluateAsync<bool>("() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1"));
+        await TouchScreenshotAsync(Page, $"usability-{width}-validation-focus.png");
+        await Page.GetByLabel("触发值", new() { Exact = true }).FillAsync("1");
     }
 
     [Fact]

@@ -57,7 +57,7 @@ else
 @if (_searched && _error is null && _traces.Count == 0)
 {
     <MudAlert Severity="Severity.Info" Dense="true">
-        没有找到完全匹配的流水号。请核对编号，或确认对应月库记录仍在保留期内。
+        @(_preferredSessionId is not null && string.IsNullOrWhiteSpace(_serialNo) ? "没有找到指定生产会话。" : "没有找到完全匹配的流水号。")请核对编号，或确认对应月库记录仍在保留期内。
     </MudAlert>
 }
 else if (_traces.Count > 0 && SelectedTrace is null)
@@ -336,7 +336,7 @@ else
         _preferredMonthKey = InitialMonthKey;
         _preferredSessionId = InitialSessionId;
         _serialNo = initial;
-        if (!string.IsNullOrWhiteSpace(initial))
+        if (!string.IsNullOrWhiteSpace(initial) || InitialSessionId is > 0)
         {
             await SearchAsync(syncUrl: false);
         }
@@ -368,7 +368,7 @@ else
     private async Task SearchAsync(bool syncUrl = true)
     {
         var serialNo = _serialNo?.Trim() ?? "";
-        if (serialNo.Length == 0)
+        if (serialNo.Length == 0 && _preferredSessionId is not > 0)
         {
             ClearResult();
             _searched = false;
@@ -391,11 +391,15 @@ else
         _searched = true;
         try
         {
-            _traces = await Store.FindSessionTracesBySerialNoAsync(serialNo);
+            _traces = serialNo.Length == 0 && _preferredSessionId is { } sessionId
+                ? await Store.FindSessionTracesBySessionIdAsync(sessionId)
+                : await Store.FindSessionTracesBySerialNoAsync(serialNo);
             var preferred = _traces.FirstOrDefault(trace =>
                 trace.MonthKey == _preferredMonthKey && trace.SessionId == _preferredSessionId);
             _selectedTraceKey = preferred is not null
                 ? TraceKey(preferred)
+                : serialNo.Length == 0 && _traces.Count == 1
+                    ? TraceKey(_traces[0])
                 : _preferredMonthKey is null && _preferredSessionId is null && _traces.Count > 0
                     ? TraceKey(_traces[0])
                     : null;

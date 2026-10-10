@@ -5,6 +5,7 @@ using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Web.Components.Pages;
 using DataTrace.Web.Services;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Microsoft.JSInterop;
@@ -33,6 +34,25 @@ public class DiagnosticsPageTests : WebTestBase
         Assert.Contains("还没有采集循环记录", cut.Markup);
         Assert.Contains("还没有 PLC 通信记录", cut.Markup);
         Assert.Contains("补传队列是空的", cut.Markup);
+    }
+
+    [Fact]
+    public void Station_deep_link_focuses_and_expands_its_plc()
+    {
+        Config.Snapshot = new DataTrace.Application.Configuration.AppConfigurationSnapshot
+        {
+            Stations = [new Station { Id = 23, Code = "ST023", PlcConnectionId = 2 }]
+        };
+        var (cut, _, _) = Render(new FakeSpool(), seed: diag =>
+        {
+            diag.PublishPlcTraffic(PlcTrafficView.Empty(1, "OTHER-PLC"));
+            diag.PublishPlcTraffic(PlcTrafficView.Empty(2, "TARGET-PLC"));
+        }, stationId: 23);
+
+        Assert.Contains("ST023", cut.Markup);
+        Assert.Contains("TARGET-PLC", cut.Markup);
+        Assert.DoesNotContain("OTHER-PLC", cut.Markup);
+        Assert.True(cut.FindComponent<MudExpansionPanel>().Instance.Expanded);
     }
 
     [Fact]
@@ -712,7 +732,8 @@ public class DiagnosticsPageTests : WebTestBase
 
     private (IRenderedComponent<Diagnostics> Cut, FakeSpool Spool, CollectorDiagnostics Diag) Render(
         FakeSpool spool,
-        Action<CollectorDiagnostics>? seed = null)
+        Action<CollectorDiagnostics>? seed = null,
+        int? stationId = null)
     {
         var diag = new CollectorDiagnostics();
         seed?.Invoke(diag);
@@ -730,6 +751,10 @@ public class DiagnosticsPageTests : WebTestBase
         // 顺序不能反：渲染宿主会初始化服务提供者，之后再注册服务会被 bUnit 直接拒绝。
         RenderPopoverHost();
 
+        if (stationId is not null)
+        {
+            Context.Services.GetRequiredService<NavigationManager>().NavigateTo($"/diagnostics?station={stationId}");
+        }
         var cut = Context.Render<Diagnostics>();
         return (cut, spool, diag);
     }
