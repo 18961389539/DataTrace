@@ -157,19 +157,25 @@
                 {
                     <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">@blockedReason</MudAlert>
                 }
-                @if (_trial is { } trial)
+                @if (_trial is { } trial && _trialStation is { } trialStation)
                 {
                     <MudPaper Class="pa-3 mb-3 dt-trial-panel">
                         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
-                            <MudText Typo="Typo.subtitle2">试读结果</MudText>
+                            <MudText Typo="Typo.subtitle2">试读结果 · @trialStation.Code @trialStation.Name</MudText>
                             <MudText Typo="Typo.caption" Class="dt-muted">
                                 @trial.At.ToString("HH:mm:ss") · @trial.ElapsedMs ms@(trial.Ok ? $" · {trial.BlockCount} 块 {trial.WordCount} 字" : "")
                             </MudText>
                             <MudSpacer />
                             <MudButton Size="Size.Small" Variant="Variant.Text" aria-label="关闭试读结果"
-                                       OnClick="@(() => _trial = null)">关闭</MudButton>
+                                       OnClick="ClearTrial">关闭</MudButton>
                         </MudStack>
 
+                        @if (TrialStale)
+                        {
+                            <MudAlert Severity="Severity.Warning" Dense="true" Class="my-2" role="status">
+                                配置已修改，试读结果已过期。
+                            </MudAlert>
+                        }
                         @if (trial.Error is { } trialError)
                         {
                             <MudAlert Severity="Severity.Error" Dense="true">@trialError</MudAlert>
@@ -200,7 +206,7 @@
                                     </tr>
                                     <tr>
                                         <td>托盘码</td>
-                                        <td>@_current.PalletCodeAddress</td>
+                                        <td>@trialStation.PalletCodeAddress</td>
                                         <td>—</td>
                                         <td>@(trial.PalletCode ?? "—")</td>
                                         <td>—</td>
@@ -210,7 +216,7 @@
                                     </tr>
                                     <tr>
                                         <td>产品位</td>
-                                        <td>@(_occupiedAddress.Length == 0 ? "未配" : _occupiedAddress)</td>
+                                        <td>@(_trialOccupiedAddress.Length == 0 ? "未配" : _trialOccupiedAddress)</td>
                                         <td>—</td>
                                         <td>@TrialOccupiedText(trial.Occupied)</td>
                                         <td>—</td>
@@ -247,7 +253,7 @@
                                而回写、会话、MES 这三样试读按定义不碰。 *@
                             <MudText Typo="Typo.caption" Class="dt-muted mt-2">
                                 只读：不落库、不写回、不建会话、不取流水号、不推 MES、不归档文件、不计入运行状态。
-                                读到的是当前表单内容（可能含未保存改动），不代表已保存的配置；
+                                读到的是试读时的表单快照（可能含未保存改动），不代表已保存的配置；
                                 回写与上报仍须在停线窗口用一件试件真采一次。
                             </MudText>
                         }
@@ -611,6 +617,20 @@
     /// <summary>试读的独立忙标记：不能占 _busy —— 否则读一次会把保存按钮也一起锁住。</summary>
     private bool _trialBusy;
     private StationTrialResult? _trial;
+    private Station? _trialStation;
+    private string? _trialConfiguration;
+    private string _trialOccupiedAddress = "";
+    private int _trialVersion;
+    private bool TrialStale => _trial is not null && (_current is null
+        || Snapshot(_current) != _trialConfiguration || _occupiedAddress != _trialOccupiedAddress);
+
+    private void ClearTrial()
+    {
+        _trialVersion++;
+        _trial = null;
+        _trialStation = null;
+        _trialConfiguration = null;
+    }
 
     /// <summary>现在能不能试读；null 表示可以，否则是原因（按钮据此禁用，顶部据此说明）。</summary>
     private string? TrialBlockedReason
@@ -1222,6 +1242,7 @@
             }
         }
 
+        ClearTrial();
         ClearErrors();
         var id = station.Id;
         await Guard("读取工站", async () =>
@@ -1250,6 +1271,7 @@
             return;
         }
 
+        ClearTrial();
         _current.PlcConnection = persisted.PlcConnection;
         _current.Positions = persisted.Positions;
         _current.Tags = persisted.Tags;
@@ -1490,19 +1512,32 @@
             return;
         }
 
-        var station = _current;
-        var connection = CurrentPlc;
+        var snapshot = Snapshot(_current);
+        var station = JsonSerializer.Deserialize<Station>(snapshot, SnapshotOptions)!;
+        var occupiedAddress = _occupiedAddress;
+        if (station.Positions.FirstOrDefault() is { } position)
+            position.OccupiedAddress = occupiedAddress;
+        var connection = JsonSerializer.Deserialize<PlcConnection>(JsonSerializer.Serialize(CurrentPlc, SnapshotOptions), SnapshotOptions)!;
+        ClearTrial();
+        var version = _trialVersion;
         _trialBusy = true;
         try
         {
             var result = await Trial.ReadAsync(station, connection);
-            _trial = result;
+            if (version == _trialVersion)
+            {
+                _trial = result;
+                _trialStation = station;
+                _trialConfiguration = snapshot;
+                _trialOccupiedAddress = occupiedAddress;
+            }
             await AuditTrialAsync(station, result);
         }
         catch (Exception ex)
         {
             // 可预期的失败（地址非法 / 连接不可用 / 超时）都由结果对象返回了，走到这里说明是意外。
-            Toast.Add($"试读失败：{ex.Message}", Severity.Error);
+            if (version == _trialVersion)
+                Toast.Add($"试读失败：{ex.Message}", Severity.Error);
         }
         finally
         {

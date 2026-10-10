@@ -3,6 +3,7 @@ using DataTrace.Collector;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Web.Components.Pages;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 
 namespace DataTrace.Web.Tests;
@@ -42,7 +43,7 @@ public class StationsTrialTests : WebTestBase
         Enabled = true
     };
 
-    private IRenderedComponent<Stations> Render()
+    private IRenderedComponent<Stations> Render(Station[]? stations = null, IStationTrialReader? reader = null)
     {
         // 审计要显式返回已完成的任务：页面 await 它，返回 null 会直接炸在页面上。
         Audit
@@ -55,9 +56,11 @@ public class StationsTrialTests : WebTestBase
         Config.Snapshot = new AppConfigurationSnapshot
         {
             PlcConnections = [Mitsubishi()],
-            Stations = [Station()]
+            Stations = stations ?? [Station()]
         };
 
+        if (reader is not null)
+            Context.Services.AddSingleton(reader);
         RenderPopoverHost();
         return Context.Render<Stations>();
     }
@@ -158,6 +161,105 @@ public class StationsTrialTests : WebTestBase
                 "admin", "Trial", "Station", "ST010", null, It.IsAny<string>(),
                 It.IsAny<CancellationToken>(), "Success", It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task Switching_stations_clears_the_completed_trial()
+    {
+        var other = Station();
+        other.Id = 20;
+        other.Code = "ST020";
+        other.Sequence = 20;
+        Trial.Result = Result();
+        var cut = Render([Station(), other]);
+        ClickButton(cut, "试读一次");
+
+        await cut.InvokeAsync(() => cut.FindAll(".station-list-item-select")[1].Click());
+
+        Assert.Contains("保存 ST020", cut.Markup);
+        Assert.DoesNotContain("试读结果", cut.Markup);
+        Assert.DoesNotContain("PLT-000123", cut.Markup);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Switching_stations_discards_a_late_trial_even_after_switching_back(bool switchBack)
+    {
+        var other = Station();
+        other.Id = 20;
+        other.Code = "ST020";
+        other.Sequence = 20;
+        var pending = new TaskCompletionSource<StationTrialResult>();
+        var reader = new Mock<IStationTrialReader>();
+        reader.Setup(service => service.ReadAsync(It.IsAny<Station>(), It.IsAny<PlcConnection>(), It.IsAny<CancellationToken>()))
+            .Returns(pending.Task);
+        var cut = Render([Station(), other], reader.Object);
+        var reading = cut.FindAll("button").Single(button => button.TextContent.Contains("试读一次")).ClickAsync();
+        reader.Verify(service => service.ReadAsync(It.IsAny<Station>(), It.IsAny<PlcConnection>(), It.IsAny<CancellationToken>()), Times.Once);
+        await cut.InvokeAsync(() => cut.FindAll(".station-list-item-select")[1].Click());
+        if (switchBack)
+            await cut.InvokeAsync(() => cut.FindAll(".station-list-item-select")[0].Click());
+
+        await cut.InvokeAsync(() => pending.SetResult(Result()));
+        await reading;
+
+        Assert.DoesNotContain("试读结果", cut.Markup);
+        Assert.DoesNotContain("PLT-000123", cut.Markup);
+        Audit.Verify(service => service.WriteAsync("admin", "Trial", "Station", "ST010", null,
+            It.IsAny<string>(), It.IsAny<CancellationToken>(), "Success", It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Editing_addresses_marks_the_trial_stale_and_keeps_the_read_snapshot(bool editWhileReading)
+    {
+        var pending = new TaskCompletionSource<StationTrialResult>();
+        Station? captured = null;
+        var reader = new Mock<IStationTrialReader>();
+        reader.Setup(service => service.ReadAsync(It.IsAny<Station>(), It.IsAny<PlcConnection>(), It.IsAny<CancellationToken>()))
+            .Callback<Station, PlcConnection, CancellationToken>((station, connection, token) => captured = station)
+            .Returns(pending.Task);
+        var station = Station();
+        station.Positions.First().OccupiedAddress = "D1020";
+        var cut = Render([station], reader.Object);
+        var reading = cut.FindAll("button").Single(button => button.TextContent.Contains("试读一次")).ClickAsync();
+        if (!editWhileReading)
+        {
+            await cut.InvokeAsync(() => pending.SetResult(Result()));
+            await reading;
+        }
+        await cut.InvokeAsync(() => cut.FindComponents<MudTextField<string>>().Single(field => field.Instance.Label == "托盘码地址")
+            .Instance.ValueChanged.InvokeAsync("D2010"));
+        await cut.InvokeAsync(() => cut.FindComponents<MudTextField<string>>().Single(field => field.Instance.Label == "有料地址")
+            .Instance.ValueChanged.InvokeAsync("D2020"));
+        if (editWhileReading)
+        {
+            await cut.InvokeAsync(() => pending.SetResult(Result()));
+            await reading;
+        }
+
+        Assert.Equal("D1010", captured!.PalletCodeAddress);
+        Assert.Equal("D1020", captured.Positions.First().OccupiedAddress);
+        var panel = cut.Find(".dt-trial-panel");
+        Assert.Contains("已过期", panel.TextContent);
+        Assert.Contains("ST010", panel.TextContent);
+        Assert.Contains("D1010", panel.TextContent);
+        Assert.Contains("D1020", panel.TextContent);
+        Assert.DoesNotContain("D2010", panel.TextContent);
+        Assert.DoesNotContain("D2020", panel.TextContent);
+
+        reader.Setup(service => service.ReadAsync(It.IsAny<Station>(), It.IsAny<PlcConnection>(), It.IsAny<CancellationToken>()))
+            .Callback<Station, PlcConnection, CancellationToken>((station, connection, token) => captured = station)
+            .ReturnsAsync(Result());
+        ClickButton(cut, "试读一次");
+        Assert.Equal("D2010", captured.PalletCodeAddress);
+        Assert.Equal("D2020", captured.Positions.First().OccupiedAddress);
+        panel = cut.Find(".dt-trial-panel");
+        Assert.DoesNotContain("已过期", panel.TextContent);
+        Assert.Contains("D2010", panel.TextContent);
+        Assert.Contains("D2020", panel.TextContent);
     }
 
     private static StationTrialResult Result() => new(

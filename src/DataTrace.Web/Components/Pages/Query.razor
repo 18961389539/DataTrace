@@ -772,6 +772,17 @@ else
                 try
                 {
                     result = await Store.QueryAsync(BuildRequest((_page - 1) * _pageSize, _pageSize));
+                    if (version != _queryVersion)
+                    {
+                        _loadPending = true;
+                        continue;
+                    }
+                    var pages = Math.Max(1, (int)Math.Ceiling(result.Total / (double)_pageSize));
+                    if (_page > pages)
+                    {
+                        _page = pages;
+                        result = await Store.QueryAsync(BuildRequest((_page - 1) * _pageSize, _pageSize));
+                    }
                 }
                 catch (Exception) when (version != _queryVersion)
                 {
@@ -788,12 +799,6 @@ else
                 _total = result.Total;
                 _loadFailed = false;
                 _pages = Math.Max(1, (int)Math.Ceiling(_total / (double)_pageSize));
-                if (_page > _pages)
-                {
-                    _page = _pages;
-                    result = await Store.QueryAsync(BuildRequest((_page - 1) * _pageSize, _pageSize));
-                    _items = result.Items;
-                }
             }
             while (_loadPending);
         }

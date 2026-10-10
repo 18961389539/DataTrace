@@ -268,6 +268,76 @@ public class QueryPageTests : WebTestBase
         Assert.DoesNotContain("查询失败", cut.Markup);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Superseded_last_page_correction_preserves_the_latest_search(bool fails)
+    {
+        var correction = new TaskCompletionSource<CollectQueryResult>();
+        var latest = new TaskCompletionSource<CollectQueryResult>();
+        _store.SetupSequence(store => store.QueryAsync(It.IsAny<CollectQueryRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CollectQueryResult { Total = 41, Items = [] })
+            .ReturnsAsync(new CollectQueryResult { Total = 1, Items = [] })
+            .Returns(correction.Task)
+            .Returns(latest.Task);
+        var cut = Render();
+        var paging = cut.InvokeAsync(() => cut.FindComponent<MudPagination>().Instance.SelectedChanged.InvokeAsync(3));
+        cut.WaitForAssertion(() => _store.Verify(store => store.QueryAsync(
+            It.IsAny<CollectQueryRequest>(), It.IsAny<CancellationToken>()), Times.Exactly(3)));
+        await cut.InvokeAsync(() => cut.FindComponent<MudSelect<int?>>().Instance.ValueChanged.InvokeAsync(23));
+
+        if (fails)
+            await cut.InvokeAsync(() => correction.SetException(new InvalidOperationException("old correction")));
+        else
+            await cut.InvokeAsync(() => correction.SetResult(new CollectQueryResult
+            {
+                Total = 1,
+                Items = [new CollectRecordListItem { MonthKey = "202610", Record = new CollectRecord { PalletCode = "OBSOLETE" } }]
+            }));
+
+        cut.WaitForAssertion(() => _store.Verify(store => store.QueryAsync(
+            It.Is<CollectQueryRequest>(request => request.StationId == 23 && request.Skip == 0),
+            It.IsAny<CancellationToken>()), Times.Once));
+        Assert.DoesNotContain("OBSOLETE", cut.Markup);
+        Assert.DoesNotContain("查询失败", cut.Markup);
+        await cut.InvokeAsync(() => latest.SetResult(new CollectQueryResult { Total = 0, Items = [] }));
+        await paging;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Current_last_page_correction_updates_the_total_or_reports_its_failure(bool fails)
+    {
+        var sequence = _store.SetupSequence(store => store.QueryAsync(It.IsAny<CollectQueryRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CollectQueryResult { Total = 41, Items = [] })
+            .ReturnsAsync(new CollectQueryResult { Total = 1, Items = [] });
+        if (fails)
+            sequence.ThrowsAsync(new InvalidOperationException("current correction"));
+        else
+            sequence.ReturnsAsync(new CollectQueryResult
+            {
+                Total = 2,
+                Items = [new CollectRecordListItem { MonthKey = "202610", Record = new CollectRecord { PalletCode = "CORRECTED" } }]
+            });
+        var cut = Render();
+
+        await cut.InvokeAsync(() => cut.FindComponent<MudPagination>().Instance.SelectedChanged.InvokeAsync(3));
+
+        if (fails)
+        {
+            Assert.Contains("查询失败", cut.Markup);
+            Assert.DoesNotContain("CORRECTED", cut.Markup);
+        }
+        else
+        {
+            Assert.Contains("CORRECTED", cut.Markup);
+            Assert.Contains("共 2 条", cut.Markup);
+            Assert.Equal(1, cut.FindComponent<MudPagination>().Instance.Selected);
+        }
+        _store.Verify(store => store.QueryAsync(It.IsAny<CollectQueryRequest>(), It.IsAny<CancellationToken>()), Times.Exactly(3));
+    }
+
     [Fact]
     public void Session_deep_link_loads_the_exact_session_without_manual_serial_input()
     {
