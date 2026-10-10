@@ -1,5 +1,6 @@
 @using DataTrace.Application.Configuration
 @using DataTrace.Application.Runtime
+@using DataTrace.Application.Reporting
 @using DataTrace.Domain.Constants
 @using DataTrace.Domain.Entities
 @using DataTrace.Domain.Enums
@@ -59,12 +60,36 @@ else
         没有找到完全匹配的流水号。请核对编号，或确认对应月库记录仍在保留期内。
     </MudAlert>
 }
+else if (_traces.Count > 0 && SelectedTrace is null)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">
+        链接指定的生产会话已不存在或不匹配，请从下面选择要查看的会话。
+    </MudAlert>
+    <MudPaper Class="dt-filter-card mb-3">
+        <MudSelect T="string" Value="_selectedTraceKey" ValueChanged="SelectTraceAsync"
+                   Label="生产会话" Dense="true" ShrinkLabel="true">
+            @foreach (var candidate in _traces)
+            {
+                <MudSelectItem T="string" Value="@TraceKey(candidate)">
+                    @TraceOption(candidate)
+                </MudSelectItem>
+            }
+        </MudSelect>
+    </MudPaper>
+}
 else if (_traces.Count > 0 && SelectedTrace is { } trace)
 {
     @if (_traces.Count > 1)
     {
         <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">
-            该流水号关联到多个生产会话，不能合并推断；请选择要查看的会话。
+            @if (_preferredMonthKey is not null && _preferredSessionId is not null && SelectedTrace is not null)
+            {
+                <text>该流水号关联到多个生产会话，不能合并推断；已按链接定位至 @TraceKey(SelectedTrace)。</text>
+            }
+            else
+            {
+                <text>该流水号关联到多个生产会话，不能合并推断；请选择要查看的会话。</text>
+            }
         </MudAlert>
         <MudPaper Class="dt-filter-card mb-3">
             <MudSelect T="string" Value="_selectedTraceKey" ValueChanged="SelectTraceAsync"
@@ -270,10 +295,16 @@ else
 
 @code {
     [Parameter] public string? InitialSerialNo { get; set; }
+    [Parameter] public string? InitialMonthKey { get; set; }
+    [Parameter] public long? InitialSessionId { get; set; }
     [Parameter] public EventCallback<string?> OnSearchCompleted { get; set; }
 
     private string? _serialNo;
     private string? _appliedInitialSerial;
+    private string? _appliedInitialMonthKey;
+    private long? _appliedInitialSessionId;
+    private string? _preferredMonthKey;
+    private long? _preferredSessionId;
     private string? _selectedTraceKey;
     private string? _error;
     private bool _loading;
@@ -292,12 +323,18 @@ else
     protected override async Task OnParametersSetAsync()
     {
         var initial = InitialSerialNo?.Trim() ?? "";
-        if (string.Equals(initial, _appliedInitialSerial, StringComparison.Ordinal))
+        if (string.Equals(initial, _appliedInitialSerial, StringComparison.Ordinal)
+            && string.Equals(InitialMonthKey, _appliedInitialMonthKey, StringComparison.Ordinal)
+            && InitialSessionId == _appliedInitialSessionId)
         {
             return;
         }
 
         _appliedInitialSerial = initial;
+        _appliedInitialMonthKey = InitialMonthKey;
+        _appliedInitialSessionId = InitialSessionId;
+        _preferredMonthKey = InitialMonthKey;
+        _preferredSessionId = InitialSessionId;
         _serialNo = initial;
         if (!string.IsNullOrWhiteSpace(initial))
         {
@@ -340,6 +377,12 @@ else
         }
 
         _serialNo = serialNo;
+        if (!string.Equals(serialNo, _appliedInitialSerial, StringComparison.Ordinal))
+        {
+            _preferredMonthKey = null;
+            _preferredSessionId = null;
+        }
+
         _appliedInitialSerial = serialNo;
         // 不先清空旧结果：履历高度差一个量级，先抽掉再撑回来会让整个页面跳一下，
         // 操作工也失去了对照。旧内容保留，顶部压一条进度条，查完无缝替换。
@@ -349,7 +392,13 @@ else
         try
         {
             _traces = await Store.FindSessionTracesBySerialNoAsync(serialNo);
-            _selectedTraceKey = _traces.Count > 0 ? TraceKey(_traces[0]) : null;
+            var preferred = _traces.FirstOrDefault(trace =>
+                trace.MonthKey == _preferredMonthKey && trace.SessionId == _preferredSessionId);
+            _selectedTraceKey = preferred is not null
+                ? TraceKey(preferred)
+                : _preferredMonthKey is null && _preferredSessionId is null && _traces.Count > 0
+                    ? TraceKey(_traces[0])
+                    : null;
         }
         catch (Exception ex)
         {
@@ -391,6 +440,12 @@ else
     private async Task SelectTraceAsync(string? key)
     {
         _selectedTraceKey = key;
+        if (SelectedTrace is { } selected)
+        {
+            _preferredMonthKey = selected.MonthKey;
+            _preferredSessionId = selected.SessionId;
+        }
+
         await LoadMesAsync();
     }
 

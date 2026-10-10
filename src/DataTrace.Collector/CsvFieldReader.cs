@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Text;
+using CsvHelper;
+using CsvHelper.Configuration;
 
 namespace DataTrace.Collector;
 
@@ -36,6 +38,11 @@ public static class CsvFieldReader
         try
         {
             records = ParseRecords(text);
+        }
+        catch (CsvHelperException)
+        {
+            error = "CSV 格式无效";
+            return false;
         }
         catch (FormatException ex)
         {
@@ -122,79 +129,19 @@ public static class CsvFieldReader
     private static List<List<string>> ParseRecords(string text)
     {
         var records = new List<List<string>>();
-        var row = new List<string>();
-        var field = new StringBuilder();
-        var inQuotes = false;
-        var fieldStarted = false;
-
-        for (var i = 0; i < text.Length; i++)
+        var configuration = new CsvConfiguration(CultureInfo.InvariantCulture)
         {
-            var c = text[i];
-            if (inQuotes)
-            {
-                if (c == '"')
-                {
-                    if (i + 1 < text.Length && text[i + 1] == '"')
-                    {
-                        field.Append('"');
-                        i++;
-                    }
-                    else
-                    {
-                        inQuotes = false;
-                    }
-                }
-                else
-                {
-                    field.Append(c);
-                }
+            HasHeaderRecord = false,
+            IgnoreBlankLines = false,
+            Mode = CsvMode.RFC4180,
+            BadDataFound = _ => throw new FormatException("CSV 格式无效")
+        };
 
-                continue;
-            }
-
-            if (c == '"' && !fieldStarted)
-            {
-                inQuotes = true;
-                fieldStarted = true;
-                continue;
-            }
-
-            if (c == ',')
-            {
-                row.Add(field.ToString());
-                field.Clear();
-                fieldStarted = false;
-                continue;
-            }
-
-            if (c == '\r')
-            {
-                continue;
-            }
-
-            if (c == '\n')
-            {
-                row.Add(field.ToString());
-                field.Clear();
-                fieldStarted = false;
-                records.Add(row);
-                row = [];
-                continue;
-            }
-
-            field.Append(c);
-            fieldStarted = true;
-        }
-
-        if (inQuotes)
+        using var reader = new StringReader(text);
+        using var csv = new CsvReader(reader, configuration);
+        while (csv.Read())
         {
-            throw new FormatException("引号没有闭合");
-        }
-
-        if (fieldStarted || row.Count > 0)
-        {
-            row.Add(field.ToString());
-            records.Add(row);
+            records.Add((csv.Parser.Record ?? Array.Empty<string>()).ToList());
         }
 
         return records;

@@ -1,56 +1,39 @@
-@* 统一折线图：坐标轴 + 网格 + 图例 + 悬停数值，各页面复用。
-   坐标文字用 MarkupString 输出：Razor 把 <text> 当作内置标签，不能带属性。
-   悬停读数不需要组件参与：点位带 data-tip，js/datatrace.js 在 document 上委托监听鼠标。 *@
+@* ECharts 绘图；图例保留为 HTML，以便显示抽稀前的真实极值。 *@
 @using System.Globalization
-@using System.Text
-@if (_plots.Count == 0)
-{
-    <MudText Typo="Typo.body2" Class="dt-muted py-3">@EmptyText</MudText>
-}
-else
-{
-    @if (ShowLegend)
-    {
-        <div class="dt-legend">
-            @foreach (var plot in _plots)
-            {
-                <span class="dt-legend-item">
-                    <span class="dt-legend-swatch" style="@($"background:{plot.Color}")"></span>
-                    <span>@LegendText(plot)</span>
-                    <span class="dt-muted">@ChartUtil.Label(plot.Min) ~ @ChartUtil.Label(plot.Max)</span>
-                </span>
-            }
-        </div>
-    }
+@implements IAsyncDisposable
+@inject IJSRuntime Js
 
-    <div class="dt-chart-box">
-        @* 带轴的图必须等比（meet）：preserveAspectRatio="none" 会把轴标签一起拉扁。
-           迷你曲线没有文字，可以横向铺满并锁死高度——否则 240×48 的 viewBox 在 3 列卡片里
-           渲染成 60px、大屏 2 列时变成 128px，同一条曲线在两种布局下差一倍多。 *@
-        <svg class="dt-chart" viewBox="@($"0 0 {ViewWidth} {Height}")"
-             style="@(ShowAxis ? "height:auto" : $"height:{Height}px")"
-             preserveAspectRatio="@(ShowAxis ? "xMidYMid meet" : "none")">
-            @((MarkupString)_axisMarkup)
-            @((MarkupString)_seriesMarkup)
-        </svg>
-        @* 悬停读数面板：内容与位置都由 js/datatrace.js 填，见那里的 dtChartReadout。
-           带轴的图才铺：迷你曲线没有点位、也没有可读的距离。 *@
-        @if (ShowAxis)
+@if (ShowLegend && _plots.Count > 0)
+{
+    <div class="dt-legend">
+        @foreach (var plot in _plots)
         {
-            <div class="dt-chart-readout" hidden aria-hidden="true"></div>
+            <span class="dt-legend-item">
+                <span class="dt-legend-swatch" style="@($"background:{plot.Color}")"></span>
+                <span>@LegendText(plot)</span>
+                <span class="dt-muted">@ChartUtil.Label(plot.Min) ~ @ChartUtil.Label(plot.Max)</span>
+            </span>
         }
     </div>
 }
 
+<div class="dt-chart-box">
+    @if (_plots.Count == 0)
+    {
+        <MudText Typo="Typo.body2" Class="dt-muted py-3">@EmptyText</MudText>
+    }
+    <div @ref="_chartElement" class="dt-chart" style="@ChartStyle"
+         role="img" aria-label="@ChartAccessibilityLabel" hidden="@(_plots.Count == 0)"></div>
+</div>
+
 @code {
     [Parameter] public IReadOnlyList<LineSeries> Series { get; set; } = [];
 
-    /// <summary>SVG 逻辑宽度；实际宽度由 CSS 100% 决定，等比缩放不变形。</summary>
+    /// <summary>有坐标轴时用于保持图表宽高比。</summary>
     [Parameter] public int ViewWidth { get; set; } = 900;
 
     /// <summary>
-    /// 绘图区逻辑高度。ShowAxis=false 时同时是渲染高度（px）；
-    /// 带轴的图走等比缩放，实际高度仍由容器宽度决定，以免轴标签被拉变形。
+    /// 有坐标轴时用于宽高比；迷你图使用固定像素高度。
     /// </summary>
     [Parameter] public int Height { get; set; } = 260;
 
@@ -71,29 +54,55 @@ else
 
     [Parameter] public string EmptyText { get; set; } = "暂无曲线数据";
 
+    private const string ModulePath = "./js/echarts-line-chart.js";
+
     private readonly List<Plot> _plots = [];
-    private ChartBox _box = new(900, 260);
+    private ElementReference _chartElement;
+    private IJSObjectReference? _module;
     private double _xMin;
     private double _xMax;
     private double _yMin;
     private double _yMax;
-    private IReadOnlyList<double> _yTicks = [];
-    private IReadOnlyList<double> _xTicks = [];
     private bool _annotated;
-    private string _axisMarkup = "";
-    private string _seriesMarkup = "";
+
+    private string ChartStyle => ShowAxis
+        ? $"aspect-ratio:{Math.Max(1, ViewWidth)} / {Math.Max(1, Height)}"
+        : $"height:{Math.Max(1, Height)}px";
+
+    private string ChartAccessibilityLabel => _plots.Count == 0
+        ? EmptyText
+        : $"{SeriesAxisName} 折线图：{string.Join("、", _plots.Select(plot => plot.Name))}";
 
     protected override void OnParametersSet() => Rebuild();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        _module ??= await Js.InvokeAsync<IJSObjectReference>("import", ModulePath);
+        await _module.InvokeVoidAsync("update", _chartElement, BuildOptions());
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_module is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _module.InvokeVoidAsync("dispose", _chartElement);
+            await _module.DisposeAsync();
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+    }
 
     private void Rebuild()
     {
         _plots.Clear();
-        _axisMarkup = "";
-        _seriesMarkup = "";
         // 首尾标注与刻度文字各占一行，只有一行留白时两者会叠成一团
         _annotated = ShowAxis && (!string.IsNullOrEmpty(XStartText) || !string.IsNullOrEmpty(XEndText));
-        _box = new ChartBox(ViewWidth, Height, ShowAxis ? 58 : 4, 14, ShowAxis ? 12 : 4,
-            ShowAxis ? (_annotated ? 48 : 30) : 4);
 
         foreach (var series in Series.Where(s => s.Values.Length > 0))
         {
@@ -119,82 +128,31 @@ else
             _xMin -= 0.5;
             _xMax += 0.5;
         }
-
-        _yTicks = ChartUtil.Ticks(_yMin, _yMax, ShowAxis ? 5 : 2);
-        _xTicks = ShowAxis ? ChartUtil.Ticks(_xMin, _xMax, 5) : [];
-        BuildMarkup();
     }
 
-    private void BuildMarkup()
+    private object BuildOptions()
     {
-        var axis = new StringBuilder();
-        if (ShowAxis)
+        return new
         {
-            foreach (var tick in _yTicks)
+            showAxis = ShowAxis,
+            showLegend = ShowLegend,
+            annotated = _annotated,
+            showPoints = ShowPoints,
+            xMin = _xMin,
+            xMax = _xMax,
+            yMin = _yMin,
+            yMax = _yMax,
+            xStartText = XStartText,
+            xEndText = XEndText,
+            ariaLabel = ChartAccessibilityLabel,
+            series = _plots.Select(plot => new
             {
-                var y = F(MapY(tick));
-                axis.Append($"<line x1=\"{F(_box.Left)}\" y1=\"{y}\" x2=\"{F(_box.Left + _box.PlotWidth)}\" ")
-                    .Append($"y2=\"{y}\" style=\"stroke:var(--dt-chart-grid)\" stroke-width=\"1\" />");
-                axis.Append($"<text x=\"{F(_box.Left - 6)}\" y=\"{F(MapY(tick) + 4)}\" text-anchor=\"end\" ")
-                    .Append($"font-size=\"12\" style=\"fill:var(--dt-chart-axis)\">{Esc(ChartUtil.Label(tick))}</text>");
-            }
-
-            foreach (var tick in _xTicks)
-            {
-                var x = F(MapX(tick));
-                axis.Append($"<line x1=\"{x}\" y1=\"{F(_box.Top)}\" x2=\"{x}\" ")
-                    .Append($"y2=\"{F(_box.Top + _box.PlotHeight)}\" style=\"stroke:var(--dt-chart-grid)\" stroke-width=\"1\" />");
-                // 最左刻度居中会与 Y 轴末位标签撞在一起，改成从轴角起排
-                var anchor = tick <= _xMin + 1e-9 ? "start" : "middle";
-                axis.Append($"<text x=\"{x}\" y=\"{F(_box.Top + _box.PlotHeight + 17)}\" text-anchor=\"{anchor}\" ")
-                    .Append($"font-size=\"12\" style=\"fill:var(--dt-chart-axis)\">{Esc(ChartUtil.Label(tick))}</text>");
-            }
-
-            var baseline = F(_box.Top + _box.PlotHeight);
-            axis.Append($"<line x1=\"{F(_box.Left)}\" y1=\"{baseline}\" x2=\"{F(_box.Left + _box.PlotWidth)}\" ")
-                .Append($"y2=\"{baseline}\" style=\"stroke:var(--dt-chart-axis)\" stroke-width=\"1\" />");
-
-            if (!string.IsNullOrEmpty(XStartText) || !string.IsNullOrEmpty(XEndText))
-            {
-                var textY = F(Height - 4);
-                axis.Append($"<text x=\"{F(_box.Left)}\" y=\"{textY}\" font-size=\"12\" ")
-                    .Append($"style=\"fill:var(--dt-chart-axis)\">{Esc(XStartText)}</text>");
-                axis.Append($"<text x=\"{F(_box.Left + _box.PlotWidth)}\" y=\"{textY}\" text-anchor=\"end\" ")
-                    .Append($"font-size=\"12\" style=\"fill:var(--dt-chart-axis)\">{Esc(XEndText)}</text>");
-            }
-        }
-
-        _axisMarkup = axis.ToString();
-
-        var body = new StringBuilder();
-        foreach (var plot in _plots)
-        {
-            // stroke 走 style：呈现属性不解析 var()，写 stroke="var(--dt-series-*)" 会整条变黑。
-            body.Append($"<polyline fill=\"none\" style=\"stroke:{plot.Color}\" stroke-width=\"2\" ")
-                .Append($"vector-effect=\"non-scaling-stroke\" stroke-linejoin=\"round\" points=\"{Polyline(plot)}\" />");
-
-            if (!ShowPoints || plot.X.Length > 120)
-            {
-                continue;
-            }
-
-            for (var i = 0; i < plot.X.Length; i++)
-            {
-                var unit = string.IsNullOrEmpty(plot.Unit) ? "" : " " + plot.Unit;
-                // 序号轴取整：ChartUtil.Label 对 0 会补成 "0.000"，读起来像坏掉的数字。
-                var xText = plot.IndexAxis
-                    ? plot.X[i].ToString("0", CultureInfo.InvariantCulture)
-                    : ChartUtil.Label(plot.X[i]);
-                // 读数文案：轴名在前、序列名在后（"位移 1.086 → 压力 12.9 kN" 的读法），
-                // 与图上"横轴是位移、纵轴是压力"的顺序一致；多条序列时各点自报家门，不必再对图例。
-                var tip = $"{SeriesAxisName} {xText} → {plot.Name} {ChartUtil.Label(plot.Y[i])}{unit}";
-                // 数值放 data-tip 而不是 <title>：面板已即时给出读数，再挂原生提示会出现两个浮层抢光标。
-                body.Append($"<circle class=\"dt-point\" r=\"3.5\" cx=\"{F(MapX(plot.X[i]))}\" cy=\"{F(MapY(plot.Y[i]))}\" ")
-                    .Append($"style=\"color:{plot.Color}\" stroke=\"currentColor\" stroke-width=\"1\" data-tip=\"{Esc(tip)}\"></circle>");
-            }
-        }
-
-        _seriesMarkup = body.ToString();
+                name = plot.Name,
+                color = plot.Color,
+                showSymbol = ShowPoints && plot.X.Length <= 120,
+                data = BuildPoints(plot)
+            }).ToArray()
+        };
     }
 
     /// <summary>
@@ -208,7 +166,8 @@ else
         // 自带 X 轴（如位移曲线）时按它抽稀；X 列比数据短就不认这一列，退回按点序号画。
         if (series.XValues is { Length: > 0 } custom && custom.Length >= values.Length)
         {
-            var (xs, ys, min, max) = ChartUtil.SampleEnvelope(values, custom, MaxPoints);
+            var xsForValues = custom.Length == values.Length ? custom : custom[..values.Length];
+            var (xs, ys, min, max) = ChartUtil.SampleEnvelope(values, xsForValues, MaxPoints);
             return (xs, ys, min, max, false);
         }
 
@@ -225,36 +184,21 @@ else
         return (indexX, indexY, rangeMin, rangeMax, true);
     }
 
-    private double MapX(double x)
-        => _box.Left + (x - _xMin) / (_xMax - _xMin) * _box.PlotWidth;
-
-    private double MapY(double y) => _box.Y(y, _yMin, _yMax);
-
-    private string Polyline(Plot plot)
+    private object[] BuildPoints(Plot plot)
     {
-        var builder = new StringBuilder();
+        var points = new object[plot.X.Length];
         for (var i = 0; i < plot.X.Length; i++)
         {
-            if (i > 0)
-            {
-                builder.Append(' ');
-            }
-
-            builder.Append(F(MapX(plot.X[i])));
-            builder.Append(',');
-            builder.Append(F(MapY(plot.Y[i])));
+            var unit = string.IsNullOrEmpty(plot.Unit) ? "" : " " + plot.Unit;
+            var xText = plot.IndexAxis
+                ? plot.X[i].ToString("0", CultureInfo.InvariantCulture)
+                : ChartUtil.Label(plot.X[i]);
+            var tooltip = $"{SeriesAxisName} {xText} → {plot.Name} {ChartUtil.Label(plot.Y[i])}{unit}";
+            points[i] = new { value = new[] { plot.X[i], plot.Y[i] }, tip = tooltip };
         }
 
-        return builder.ToString();
+        return points;
     }
-
-    private static string F(double value) => value.ToString("0.##", CultureInfo.InvariantCulture);
-
-    /// <summary>拼接 SVG 文本前统一转义，点位/曲线名来自配置，可能含特殊字符。</summary>
-    private static string Esc(string? text)
-        => string.IsNullOrEmpty(text)
-            ? ""
-            : text.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
 
     private static string LegendText(Plot plot)
         => string.IsNullOrEmpty(plot.Unit) ? plot.Name : $"{plot.Name}（{plot.Unit}）";

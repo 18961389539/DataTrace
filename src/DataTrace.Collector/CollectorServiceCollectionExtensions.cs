@@ -1,4 +1,5 @@
 using DataTrace.Application.Realtime;
+using DataTrace.Domain.Validation;
 using DataTrace.Plc;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -6,8 +7,22 @@ namespace DataTrace.Collector;
 
 public static class CollectorServiceCollectionExtensions
 {
+    public static IHttpClientBuilder AddDataTraceMesHttpClient(this IServiceCollection services)
+    {
+        var client = services.AddHttpClient("mes", http => http.Timeout = Timeout.InfiniteTimeSpan);
+        client.AddStandardResilienceHandler(options =>
+        {
+            options.Retry.ShouldHandle = _ => ValueTask.FromResult(false);
+            options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(SettingsLimits.MaxMesTimeoutSeconds);
+            options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(SettingsLimits.MaxMesTimeoutSeconds);
+            options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(SettingsLimits.MaxMesTimeoutSeconds * 2);
+        });
+        return client;
+    }
+
     public static IServiceCollection AddDataTraceCollector(this IServiceCollection services)
     {
+        services.AddDataTraceMesHttpClient();
         services.AddSingleton<StationCollectPipeline>();
         services.AddScoped<CurveBaselineFactory>();
         services.AddSingleton<CollectionHostedService>();

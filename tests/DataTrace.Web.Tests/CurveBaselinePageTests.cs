@@ -49,12 +49,13 @@ public class CurveBaselinePageTests : WebTestBase
         return Context.RenderComponent<CurveBaseline>();
     }
 
-    private static CurveBaselineReport Report(string curveCode) => new()
+    private static CurveBaselineReport Report(string curveCode, string recipeCode = "") => new()
     {
         CurveDefinitionId = 3,
         CurveCode = curveCode,
         CurveName = "位移压力曲线",
         SeriesName = "压力",
+        RecipeCode = recipeCode,
         Template = CurveTemplateBuilder.Build([]),
         Shadow = new CurveShadowComparison()
     };
@@ -169,6 +170,35 @@ public class CurveBaselinePageTests : WebTestBase
 
         Assert.Contains("型号切换中", cut.Markup);
         Assert.Contains("缓存为 PREVIOUS", cut.Markup);
+    }
+
+    [Fact]
+    public void Baseline_header_uses_the_recipe_that_was_actually_analyzed()
+    {
+        Config.Snapshot = new AppConfigurationSnapshot
+        {
+            ActiveRecipe = new Recipe { Code = "CURRENT" },
+            Stations =
+            [
+                new Station
+                {
+                    Id = 10,
+                    Code = "ST010",
+                    Name = "压装",
+                    Curves = [new CurveDefinition { Id = 3, StationId = 10, Code = "ST010_PD", Name = "位移压力曲线" }]
+                }
+            ]
+        };
+        _templates
+            .Setup(s => s.GetBaselineAsync(
+                It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(),
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.FromResult<CurveBaselineReport?>(Report("CURVE", "ANALYZED")));
+
+        var cut = Render();
+
+        cut.WaitForState(() => cut.Markup.Contains("型号 ANALYZED"));
+        Assert.Contains("当前型号已切换，请刷新分析", cut.Markup);
     }
 
     [Fact]

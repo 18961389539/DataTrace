@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Text;
+using CsvHelper;
+using CsvHelper.Configuration;
 
 namespace DataTrace.Shared;
 
@@ -11,12 +13,11 @@ public static class CsvExporter
     /// <summary>把表头与数据行拼成 CSV 文本（不含 BOM）。</summary>
     public static string Build(IEnumerable<string> headers, IEnumerable<IEnumerable<string?>> rows)
     {
-        var builder = new StringBuilder();
-        builder.Append(string.Join(',', headers.Select(Escape)));
+        var builder = new StringBuilder(WriteRecord(headers));
         foreach (var row in rows)
         {
             builder.Append('\n');
-            builder.Append(string.Join(',', row.Select(Escape)));
+            builder.Append(WriteRecord(row));
         }
 
         return builder.ToString();
@@ -24,7 +25,7 @@ public static class CsvExporter
 
     /// <summary>转义并输出单行 CSV，供大文件导出逐行写入流。</summary>
     public static string BuildRow(IEnumerable<string?> values)
-        => string.Join(',', values.Select(Escape));
+        => WriteRecord(values);
 
     /// <summary>把 CSV 文本转成带 BOM 的 Base64，交给前端 Blob 下载。</summary>
     public static string ToBase64(string csv)
@@ -39,22 +40,33 @@ public static class CsvExporter
     /// <summary>导出文件名统一带时间戳，避免多次导出互相覆盖。</summary>
     public static string FileName(string prefix) => $"{prefix}_{DateTime.Now:yyyyMMdd_HHmmss}.csv";
 
-    private static string Escape(string? value)
+    private static string WriteRecord(IEnumerable<string?> values)
     {
-        var text = value ?? "";
-        // 以 = + @ 开头的单元格进 Excel 会被当公式执行（DDE 这类注入就靠它）；
-        // 前置单引号是最省事的挡法，Excel 会把整格当文本。不含 "-"：
-        // 负数值列很常见，而 "-2+3" 这种算术载荷本身没有执行能力。
-        if (text.Length > 0 && text[0] is '=' or '+' or '@')
+        using var textWriter = new StringWriter(CultureInfo.InvariantCulture);
+        var configuration = new CsvConfiguration(CultureInfo.InvariantCulture)
         {
-            text = "'" + text;
+            Mode = CsvMode.RFC4180,
+            NewLine = "\n",
+            ShouldQuote = args => args.Field is not null && args.Field.IndexOfAny([',', '"', '\r', '\n']) >= 0
+        };
+        using (var csv = new CsvWriter(textWriter, configuration))
+        {
+            foreach (var value in values)
+            {
+                var text = value ?? "";
+                // Excel 会执行以 =、+、@ 开头的单元格；负号保留给正常负数。
+                if (text.Length > 0 && text[0] is '=' or '+' or '@')
+                {
+                    text = "'" + text;
+                }
+
+                csv.WriteField(text);
+            }
+
+            csv.NextRecord();
         }
 
-        if (text.IndexOfAny([',', '"', '\n', '\r']) < 0)
-        {
-            return text;
-        }
-
-        return "\"" + text.Replace("\"", "\"\"") + "\"";
+        var record = textWriter.ToString();
+        return record.EndsWith('\n') ? record[..^1] : record;
     }
 }

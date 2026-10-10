@@ -298,8 +298,9 @@ public class SpoolReplayServiceTests
         var spool = ctx.Provider.GetRequiredService<ISpoolStore>();
 
         // 先把 P001 真写进库，再让它以"没删掉的缓存件"出现；P002 是正常积压。
-        await writer.SaveAsync(RequestWithSession("P001"));
-        await spool.SaveAsync(RequestWithSession("P001"));
+        var alreadyStored = RequestWithSession("P001");
+        await writer.SaveAsync(alreadyStored);
+        await spool.SaveAsync(alreadyStored);
         await spool.SaveAsync(RequestWithSession("P002"));
 
         var done = await ReplayRunner(ctx, spool).ReplayAllAsync();
@@ -318,6 +319,204 @@ public class SpoolReplayServiceTests
         Assert.Equal(2, result.Total);
     }
 
+    [Theory]
+    [InlineData(SessionStatus.Open)]
+    [InlineData(SessionStatus.Abnormal)]
+    public async Task ReplayRepairsActiveSessionAfterPostCommitFailure(SessionStatus status)
+    {
+        await using var ctx = await InfrastructureContext.CreateAsync();
+        var initial = RequestWithSession("P001");
+        initial.UpsertSession!.Status = status;
+        var request = new CollectSaveRequest
+        {
+            MonthKey = initial.MonthKey,
+            UpsertSession = initial.UpsertSession,
+            Record = initial.Record,
+            ActiveSession = new ActiveSessionIndex
+            {
+                PalletCode = "P001",
+                SerialNo = initial.Record.SerialNo,
+                MonthKey = initial.MonthKey,
+                StartTime = initial.Record.TriggerTime
+            }
+        };
+        var failingWriter = new RuntimeStore(
+            ctx.Provider.GetRequiredService<RuntimeDbFactory>(),
+            ctx.Provider.GetRequiredService<ICurveFileStore>(),
+            new FailOnUpsertActiveSessionStore());
+
+        await Assert.ThrowsAsync<PostCommitStateUpdateException>(() => failingWriter.SaveAsync(request));
+        var sessions = ctx.Scope.ServiceProvider.GetRequiredService<IActiveSessionStore>();
+        Assert.Null(await sessions.FindByPalletAsync("P001"));
+        var spool = ctx.Provider.GetRequiredService<ISpoolStore>();
+        await spool.SaveAsync(request);
+
+        Assert.Equal(1, await ReplayRunner(ctx, spool).ReplayAllAsync());
+        Assert.Equal(request.Record.PalletSessionId, (await sessions.FindByPalletAsync("P001"))?.SessionId);
+        Assert.Single(await ctx.Provider.GetRequiredService<ICollectQuery>().GetSessionRecordsAsync(
+            request.MonthKey, request.Record.PalletSessionId));
+        Assert.Empty(await spool.ListAsync());
+    }
+
+    [Fact]
+    public async Task ReplayKeepsSpoolWhenPostCommitRepairStillFails()
+    {
+        await using var ctx = await InfrastructureContext.CreateAsync(configure: services =>
+            services.AddScoped<IActiveSessionStore>(_ => new FailOnUpsertActiveSessionStore()));
+        var initial = RequestWithSession("P001");
+        var request = new CollectSaveRequest
+        {
+            MonthKey = initial.MonthKey,
+            UpsertSession = initial.UpsertSession,
+            Record = initial.Record,
+            ActiveSession = new ActiveSessionIndex
+            {
+                PalletCode = "P001",
+                SerialNo = initial.Record.SerialNo,
+                MonthKey = initial.MonthKey,
+                StartTime = initial.Record.TriggerTime
+            }
+        };
+        await Assert.ThrowsAsync<PostCommitStateUpdateException>(() =>
+            ctx.Scope.ServiceProvider.GetRequiredService<ICollectWriter>().SaveAsync(request));
+        var spool = ctx.Provider.GetRequiredService<ISpoolStore>();
+        await spool.SaveAsync(request);
+
+        Assert.Equal(0, await ReplayRunner(ctx, spool).ReplayAllAsync());
+        Assert.Equal(1, (await spool.ListEntriesAsync()).Single().Attempts);
+        Assert.Single(await ctx.Provider.GetRequiredService<ICollectQuery>().GetSessionRecordsAsync(
+            request.MonthKey, request.Record.PalletSessionId));
+    }
+
+    [Fact]
+    public async Task LateReplayDoesNotOverwriteANewerActiveSession()
+    {
+        await using var ctx = await InfrastructureContext.CreateAsync();
+        var initial = RequestWithSession("P001");
+        var request = new CollectSaveRequest
+        {
+            MonthKey = initial.MonthKey,
+            UpsertSession = initial.UpsertSession,
+            Record = initial.Record,
+            ActiveSession = new ActiveSessionIndex
+            {
+                PalletCode = "P001",
+                SerialNo = initial.Record.SerialNo,
+                MonthKey = initial.MonthKey,
+                StartTime = initial.Record.TriggerTime
+            }
+        };
+        await ctx.Scope.ServiceProvider.GetRequiredService<ICollectWriter>().SaveAsync(request);
+        var sessions = ctx.Scope.ServiceProvider.GetRequiredService<IActiveSessionStore>();
+        await sessions.UpsertAsync(new ActiveSessionIndex
+        {
+            PalletCode = "P001",
+            SerialNo = "SN-NEW",
+            MonthKey = request.MonthKey,
+            StartTime = initial.Record.TriggerTime.AddMinutes(1)
+        });
+        var spool = ctx.Provider.GetRequiredService<ISpoolStore>();
+        await spool.SaveAsync(request);
+
+        Assert.Equal(1, await ReplayRunner(ctx, spool).ReplayAllAsync());
+        Assert.Equal("SN-NEW", (await sessions.FindByPalletAsync("P001"))?.SerialNo);
+        Assert.Empty(await spool.ListAsync());
+    }
+
+    [Fact]
+    public async Task LateReplayDoesNotReopenAClosedSession()
+    {
+        await using var ctx = await InfrastructureContext.CreateAsync();
+        var initial = RequestWithSession("P001");
+        var request = new CollectSaveRequest
+        {
+            MonthKey = initial.MonthKey,
+            UpsertSession = initial.UpsertSession,
+            Record = initial.Record,
+            ActiveSession = new ActiveSessionIndex
+            {
+                PalletCode = "P001",
+                SerialNo = initial.Record.SerialNo,
+                MonthKey = initial.MonthKey,
+                StartTime = initial.Record.TriggerTime
+            }
+        };
+        var writer = ctx.Scope.ServiceProvider.GetRequiredService<ICollectWriter>();
+        await writer.SaveAsync(request);
+        await writer.SaveAsync(new CollectSaveRequest
+        {
+            MonthKey = request.MonthKey,
+            CloseSession = true,
+            RemoveActiveSession = true,
+            Record = new CollectRecord
+            {
+                PalletSessionId = request.Record.PalletSessionId,
+                PalletCode = "P001",
+                SerialNo = request.Record.SerialNo,
+                StationId = 20,
+                StationCode = "ST020",
+                TriggerTime = request.Record.TriggerTime.AddMinutes(1),
+                CompleteTime = request.Record.TriggerTime.AddMinutes(1),
+                Judgement = Judgement.Ok
+            }
+        });
+        var spool = ctx.Provider.GetRequiredService<ISpoolStore>();
+        await spool.SaveAsync(request);
+
+        Assert.Equal(1, await ReplayRunner(ctx, spool).ReplayAllAsync());
+        Assert.Null(await ctx.Scope.ServiceProvider.GetRequiredService<IActiveSessionStore>().FindByPalletAsync("P001"));
+        Assert.Empty(await spool.ListAsync());
+    }
+
+    private sealed class FailOnUpsertActiveSessionStore : IActiveSessionStore
+    {
+        public Task<ActiveSessionIndex?> FindByPalletAsync(string palletCode, CancellationToken cancellationToken = default)
+            => Task.FromResult<ActiveSessionIndex?>(null);
+
+        public Task UpsertAsync(ActiveSessionIndex session, CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("Simulated post-commit index failure");
+
+        public Task RemoveByPalletAsync(string palletCode, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task<IReadOnlyList<ActiveSessionIndex>> ListAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<ActiveSessionIndex>>([]);
+    }
+
+    [Theory]
+    [InlineData(10)]
+    [InlineData(20)]
+    public async Task ReplayDoesNotSkipAnotherCollectionWithTheSameSerial(int stationId)
+    {
+        await using var ctx = await InfrastructureContext.CreateAsync();
+        var writer = ctx.Provider.GetRequiredService<ICollectWriter>();
+        var spool = ctx.Provider.GetRequiredService<ISpoolStore>();
+        var first = RequestWithSession("P001");
+        await writer.SaveAsync(first);
+
+        var following = new CollectSaveRequest
+        {
+            MonthKey = first.MonthKey,
+            Record = new CollectRecord
+            {
+                PalletSessionId = first.Record.PalletSessionId,
+                PalletCode = first.Record.PalletCode,
+                SerialNo = first.Record.SerialNo,
+                StationId = stationId,
+                StationCode = $"ST{stationId:000}",
+                TriggerTime = first.Record.TriggerTime.AddSeconds(1),
+                Judgement = Judgement.Ok
+            }
+        };
+        await spool.SaveAsync(following);
+
+        Assert.Equal(1, await ReplayRunner(ctx, spool).ReplayAllAsync());
+        var records = await ctx.Provider.GetRequiredService<ICollectQuery>().GetSessionRecordsAsync(
+            first.MonthKey, first.Record.PalletSessionId);
+        Assert.Equal(new[] { 10, stationId }.OrderBy(id => id), records.Select(record => record.StationId).OrderBy(id => id));
+        Assert.Empty(await spool.ListAsync());
+    }
+
     /// <summary>后台补传服务现在只是执行器的一层壳，测试按生产一致的装配方式构造。</summary>
     private static SpoolReplayRunner ReplayRunner(InfrastructureContext ctx, ISpoolStore spool)
         => new(ctx.ScopeFactory, spool, ctx.Logger<SpoolReplayRunner>());
@@ -326,6 +525,23 @@ public class SpoolReplayServiceTests
 /// <summary>MES Outbox 推送：状态流转、退避与批量上限。</summary>
 public class MesOutboxProcessorTests
 {
+    [Fact]
+    public async Task Resilience_pipeline_does_not_retry_mes_posts()
+    {
+        var handler = new FakeHttpMessageHandler(503);
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDataTraceMesHttpClient()
+            .ConfigurePrimaryHttpMessageHandler(() => handler);
+
+        await using var provider = services.BuildServiceProvider();
+        var client = provider.GetRequiredService<IHttpClientFactory>().CreateClient("mes");
+        using var response = await client.PostAsync("http://mes.local/push", new StringContent("{}"));
+
+        Assert.Equal(System.Net.HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Single(handler.Requests);
+    }
+
     [Fact]
     public async Task PostsPendingItemAndMarksItSucceeded()
     {

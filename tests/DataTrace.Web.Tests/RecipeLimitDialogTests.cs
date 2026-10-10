@@ -83,4 +83,25 @@ public class RecipeLimitDialogTests : WebTestBase
         var enabledRow = rows.Single(r => r.TextContent.Contains("ST010_P1"));
         Assert.DoesNotContain("已停用", enabledRow.TextContent);
     }
+
+    [Fact]
+    public async Task Effective_preview_merges_override_fields_with_tag_defaults()
+    {
+        var (recipe, stations) = Fixtures();
+
+        Context.Services.AddSingleton<IDialogService, DialogService>();
+        RenderPopoverHost();
+        var provider = Context.RenderComponent<MudDialogProvider>();
+        await Context.Services.GetRequiredService<IDialogService>().ShowAsync<RecipeLimitDialog>("型号限值", new DialogParameters
+        {
+            ["Recipe"] = recipe,
+            ["Stations"] = stations
+        });
+        provider.Render();
+
+        var row = provider.FindAll("tr").Single(r => r.TextContent.Contains("ST010_TEMP"));
+        Assert.Contains("生效值预览", provider.Markup);
+        Assert.Contains("规格 5 ~ 20", row.TextContent);
+        Assert.Contains("预警 — ~ 45", row.TextContent);
+    }
 }

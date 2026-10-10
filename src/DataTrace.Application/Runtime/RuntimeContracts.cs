@@ -58,6 +58,9 @@ public sealed class CollectQueryRequest
     /// 型号过滤：null = 全部；"" = 仅「未选型号」；其它 = 精确匹配 RecipeCode。
     /// </summary>
     public string? RecipeCode { get; init; }
+
+    /// <summary>跨改码追溯同一型号时使用；非空时按列表精确匹配并覆盖 <see cref="RecipeCode"/>。</summary>
+    public IReadOnlyList<string>? RecipeCodes { get; init; }
     public int Skip { get; init; }
     public int Take { get; init; } = 50;
 
@@ -183,9 +186,18 @@ public sealed class CurveFeaturePoint
 public sealed record CurveRecipeSampleCount(string RecipeCode, int Total, int Ng, int Unjudged = 0);
 
 /// <summary>采集写入：落一条记录，或把在制会话标成异常。</summary>
+public sealed class PostCommitStateUpdateException : Exception
+{
+    public PostCommitStateUpdateException(Exception innerException)
+        : base("采集记录已入库，但在制会话索引更新失败", innerException)
+    {
+    }
+}
+
 public interface ICollectWriter
 {
     Task SaveAsync(CollectSaveRequest request, CancellationToken cancellationToken = default);
+    Task RepairPostCommitStateAsync(CollectSaveRequest request, CancellationToken cancellationToken = default);
     Task MarkSessionAbnormalAsync(string monthKey, long sessionId, DateTime endTime, CancellationToken cancellationToken = default);
 }
 
@@ -196,11 +208,11 @@ public interface ICollectQuery
     Task<CollectRecord?> GetRecordAsync(string monthKey, long recordId, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 某个月库里是否已有这个流水号。补传重放用它做幂等判断：写库成功但缓存没删掉
-    /// （删文件被占用、提交后进程被杀）留下的缓存件，直接重放会撞流水号唯一索引而永远失败，
-    /// 把整条补传队列堵死在最前面一条上；命中查重就按"已入库"收尾，把缓存删掉让队列继续走。
+    /// 某个月库里是否已有这个流水号。单个托盘会跨工站复用流水号，不能用它判断某次采集是否已入库。
     /// </summary>
     Task<bool> ExistsBySerialAsync(string monthKey, string serialNo, CancellationToken cancellationToken = default);
+    /// <summary>补传幂等判断：同一流水号下的不同工站或不同触发必须分别入库。</summary>
+    Task<bool> ExistsCollectAsync(string monthKey, string serialNo, int stationId, DateTime triggerTime, CancellationToken cancellationToken = default);
     Task<PalletSession?> GetSessionAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<CollectRecord>> GetSessionRecordsAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesBySerialNoAsync(string serialNo, CancellationToken cancellationToken = default);

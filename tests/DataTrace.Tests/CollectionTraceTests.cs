@@ -26,6 +26,21 @@ public class CollectionTraceTests
         public Task SaveAsync(CollectSaveRequest request, CancellationToken cancellationToken = default)
             => throw new InvalidOperationException("disk full");
 
+        public Task RepairPostCommitStateAsync(CollectSaveRequest request, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task MarkSessionAbnormalAsync(string monthKey, long sessionId, DateTime endTime, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+    }
+
+    private sealed class PostCommitFailingWriter : ICollectWriter
+    {
+        public Task SaveAsync(CollectSaveRequest request, CancellationToken cancellationToken = default)
+            => throw new PostCommitStateUpdateException(new InvalidOperationException("index unavailable"));
+
+        public Task RepairPostCommitStateAsync(CollectSaveRequest request, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
         public Task MarkSessionAbnormalAsync(string monthKey, long sessionId, DateTime endTime, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
     }
@@ -66,6 +81,28 @@ public class CollectionTraceTests
 
         var spoolFile = Path.GetFileName(Assert.Single(Directory.GetFiles(ctx.Workspace.Path("spool"), "*.spool.json")));
         Assert.Contains(logs, entry => entry.Message.Contains(spoolFile));
+    }
+
+    [Fact]
+    public async Task Post_commit_failure_does_not_report_a_database_write_failure()
+    {
+        await using var ctx = await InfrastructureContext.CreateAsync(configure: services =>
+            services.AddSingleton<ICollectWriter>(new PostCommitFailingWriter()));
+        var coordinator = new CollectSessionCoordinator(ctx.ScopeFactory, ctx.Logger<CollectSessionCoordinator>());
+
+        var saved = await coordinator.PersistAsync(
+            FirstStation(),
+            new AppConfigurationSnapshot(),
+            "P902",
+            new DateTime(2026, 9, 30, 10, 2, 0),
+            Stopwatch.StartNew(),
+            source: null,
+            Assessment(),
+            CancellationToken.None);
+
+        Assert.Equal(ResultCodes.Success, saved.Record.ResultCode);
+        Assert.Single(Directory.GetFiles(ctx.Workspace.Path("spool"), "*.spool.json"));
+        Assert.Contains(ctx.Logs.Snapshot(), entry => entry.Message.Contains("记录已入库") && entry.Message.Contains("索引更新失败"));
     }
 
     /// <summary>流水号也要进作用域：库里、框架里那些没手写消息的日志同样要能被串起来。</summary>

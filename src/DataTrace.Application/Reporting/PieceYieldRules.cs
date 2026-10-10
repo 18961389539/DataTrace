@@ -29,7 +29,7 @@ public static class PieceYieldRules
 
                 counted.Add(new CountedPiece(
                     piece,
-                    OutcomeOf(atStation.Select(station => station.Judgement)),
+                    OutcomeAtStation(piece, sid),
                     piece.Faults.Where(fault => fault.StationId == sid).ToList()));
             }
             else
@@ -80,6 +80,7 @@ public static class PieceYieldRules
         return new DailyThroughput
         {
             Day = start,
+            ShiftEnd = end,
             ShiftLabel = new ShiftWindow(start, end).Label,
             Total = list.Count,
             Ok = list.Count(item => item.Outcome == Judgement.Ok),
@@ -89,6 +90,12 @@ public static class PieceYieldRules
             None = list.Count(item => item.Outcome == Judgement.None)
         };
     }
+
+    /// <summary>按指定工站的判定计算该件的站级结果；该站没有判定时返回未判定。</summary>
+    public static Judgement OutcomeAtStation(FinishedPieceObservation piece, int stationId)
+        => OutcomeOf(piece.Stations
+            .Where(station => station.StationId == stationId)
+            .Select(station => station.Judgement));
 
     /// <summary>
     /// 不合格件里，只要有一站是采成之后判废，就算质量不合格。

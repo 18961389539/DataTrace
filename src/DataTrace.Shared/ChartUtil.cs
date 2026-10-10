@@ -3,7 +3,7 @@ using System.Globalization;
 namespace DataTrace.Shared;
 
 /// <summary>
-/// SVG 绘图区：统一留白与坐标换算，避免各页面各写一套折线点计算。
+/// 折线图数据准备：量程、尖峰保留抽稀与刻度格式。
 /// </summary>
 public readonly record struct ChartBox(
     double Width,
@@ -171,7 +171,6 @@ public static class ChartUtil
             }
         }
 
-        // 末点补齐，曲线右端不会被截短一截。
         if (picks.Count == 0 || picks[^1] != count - 1)
         {
             picks.Add(count - 1);

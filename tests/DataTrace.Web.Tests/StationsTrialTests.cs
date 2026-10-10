@@ -74,6 +74,17 @@ public class StationsTrialTests : WebTestBase
     }
 
     [Fact]
+    public void Trial_and_save_actions_share_the_station_toolbar()
+    {
+        var cut = Render();
+
+        var toolbar = cut.Find(".dt-station-actions");
+
+        Assert.Contains("试读一次", toolbar.TextContent);
+        Assert.Contains("保存 ST010", toolbar.TextContent);
+    }
+
+    [Fact]
     public void Trial_renders_the_values_it_read()
     {
         Trial.Result = Result();

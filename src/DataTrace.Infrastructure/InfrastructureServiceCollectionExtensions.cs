@@ -23,6 +23,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Quartz;
 
 namespace DataTrace.Infrastructure;
 
@@ -67,7 +68,9 @@ public static class InfrastructureServiceCollectionExtensions
         Directory.CreateDirectory(dataRoot);
         services.AddSingleton(new DataRootPaths(dataRoot));
         services.AddSingleton<IDatabaseBackupService, DatabaseBackupService>();
-        services.AddHostedService<DatabaseBackupHostedService>();
+        services.AddQuartz();
+        services.AddQuartzHostedService(options => options.WaitForJobsToComplete = true);
+        services.AddHostedService<DatabaseBackupScheduleService>();
 
         var configPath = Path.Combine(dataRoot, "config.db");
         var runtimePath = Path.Combine(dataRoot, "runtime");

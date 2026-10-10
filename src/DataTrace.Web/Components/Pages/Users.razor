@@ -10,6 +10,10 @@
 <PageHeader Title="用户" HelpRoute="users" Busy="@_loading">
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">显示 @VisibleUsers.Count / @_users.Count 个账号</MudText>
+        <MudTooltip Text="重新读取用户与锁定状态">
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh" aria-label="刷新用户列表"
+                           Disabled="@(_loading || _working)" OnClick="Reload" />
+        </MudTooltip>
         <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
                    StartIcon="@Icons.Material.Filled.PersonAdd" Disabled="_working"
                    OnClick="OpenCreateDialog">新增用户</MudButton>
@@ -86,7 +90,9 @@
             {
                 <MudTooltip Arrow="true" RootClass="dt-help-popover">
                     <ChildContent>
-                        <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning" Class="ml-2">已锁定</MudChip>
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning" Class="ml-2">
+                            @LockLabel(context.User)
+                        </MudChip>
                     </ChildContent>
                     <TooltipContent>
                         <HelpContent Topic="HelpTexts.Lockout" Extra="@LockTooltip(context.User)" />
@@ -370,10 +376,15 @@
     private static string LockTooltip(UserAccount user)
     {
         var until = user.LockoutEnd is { } end
-            ? TimeZoneInfo.ConvertTime(end, TimeZoneInfo.Local).ToString("HH:mm:ss")
+            ? TimeZoneInfo.ConvertTime(end, TimeZoneInfo.Local).ToString("yyyy-MM-dd HH:mm:ss")
             : "—";
         return $"连续登录失败 {user.AccessFailedCount} 次，锁定到 {until}；可解除锁定后让本人重试。";
     }
+
+    private static string LockLabel(UserAccount user)
+        => user.LockoutEnd is { } end
+            ? $"锁定至 {TimeZoneInfo.ConvertTime(end, TimeZoneInfo.Local):MM-dd HH:mm}"
+            : "已锁定";
 
     /// <summary>
     /// 改显示名与角色。角色按差集只写变化的部分，避免"全撤再全加"

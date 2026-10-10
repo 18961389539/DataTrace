@@ -78,7 +78,15 @@ public sealed class RuntimeDbFactory
                 }
             }
 
-            ctx.Database.EnsureCreated();
+            if (MigrationBootstrap.NeedsLegacyBootstrap(ctx))
+            {
+                ctx.Database.EnsureCreated();
+                RuntimeSchema.Upgrade(ctx);
+                MigrationBootstrap.MarkBaseline(ctx);
+            }
+
+            ctx.Database.Migrate();
+            RuntimeSchema.Upgrade(ctx);
             ctx.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
             ctx.Database.ExecuteSqlRaw("PRAGMA synchronous=NORMAL;");
             RuntimeSchema.Upgrade(ctx);

@@ -138,6 +138,21 @@ public class CurveFileStoreTests
     }
 
     [Fact]
+    public async Task Collect_archive_crc_matches_the_standard_ieee_vector()
+    {
+        using var workspace = new TempWorkspace();
+        var store = new CollectArchiveFileStore(workspace.Path("archive"));
+
+        var written = await store.WriteAsync(
+            TriggerTime,
+            "P0001",
+            3,
+            Encoding.ASCII.GetBytes("123456789"));
+
+        Assert.Equal(0xCBF43926u, written.Crc32);
+    }
+
+    [Fact]
     public async Task Rewriting_same_key_never_clobbers_the_previous_file()
     {
         using var workspace = new TempWorkspace();
@@ -316,6 +331,21 @@ public class FileSpoolStoreTests
         Assert.Equal(ResultCodes.Success, request.Record.ResultCode);
         Assert.Single(request.Record.Products);
         Assert.Equal(12.5, request.Record.TagValues.Single().NumericValue);
+    }
+
+    [Fact]
+    public async Task Failed_serialization_does_not_publish_an_incomplete_spool_file()
+    {
+        using var workspace = new TempWorkspace();
+        var root = workspace.Path("spool");
+        var store = new FileSpoolStore(root);
+        var request = BuildRequest("P0001", "S1", withCurve: true);
+        request.Curves[0].Payload.Series[0].Values[0] = float.NaN;
+
+        await Assert.ThrowsAsync<ArgumentException>(() => store.SaveAsync(request));
+
+        Assert.Empty(Directory.GetFiles(root));
+        Assert.Equal(0, (await store.DescribeAsync()).Count);
     }
 
     [Fact]

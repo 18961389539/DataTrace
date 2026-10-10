@@ -5,6 +5,7 @@ using System.Text.Json;
 using DataTrace.Application.Configuration;
 using DataTrace.Domain.Entities;
 using DataTrace.Infrastructure.Backup;
+using DataTrace.Shared;
 using Microsoft.Extensions.Logging;
 
 namespace DataTrace.Infrastructure.Persistence;
@@ -326,20 +327,7 @@ public sealed class AuditRetentionArchiveService : IAuditRetention
         item.NewValue
     ];
 
-    private static string CsvRow(IEnumerable<string?> values) => string.Join(',', values.Select(Escape));
-
-    private static string Escape(string? value)
-    {
-        var text = value ?? "";
-        if (text.Length > 0 && text[0] is '=' or '+' or '@')
-        {
-            text = "'" + text;
-        }
-
-        return text.IndexOfAny([',', '"', '\n', '\r']) < 0
-            ? text
-            : "\"" + text.Replace("\"", "\"\"") + "\"";
-    }
+    private static string CsvRow(IEnumerable<string?> values) => CsvExporter.BuildRow(values);
 
     private static async Task<string> ComputeSha256Async(string path, CancellationToken cancellationToken)
     {

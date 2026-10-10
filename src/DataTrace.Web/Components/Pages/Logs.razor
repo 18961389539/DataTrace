@@ -151,6 +151,15 @@
         {
             <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
         }
+        else if (_timelineError is { } timelineError)
+        {
+            <MudAlert Severity="Severity.Error" Dense="true" Variant="Variant.Outlined">
+                <div class="d-flex align-center flex-wrap gap-2">
+                    <span>@timelineError</span>
+                    <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="RetryTimelineAsync">重试</MudButton>
+                </div>
+            </MudAlert>
+        }
         else if (_timelineItems.Count == 0)
         {
             <MudText Typo="Typo.body2" Class="dt-muted py-2">没有找到该关联 ID 的日志。</MudText>
@@ -400,6 +409,8 @@
     private List<AuditLog> _timelineItems = [];
     private int _timelineTotal;
     private bool _timelineLoading;
+    private string? _timelineError;
+    private int _timelineLoadVersion;
 
     private CancellationTokenSource? _filterCts;
 
@@ -612,10 +623,12 @@
 
     private async Task LoadTimelineAsync(string correlationId)
     {
+        var version = ++_timelineLoadVersion;
         _timelineCorrelationId = correlationId;
         _timelineLoading = true;
         _timelineItems = [];
         _timelineTotal = 0;
+        _timelineError = null;
         try
         {
             var (items, total) = await Audit.QueryAsync(
@@ -623,24 +636,41 @@
                 skip: 0,
                 take: TimelineCap,
                 newestFirst: false);
-            _timelineItems = items.ToList();
-            _timelineTotal = total;
+            if (version == _timelineLoadVersion)
+            {
+                _timelineItems = items.ToList();
+                _timelineTotal = total;
+            }
         }
         catch (Exception ex)
         {
-            Toast.Add($"加载关联时间线失败：{ex.Message}", Severity.Error);
+            if (version == _timelineLoadVersion)
+            {
+                _timelineError = $"关联时间线加载失败：{ex.Message}";
+            }
         }
         finally
         {
-            _timelineLoading = false;
+            if (version == _timelineLoadVersion)
+            {
+                _timelineLoading = false;
+            }
         }
     }
 
+    private Task RetryTimelineAsync()
+        => _timelineCorrelationId is { } correlationId
+            ? LoadTimelineAsync(correlationId)
+            : Task.CompletedTask;
+
     private void CloseTimeline()
     {
+        _timelineLoadVersion++;
         _timelineCorrelationId = null;
         _timelineItems = [];
         _timelineTotal = 0;
+        _timelineError = null;
+        _timelineLoading = false;
     }
 
     private async Task ToggleNoticeAsync()

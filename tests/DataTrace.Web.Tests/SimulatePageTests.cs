@@ -326,6 +326,8 @@ public class SimulatePageTests : WebTestBase
         ToggleSwitch(cut, true);
 
         Assert.Equal(Severity.Error, Toast.LastSeverity);
-        Assert.Contains("保存仿真参数失败：配置库锁定", Toast.LastMessage);
+        Assert.Contains("自动跑线配置保存失败，运行状态未改变：配置库锁定", Toast.LastMessage);
+        Assert.Empty(Simulator.RunningChanges);
+        Assert.Empty(Config.SavedSettings);
     }
 }

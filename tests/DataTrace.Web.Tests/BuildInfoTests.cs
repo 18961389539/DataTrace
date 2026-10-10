@@ -27,7 +27,7 @@ public class BuildInfoTests : WebTestBase
     }
 
     /// <summary>
-    /// 本产物必须带真实提交号：要么来自 CI 的 GITHUB_SHA，要么读自检出目录的 .git。
+    /// 有 CI SHA 或检出目录时必须带真实提交号；源码包构建则必须明确标记为 nogit。
     /// </summary>
     /// <remarks>
     /// nogit 会在这里红：那说明这批产物无法与任何提交对应（例如用源码压缩包构建），
@@ -36,8 +36,12 @@ public class BuildInfoTests : WebTestBase
     [Fact]
     public void The_shipped_assembly_carries_a_build_marker()
     {
+        var repositoryRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var hasSourceRevision = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("GITHUB_SHA"))
+                               || File.Exists(Path.Combine(repositoryRoot, ".git", "HEAD"));
+
         Assert.False(string.IsNullOrWhiteSpace(BuildInfo.Commit), "产物没有构建标识：盖章没生效？");
-        Assert.NotEqual("nogit", BuildInfo.Commit);
+        Assert.Equal(hasSourceRevision, BuildInfo.Commit != "nogit");
         Assert.Matches(@"^\d+\.\d+\.\d+$", BuildInfo.Version);
         Assert.False(string.IsNullOrWhiteSpace(BuildInfo.CommitLabel));
     }

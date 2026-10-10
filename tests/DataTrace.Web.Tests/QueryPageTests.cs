@@ -94,6 +94,44 @@ public class QueryPageTests : WebTestBase
     }
 
     [Fact]
+    public async Task Search_controls_and_export_are_disabled_while_query_is_loading()
+    {
+        var query = new TaskCompletionSource<CollectQueryResult>();
+        _store
+            .Setup(s => s.QueryAsync(It.IsAny<CollectQueryRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(query.Task);
+
+        var cut = Render();
+
+        var export = cut.FindAll("button").Single(button => button.TextContent.Contains("导出 CSV"));
+        Assert.True(export.HasAttribute("disabled"));
+        Assert.True(cut.FindComponent<DateRangeFilter>().Instance.Disabled);
+
+        await cut.InvokeAsync(() => query.SetResult(new CollectQueryResult
+        {
+            Total = 1,
+            Items =
+            [
+                new CollectRecordListItem
+                {
+                    MonthKey = "202609",
+                    Record = new CollectRecord
+                    {
+                        Id = 1,
+                        SerialNo = "20260919-000001",
+                        PalletCode = "P0001",
+                        StationCode = "ST010",
+                        TriggerTime = new DateTime(2026, 9, 19, 8, 0, 0),
+                        Judgement = Judgement.Ok
+                    }
+                }
+            ]
+        }));
+        cut.WaitForAssertion(() => Assert.False(cut.FindAll("button")
+            .Single(button => button.TextContent.Contains("导出 CSV")).HasAttribute("disabled")));
+    }
+
+    [Fact]
     public void Trace_mode_keeps_record_search_separate_and_requests_an_exact_serial()
     {
         const string serial = "20260919-000001";

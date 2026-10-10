@@ -13,6 +13,9 @@
             这里填的是<b>本型号的覆盖值</b>，留空的项沿用点位默认限值（不是「不判」）。
             五个字段全部留空的点位等于没有覆盖，保存时会被丢弃。<InfoHint Topic="HelpTexts.CoverablePoints" />
         </MudAlert>
+        <MudText Typo="Typo.caption" Class="dt-muted mb-3">
+            生效值预览按默认值与当前输入逐项合并；目标值仅供参考，不参与 OK/NG 判定。
+        </MudText>
 
         @if (!string.IsNullOrEmpty(_error))
         {
@@ -49,6 +52,7 @@
                     <MudTh>预警下限</MudTh>
                     <MudTh>预警上限</MudTh>
                     <MudTh>目标值 <InfoHint Topic="HelpTexts.TargetValue" /></MudTh>
+                    <MudTh>生效值预览</MudTh>
                 </HeaderContent>
                 <RowTemplate>
                     <MudTd Class="dt-nowrap">
@@ -79,6 +83,12 @@
                                              Margin="Margin.Dense" Class="dt-limit-field" /></MudTd>
                     <MudTd><MudNumericField @bind-Value="context.Target" @bind-Value:after="@(() => context.Error = null)" Placeholder="默认" Variant="Variant.Outlined"
                                              Margin="Margin.Dense" Class="dt-limit-field" /></MudTd>
+                    <MudTd DataLabel="生效值预览" Class="dt-nowrap">
+                        @{ var effective = TagLimits.From(context.Tag).Override(context.ToLimits()); }
+                        <MudText Typo="Typo.caption">规格 @DisplayLabels.LimitRange(effective.Lower, effective.Upper)</MudText>
+                        <MudText Typo="Typo.caption">预警 @DisplayLabels.LimitRange(effective.WarningLower, effective.WarningUpper)</MudText>
+                        <MudText Typo="Typo.caption" Class="dt-muted">目标 @(effective.Target?.ToString("0.###") ?? "—")</MudText>
+                    </MudTd>
                 </RowTemplate>
                 </MudTable>
             </div>

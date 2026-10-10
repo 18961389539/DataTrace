@@ -123,6 +123,8 @@ public sealed class ReportService : IReportService
         {
             MonthKey = piece.MonthKey,
             SessionId = piece.SessionId,
+            PalletCode = piece.PalletCode,
+            SerialNo = piece.SerialNo,
             EndTime = piece.EndTime,
             Judgement = piece.Judgement,
             RecipeCode = piece.RecipeCode,

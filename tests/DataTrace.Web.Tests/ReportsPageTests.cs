@@ -84,7 +84,7 @@ public class ReportsPageTests : WebTestBase
             .ReturnsAsync((ProcessCapabilityReport?)null);
     }
 
-    private IRenderedComponent<Reports> Render()
+    private IRenderedComponent<Reports> Render(string? from = null, string? to = null)
     {
         Context.Services.AddSingleton(_store.Object);
         Context.Services.AddSingleton(_reports.Object);
@@ -93,6 +93,18 @@ public class ReportsPageTests : WebTestBase
         Context.Services.AddSingleton<AuthenticationStateProvider>(new StubAuthenticationStateProvider(_role));
         // MudSelect 的浮层要一个 provider：真实应用由 MainLayout 提供。
         Context.RenderComponent<MudPopoverProvider>();
+
+        var navigation = Context.Services.GetRequiredService<NavigationManager>();
+        navigation.NavigateTo(navigation.BaseUri);
+        if (from is not null)
+        {
+            navigation.NavigateTo(navigation.GetUriWithQueryParameter("from", from));
+        }
+
+        if (to is not null)
+        {
+            navigation.NavigateTo(navigation.GetUriWithQueryParameter("to", to));
+        }
 
         return Context.RenderComponent<Reports>();
     }
@@ -161,6 +173,98 @@ public class ReportsPageTests : WebTestBase
         gate.SetResult([new TrendPoint { Time = SampleTime, Value = 12.5, PalletCode = "P0001" }]);
 
         cut.WaitForAssertion(() => Assert.False(ExportButtonDisabled(cut)));
+    }
+
+    [Fact]
+    public void Recipe_ng_count_links_to_matching_record_query_filters()
+    {
+        _reports
+            .Setup(r => r.GetPieceYieldAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PieceYieldReport
+            {
+                ByRecipe = [new RecipeThroughput { RecipeCode = "A100", Total = 4, Ok = 3, Ng = 1 }]
+            });
+
+        var cut = Render();
+        var table = cut.FindAll("table").Single(t => t.QuerySelectorAll("th").First().TextContent.Contains("型号"));
+        var link = Assert.Single(table.QuerySelectorAll("tbody tr a"));
+        var href = link.GetAttribute("href");
+
+        Assert.Contains($"from={DateTime.Today.AddDays(-6):yyyy-MM-dd}", href);
+        Assert.Contains($"to={DateTime.Today:yyyy-MM-dd}", href);
+        Assert.Contains("judge=Ng", href);
+        Assert.Contains("recipe=A100", href);
+        Assert.Contains("数量口径不同", cut.Markup);
+    }
+
+    [Fact]
+    public void Shift_detail_is_clipped_to_the_report_date_and_opens_traceability()
+    {
+        var shiftStart = new DateTime(2026, 9, 18, 20, 0, 0);
+        var shiftEnd = shiftStart.AddHours(12);
+        _reports
+            .Setup(r => r.GetPieceYieldAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PieceYieldReport
+            {
+                ByShift =
+                [
+                    new DailyThroughput
+                    {
+                        Day = shiftStart,
+                        ShiftEnd = shiftEnd,
+                        ShiftLabel = "09-19 08:00–20:00",
+                        Total = 1,
+                        Ng = 1
+                    }
+                ]
+            });
+        var pieces = new[]
+        {
+            new FinishedPieceObservation
+            {
+                MonthKey = "202609",
+                SessionId = 10,
+                PalletCode = "P0001",
+                SerialNo = "SERIAL-10",
+                EndTime = shiftStart.AddHours(7),
+                Judgement = Judgement.Ng,
+                RecipeCode = "A100",
+                Stations = [new PieceStationMark(10, "ST010", Judgement.Ng)]
+            },
+            new FinishedPieceObservation
+            {
+                MonthKey = "202609",
+                SessionId = 9,
+                PalletCode = "P0000",
+                SerialNo = "SERIAL-9",
+                EndTime = shiftStart.AddHours(2),
+                Judgement = Judgement.Ok,
+                RecipeCode = "A100",
+                Stations = [new PieceStationMark(10, "ST010", Judgement.Ok)]
+            }
+        };
+        var detailFrom = new DateTime(2026, 9, 19, 0, 0, 0);
+        var detailTo = shiftEnd.AddTicks(-1);
+        _store
+            .Setup(s => s.ListFinishedPiecesAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DateTime from, DateTime to, string? recipeCode, CancellationToken cancellationToken) =>
+                pieces.Where(piece => piece.EndTime >= from && piece.EndTime <= to).ToArray());
+
+        var cut = Render("2026-09-19", "2026-09-19");
+        cut.WaitForAssertion(() => _reports.Verify(
+            r => r.GetPieceYieldAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Once));
+        cut.WaitForAssertion(() => Assert.Contains("成品明细", cut.Markup));
+        ClickButton(cut, "成品明细");
+
+        cut.WaitForAssertion(() => Assert.Contains("SERIAL-10", cut.Markup));
+        Assert.DoesNotContain("SERIAL-9", cut.Markup);
+        Assert.Contains("P0001", cut.Markup);
+        _store.Verify(
+            s => s.ListFinishedPiecesAsync(detailFrom, detailTo, null, It.IsAny<CancellationToken>()),
+            Times.Once);
+        var traceLink = Assert.Single(cut.FindAll("a").Where(link => link.TextContent.Contains("查看履历")));
+        Assert.Contains("query?view=trace&trace=SERIAL-10&sessionMonth=202609&sessionId=10", traceLink.GetAttribute("href"));
     }
 
     /// <summary>
@@ -283,6 +387,9 @@ public class ReportsPageTests : WebTestBase
         var row = Assert.Single(table.QuerySelectorAll("tbody tr"));
         Assert.Contains("B300 · 改码后的型号", row.TextContent);
         Assert.DoesNotContain("旧编码 A100", row.TextContent);
+        var drilldown = Assert.Single(row.QuerySelectorAll("a"));
+        Assert.Contains("recipe=B300", drilldown.GetAttribute("href"));
+        Assert.Contains("alias=A100", drilldown.GetAttribute("href"));
 
         // 产量与 OK/NG 都按合并后的口径累加。
         var cells = row.QuerySelectorAll("td").Select(td => td.TextContent.Trim()).ToList();

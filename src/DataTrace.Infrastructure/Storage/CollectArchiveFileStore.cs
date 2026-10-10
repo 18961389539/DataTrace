@@ -1,3 +1,4 @@
+using System.IO.Hashing;
 using DataTrace.Application.Runtime;
 
 namespace DataTrace.Infrastructure.Storage;
@@ -43,7 +44,7 @@ public sealed class CollectArchiveFileStore : ICollectArchiveStore
         await File.WriteAllBytesAsync(tempFull, content, cancellationToken).ConfigureAwait(false);
         File.Move(tempFull, finalFull, overwrite: true);
 
-        return (Path.GetRelativePath(_root, finalFull).Replace('\\', '/'), content.LongLength, Crc32Util.Compute(content));
+        return (Path.GetRelativePath(_root, finalFull).Replace('\\', '/'), content.LongLength, Crc32.HashToUInt32(content));
     }
 
     public async Task<byte[]> ReadAsync(string relativePath, uint? expectedCrc = null, CancellationToken cancellationToken = default)
@@ -52,7 +53,7 @@ public sealed class CollectArchiveFileStore : ICollectArchiveStore
         var bytes = await File.ReadAllBytesAsync(full, cancellationToken).ConfigureAwait(false);
 
         // 损坏与缺失必须区分开：都报"文件缺失"的话，现场会去查备份而不是查磁盘。
-        if (expectedCrc is { } expected && Crc32Util.Compute(bytes) != expected)
+        if (expectedCrc is { } expected && Crc32.HashToUInt32(bytes) != expected)
         {
             throw new InvalidDataException($"归档文件校验失败：CRC 与入库值不一致（{relativePath}）");
         }

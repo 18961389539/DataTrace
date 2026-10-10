@@ -217,6 +217,12 @@ public sealed class CollectSessionCoordinator
         {
             await writer.SaveAsync(save, cancellationToken).ConfigureAwait(false);
         }
+        catch (PostCommitStateUpdateException ex)
+        {
+            var spool = scope.ServiceProvider.GetRequiredService<ISpoolStore>();
+            var spoolFile = await spool.SaveAsync(save, cancellationToken).ConfigureAwait(false);
+            _logger.LogWarning(ex, "工站 {Station} 记录已入库（{Serial}），会话索引更新失败，已转存 {SpoolFile} 待补传", station.Code, serialNo, spoolFile);
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "工站 {Station} 写库失败（{Serial}），转入本地缓存", station.Code, serialNo);

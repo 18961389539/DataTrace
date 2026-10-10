@@ -4,12 +4,24 @@ using DataTrace.Infrastructure.Backup;
 using DataTrace.Infrastructure.Persistence;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Quartz;
 
 namespace DataTrace.Tests;
 
 /// <summary>全量在线备份：数据库通过 SQLite Backup API，其余 DataRoot 文件逐个做 SHA-256 校验。</summary>
 public class DatabaseBackupTests
 {
+    [Theory]
+    [InlineData(2, 30)]
+    [InlineData(17, 5)]
+    public void Quartz_trigger_uses_configured_daily_local_time(int hour, int minute)
+    {
+        var trigger = DatabaseBackupScheduleService.CreateDailyTrigger(new TimeOnly(hour, minute));
+
+        Assert.Equal($"0 {minute} {hour} ? * *", trigger.CronExpressionString);
+        Assert.Equal(TimeZoneInfo.Local.Id, trigger.TimeZone.Id);
+    }
+
     [Fact]
     public async Task Successful_run_captures_full_data_roots_and_publishes_v2_manifest()
     {

@@ -223,6 +223,9 @@ internal class FakeRuntimeStore : IRuntimeStore
         return Task.CompletedTask;
     }
 
+    public Task RepairPostCommitStateAsync(CollectSaveRequest request, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
     public Task<CollectQueryResult> QueryAsync(CollectQueryRequest request, CancellationToken cancellationToken = default)
     {
         var items = Records
@@ -239,6 +242,11 @@ internal class FakeRuntimeStore : IRuntimeStore
     public Task<bool> ExistsBySerialAsync(string monthKey, string serialNo, CancellationToken cancellationToken = default)
         => Task.FromResult(Records.Any(x =>
             x.MonthKey == monthKey && string.Equals(x.Record.SerialNo, serialNo, StringComparison.Ordinal)));
+
+    public Task<bool> ExistsCollectAsync(string monthKey, string serialNo, int stationId, DateTime triggerTime, CancellationToken cancellationToken = default)
+        => Task.FromResult(Records.Any(x =>
+            x.MonthKey == monthKey && string.Equals(x.Record.SerialNo, serialNo, StringComparison.Ordinal)
+            && x.Record.StationId == stationId && x.Record.TriggerTime == triggerTime));
 
     public Task<DataTrace.Domain.Entities.PalletSession?> GetSessionAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default)
         => Task.FromResult<DataTrace.Domain.Entities.PalletSession?>(null);

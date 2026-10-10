@@ -92,7 +92,14 @@ partial class RuntimeStore
                                   && session.EndTime != null
                                   && session.EndTime >= from
                                   && session.EndTime <= to)
-                .Select(session => new { session.Id, EndTime = session.EndTime!.Value, session.Judgement })
+                .Select(session => new
+                {
+                    session.Id,
+                    session.PalletCode,
+                    session.SerialNo,
+                    EndTime = session.EndTime!.Value,
+                    session.Judgement
+                })
                 .ToListAsync(cancellationToken)
                 .ConfigureAwait(false);
             if (sessions.Count == 0)
@@ -197,6 +204,8 @@ partial class RuntimeStore
                 {
                     MonthKey = month,
                     SessionId = session.Id,
+                    PalletCode = session.PalletCode,
+                    SerialNo = session.SerialNo,
                     EndTime = session.EndTime,
                     Judgement = session.Judgement,
                     RecipeCode = recipe,

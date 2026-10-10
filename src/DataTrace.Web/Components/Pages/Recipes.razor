@@ -37,6 +37,16 @@
     </Actions>
 </PageHeader>
 
+@if (_loadError is { } loadError)
+{
+    <MudAlert Severity="Severity.Error" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+        <div class="d-flex align-center flex-wrap gap-2">
+            <span>@loadError 上次成功读取的数据仍保留，当前列表可能不是最新。</span>
+            <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_loading" OnClick="Reload">重试</MudButton>
+        </div>
+    </MudAlert>
+}
+
 <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-3">
     型号里的限值是<b>覆盖值</b>：留空的字段沿用点位默认限值（不是「不判」）。
     当前没有选择型号时，全部点位按自身默认限值判定。
@@ -110,14 +120,20 @@
             </MudTd>
         </RowTemplate>
         <NoRecordsContent>
-            @* 空态也给出口：只留一句引导，新用户还得自己抬头找「新增型号」按钮。 *@
-            <div class="dt-empty-hint">
-                <MudText Typo="Typo.body2" Class="dt-muted py-3">还没有型号。填写型号名称添加第一个型号，再点「限值」设定它的覆盖值。</MudText>
-                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" Class="mt-1"
-                           StartIcon="@Icons.Material.Filled.Add" Disabled="_saving" OnClick="AddRecipe">
-                    新增型号
-                </MudButton>
-            </div>
+            @if (_loadError is not null)
+            {
+                <MudText Typo="Typo.body2" Class="dt-muted py-3">读取失败，尚不能确认型号列表为空。</MudText>
+            }
+            else
+            {
+                <div class="dt-empty-hint">
+                    <MudText Typo="Typo.body2" Class="dt-muted py-3">还没有型号。填写型号名称添加第一个型号，再点「限值」设定它的覆盖值。</MudText>
+                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" Class="mt-1"
+                               StartIcon="@Icons.Material.Filled.Add" Disabled="_saving" OnClick="AddRecipe">
+                        新增型号
+                    </MudButton>
+                </div>
+            }
         </NoRecordsContent>
     </MudTable>
 </MudPaper>
@@ -139,12 +155,14 @@
     private Recipe? _active;
     private bool _loading;
     private bool _saving;
+    private string? _loadError;
 
     protected override async Task OnInitializedAsync() => await Reload();
 
     private async Task Reload()
     {
         _loading = true;
+        _loadError = null;
         try
         {
             var snapshot = await Config.GetSnapshotAsync();
@@ -155,6 +173,7 @@
         }
         catch (Exception ex)
         {
+            _loadError = $"加载型号失败：{ex.Message}";
             Toast.Add($"加载型号失败：{ex.Message}", Severity.Error);
         }
         finally
@@ -165,6 +184,27 @@
 
     private static int Overrides(Recipe recipe) => RecipeLimitResolver.CountOverrides(recipe);
     private static string SystemCodeLabel(string code) => code.Length > 15 ? $"{code[..12]}..." : code;
+
+    private static Recipe CloneRecipe(Recipe recipe) => new()
+    {
+        Id = recipe.Id,
+        Code = recipe.Code,
+        Name = recipe.Name,
+        Enabled = recipe.Enabled,
+        Remark = recipe.Remark,
+        PreviousCodes = recipe.PreviousCodes,
+        Limits = recipe.Limits.Select(limit => new RecipeLimit
+        {
+            Id = limit.Id,
+            RecipeId = limit.RecipeId,
+            TagId = limit.TagId,
+            LowerLimit = limit.LowerLimit,
+            UpperLimit = limit.UpperLimit,
+            WarningLowerLimit = limit.WarningLowerLimit,
+            WarningUpperLimit = limit.WarningUpperLimit,
+            TargetValue = limit.TargetValue
+        }).ToList()
+    };
 
     private async Task<ConfigAudit> AuditOf(string action, string key, string? oldValue, string? newValue)
     {
@@ -243,10 +283,11 @@
 
         await Write("保存型号", async () =>
         {
-            recipe.Code = edited.Code;
-            recipe.Name = edited.Name;
-            recipe.Remark = edited.Remark;
-            await Changes.SaveRecipeAsync(recipe, await AuditOf(
+            var updated = CloneRecipe(recipe);
+            updated.Code = edited.Code;
+            updated.Name = edited.Name;
+            updated.Remark = edited.Remark;
+            await Changes.SaveRecipeAsync(updated, await AuditOf(
                 "Save", oldCode,
                 $"{oldCode}/{oldName}/{oldRemark}",
                 $"{edited.Code}/{edited.Name}/{edited.Remark}"));
@@ -341,8 +382,9 @@
         await Write("切换型号启用状态", async () =>
         {
             var wasActive = recipe.Id == _active?.Id;
-            recipe.Enabled = enabled;
-            await Changes.SaveRecipeAsync(recipe, await AuditOf(
+            var updated = CloneRecipe(recipe);
+            updated.Enabled = enabled;
+            await Changes.SaveRecipeAsync(updated, await AuditOf(
                 enabled ? "Enable" : "Disable", recipe.Code,
                 enabled ? "disabled" : "enabled",
                 enabled ? "enabled" : (wasActive ? "disabled; cleared active → 点位默认限值" : "disabled")));

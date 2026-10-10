@@ -36,7 +36,7 @@ public sealed partial class DatabaseSeeder
     }
 
     /// <summary>
-/// 初始化配置库（建表、补列、角色与账号、演示产线）。
+    /// 初始化配置库（迁移、旧库接管、角色与账号、演示产线）。
     /// </summary>
     /// <param name="users">
     /// 种子账号策略。默认种入口令写在源码里的演示账号，仅供开发/演示/测试；
@@ -49,87 +49,94 @@ public sealed partial class DatabaseSeeder
         CancellationToken cancellationToken = default)
     {
         users ??= new SeedUserOptions();
-        await _db.Database.EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+        var needsLegacyBootstrap = MigrationBootstrap.NeedsLegacyBootstrap(_db);
+        if (needsLegacyBootstrap)
+        {
+            await _db.Database.EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+            await EnsureAuditLogSchemaAsync(cancellationToken).ConfigureAwait(false);
+            await EnsureAlarmSchemaAsync(cancellationToken).ConfigureAwait(false);
+            await EnsureQualityIncidentSchemaAsync(cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "SimulatorAutoRun",
+                "ALTER TABLE SystemSettings ADD COLUMN SimulatorAutoRun INTEGER NOT NULL DEFAULT 1", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "SimulatorIntervalMs",
+                "ALTER TABLE SystemSettings ADD COLUMN SimulatorIntervalMs INTEGER NOT NULL DEFAULT 2500", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "SimulatorNgPercent",
+                "ALTER TABLE SystemSettings ADD COLUMN SimulatorNgPercent INTEGER NOT NULL DEFAULT 8", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "SimulatorPalletPool",
+                "ALTER TABLE SystemSettings ADD COLUMN SimulatorPalletPool INTEGER NOT NULL DEFAULT 20", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "AuditRetentionYears",
+                "ALTER TABLE SystemSettings ADD COLUMN AuditRetentionYears INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "AlarmWebhookUrl",
+                "ALTER TABLE SystemSettings ADD COLUMN AlarmWebhookUrl TEXT NULL", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "ShiftStartHour",
+                "ALTER TABLE SystemSettings ADD COLUMN ShiftStartHour INTEGER NOT NULL DEFAULT 8", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "ShiftLengthHours",
+                "ALTER TABLE SystemSettings ADD COLUMN ShiftLengthHours INTEGER NOT NULL DEFAULT 12", cancellationToken).ConfigureAwait(false);
+
+            // 点位三级限值：老配置库缺这些列，采集侧读限值会直接报 no such column。
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "WarningLowerLimit",
+                "ALTER TABLE Tags ADD COLUMN WarningLowerLimit REAL NULL", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "WarningUpperLimit",
+                "ALTER TABLE Tags ADD COLUMN WarningUpperLimit REAL NULL", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "TargetValue",
+                "ALTER TABLE Tags ADD COLUMN TargetValue REAL NULL", cancellationToken).ConfigureAwait(false);
+
+            // 当前生效的产品型号指针（手工切换）。
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "ActiveRecipeId",
+                "ALTER TABLE SystemSettings ADD COLUMN ActiveRecipeId INTEGER NULL", cancellationToken).ConfigureAwait(false);
+
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "Recipes", "PreviousCodes",
+                "ALTER TABLE Recipes ADD COLUMN PreviousCodes TEXT NULL", cancellationToken).ConfigureAwait(false);
+
+            // 在制索引要记住首站型号和最后停在哪一站。老库没有这些列时，采集侧一读就报 no such column。
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "ActiveSessions", "RecipeCode",
+                "ALTER TABLE ActiveSessions ADD COLUMN RecipeCode TEXT NOT NULL DEFAULT ''", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "ActiveSessions", "LastStationId",
+                "ALTER TABLE ActiveSessions ADD COLUMN LastStationId INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "ActiveSessions", "LastStationCode",
+                "ALTER TABLE ActiveSessions ADD COLUMN LastStationCode TEXT NOT NULL DEFAULT ''", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "ActiveSessions", "LastActivityAt",
+                "ALTER TABLE ActiveSessions ADD COLUMN LastActivityAt TEXT NULL", cancellationToken).ConfigureAwait(false);
+
+            // 点位取值来源（0 = PLC 寄存器）与文件源点位读的那一个文件路径。
+            // 老配置库没有这两列，采集侧读配置会直接报 no such column。
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "Source",
+                "ALTER TABLE Tags ADD COLUMN Source INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "Stations", "DataFilePath",
+                "ALTER TABLE Stations ADD COLUMN DataFilePath TEXT NOT NULL DEFAULT ''", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "Stations", "DataFileFormat",
+                "ALTER TABLE Stations ADD COLUMN DataFileFormat INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
+            SqliteSchema.DropColumnIfPresent(_db, "Stations", "ScriptPath");
+
+            // 判异规则开关（NULL = 全套规则）与按点位冻结的控制限。
+            // 老配置库缺这些列时，报表读点位会直接报 no such column。
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "SpcRuleMask",
+                "ALTER TABLE Tags ADD COLUMN SpcRuleMask INTEGER NULL", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlCenterLine",
+                "ALTER TABLE Tags ADD COLUMN ControlCenterLine REAL NULL", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlUpperLimit",
+                "ALTER TABLE Tags ADD COLUMN ControlUpperLimit REAL NULL", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlLowerLimit",
+                "ALTER TABLE Tags ADD COLUMN ControlLowerLimit REAL NULL", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlSampleCount",
+                "ALTER TABLE Tags ADD COLUMN ControlSampleCount INTEGER NULL", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlCapturedAt",
+                "ALTER TABLE Tags ADD COLUMN ControlCapturedAt TEXT NULL", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlCapturedBy",
+                "ALTER TABLE Tags ADD COLUMN ControlCapturedBy TEXT NULL", cancellationToken).ConfigureAwait(false);
+
+            // 强制改密标记。老配置库没有这列，登录管道读主体标记前 EF 会直接报 no such column。
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "AspNetUsers", "MustChangePassword",
+                """ALTER TABLE "AspNetUsers" ADD COLUMN "MustChangePassword" INTEGER NOT NULL DEFAULT 0""", cancellationToken).ConfigureAwait(false);
+
+            await RemoveTagCodesAsync(cancellationToken).ConfigureAwait(false);
+
+            await CleanupOrphanRecipeLimitsAsync(cancellationToken).ConfigureAwait(false);
+            MigrationBootstrap.MarkBaseline(_db);
+        }
+
+        await _db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
         await _db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;", cancellationToken).ConfigureAwait(false);
-        await EnsureAuditLogSchemaAsync(cancellationToken).ConfigureAwait(false);
-        await EnsureAlarmSchemaAsync(cancellationToken).ConfigureAwait(false);
-        await EnsureQualityIncidentSchemaAsync(cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "SimulatorAutoRun",
-            "ALTER TABLE SystemSettings ADD COLUMN SimulatorAutoRun INTEGER NOT NULL DEFAULT 1", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "SimulatorIntervalMs",
-            "ALTER TABLE SystemSettings ADD COLUMN SimulatorIntervalMs INTEGER NOT NULL DEFAULT 2500", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "SimulatorNgPercent",
-            "ALTER TABLE SystemSettings ADD COLUMN SimulatorNgPercent INTEGER NOT NULL DEFAULT 8", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "SimulatorPalletPool",
-            "ALTER TABLE SystemSettings ADD COLUMN SimulatorPalletPool INTEGER NOT NULL DEFAULT 20", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "AuditRetentionYears",
-            "ALTER TABLE SystemSettings ADD COLUMN AuditRetentionYears INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "AlarmWebhookUrl",
-            "ALTER TABLE SystemSettings ADD COLUMN AlarmWebhookUrl TEXT NULL", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "ShiftStartHour",
-            "ALTER TABLE SystemSettings ADD COLUMN ShiftStartHour INTEGER NOT NULL DEFAULT 8", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "ShiftLengthHours",
-            "ALTER TABLE SystemSettings ADD COLUMN ShiftLengthHours INTEGER NOT NULL DEFAULT 12", cancellationToken).ConfigureAwait(false);
-
-        // 点位三级限值：老配置库缺这些列，采集侧读限值会直接报 no such column。
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "WarningLowerLimit",
-            "ALTER TABLE Tags ADD COLUMN WarningLowerLimit REAL NULL", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "WarningUpperLimit",
-            "ALTER TABLE Tags ADD COLUMN WarningUpperLimit REAL NULL", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "TargetValue",
-            "ALTER TABLE Tags ADD COLUMN TargetValue REAL NULL", cancellationToken).ConfigureAwait(false);
-
-        // 当前生效的产品型号指针（手工切换）。
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "SystemSettings", "ActiveRecipeId",
-            "ALTER TABLE SystemSettings ADD COLUMN ActiveRecipeId INTEGER NULL", cancellationToken).ConfigureAwait(false);
-
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "Recipes", "PreviousCodes",
-            "ALTER TABLE Recipes ADD COLUMN PreviousCodes TEXT NULL", cancellationToken).ConfigureAwait(false);
-
-        // 在制索引要记住首站型号和最后停在哪一站。老库没有这些列时，采集侧一读就报 no such column。
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "ActiveSessions", "RecipeCode",
-            "ALTER TABLE ActiveSessions ADD COLUMN RecipeCode TEXT NOT NULL DEFAULT ''", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "ActiveSessions", "LastStationId",
-            "ALTER TABLE ActiveSessions ADD COLUMN LastStationId INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "ActiveSessions", "LastStationCode",
-            "ALTER TABLE ActiveSessions ADD COLUMN LastStationCode TEXT NOT NULL DEFAULT ''", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "ActiveSessions", "LastActivityAt",
-            "ALTER TABLE ActiveSessions ADD COLUMN LastActivityAt TEXT NULL", cancellationToken).ConfigureAwait(false);
-
-        // 点位取值来源（0 = PLC 寄存器）与文件源点位读的那一个文件路径。
-        // 老配置库没有这两列，采集侧读配置会直接报 no such column。
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "Source",
-            "ALTER TABLE Tags ADD COLUMN Source INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "Stations", "DataFilePath",
-            "ALTER TABLE Stations ADD COLUMN DataFilePath TEXT NOT NULL DEFAULT ''", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "Stations", "DataFileFormat",
-            "ALTER TABLE Stations ADD COLUMN DataFileFormat INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
-        SqliteSchema.DropColumnIfPresent(_db, "Stations", "ScriptPath");
-
-        // 判异规则开关（NULL = 全套规则）与按点位冻结的控制限。
-        // 老配置库缺这些列时，报表读点位会直接报 no such column。
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "SpcRuleMask",
-            "ALTER TABLE Tags ADD COLUMN SpcRuleMask INTEGER NULL", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlCenterLine",
-            "ALTER TABLE Tags ADD COLUMN ControlCenterLine REAL NULL", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlUpperLimit",
-            "ALTER TABLE Tags ADD COLUMN ControlUpperLimit REAL NULL", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlLowerLimit",
-            "ALTER TABLE Tags ADD COLUMN ControlLowerLimit REAL NULL", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlSampleCount",
-            "ALTER TABLE Tags ADD COLUMN ControlSampleCount INTEGER NULL", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlCapturedAt",
-            "ALTER TABLE Tags ADD COLUMN ControlCapturedAt TEXT NULL", cancellationToken).ConfigureAwait(false);
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlCapturedBy",
-            "ALTER TABLE Tags ADD COLUMN ControlCapturedBy TEXT NULL", cancellationToken).ConfigureAwait(false);
-
-        // 强制改密标记。老配置库没有这列，登录管道读主体标记前 EF 会直接报 no such column。
-        await SqliteSchema.AddColumnIfMissingAsync(_db, "AspNetUsers", "MustChangePassword",
-            """ALTER TABLE "AspNetUsers" ADD COLUMN "MustChangePassword" INTEGER NOT NULL DEFAULT 0""", cancellationToken).ConfigureAwait(false);
-
-        await RemoveTagCodesAsync(cancellationToken).ConfigureAwait(false);
-
-        await CleanupOrphanRecipeLimitsAsync(cancellationToken).ConfigureAwait(false);
 
         foreach (var role in AppRoles.All)
         {

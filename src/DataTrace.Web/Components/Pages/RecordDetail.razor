@@ -26,6 +26,20 @@
     </PageHeader>
     <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="180px" />
 }
+else if (_loadError is { } loadError)
+{
+    <PageHeader Title="记录明细" HelpRoute="record">
+        <Actions>
+            <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Href="@BackUrl">返回查询</MudButton>
+        </Actions>
+    </PageHeader>
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">
+        <div class="d-flex align-center flex-wrap gap-2">
+            <span>@loadError</span>
+            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="RetryLoadAsync">重试</MudButton>
+        </div>
+    </MudAlert>
+}
 else if (_record is null)
 {
     <PageHeader Title="记录明细" HelpRoute="record">
@@ -285,6 +299,7 @@ else
 
     private CollectRecord? _record;
     private bool _loaded;
+    private string? _loadError;
     private bool _canExport;
     private bool _canCreateQualityIncident;
     private readonly Dictionary<long, CurvePayload> _curvePayloads = [];
@@ -310,11 +325,26 @@ else
     protected override async Task OnParametersSetAsync()
     {
         _loaded = false;
+        _loadError = null;
         _curvePayloads.Clear();
         _curveErrors.Clear();
         _archiveText = null;
         _archiveError = null;
-        _record = await Store.GetRecordAsync(MonthKey, RecordId);
+        try
+        {
+            _record = await Store.GetRecordAsync(MonthKey, RecordId);
+        }
+        catch (Exception ex)
+        {
+            _record = null;
+            _tagRows = [];
+            _outOfLimitCount = 0;
+            _warningCount = 0;
+            _loadError = $"记录读取失败：{ex.Message}";
+            _loaded = true;
+            return;
+        }
+
         if (_record is null)
         {
             _tagRows = [];
@@ -356,6 +386,8 @@ else
 
         _loaded = true;
     }
+
+    private Task RetryLoadAsync() => OnParametersSetAsync();
 
     private CurvePayload? PayloadFor(long curveId)
         => _curvePayloads.TryGetValue(curveId, out var payload) ? payload : null;

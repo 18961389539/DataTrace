@@ -132,6 +132,7 @@
                             <MudTh Class="dt-num">未判定</MudTh>
                             <MudTh Class="dt-num">直通率 <InfoHint Topic="HelpTexts.YieldRate" /></MudTh>
                             <MudTh>少做 <InfoHint Topic="HelpTexts.ShiftShortfall" /></MudTh>
+                            <MudTh>明细</MudTh>
                         </HeaderContent>
                         <RowTemplate>
                             <MudTd DataLabel="班次">@(string.IsNullOrEmpty(context.ShiftLabel) ? context.Day.ToString("yyyy-MM-dd HH:mm") : context.ShiftLabel)</MudTd>
@@ -158,6 +159,14 @@
                                 </MudChip>
                             </MudTd>
                             <MudTd DataLabel="少做">@StopBrief(context.Day)</MudTd>
+                            <MudTd DataLabel="明细">
+                                <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_loading || _shiftPiecesLoading"
+                                           aria-expanded="@(_expandedShiftStart == context.Day ? "true" : "false")"
+                                           aria-controls="dt-shift-piece-details"
+                                           OnClick="@(() => ToggleShiftPiecesAsync(context))">
+                                    @(_expandedShiftStart == context.Day ? "收起" : "成品明细")
+                                </MudButton>
+                            </MudTd>
                         </RowTemplate>
                         <NoRecordsContent>
                             @* 空态也给出口：只说"没有件"，用户得自己回到上面猜是区间太窄还是筛选太狠。 *@
@@ -195,6 +204,76 @@
                             }
                             平均直通率 @AverageYield().ToString("P1")<InfoHint Topic="HelpTexts.AverageYield" />
                         </MudText>
+                    }
+                    @if (_expandedShiftStart is { } expandedShift)
+                    {
+                        <MudPaper id="dt-shift-piece-details" Class="pa-3 mt-3 dt-shift-piece-details" Elevation="0">
+                            <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+                                <MudText Typo="Typo.subtitle2">@_expandedShiftLabel · 成品明细</MudText>
+                                @if (_shiftPiecesLoading)
+                                {
+                                    <MudText Typo="Typo.caption" Class="dt-muted">正在加载…</MudText>
+                                }
+                                else if (_shiftPiecesError is null)
+                                {
+                                    <MudText Typo="Typo.caption" Class="dt-muted">@_shiftPieces.Count 件</MudText>
+                                }
+                                <MudSpacer />
+                                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ClearShiftPieces">关闭</MudButton>
+                            </MudStack>
+                            <MudText Typo="Typo.caption" Class="dt-muted mb-2">
+                                按末站完成时间 @_expandedDetailFrom?.ToString("yyyy-MM-dd HH:mm") 至 @_expandedDetailTo?.ToString("yyyy-MM-dd HH:mm") 查询；
+                                @(_stationId is null ? "判定按整件统计" : "判定按所选工站统计")。
+                            </MudText>
+                            @if (_shiftPiecesLoading)
+                            {
+                                <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+                            }
+                            else if (_shiftPiecesError is not null)
+                            {
+                                <MudAlert Severity="Severity.Error" Dense="true" Variant="Variant.Outlined">
+                                    <div class="d-flex align-center flex-wrap gap-2">
+                                        <span>@_shiftPiecesError</span>
+                                        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => RetryShiftPiecesAsync(expandedShift))">重试</MudButton>
+                                    </div>
+                                </MudAlert>
+                            }
+                            else if (_shiftPieces.Count == 0)
+                            {
+                                <MudText Typo="Typo.body2" Class="dt-muted">该班次没有符合当前型号与工站条件的完工件。</MudText>
+                            }
+                            else
+                            {
+                                <MudTable Items="_shiftPieces" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm"
+                                          RowsPerPage="20" Class="dt-shift-piece-table">
+                                    <HeaderContent>
+                                        <MudTh>末站完成</MudTh>
+                                        <MudTh>托盘码</MudTh>
+                                        <MudTh>流水号</MudTh>
+                                        <MudTh>型号</MudTh>
+                                        <MudTh>判定</MudTh>
+                                        <MudTh></MudTh>
+                                    </HeaderContent>
+                                    <RowTemplate>
+                                        <MudTd DataLabel="末站完成" Class="dt-nowrap">@context.EndTime.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+                                        <MudTd DataLabel="托盘码">@context.PalletCode</MudTd>
+                                        <MudTd DataLabel="流水号">@context.SerialNo</MudTd>
+                                        <MudTd DataLabel="型号">@FormatRecipeRow(context.RecipeCode)</MudTd>
+                                        <MudTd DataLabel="判定">
+                                            <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                                                     Color="@(ShiftPieceJudgement(context) == Judgement.Ng ? Color.Error : ShiftPieceJudgement(context) == Judgement.Ok ? Color.Success : Color.Default)">
+                                                @DisplayLabels.JudgementText(ShiftPieceJudgement(context))
+                                            </MudChip>
+                                        </MudTd>
+                                        <MudTd DataLabel="追溯">
+                                            <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
+                                                       Href="@TracePieceUrl(context)">查看履历</MudButton>
+                                        </MudTd>
+                                    </RowTemplate>
+                                    <PagerContent><MudTablePager /></PagerContent>
+                                </MudTable>
+                            }
+                        </MudPaper>
                     }
                 </MudPaper>
             </MudItem>
@@ -245,7 +324,11 @@
                             <MudTd DataLabel="NG" Class="dt-num">
                                 @if (context.Ng > 0)
                                 {
-                                    <strong class="dt-text-error">@context.Ng</strong>
+                                    <MudLink Href="@RecipeNgQueryUrl(context.RecipeCode)" Color="Color.Error"
+                                             Underline="Underline.Hover"
+                                             aria-label="@($"查询 {FormatRecipeRow(context.RecipeCode)} 的 NG 采集记录")">
+                                        <strong>@context.Ng</strong>
+                                    </MudLink>
                                 }
                                 else
                                 {
@@ -273,6 +356,9 @@
                             </div>
                         </NoRecordsContent>
                     </MudTable>
+                    <MudText Typo="Typo.caption" Class="dt-muted mt-2">
+                        点击 NG 数可查看该型号相关采集记录。查询按采集触发时间筛选；本报表按末站完成时间统计成品，数量口径不同。
+                    </MudText>
                 </MudPaper>
             </MudItem>
 
@@ -401,7 +487,7 @@
             }
             else if (_spc is null)
             {
-                <MudText Typo="Typo.body2" Class="dt-muted py-3">请先在「参数趋势」页签选择一个数值点位，再回到这里查看过程能力。</MudText>
+                <MudText Typo="Typo.body2" Class="dt-muted py-3">当前工站与条件下没有可分析的数值点位。</MudText>
             }
             else
             {
@@ -615,6 +701,14 @@
     private IReadOnlyList<Station> _stations = [];
     private List<TagDefinition> _tags = [];
     private IReadOnlyList<DailyThroughput> _fpy = [];
+    private DateTime? _expandedShiftStart;
+    private DateTime? _expandedDetailFrom;
+    private DateTime? _expandedDetailTo;
+    private string _expandedShiftLabel = "";
+    private IReadOnlyList<FinishedPieceObservation> _shiftPieces = [];
+    private string? _shiftPiecesError;
+    private bool _shiftPiecesLoading;
+    private int _shiftPiecesLoadVersion;
     private IReadOnlyList<RecipeThroughput> _byRecipe = [];
     private PieceYieldDrag? _pieceDrag;
     private PieceFirstNg? _pieceFirstNg;
@@ -900,6 +994,37 @@ private async Task OnStationChanged(int? stationId)
             .OrderBy(x => string.IsNullOrEmpty(x.RecipeCode) ? "~" : x.RecipeCode, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+    private string RecipeNgQueryUrl(string recipeCode)
+    {
+        var parts = new List<string>
+        {
+            $"from={DateRangeFilter.StartOf(_from):yyyy-MM-dd}",
+            $"to={DateRangeFilter.StartOf(_to):yyyy-MM-dd}",
+            "judge=Ng"
+        };
+
+        if (_stationId is { } stationId)
+        {
+            parts.Add($"station={stationId}");
+        }
+
+        if (string.IsNullOrEmpty(recipeCode))
+        {
+            parts.Add("norecipe=1");
+        }
+        else
+        {
+            var recipe = CurveRecipeScope.FindByAnyCode(_knownRecipes, recipeCode);
+            var codes = recipe is null
+                ? [recipeCode]
+                : CurveRecipeScope.AllowedCodes(recipe.Code, recipe.PreviousCodes);
+            parts.Add($"recipe={Uri.EscapeDataString(codes[0])}");
+            parts.AddRange(codes.Skip(1).Select(code => $"alias={Uri.EscapeDataString(code)}"));
+        }
+
+        return $"query?{string.Join("&", parts)}";
+    }
+
     private async Task Load()
     {
         if (DateRangeFilter.IsReversed(_from, _to))
@@ -920,6 +1045,7 @@ private async Task OnStationChanged(int? stationId)
         }
 
         _loading = true;
+        ClearShiftPieces();
         try
         {
             do
@@ -1046,9 +1172,91 @@ private async Task OnStationChanged(int? stationId)
     private string StopBrief(DateTime shiftStart)
         => _stops.TryGetValue(shiftStart, out var stop) ? stop.Brief : "—";
 
+    private async Task ToggleShiftPiecesAsync(DailyThroughput shift)
+    {
+        if (_expandedShiftStart == shift.Day)
+        {
+            ClearShiftPieces();
+            return;
+        }
+
+        await LoadShiftPiecesAsync(shift);
+    }
+
+    private Task RetryShiftPiecesAsync(DateTime shiftStart)
+    {
+        var shift = _fpy.FirstOrDefault(row => row.Day == shiftStart);
+        return shift is null ? Task.CompletedTask : LoadShiftPiecesAsync(shift);
+    }
+
+    private async Task LoadShiftPiecesAsync(DailyThroughput shift)
+    {
+        var version = ++_shiftPiecesLoadVersion;
+        _expandedShiftStart = shift.Day;
+        _expandedShiftLabel = shift.ShiftLabel;
+        var detailFrom = shift.Day > DateRangeFilter.StartOf(_from)
+            ? shift.Day
+            : DateRangeFilter.StartOf(_from);
+        var shiftEndInclusive = shift.ShiftEnd.AddTicks(-1);
+        var reportEndInclusive = DateRangeFilter.EndOfInclusive(_to);
+        var detailTo = shiftEndInclusive < reportEndInclusive ? shiftEndInclusive : reportEndInclusive;
+        _expandedDetailFrom = detailFrom;
+        _expandedDetailTo = detailTo;
+        _shiftPieces = [];
+        _shiftPiecesError = null;
+        _shiftPiecesLoading = true;
+
+        try
+        {
+            var pieces = await Store.ListFinishedPiecesAsync(detailFrom, detailTo, ToRecipeQueryArg());
+            if (version == _shiftPiecesLoadVersion)
+            {
+                _shiftPieces = _stationId is { } stationId
+                    ? pieces.Where(piece => piece.Stations.Any(mark => mark.StationId == stationId)).ToList()
+                    : pieces;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (version == _shiftPiecesLoadVersion)
+            {
+                _shiftPiecesError = $"成品明细加载失败：{ex.Message}";
+            }
+        }
+        finally
+        {
+            if (version == _shiftPiecesLoadVersion)
+            {
+                _shiftPiecesLoading = false;
+            }
+        }
+    }
+
+    private void ClearShiftPieces()
+    {
+        _shiftPiecesLoadVersion++;
+        _expandedShiftStart = null;
+        _expandedDetailFrom = null;
+        _expandedDetailTo = null;
+        _expandedShiftLabel = "";
+        _shiftPieces = [];
+        _shiftPiecesError = null;
+        _shiftPiecesLoading = false;
+    }
+
+    private Judgement ShiftPieceJudgement(FinishedPieceObservation piece)
+        => _stationId is { } stationId
+            ? PieceYieldRules.OutcomeAtStation(piece, stationId)
+            : piece.Judgement;
+
+    private static string TracePieceUrl(FinishedPieceObservation piece)
+        => $"query?view=trace&trace={Uri.EscapeDataString(piece.SerialNo)}"
+           + $"&sessionMonth={Uri.EscapeDataString(piece.MonthKey)}&sessionId={piece.SessionId}";
+
     private void ClearResults()
     {
         _fpy = [];
+        ClearShiftPieces();
         // 这张表也要清：它同样会"进度条一消失还留着旧数字"。
         _byRecipe = [];
         _pieceDrag = null;

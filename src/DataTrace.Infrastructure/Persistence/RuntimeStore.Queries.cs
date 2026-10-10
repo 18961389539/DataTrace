@@ -126,6 +126,19 @@ partial class RuntimeStore
             .ConfigureAwait(false);
     }
 
+    public async Task<bool> ExistsCollectAsync(string monthKey, string serialNo, int stationId, DateTime triggerTime, CancellationToken cancellationToken = default)
+    {
+        if (!_factory.Exists(monthKey))
+        {
+            return false;
+        }
+
+        await using var db = _factory.Open(monthKey);
+        return await db.CollectRecords.AsNoTracking()
+            .AnyAsync(x => x.SerialNo == serialNo && x.StationId == stationId && x.TriggerTime == triggerTime, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public async Task<PalletSession?> GetSessionAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default)
     {
         if (!_factory.Exists(monthKey))
@@ -243,6 +256,11 @@ partial class RuntimeStore
         if (request.ResultCode is { } resultCode)
         {
             query = query.Where(x => x.ResultCode == resultCode);
+        }
+
+        if (request.RecipeCodes is { Count: > 0 } recipeCodes)
+        {
+            return query.Where(x => recipeCodes.Contains(x.RecipeCode));
         }
 
         return ApplyRecipeFilter(query, request.RecipeCode);

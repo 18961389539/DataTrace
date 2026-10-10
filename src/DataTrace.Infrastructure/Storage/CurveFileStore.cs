@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
+using System.IO.Hashing;
 using System.Text;
 using DataTrace.Application.Runtime;
 using DataTrace.Domain.Enums;
@@ -57,7 +58,7 @@ public sealed class CurveFileStore : ICurveFileStore
         }
 
         var bytes = await File.ReadAllBytesAsync(tempFull, cancellationToken).ConfigureAwait(false);
-        var crc = Crc32Util.Compute(bytes);
+        var crc = Crc32.HashToUInt32(bytes);
         File.Move(tempFull, finalFull, overwrite: true);
         return (Path.GetRelativePath(_root, finalFull).Replace('\\', '/'), bytes.LongLength, crc);
     }
@@ -69,7 +70,7 @@ public sealed class CurveFileStore : ICurveFileStore
 
         // 校验的是压缩后的字节，与写入口径一致。损坏与缺失必须区分开：
         // 都报"文件缺失"的话，现场会去查备份而不是查磁盘。
-        if (expectedCrc is { } expected && Crc32Util.Compute(compressed) != expected)
+        if (expectedCrc is { } expected && Crc32.HashToUInt32(compressed) != expected)
         {
             throw new InvalidDataException(
                 $"曲线文件校验失败：CRC 与入库值不一致（{relativePath}）");
@@ -208,38 +209,5 @@ public sealed class CurveFileStore : ICurveFileStore
                 return candidate;
             }
         }
-    }
-}
-
-internal static class Crc32Util
-{
-    private static readonly uint[] Table = Create();
-
-    public static uint Compute(ReadOnlySpan<byte> data)
-    {
-        var crc = 0xFFFFFFFFu;
-        foreach (var b in data)
-        {
-            crc = Table[(crc ^ b) & 0xFF] ^ (crc >> 8);
-        }
-
-        return crc ^ 0xFFFFFFFFu;
-    }
-
-    private static uint[] Create()
-    {
-        var table = new uint[256];
-        for (uint i = 0; i < 256; i++)
-        {
-            var c = i;
-            for (var j = 0; j < 8; j++)
-            {
-                c = (c & 1) != 0 ? 0xEDB88320 ^ (c >> 1) : c >> 1;
-            }
-
-            table[i] = c;
-        }
-
-        return table;
     }
 }

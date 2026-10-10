@@ -1,4 +1,5 @@
 using System.Globalization;
+using MathNet.Numerics.Statistics;
 
 namespace DataTrace.Domain.Evaluation;
 
@@ -56,11 +57,11 @@ public static class SpcCalculator
         }
 
         var n = values.Count;
-        var mean = values.Average();
+        var mean = Statistics.Mean(values);
         var min = values.Min();
         var max = values.Max();
 
-        var overallStdDev = n > 1 ? Math.Sqrt(values.Sum(v => (v - mean) * (v - mean)) / (n - 1)) : 0;
+        var overallStdDev = n > 1 ? Statistics.StandardDeviation(values) : 0;
 
         // 移动极差：相邻两点的绝对差，共 n-1 个。
         var movingRangeMean = 0d;

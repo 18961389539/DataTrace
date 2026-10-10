@@ -87,11 +87,11 @@ else
                            OnClick="@(() => ScrollTo("sec-basic"))">查看基本信息</MudButton>
             </div>
             <div class="dt-settings-health-card">
-                <div class="dt-settings-health-label">默认口令</div>
+                <div class="dt-settings-health-label">初始口令</div>
                 <div class="dt-settings-health-value">
-                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning">需关注</MudChip>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">首次登录强制改密</MudChip>
                 </div>
-                <div class="dt-settings-health-detail">请确认已修改 admin / engineer 等出厂口令（应用不强制检测）</div>
+                <div class="dt-settings-health-detail">生产首次部署使用随机管理员口令；admin / engineer 演示账号仅供本机开发。</div>
                 <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Primary" Class="pa-0 mt-1"
                            Href="/users">去用户页</MudButton>
             </div>
@@ -440,7 +440,8 @@ else
                         <div>
                             <div class="dt-settings-row-name">启用 MES HTTP 推送</div>
                         </div>
-                        <MudSwitch @bind-Value="_edit.MesEnabled" Color="Color.Primary"
+                        <MudSwitch @bind-Value="_edit.MesEnabled" @bind-Value:after="ValidateUrlFields"
+                                   Color="Color.Primary"
                                    Label="@(_edit.MesEnabled ? "已启用" : "已关闭")" />
                         <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
@@ -449,8 +450,10 @@ else
                             <div class="dt-settings-row-name">MES 地址</div>
                             <div class="dt-settings-row-hint">启用推送时必须填写合法 http(s) 地址</div>
                         </div>
-                        <MudTextField @bind-Value="_edit.MesEndpoint" Immediate="true" Margin="Margin.Dense"
+                        <MudTextField @bind-Value="_edit.MesEndpoint" @bind-Value:after="ValidateUrlFields"
+                                      Immediate="true" Margin="Margin.Dense"
                                       Variant="Variant.Outlined" Placeholder="http://mes.local/api/collect"
+                                      Error="@(_mesEndpointError is not null)" ErrorText="@_mesEndpointError"
                                       aria-label="MES 地址" />
                         <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
@@ -522,8 +525,10 @@ else
                                 填写后，同一条异常还会每 @SystemDefaults.AlarmRepeatMinutes 分钟 POST 到这个地址。
                             </div>
                         </div>
-                        <MudTextField @bind-Value="_edit.AlarmWebhookUrl" Immediate="true" Margin="Margin.Dense"
+                        <MudTextField @bind-Value="_edit.AlarmWebhookUrl" @bind-Value:after="ValidateUrlFields"
+                                      Immediate="true" Margin="Margin.Dense"
                                       Variant="Variant.Outlined" Placeholder="http://notify.local/datatrace"
+                                      Error="@(_alarmWebhookUrlError is not null)" ErrorText="@_alarmWebhookUrlError"
                                       aria-label="异常呼叫地址" />
                         <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
@@ -532,7 +537,7 @@ else
                 <MudPaper Class="pa-4 mb-3 dt-settings-section" id="sec-security" Elevation="1">
                     <MudText Typo="Typo.subtitle1" Class="mb-1">安全</MudText>
                     <MudText Typo="Typo.caption" Class="dt-muted mb-3">
-                        首次部署请到「用户」页修改 admin / engineer 等出厂口令。应用不强制改密，需由管理员自行确认。
+                        生产首次部署生成随机管理员口令，并强制首次登录改密；admin / engineer 演示账号仅供本机开发，勿用于现场。
                         @if (_softCapWarning is { Length: > 0 })
                         {
                             <text> 另：@_softCapWarning</text>
@@ -590,6 +595,15 @@ else
                 {
                     <div class="dt-settings-savebar">
                         <span class="dt-settings-savebar-note">有未保存的更改</span>
+                        <details class="dt-settings-change-summary">
+                            <summary>查看本次改动 · @PendingChanges.Count 项</summary>
+                            <ul aria-label="待保存的更改">
+                                @foreach (var change in PendingChanges)
+                                {
+                                    <li>@change</li>
+                                }
+                            </ul>
+                        </details>
                         <MudButton Variant="Variant.Outlined" OnClick="Reload" Disabled="_saving"
                                    StartIcon="@Icons.Material.Filled.RestartAlt">放弃</MudButton>
                         <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save" Disabled="_saving"
@@ -633,6 +647,8 @@ else
     private string? _savedLogoPath;
     private bool _loading = true;
     private bool _saving;
+    private string? _mesEndpointError;
+    private string? _alarmWebhookUrlError;
     private bool _backingUp;
     private bool _canEditBrand;
     private string _editSiteName = "";
@@ -698,6 +714,60 @@ else
             || !string.Equals((_editLogoPath ?? "").Trim(), (_savedLogoPath ?? "").Trim(), StringComparison.Ordinal));
 
     private bool Dirty => SettingsDirty || BrandingDirty;
+
+    private IReadOnlyList<string> PendingChanges
+    {
+        get
+        {
+            var changes = new List<string>();
+
+            if (_edit.ScanIntervalMs != _loaded.ScanIntervalMs)
+                changes.Add(NumberChange("扫描间隔", _loaded.ScanIntervalMs, _edit.ScanIntervalMs, " ms"));
+            if (_edit.WriteRetryCount != _loaded.WriteRetryCount)
+                changes.Add(NumberChange("写回重试次数", _loaded.WriteRetryCount, _edit.WriteRetryCount, " 次"));
+            if (_edit.WriteRetryDelayMs != _loaded.WriteRetryDelayMs)
+                changes.Add(NumberChange("写回重试间隔", _loaded.WriteRetryDelayMs, _edit.WriteRetryDelayMs, " ms"));
+            if (_edit.ShiftStartHour != _loaded.ShiftStartHour)
+                changes.Add(NumberChange("班次起点", _loaded.ShiftStartHour, _edit.ShiftStartHour, " 时"));
+            if (_edit.ShiftLengthHours != _loaded.ShiftLengthHours)
+                changes.Add(NumberChange("班次时长", _loaded.ShiftLengthHours, _edit.ShiftLengthHours, " 小时"));
+            if (_edit.RetentionYears != _loaded.RetentionYears)
+                changes.Add(RetentionChange("运行数据保留年数", _loaded.RetentionYears, _edit.RetentionYears));
+            if (_edit.AuditRetentionYears != _loaded.AuditRetentionYears)
+                changes.Add(RetentionChange("审计日志保留年数", _loaded.AuditRetentionYears, _edit.AuditRetentionYears));
+            if (_edit.CollectEnabled != _loaded.CollectEnabled)
+                changes.Add($"采集：{EnabledText(_loaded.CollectEnabled)} → {EnabledText(_edit.CollectEnabled)}；保存后下发采集端");
+            if (_edit.MesEnabled != _loaded.MesEnabled)
+                changes.Add($"MES 推送：{EnabledText(_loaded.MesEnabled)} → {EnabledText(_edit.MesEnabled)}");
+            if (!string.Equals(_edit.MesEndpoint ?? "", _loaded.MesEndpoint ?? "", StringComparison.Ordinal))
+                changes.Add("MES 地址已修改（地址内容不在摘要中显示）");
+            if (_edit.MesTimeoutSeconds != _loaded.MesTimeoutSeconds)
+                changes.Add(NumberChange("MES 超时", _loaded.MesTimeoutSeconds, _edit.MesTimeoutSeconds, " 秒"));
+            if (!string.Equals(_edit.AlarmWebhookUrl ?? "", _loaded.AlarmWebhookUrl ?? "", StringComparison.Ordinal))
+                changes.Add("异常呼叫地址已修改（地址内容不在摘要中显示）");
+            if (_canEditBrand && !string.Equals((_editSiteName ?? "").Trim(), (_savedSiteName ?? "").Trim(), StringComparison.Ordinal))
+                changes.Add($"站点显示名：{EmptyText(_savedSiteName)} → {EmptyText(_editSiteName)}");
+            if (_canEditBrand && !string.Equals((_editLogoPath ?? "").Trim(), (_savedLogoPath ?? "").Trim(), StringComparison.Ordinal))
+                changes.Add("Logo 文件名已修改");
+
+            return changes;
+        }
+    }
+
+    private static string NumberChange(string label, int? before, int? after, string unit)
+        => $"{label}：{ValueText(before)}{unit} → {ValueText(after)}{unit}";
+
+    private static string RetentionChange(string label, int? before, int? after)
+    {
+        var change = NumberChange(label, before, after, " 年");
+        return after < before ? $"{change}；缩短保留期后，超期历史会按清理策略删除或归档" : change;
+    }
+
+    private static string ValueText(int? value) => value?.ToString() ?? "未填写";
+
+    private static string EmptyText(string? value) => string.IsNullOrWhiteSpace(value) ? "空" : value.Trim();
+
+    private static string EnabledText(bool enabled) => enabled ? "启用" : "关闭";
 
     private Color BackupChipColor =>
         _backupStatus is null ? Color.Default
@@ -905,14 +975,21 @@ else
     {
         if (_settings is null || _saving) return;
 
+        ValidateUrlFields();
         if (SettingsEditRules.UrlError(_edit) is { } urlError)
         {
             Toast.Add(urlError, Severity.Warning);
+            await ScrollTo(_mesEndpointError is not null ? "sec-mes" : "sec-alarm");
             return;
         }
 
         if (!ValidateEditFields())
         {
+            if (FirstInvalidSection is { } section)
+            {
+                await ScrollTo(section);
+            }
+
             return;
         }
 
@@ -1104,6 +1181,20 @@ else
         Toast.Add($"{bad} 项填写有误，已在对应输入框标出（未保存）", Severity.Warning);
         return false;
     }
+
+    private void ValidateUrlFields()
+    {
+        _mesEndpointError = SettingsEditRules.MesEndpointError(_edit);
+        _alarmWebhookUrlError = SettingsEditRules.AlarmWebhookUrlError(_edit);
+    }
+
+    private string? FirstInvalidSection
+        => _scanError is not null || _retryError is not null || _retryDelayError is not null
+           || _shiftStartError is not null || _shiftLengthError is not null
+            ? "sec-collect"
+            : _retentionError is not null || _auditRetentionError is not null
+                ? "sec-data"
+                : _mesTimeoutError is not null ? "sec-mes" : null;
 
     /// <summary>改小保留年数前的确认：把"会删到哪个月"说清楚，避免事后才发现历史没了。</summary>
     private async Task<bool> ConfirmRetentionChange()

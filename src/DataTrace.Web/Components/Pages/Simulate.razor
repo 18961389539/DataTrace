@@ -183,7 +183,7 @@
         var snapshot = await Config.GetSnapshotAsync();
         _stations = snapshot.Stations.Where(s => s.Enabled).OrderBy(s => s.Sequence).ToList();
         _plcs = snapshot.PlcConnections.ToDictionary(x => x.Id);
-        _auto = snapshot.Settings.SimulatorAutoRun || Simulator.Status.Running;
+        _auto = snapshot.Settings.SimulatorAutoRun;
         _interval = snapshot.Settings.SimulatorIntervalMs;
         _ng = snapshot.Settings.SimulatorNgPercent;
         _pool = snapshot.Settings.SimulatorPalletPool;
@@ -208,7 +208,6 @@
             }
 
             _status = Simulator.Status;
-            _auto = _status.Running;
             StateHasChanged();
         });
     }
@@ -230,10 +229,17 @@
             }
         }
 
+        var previousAuto = _auto;
         _auto = value;
-        Simulator.SetRunning(value);
         // 只落开关本身：三个参数各自由「保存参数」提交，避免开关把没点保存的改动顺手存下去（或反过来被参数校验挡住）。
-        await PersistAsync(value ? "Enable" : "Disable", includeOptions: false);
+        if (await PersistAsync(value ? "Enable" : "Disable", includeOptions: false))
+        {
+            Simulator.SetRunning(value);
+        }
+        else
+        {
+            _auto = previousAuto;
+        }
     }
 
     private void ValidatePallet()
@@ -294,11 +300,11 @@
     /// <summary>
     /// 落库仿真配置。<paramref name="includeOptions"/> 为 false 时只写"自动跑线"开关。
     /// </summary>
-    private async Task PersistAsync(string auditAction, bool includeOptions)
+    private async Task<bool> PersistAsync(string auditAction, bool includeOptions)
     {
         if (_saving)
         {
-            return;
+            return false;
         }
 
         _saving = true;
@@ -332,12 +338,18 @@
                     ? "仿真参数已保存"
                     : settings.SimulatorAutoRun ? "自动跑线已开启" : "自动跑线已停止",
                 Severity.Success);
+            return true;
         }
         catch (Exception ex)
         {
             // 配置库写入失败如果抛给 Blazor，整条 circuit 会断掉，现场只看到页面卡死。
             await AuditSafe(auditAction, "simulator", null, $"save failed; {ex.Message}", "Failure");
-            Toast.Add($"保存仿真参数失败：{ex.Message}", Severity.Error);
+            Toast.Add(
+                includeOptions
+                    ? $"保存仿真参数失败：{ex.Message}"
+                    : $"自动跑线配置保存失败，运行状态未改变：{ex.Message}",
+                Severity.Error);
+            return false;
         }
         finally
         {

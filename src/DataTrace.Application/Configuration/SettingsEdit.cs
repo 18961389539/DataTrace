@@ -61,12 +61,20 @@ public sealed class SettingsEdit
 public static class SettingsEditRules
 {
     public static string? UrlError(SettingsEdit edit)
+        => MesEndpointError(edit) ?? AlarmWebhookUrlError(edit);
+
+    public static string? MesEndpointError(SettingsEdit edit)
     {
         if (edit.MesEnabled && !IsHttpUrl(edit.MesEndpoint))
         {
             return "已启用 MES 推送，但地址不是合法的 http(s) 地址";
         }
 
+        return null;
+    }
+
+    public static string? AlarmWebhookUrlError(SettingsEdit edit)
+    {
         if (!string.IsNullOrWhiteSpace(edit.AlarmWebhookUrl) && !IsHttpUrl(edit.AlarmWebhookUrl))
         {
             return "异常呼叫地址不是合法的 http(s) 地址";

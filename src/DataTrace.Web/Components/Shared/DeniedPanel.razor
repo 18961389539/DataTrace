@@ -15,9 +15,15 @@
         {
             <text>你想打开的「@title」需要更高的角色权限。</text>
         }
-        配置类页面需要工程师或管理员权限，用户管理需要管理员权限。
+        所需角色：@RequiredRoleText。
     </MudText>
     <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/">回到实时看板</MudButton>
+    @if (!string.IsNullOrWhiteSpace(UserName))
+    {
+        <form method="post" action="/account/logout" data-enhance="false" data-enhance-nav="false" class="mt-2">
+            <button type="submit" class="login-btn login-btn-plain">退出并切换账号</button>
+        </form>
+    }
 </MudPaper>
 
 @code {
@@ -25,4 +31,12 @@
 
     /// <summary>被拒绝的那个路由（相对路径，不含查询串）。</summary>
     [Parameter] public string? RequestedPath { get; set; }
+
+    private string RequiredRoleText => RequestedPath?.Trim('/') switch
+    {
+        "users" => "管理员",
+        "logs" or "config/plc" or "config/stations" or "config/recipes" or "config/settings" or "simulate" or "diagnostics"
+            => "工程师或管理员",
+        _ => "已登录账号"
+    };
 }

@@ -52,12 +52,12 @@
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
             <MudText Typo="Typo.subtitle2">系统健康</MudText>
             <MudChip T="string" Size="Size.Small"
-                     Color="@(health.Status == "healthy" ? Color.Success : Color.Error)"
+                     Color="@(_healthError is not null ? Color.Warning : health.Status == "healthy" ? Color.Success : Color.Error)"
                      Variant="Variant.Filled">
-                @(health.Status == "healthy" ? "全部正常" : "有异常项")
+                @(_healthError is not null ? "检查失败 · 显示上次结果" : health.Status == "healthy" ? "全部正常" : "有异常项")
             </MudChip>
             <MudText Typo="Typo.caption" Class="dt-muted">
-                与 /healthz 同一份判据 · @HealthCadenceText · 版本 @health.Version · 已运行 @UptimeText(health.UptimeSeconds)
+                与 /healthz 同一份判据 · 最近检查 @(_healthAt?.ToString("HH:mm:ss") ?? "—") · @HealthCadenceText · 版本 @health.Version · 已运行 @UptimeText(health.UptimeSeconds)
             </MudText>
         </MudStack>
         <div class="dt-diag-health-grid">

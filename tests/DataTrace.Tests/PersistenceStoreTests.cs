@@ -50,6 +50,9 @@ public class RuntimeDbFactoryTests
         await using (var db = factory.Open("202609"))
         {
             Assert.Empty(db.CollectRecords);
+            Assert.Contains(
+                await db.Database.GetAppliedMigrationsAsync(),
+                migration => migration.EndsWith("_InitialRuntimeSchema", StringComparison.Ordinal));
         }
 
         Assert.True(factory.Exists("202609"));

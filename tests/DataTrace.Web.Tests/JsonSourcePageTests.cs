@@ -224,6 +224,44 @@ public class JsonSourcePageTests : WebTestBase
     }
 
     [Fact]
+    public void Saving_a_tag_preserves_unsaved_station_fields()
+    {
+        var cut = RenderStations();
+        TypeInto(cut, "编码", "ST011");
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("有未保存的改动", cut.Markup);
+            Assert.Contains("ST011", cut.Find("h6").TextContent);
+        });
+        OpenTagTab(cut);
+        Assert.Contains("有未保存的改动", cut.Markup);
+        Assert.Contains("ST011", cut.Find("h6").TextContent);
+        Config.Snapshot = new AppConfigurationSnapshot
+        {
+            PlcConnections = [Mitsubishi()],
+            Stations = [FileStation()]
+        };
+        Assert.Contains("ST011", cut.Find("h6").TextContent);
+
+        var toggle = cut.FindAll("input[type=checkbox]").First(i => i.GetAttribute("aria-label")?.Contains("压力") == true);
+        toggle.Change(false);
+
+        Assert.Contains("ST011", cut.Find("h6").TextContent);
+        Assert.Contains("有未保存的改动", cut.Markup);
+        Assert.DoesNotContain(nameof(IConfigRepository.SaveStationAsync), Config.Calls);
+    }
+
+    [Fact]
+    public void Occupied_address_is_included_in_unsaved_state()
+    {
+        var cut = RenderStations();
+
+        TypeInto(cut, "有料地址", "D1099");
+
+        Assert.Contains("有未保存的改动", cut.Markup);
+    }
+
+    [Fact]
     public void File_source_tag_requires_the_station_file_path_before_saving_the_station()
     {
         var cut = RenderStations(FileStation(filePath: ""));

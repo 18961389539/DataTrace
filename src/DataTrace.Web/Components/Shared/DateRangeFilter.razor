@@ -11,15 +11,16 @@
                 <MudButton Size="Size.Small"
                            Variant="@(selected ? Variant.Filled : Variant.Outlined)"
                            Color="@(selected ? Color.Primary : Color.Default)"
+                           Disabled="Disabled"
                            aria-label="@($"时间区间 {preset.Label}")"
                            OnClick="@(() => SelectAsync(range))">@preset.Label</MudButton>
             }
         </div>
     </div>
 
-    <MudDatePicker Class="dt-range-date" Label="开始日期" Date="From" DateChanged="SetFromAsync" />
+    <MudDatePicker Class="dt-range-date" Label="开始日期" Date="From" DateChanged="SetFromAsync" Disabled="Disabled" />
     <MudDatePicker Class="dt-range-date" Label="结束日期" Date="To" DateChanged="SetToAsync"
-                   Error="@Invalid" ErrorText="@ReversedRangeMessage" />
+                   Error="@Invalid" ErrorText="@ReversedRangeMessage" Disabled="Disabled" />
 </div>
 
 @code {
@@ -40,6 +41,8 @@
 
     /// <summary>区间一变就回调，页面在这里发起查询：改了日期忘了点按钮是最容易踩的坑。</summary>
     [Parameter] public EventCallback OnRangeChanged { get; set; }
+
+    [Parameter] public bool Disabled { get; set; }
 
     /// <summary>倒置区间的提示语，唯一出处。</summary>
     public const string ReversedRangeMessage = "开始日期不能晚于结束日期";

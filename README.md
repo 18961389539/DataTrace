@@ -13,6 +13,18 @@ dotnet build DataTrace.slnx -c Release
 - 包版本集中在 `Directory.Packages.props`（CPM）：`.csproj` 里只写 `Include`，改版本改一处。
 - `TreatWarningsAsErrors=true`：多出一个告警构建就红。确有需要临时放行时用 `WarningsNotAsErrors` 逐条列出。
 
+## 数据库迁移
+
+数据库模型变更要提交 EF Core migration，不要把新库结构只加到模型或 Seeder 补列脚本中。工具版本与 EF Core 保持一致：
+
+```bat
+dotnet tool install --global dotnet-ef --version 8.0.11
+dotnet ef migrations add AddConfigChange --project src\DataTrace.Infrastructure --startup-project src\DataTrace.Infrastructure --context ConfigDbContext --output-dir Persistence\Migrations\Config
+dotnet ef migrations add AddRuntimeChange --project src\DataTrace.Infrastructure --startup-project src\DataTrace.Infrastructure --context RuntimeDbContext --output-dir Persistence\Migrations\Runtime
+```
+
+只为实际变更的上下文生成 migration，并检查生成的 `Up`/`Down` 与模型快照。新配置库和新月库启动时由 EF 执行 migration；旧库没有 EF 基线时，应用会先运行现有幂等升级逻辑，再记录初始基线，后续升级转由 migration 管理。月库的 `RuntimeSchemaVersion` 仍负责兼容更早版本的数据补丁。
+
 ## 运行
 
 ```bat

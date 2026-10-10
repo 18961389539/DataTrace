@@ -7,6 +7,9 @@ public sealed class DailyThroughput
     /// <summary>这一班的开始时刻。</summary>
     public DateTime Day { get; init; }
 
+    /// <summary>这一班的结束时刻（不含）。</summary>
+    public DateTime ShiftEnd { get; init; }
+
     /// <summary>给表格看的班次名，例如 09-28 08:00–20:00。</summary>
     public string ShiftLabel { get; init; } = "";
 
@@ -100,6 +103,8 @@ public sealed class FinishedPieceObservation
 {
     public string MonthKey { get; init; } = "";
     public long SessionId { get; init; }
+    public string PalletCode { get; init; } = "";
+    public string SerialNo { get; init; } = "";
     public DateTime EndTime { get; init; }
     public Judgement Judgement { get; init; }
     public string RecipeCode { get; init; } = "";

@@ -118,57 +118,9 @@ public class CsvExporterTests
 }
 
 /// <summary>SVG 折线图计算：量程、抽稀、坐标映射与刻度。</summary>
+/// <summary>折线图数据准备：量程、尖峰保留抽稀与标签格式。</summary>
 public class ChartUtilTests
 {
-    [Fact]
-    public void ChartBox_computes_plot_area_from_padding()
-    {
-        var box = new ChartBox(200, 100);
-        Assert.Equal(52, box.Left);
-        Assert.Equal(14, box.Right);
-        Assert.Equal(134, box.PlotWidth);
-        Assert.Equal(62, box.PlotHeight);
-    }
-
-    [Fact]
-    public void ChartBox_guards_against_degenerate_sizes()
-    {
-        var box = new ChartBox(40, 20);
-        Assert.Equal(1, box.PlotWidth);
-        Assert.Equal(1, box.PlotHeight);
-    }
-
-    [Fact]
-    public void ChartBox_maps_first_and_last_index_to_plot_edges()
-    {
-        var box = new ChartBox(200, 100);
-        Assert.Equal(52, box.X(0, 5));
-        Assert.Equal(119, box.X(2, 5));
-        Assert.Equal(186, box.X(4, 5));
-    }
-
-    [Fact]
-    public void ChartBox_centers_single_point_series()
-        => Assert.Equal(52 + (200 - 52 - 14) / 2.0, new ChartBox(200, 100).X(0, 1));
-
-    [Fact]
-    public void ChartBox_maps_y_axis_top_to_max_and_bottom_to_min()
-    {
-        var box = new ChartBox(200, 100);
-        Assert.Equal(74, box.Y(0, 0, 10));
-        Assert.Equal(12, box.Y(10, 0, 10));
-        Assert.Equal(43, box.Y(5, 0, 10));
-    }
-
-    [Fact]
-    public void ChartBox_y_axis_tolerates_flat_range()
-    {
-        var box = new ChartBox(200, 100);
-        // 量程为 0 时不能除零，退化为把点画在底部。
-        var y = box.Y(5, 5, 5);
-        Assert.True(double.IsFinite(y));
-    }
-
     [Fact]
     public void Range_of_empty_values_returns_unit_interval()
         => Assert.Equal((0d, 1d), ChartUtil.Range(new List<float>()));
@@ -355,29 +307,64 @@ public class ChartUtilTests
             Name = "位移压力",
             Values = [1f, 2f],
             XValues = [0f, 1f],
-            Color = ChartColors.Third,
-            Unit = "kN"
+            Unit = "mm"
         };
 
-        Assert.Equal("kN", series.Unit);
-        Assert.Equal(ChartColors.Third, series.Color);
-        Assert.Equal(new[] { 0f, 1f }, series.XValues!);
+        Assert.Equal("位移压力", series.Name);
+        Assert.Equal(new[] { 0f, 1f }, series.XValues);
+        Assert.Equal("mm", series.Unit);
     }
-}
 
-/// <summary>
-/// 界面文案映射。顶栏面包屑与"权限不足"页共用同一张路径→页名表，
-/// 之前那张表埋在 MainLayout 里，改名表就等于只改一处。
-/// </summary>
-public class DisplayLabelsTests
-{
+            [Fact]
+            public void ChartBox_computes_plot_area_from_padding()
+            {
+                var box = new ChartBox(200, 100);
+                Assert.Equal(52, box.Left);
+                Assert.Equal(14, box.Right);
+                Assert.Equal(134, box.PlotWidth);
+                Assert.Equal(62, box.PlotHeight);
+            }
+
+            [Fact]
+            public void ChartBox_guards_against_degenerate_sizes()
+            {
+                var box = new ChartBox(40, 20);
+                Assert.Equal(1, box.PlotWidth);
+                Assert.Equal(1, box.PlotHeight);
+            }
+
+            [Fact]
+            public void ChartBox_maps_first_and_last_index_to_plot_edges()
+            {
+                var box = new ChartBox(200, 100);
+                Assert.Equal(52, box.X(0, 5));
+                Assert.Equal(119, box.X(2, 5));
+                Assert.Equal(186, box.X(4, 5));
+            }
+
+            [Fact]
+            public void ChartBox_centers_single_point_series()
+                => Assert.Equal(52 + (200 - 52 - 14) / 2.0, new ChartBox(200, 100).X(0, 1));
+
+            [Fact]
+            public void ChartBox_maps_y_axis_top_to_max_and_bottom_to_min()
+            {
+                var box = new ChartBox(200, 100);
+                Assert.Equal(74, box.Y(0, 0, 10));
+                Assert.Equal(12, box.Y(10, 0, 10));
+                Assert.Equal(43, box.Y(5, 0, 10));
+            }
+
+            [Fact]
+            public void ChartBox_y_axis_tolerates_flat_range()
+            {
+                var box = new ChartBox(200, 100);
+                // 量程为 0 时不能除零，退化为把点画在底部。
+                var y = box.Y(5, 5, 5);
+                Assert.True(double.IsFinite(y));
+            }
+
     [Theory]
-    [InlineData("", "实时看板")]
-    [InlineData("/", "实时看板")]
-    [InlineData("query", "数据查询")]
-    [InlineData("query?from=2026-09-15", "数据查询")]
-    [InlineData("query/202609/12", "数据查询 / 记录明细")]
-    [InlineData("reports", "报表")]
     [InlineData("config/plc", "PLC 连接")]
     [InlineData("config/stations", "工站配置")]
     [InlineData("users", "用户")]

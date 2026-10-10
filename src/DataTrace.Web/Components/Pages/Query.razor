@@ -42,25 +42,32 @@
 
 @if (_traceMode)
 {
-    <ProductTraceabilityPanel InitialSerialNo="@TraceQuery" OnSearchCompleted="OnTraceSearchCompleted" />
+    <ProductTraceabilityPanel InitialSerialNo="@TraceQuery"
+                              InitialMonthKey="@TraceMonthQuery"
+                              InitialSessionId="@TraceSessionQuery"
+                              OnSearchCompleted="OnTraceSearchCompleted" />
 }
 else
 {
 <MudPaper Class="dt-filter-card mb-3">
     <form @onsubmit="OnSubmit" @onsubmit:preventDefault="true">
-        <DateRangeFilter @bind-From="_from" @bind-To="_to" OnRangeChanged="Search" />
+        <DateRangeFilter @bind-From="_from" @bind-To="_to" OnRangeChanged="Search"
+                 Disabled="@(_loading || _exporting)" />
 
         <MudGrid Class="dt-filters">
             <MudItem xs="12" sm="6" md="4" lg="3">
                 <MudTextField T="string" Value="_pallet" ValueChanged="OnPalletChanged" Label="托盘码" Placeholder="支持模糊匹配"
-                              Immediate="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.QrCode" />
+                                  Immediate="true" Disabled="@(_loading || _exporting)"
+                                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.QrCode" />
             </MudItem>
             <MudItem xs="12" sm="6" md="4" lg="3">
                 <MudTextField T="string" Value="_serialNo" ValueChanged="OnSerialChanged" Label="流水号"
-                              Immediate="true" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Tag" />
+                                  Immediate="true" Disabled="@(_loading || _exporting)"
+                                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Tag" />
             </MudItem>
             <MudItem xs="12" sm="6" md="4" lg="3">
-                <MudSelect T="int?" Value="_stationId" ValueChanged="OnStationChanged" Label="工站" Clearable="true">
+                <MudSelect T="int?" Value="_stationId" ValueChanged="OnStationChanged" Label="工站" Clearable="true"
+                           Disabled="@(_loading || _exporting)">
                     @foreach (var s in _stations)
                     {
                         <MudSelectItem T="int?" Value="@s.Id">@s.Code @s.Name</MudSelectItem>
@@ -68,7 +75,8 @@ else
                 </MudSelect>
             </MudItem>
             <MudItem xs="12" sm="6" md="4" lg="3">
-                <MudSelect T="Judgement?" Value="_judgement" ValueChanged="OnJudgementChanged" Label="判定" Clearable="true">
+                <MudSelect T="Judgement?" Value="_judgement" ValueChanged="OnJudgementChanged" Label="判定" Clearable="true"
+                           Disabled="@(_loading || _exporting)">
                     <MudSelectItem T="Judgement?" Value="Judgement.Ok">OK（合格）</MudSelectItem>
                     <MudSelectItem T="Judgement?" Value="Judgement.Ng">NG（不合格）</MudSelectItem>
                     <MudSelectItem T="Judgement?" Value="Judgement.None">未判定</MudSelectItem>
@@ -77,7 +85,8 @@ else
 
             @* 结果码描述已落库采集记录的处理结果；PLC 通讯失败没有有效产品记录，单独留在审计日志。 *@
             <MudItem xs="12" sm="6" md="4" lg="3">
-                <MudSelect T="short?" Value="_resultCode" ValueChanged="OnResultCodeChanged" Label="结果码" Clearable="true">
+                <MudSelect T="short?" Value="_resultCode" ValueChanged="OnResultCodeChanged" Label="结果码" Clearable="true"
+                           Disabled="@(_loading || _exporting)">
                     @foreach (var code in ResultCodeOptions)
                     {
                         <MudSelectItem T="short?" Value="@((short?)code)">@ResultCodeLabel(code)</MudSelectItem>
@@ -87,7 +96,7 @@ else
 
                         <MudItem xs="12" sm="6" md="4" lg="3">
                 <MudSelect T="RecipeFilterValue" Value="@ToOptionValue(_recipeFilter)" ValueChanged="OnRecipeFilterChanged"
-                           Label="产品型号" Dense="true" Disabled="_loading">
+                           Label="产品型号" Dense="true" Disabled="@(_loading || _exporting)">
                     <MudSelectItem T="RecipeFilterValue" Value="@RecipeFilterValue.All">全部型号</MudSelectItem>
                     <MudSelectItem T="RecipeFilterValue" Value="@RecipeFilterValue.NoRecipe">未选型号</MudSelectItem>
                     @foreach (var opt in _recipeOptions)
@@ -103,7 +112,8 @@ else
                        StartIcon="@Icons.Material.Filled.Search" Disabled="_loading">
                 @(_loading ? "查询中…" : "查询")
             </MudButton>
-            <MudButton Variant="Variant.Outlined" OnClick="Reset" StartIcon="@Icons.Material.Filled.RestartAlt">
+            <MudButton Variant="Variant.Outlined" OnClick="Reset" Disabled="@(_loading || _exporting)"
+                       StartIcon="@Icons.Material.Filled.RestartAlt">
                 重置
             </MudButton>
             @if (_canExport)
@@ -112,7 +122,7 @@ else
                    .mud-tooltip .mud-button:disabled 那条：让按钮不接指针事件，hover 落到包裹层。 *@
                 <MudTooltip Arrow="true" Text="@ExportTooltipText">
                     <ChildContent>
-                        <MudButton Variant="Variant.Outlined" OnClick="ExportCsv" Disabled="_exporting || _total == 0"
+                        <MudButton Variant="Variant.Outlined" OnClick="ExportCsv" Disabled="@(_loading || _exporting || _total == 0)"
                                    StartIcon="@Icons.Material.Filled.FileDownload">
                             @(_exporting ? "导出中…" : "导出 CSV")
                         </MudButton>
@@ -139,17 +149,19 @@ else
                 @filter.Label
                 <MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close"
                                aria-label="@($"移除筛选条件：{filter.Label}")"
+                               Disabled="@(_loading || _exporting)"
                                OnClick="@(() => ClearOneAsync(filter.Clear))" />
             </MudChip>
         }
-        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ClearAllFiltersAsync">清空全部</MudButton>
+        <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@(_loading || _exporting)"
+               OnClick="ClearAllFiltersAsync">清空全部</MudButton>
     </div>
 }
 
 @* 表头吸附：一页最多 100 行，滚下去就没有列名可对。高度用 --dt-grid-height 统一约定，
    不写在这里是因为它和页头/筛选卡/分页条的实际高度有关，只该有一处真相。 *@
 <MudTable Items="_items" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm"
-          Loading="_loading" LoadingProgressColor="Color.Info"
+          Loading="@(_loading || _exporting)" LoadingProgressColor="Color.Info"
           FixedHeader="true" Height="var(--dt-grid-height)"
           Class="dt-clickable" OnRowClick="@((TableRowClickEventArgs<CollectRecordListItem> args) => OnRowClicked(args))">
     <HeaderContent>
@@ -362,6 +374,7 @@ else
     private short? _resultCode;
     /// <summary>型号筛选：null/缺省=全部型号；<c>""</c>=未选型号；其它为精确匹配。</summary>
     private string? _recipeFilter;
+    private IReadOnlyList<string> _recipeAliases = [];
     private IReadOnlyList<Station> _stations = [];
     private IReadOnlyList<CollectRecordListItem> _items = [];
     private int _total;
@@ -406,6 +419,12 @@ else
     [SupplyParameterFromQuery(Name = "trace")]
     public string? TraceQuery { get; set; }
 
+    [SupplyParameterFromQuery(Name = "sessionMonth")]
+    public string? TraceMonthQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "sessionId")]
+    public long? TraceSessionQuery { get; set; }
+
     [SupplyParameterFromQuery(Name = "days")]
     public int? DaysQuery { get; set; }
 
@@ -430,6 +449,9 @@ else
     /// <summary>型号筛选：缺省=全部；<c>recipe=CODE</c> 精确匹配编码，<c>norecipe=1</c> 表示「未选型号」。</summary>
     [SupplyParameterFromQuery(Name = "recipe")]
     public string? RecipeQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "alias")]
+    public string[]? RecipeAliasesQuery { get; set; }
 
     /// <summary>
     /// 「未选型号」用独立参数表达：与真实编码共用 recipe 时，
@@ -534,6 +556,12 @@ else
         else if (!string.IsNullOrWhiteSpace(RecipeQuery))
         {
             _recipeFilter = RecipeQuery.Trim();
+            _recipeAliases = (RecipeAliasesQuery ?? [])
+                .Where(alias => !string.IsNullOrWhiteSpace(alias))
+                .Select(alias => alias.Trim())
+                .Where(alias => !string.Equals(alias, _recipeFilter, StringComparison.Ordinal))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
         }
 
         // 工站下拉与型号选项都取自同一份配置快照：它按版本号在本电路内缓存，
@@ -567,10 +595,20 @@ else
 
     private Task OnTraceSearchCompleted(string? serialNo)
     {
-        TraceQuery = string.IsNullOrWhiteSpace(serialNo) ? null : serialNo.Trim();
+        var nextSerial = string.IsNullOrWhiteSpace(serialNo) ? null : serialNo.Trim();
+        if (!string.Equals(nextSerial, TraceQuery, StringComparison.Ordinal))
+        {
+            TraceMonthQuery = null;
+            TraceSessionQuery = null;
+        }
+
+        TraceQuery = nextSerial;
         var target = TraceQuery is null
             ? "query?view=trace"
-            : $"query?view=trace&trace={Uri.EscapeDataString(TraceQuery)}";
+            : $"query?view=trace&trace={Uri.EscapeDataString(TraceQuery)}"
+              + (TraceMonthQuery is not null && TraceSessionQuery is { } sessionId
+                  ? $"&sessionMonth={Uri.EscapeDataString(TraceMonthQuery)}&sessionId={sessionId}"
+                  : "");
         Nav.NavigateTo(target, replace: true);
         return Task.CompletedTask;
     }
@@ -582,9 +620,12 @@ else
         PalletCode = string.IsNullOrWhiteSpace(_pallet) ? null : _pallet.Trim(),
         SerialNo = string.IsNullOrWhiteSpace(_serialNo) ? null : _serialNo.Trim(),
         StationId = _stationId,
-        RecipeCode = ToRecipeQueryArg(),
         Judgement = _judgement,
         ResultCode = _resultCode,
+        RecipeCodes = _recipeAliases.Count > 0
+            ? new[] { _recipeFilter! }.Concat(_recipeAliases).Distinct(StringComparer.Ordinal).ToArray()
+            : null,
+        RecipeCode = _recipeAliases.Count > 0 ? null : ToRecipeQueryArg(),
         Skip = skip,
         Take = take,
         SortBy = _sortBy,
@@ -684,6 +725,12 @@ else
         // 但直接丢弃请求也不行：日期控件在加载中没禁用，"先改开始日期、再改结束日期"
         // 会丢掉后者——表格和地址栏停在旧条件上，输入框却显示新日期。
         // 所以把请求记下来，等这一轮结束立刻按最新条件再跑一次。
+        if (_exporting)
+        {
+            _loadPending = true;
+            return;
+        }
+
         if (_loading)
         {
             _loadPending = true;
@@ -789,6 +836,7 @@ else
         if (_recipeFilter is { Length: > 0 } recipe)
         {
             parts.Add($"recipe={Uri.EscapeDataString(recipe.Trim())}");
+            parts.AddRange(_recipeAliases.Select(alias => $"alias={Uri.EscapeDataString(alias)}"));
         }
         else if (_recipeFilter is not null)
         {
@@ -833,6 +881,7 @@ else
     private void ClearFilterState()
     {
         _recipeFilter = null;
+        _recipeAliases = [];
         _pallet = null;
         _serialNo = null;
         _stationId = null;
@@ -904,7 +953,12 @@ else
 
             if (_recipeFilter is { } recipe)
             {
-                list.Add(new($"型号 {RecipeLabel(recipe)}", () => _recipeFilter = null));
+                var suffix = _recipeAliases.Count > 0 ? $"（含历史编码 {_recipeAliases.Count} 个）" : "";
+                list.Add(new($"型号 {RecipeLabel(recipe)}{suffix}", () =>
+                {
+                    _recipeFilter = null;
+                    _recipeAliases = [];
+                }));
             }
 
             return list;
@@ -1013,6 +1067,11 @@ else
     /// </summary>
     private async Task OnSortClicked(CollectSortField field)
     {
+        if (_loading || _exporting)
+        {
+            return;
+        }
+
         if (_sortBy == field)
         {
             _sortDesc = !_sortDesc;
@@ -1037,6 +1096,7 @@ else
     private async Task OnRecipeFilterChanged(RecipeFilterValue? value)
     {
         _recipeFilter = value?.Recipe;
+        _recipeAliases = [];
         _page = 1;
         await Load();
     }
@@ -1100,7 +1160,7 @@ else
 
     private async Task ExportCsv()
     {
-        if (_exporting)
+        if (_loading || _exporting)
         {
             return;
         }
@@ -1111,10 +1171,13 @@ else
             return;
         }
 
+        var request = BuildRequest(0, SystemDefaults.ExportRowLimit);
+        var auditKey = $"{(_from ?? DateTime.Today):yyyy-MM-dd}~{(_to ?? DateTime.Today):yyyy-MM-dd}";
+        var auditFilters = ExportFilterSummary();
         _exporting = true;
         try
         {
-            var result = await Store.QueryAsync(BuildRequest(0, SystemDefaults.ExportRowLimit));
+            var result = await Store.QueryAsync(request);
             if (result.Items.Count == 0)
             {
                 Toast.Add("没有可导出的记录", Severity.Warning);
@@ -1145,7 +1208,7 @@ else
                 : $"已导出 {result.Items.Count} 条";
             try
             {
-                await WriteExportAuditAsync(result.Items.Count, result.Total);
+                await WriteExportAuditAsync(result.Items.Count, result.Total, auditKey, auditFilters);
                 Toast.Add(message, result.Total > result.Items.Count ? Severity.Warning : Severity.Success);
             }
             catch (Exception ex)
@@ -1161,6 +1224,11 @@ else
         finally
         {
             _exporting = false;
+            if (_loadPending)
+            {
+                _loadPending = false;
+                await Load();
+            }
         }
     }
 
@@ -1171,23 +1239,25 @@ else
     private static string DurationMsText(int? durationMs)
         => durationMs is > 0 ? durationMs.Value.ToString() : "";
 
-    private async Task WriteExportAuditAsync(int exported, int total)
+    private string ExportFilterSummary()
     {
-        var auth = await Auth.GetAuthenticationStateAsync();
-        var user = auth.User.Identity?.Name ?? "";
         var recipe = _recipeFilter switch
         {
             null => "全部",
             "" => "未选型号",
             var code => code.Trim()
         };
+        return $"pallet={_pallet?.Trim() ?? ""};serial={_serialNo?.Trim() ?? ""};" +
+               $"station={_stationId?.ToString() ?? ""};judge={_judgement?.ToString() ?? ""};" +
+               $"result={_resultCode?.ToString() ?? ""};recipe={recipe};aliases={string.Join(",", _recipeAliases)}";
+    }
+
+    private async Task WriteExportAuditAsync(int exported, int total, string key, string filters)
+    {
+        var auth = await Auth.GetAuthenticationStateAsync();
+        var user = auth.User.Identity?.Name ?? "";
         // 键放"导的是哪个区间"，过滤条件与条数放变更列：与明细页导出的写法一致，
         // 日志页的"键"列不该塞进一长串条件。审计日志的键/明细字段唯一语义见 Logs.razor。
-        var key = $"{(_from ?? DateTime.Today):yyyy-MM-dd}~{(_to ?? DateTime.Today):yyyy-MM-dd}";
-        var summary =
-            $"pallet={_pallet?.Trim() ?? ""};serial={_serialNo?.Trim() ?? ""};" +
-            $"station={_stationId?.ToString() ?? ""};judge={_judgement?.ToString() ?? ""};" +
-            $"recipe={recipe};exported={exported};total={total}";
-        await Audit.WriteAsync(user, "Export", "Query", key, null, summary);
+        await Audit.WriteAsync(user, "Export", "Query", key, null, $"{filters};exported={exported};total={total}");
     }
 }

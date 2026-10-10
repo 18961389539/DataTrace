@@ -775,6 +775,9 @@ public class DiagnosticsPageTests : WebTestBase
             Saved.Add(request.Record.SerialNo);
         }
 
+        public Task RepairPostCommitStateAsync(CollectSaveRequest request, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
         public Task MarkSessionAbnormalAsync(
             string monthKey,
             long sessionId,

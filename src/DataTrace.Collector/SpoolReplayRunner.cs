@@ -115,18 +115,18 @@ public sealed class SpoolReplayRunner
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
 
-            // 幂等查重：上一次可能已经写进去了，只是缓存没来得及删（提交后进程被杀、
-            // 删文件被占用）。这种情况直接重放会撞流水号唯一索引，永远失败 ——
-            // 而"从最早一条开始、遇失败即止"会让它把整队堵死。命中就按已入库收尾。
+            // 按同一次采集查重：流水号属于托盘会话，会被多个工站复用。
+            // 数据已写入但缓存没删掉时，命中才按已入库收尾。
             var query = scope.ServiceProvider.GetRequiredService<ICollectQuery>();
-            if (await query.ExistsBySerialAsync(request.MonthKey, serial).ConfigureAwait(false))
+            var runtime = scope.ServiceProvider.GetRequiredService<ICollectWriter>();
+            if (await query.ExistsCollectAsync(request.MonthKey, serial, request.Record.StationId, request.Record.TriggerTime).ConfigureAwait(false))
             {
+                await runtime.RepairPostCommitStateAsync(request).ConfigureAwait(false);
                 await _spool.DeleteAsync(file).ConfigureAwait(false);
                 _logger.LogInformation("补传跳过 {SpoolFile} {Serial}：记录已在库（上次写库已成功、缓存没删掉），清掉这条缓存", file, serial);
                 return SpoolReplayResult.Success;
             }
 
-            var runtime = scope.ServiceProvider.GetRequiredService<ICollectWriter>();
             await runtime.SaveAsync(request).ConfigureAwait(false);
             await _spool.DeleteAsync(file).ConfigureAwait(false);
             _logger.LogInformation("补传成功 {SpoolFile} {Serial}", file, serial);

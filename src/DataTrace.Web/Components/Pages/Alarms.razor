@@ -36,38 +36,40 @@ else
 }
 else
 {
-    <MudText Typo="Typo.subtitle1" Class="mb-2">待处理 @_attention.Count</MudText>
-    @if (!_canTake)
+    @if (NeedsOwner.Count > 0)
     {
-        <MudText Typo="Typo.body2" Class="dt-muted mb-2">当前账号是访客，只能查看，不能接手。</MudText>
-    }
-    <MudTable Items="_attention" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-4">
-        <HeaderContent>
-            <MudTh>发生时间</MudTh>
-            <MudTh>类型</MudTh>
-            <MudTh>内容</MudTh>
-            <MudTh>状态</MudTh>
-            <MudTh>接手</MudTh>
-            <MudTh></MudTh>
-        </HeaderContent>
-        <RowTemplate>
-            <MudTd DataLabel="发生时间">@When(context.RaisedAt)</MudTd>
-            <MudTd DataLabel="类型">@KindText(context.Kind)</MudTd>
-            <MudTd DataLabel="内容">@context.Message</MudTd>
-            <MudTd DataLabel="状态">@StatusText(context)</MudTd>
-            <MudTd DataLabel="接手">@OwnerText(context)</MudTd>
-            <MudTd DataLabel="操作">
-                @if (context.NeedsOwner && _canTake)
-                {
-                    @* 进度落在本行：原来只有全局禁用 + Toast，点完看着像所有行一起灰了，
-                       却不知道是哪一条在处理。 *@
-                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
-                               Disabled="_working"
-                               StartIcon="@(_workingId == context.Id ? Icons.Material.Filled.Sync : null)"
-                               OnClick="@(() => Take(context))">
-                        @(_workingId == context.Id ? "接手中…" : "接手")
-                    </MudButton>
-                }
+        <MudText Typo="Typo.subtitle1" Class="mb-2">待接手 @NeedsOwner.Count</MudText>
+        @if (!_canTake)
+        {
+            <MudText Typo="Typo.body2" Class="dt-muted mb-2">当前账号是访客，只能查看，不能接手。</MudText>
+        }
+        <MudTable Items="NeedsOwner" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-4">
+            <HeaderContent>
+                <MudTh>发生时间</MudTh>
+                <MudTh>类型</MudTh>
+                <MudTh>内容</MudTh>
+                <MudTh>状态</MudTh>
+                <MudTh>接手</MudTh>
+                <MudTh>定位</MudTh>
+                <MudTh></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="发生时间">@When(context.RaisedAt)</MudTd>
+                <MudTd DataLabel="类型">@KindText(context.Kind)</MudTd>
+                <MudTd DataLabel="内容">@context.Message</MudTd>
+                <MudTd DataLabel="状态">@StatusText(context)</MudTd>
+                <MudTd DataLabel="接手">@OwnerText(context)</MudTd>
+                <MudTd DataLabel="定位">
+                    @{ var action = ActionFor(context.Kind); }
+                    @if (action.Href is not null)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
+                                   Href="@action.Href">@action.Label</MudButton>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption" Class="dt-muted">需要工程师或管理员</MudText>
+                    }
                     @if (_canTake && context.Kind == LineAlarmKind.ConsecutiveNg)
                     {
                         <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning"
@@ -75,9 +77,62 @@ else
                             创建质量异常
                         </MudButton>
                     }
-            </MudTd>
-        </RowTemplate>
-    </MudTable>
+                </MudTd>
+                <MudTd DataLabel="操作">
+                    @if (_canTake)
+                    {
+                        @* 进度落在本行：一次只处理一条，行内能看清当前进度。 *@
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                                   Disabled="_working"
+                                   StartIcon="@(_workingId == context.Id ? Icons.Material.Filled.Sync : null)"
+                                   OnClick="@(() => Take(context))">
+                            @(_workingId == context.Id ? "接手中…" : "接手")
+                        </MudButton>
+                    }
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+    @if (AcknowledgedOpen.Count > 0)
+    {
+        <MudText Typo="Typo.subtitle1" Class="mb-2">已接手，尚未解除 @AcknowledgedOpen.Count</MudText>
+        <MudTable Items="AcknowledgedOpen" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-4 dt-acknowledged-alarms">
+            <HeaderContent>
+                <MudTh>发生时间</MudTh>
+                <MudTh>类型</MudTh>
+                <MudTh>内容</MudTh>
+                <MudTh>状态</MudTh>
+                <MudTh>接手人</MudTh>
+                <MudTh>定位</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="发生时间">@When(context.RaisedAt)</MudTd>
+                <MudTd DataLabel="类型">@KindText(context.Kind)</MudTd>
+                <MudTd DataLabel="内容">@context.Message</MudTd>
+                <MudTd DataLabel="状态">@StatusText(context)</MudTd>
+                <MudTd DataLabel="接手人">@OwnerText(context)</MudTd>
+                <MudTd DataLabel="定位">
+                    @{ var action = ActionFor(context.Kind); }
+                    @if (action.Href is not null)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
+                                   Href="@action.Href">@action.Label</MudButton>
+                    }
+                    else
+                    {
+                        <MudText Typo="Typo.caption" Class="dt-muted">需要工程师或管理员</MudText>
+                    }
+                    @if (_canTake && context.Kind == LineAlarmKind.ConsecutiveNg)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning"
+                                   StartIcon="@Icons.Material.Filled.ReportProblem" Href="@CreateQualityIncidentUrl(context.Id)">
+                            创建质量异常
+                        </MudButton>
+                    }
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
 }
 
 @* 两类表的权重刻意不同：待处理是待办，最近结束是归档。
@@ -121,8 +176,11 @@ else
 @code {
     private IReadOnlyList<AlarmIncidentDraft> _attention = [];
     private IReadOnlyList<AlarmIncidentDraft> _recent = [];
+    private IReadOnlyList<AlarmIncidentDraft> NeedsOwner => _attention.Where(item => item.NeedsOwner).ToList();
+    private IReadOnlyList<AlarmIncidentDraft> AcknowledgedOpen => _attention.Where(item => !item.NeedsOwner).ToList();
     private string? _loadError;
     private bool _canTake;
+    private bool _canDiagnose;
     /// <summary>有任意一条在接手时为 true：其余行的按钮一起禁用，防止并发写同一条。</summary>
     private bool _working;
     /// <summary>正在接手的那一条：进度显示在它自己的按钮上，而不是整表一起灰。</summary>
@@ -135,6 +193,7 @@ else
         _canTake = user.IsInRole(AppRoles.Administrator)
                    || user.IsInRole(AppRoles.Engineer)
                    || user.IsInRole(AppRoles.Operator);
+        _canDiagnose = user.IsInRole(AppRoles.Administrator) || user.IsInRole(AppRoles.Engineer);
         Board.Changed += OnChanged;
         await Reload(pushBoard: false);
     }
@@ -221,8 +280,6 @@ else
             item.Kind,
             item.StillActive ? item.Message : item.Message + "（已恢复，仍待接手）");
 
-    private static string CreateQualityIncidentUrl(long alarmId) => $"/quality/incidents/new?alarmId={alarmId}";
-
     private static string KindText(LineAlarmKind kind) => kind switch
     {
         LineAlarmKind.HeartbeatStale => "采集心跳",
@@ -251,6 +308,27 @@ else
 
     private static string OwnerText(AlarmIncidentDraft item)
         => item.AcknowledgedBy is null ? "—" : $"{item.AcknowledgedBy} {When(item.AcknowledgedAt)}";
+
+    private (string Label, string? Href) ActionFor(LineAlarmKind kind)
+    {
+        if (!_canDiagnose && kind is not LineAlarmKind.ConsecutiveNg
+            and not LineAlarmKind.ConsecutiveWarning and not LineAlarmKind.ProcessDrift)
+        {
+            return ("需授权", null);
+        }
+
+        return kind switch
+        {
+            LineAlarmKind.MesBacklog => ("查看 MES 状态", "/config/settings"),
+            LineAlarmKind.ConsecutiveNg => ("查看 NG 记录", "/query?judge=Ng&days=30"),
+            LineAlarmKind.ConsecutiveWarning or LineAlarmKind.ProcessDrift => ("查看过程报表", "/reports"),
+            LineAlarmKind.SessionSuperseded or LineAlarmKind.OpenSession => ("打开产品追溯", "/query?view=trace"),
+            _ => ("打开运行诊断", "/diagnostics")
+        };
+    }
+
+    private static string CreateQualityIncidentUrl(long alarmId)
+        => $"/quality/incidents/new?alarmId={alarmId}";
 
     private static string When(DateTime? time)
         => time?.ToString("yyyy-MM-dd HH:mm:ss") ?? "—";

@@ -9,7 +9,7 @@
 <MudPaper Class="pa-6" Style="max-width:640px;margin:6vh auto">
     <MudText Typo="Typo.h5" Class="mb-2">系统发生错误</MudText>
     <MudText Typo="Typo.body2" Class="mb-3">
-        当前操作没有完成。可以先返回看板重试一次；如果反复出现，请联系维护工程师。
+        系统未能确认当前操作是否完成。请先核对页面或记录结果，再决定是否重试；若问题仍在，请联系维护工程师。
     </MudText>
     @if (ErrorCode is not null)
     {
@@ -22,7 +22,7 @@
         </MudAlert>
     }
     <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-4">
-        日志文件：程序目录下 data/logs/datatrace-yyyyMMdd.log（记录完整堆栈与时间）
+        维护工程师可使用回报码与发生时间，在服务器日志中定位完整错误记录。
     </MudAlert>
     <MudStack Row="true" Spacing="2">
         <MudButton Variant="Variant.Filled" Color="Color.Primary" Href="/">回到实时看板</MudButton>

@@ -195,7 +195,7 @@ public class UsersPageTests : WebTestBase, IDisposable
         LockAccount("zhang", TimeSpan.FromMinutes(5));
 
         var cut = RenderUsers();
-        cut.WaitForAssertion(() => Assert.Contains("已锁定", cut.Markup));
+        cut.WaitForAssertion(() => Assert.Contains("锁定至", cut.Markup));
 
         ClickButton(cut, "解除锁定");
 

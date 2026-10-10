@@ -61,6 +61,7 @@
                    title="在专用终端上勾选：关掉浏览器再打开无需重新登录；公共终端请勿勾选。">
                 <input type="checkbox" name="RememberMe" value="true" checked="@_rememberMe" />
                 <span>记住我</span>
+                <span class="login-remember-hint">仅专用终端使用；公共终端请勿勾选。</span>
             </label>
             <button type="submit" class="login-btn">登录</button>
             @if (ErrorText is { } message)

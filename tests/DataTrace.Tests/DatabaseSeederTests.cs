@@ -9,6 +9,17 @@ namespace DataTrace.Tests;
 public class DatabaseSeederTests
 {
     [Fact]
+    public async Task Fresh_config_database_is_created_by_ef_migrations()
+    {
+        await using var context = await InfrastructureContext.CreateAsync();
+        var db = context.Scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
+
+        Assert.Contains(
+            await db.Database.GetAppliedMigrationsAsync(),
+            migration => migration.EndsWith("_InitialConfigSchema", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task Quality_incident_tables_are_recreated_for_an_existing_config_database()
     {
         await using var context = await InfrastructureContext.CreateAsync();
@@ -16,6 +27,7 @@ public class DatabaseSeederTests
         using (var scope = context.Provider.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
+            await db.Database.ExecuteSqlRawAsync("DROP TABLE \"__EFMigrationsHistory\"");
             await db.Database.ExecuteSqlRawAsync("DROP TABLE \"QualityIncidentActivities\"");
             await db.Database.ExecuteSqlRawAsync("DROP TABLE \"QualityIncidentEvidence\"");
             await db.Database.ExecuteSqlRawAsync("DROP TABLE \"QualityIncidents\"");

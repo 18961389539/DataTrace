@@ -28,9 +28,27 @@ public sealed class FileSpoolStore : ISpoolStore
         Directory.CreateDirectory(_root);
         var name = $"{DateTime.Now:yyyyMMddHHmmssfff}_{Guid.NewGuid():N}{PayloadSuffix}";
         var path = Path.Combine(_root, name);
-        await using var stream = File.Create(path);
-        await JsonSerializer.SerializeAsync(stream, request, JsonOptions, cancellationToken).ConfigureAwait(false);
-        return name;
+        var temporaryPath = path + ".tmp";
+        try
+        {
+            await using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
+            {
+                await JsonSerializer.SerializeAsync(stream, request, JsonOptions, cancellationToken).ConfigureAwait(false);
+                stream.Flush(flushToDisk: true);
+            }
+
+            File.Move(temporaryPath, path);
+            return name;
+        }
+        catch
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+
+            throw;
+        }
     }
 
     public async Task<IReadOnlyList<(string FileName, CollectSaveRequest Request)>> ListAsync(CancellationToken cancellationToken = default)

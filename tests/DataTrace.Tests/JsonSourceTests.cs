@@ -198,6 +198,7 @@ public class JsonSourceTests
         await using var ctx = await InfrastructureContext.CreateAsync();
         var db = ctx.Scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
 
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE \"__EFMigrationsHistory\"");
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE Tags DROP COLUMN Source");
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE Stations DROP COLUMN DataFilePath");
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE Stations DROP COLUMN DataFileFormat");
@@ -206,6 +207,9 @@ public class JsonSourceTests
 
         await ctx.Scope.ServiceProvider.GetRequiredService<DatabaseSeeder>().SeedAsync();
 
+        Assert.Contains(
+            await db.Database.GetAppliedMigrationsAsync(),
+            migration => migration.EndsWith("_InitialConfigSchema", StringComparison.Ordinal));
         var columns = await ColumnNamesAsync(db, "Tags");
         Assert.Contains("Source", columns);
         Assert.Contains("DataFilePath", await ColumnNamesAsync(db, "Stations"));
@@ -233,6 +237,7 @@ public class JsonSourceTests
             outcome: "Success");
         var original = await db.AuditLogs.SingleAsync(x => x.Action == "Update");
 
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE \"__EFMigrationsHistory\"");
         await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "AuditLogs" DROP COLUMN "Outcome" """);
         await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "AuditLogs" DROP COLUMN "Source" """);
         await db.Database.ExecuteSqlRawAsync("""ALTER TABLE "AuditLogs" DROP COLUMN "SourceIp" """);
@@ -261,6 +266,7 @@ public class JsonSourceTests
         var services = ctx.Scope.ServiceProvider;
         var db = services.GetRequiredService<ConfigDbContext>();
 
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE \"__EFMigrationsHistory\"");
         await db.Database.ExecuteSqlRawAsync("""DROP TABLE "AuditLogs" """);
         await services.GetRequiredService<DatabaseSeeder>().SeedAsync();
         var columns = await ColumnNamesAsync(db, "AuditLogs");

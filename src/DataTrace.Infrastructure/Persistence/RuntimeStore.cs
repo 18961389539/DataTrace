@@ -142,14 +142,13 @@ public sealed partial class RuntimeStore : IRuntimeStore
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
             databaseCommitted = true;
 
-            if (request.RemoveActiveSession)
+            try
             {
-                await _activeSessions.RemoveByPalletAsync(request.Record.PalletCode, cancellationToken).ConfigureAwait(false);
+                await UpdateActiveSessionAsync(request, replay: false, cancellationToken).ConfigureAwait(false);
             }
-            else if (request.ActiveSession is not null)
+            catch (Exception ex)
             {
-                request.ActiveSession.SessionId = request.Record.PalletSessionId;
-                await _activeSessions.UpsertAsync(request.ActiveSession, cancellationToken).ConfigureAwait(false);
+                throw new PostCommitStateUpdateException(ex);
             }
         }
         catch
@@ -177,6 +176,53 @@ public sealed partial class RuntimeStore : IRuntimeStore
             }
 
             throw;
+        }
+    }
+
+    public Task RepairPostCommitStateAsync(CollectSaveRequest request, CancellationToken cancellationToken = default)
+        => UpdateActiveSessionAsync(request, replay: true, cancellationToken);
+
+    private async Task UpdateActiveSessionAsync(CollectSaveRequest request, bool replay, CancellationToken cancellationToken)
+    {
+        if (!request.RemoveActiveSession && request.ActiveSession is null)
+        {
+            return;
+        }
+
+        if (replay)
+        {
+            var current = await _activeSessions.FindByPalletAsync(request.Record.PalletCode, cancellationToken).ConfigureAwait(false);
+            if (current is not null && current.SerialNo != request.Record.SerialNo)
+            {
+                return;
+            }
+
+            if (request.RemoveActiveSession && current is null)
+            {
+                return;
+            }
+
+            if (!request.RemoveActiveSession)
+            {
+                await using var db = _factory.Open(request.MonthKey);
+                var session = await db.PalletSessions.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.Id == request.Record.PalletSessionId, cancellationToken).ConfigureAwait(false);
+                if (session is null || session.Status == SessionStatus.Closed || session.EndTime is not null
+                    || current?.LastActivityAt > request.ActiveSession!.LastActivityAt)
+                {
+                    return;
+                }
+            }
+        }
+
+        if (request.RemoveActiveSession)
+        {
+            await _activeSessions.RemoveByPalletAsync(request.Record.PalletCode, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            request.ActiveSession!.SessionId = request.Record.PalletSessionId;
+            await _activeSessions.UpsertAsync(request.ActiveSession, cancellationToken).ConfigureAwait(false);
         }
     }
 

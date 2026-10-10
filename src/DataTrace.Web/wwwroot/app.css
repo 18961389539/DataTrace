@@ -619,49 +619,12 @@ h5:focus,
     width: 100%;
 }
 
+.dt-chart[hidden] {
+    display: none;
+}
+
 .dt-chart-box {
     position: relative;
-}
-
-/* 折线点：默认隐藏，悬停时按该序列自身的颜色填点（颜色由 LineChart 内联到 currentColor） */
-.dt-point {
-    fill: transparent;
-    transition: fill .12s ease-in;
-}
-
-.dt-chart-box:hover .dt-point {
-    fill: currentColor;
-    fill-opacity: .85;
-}
-
-/* 悬停读数选中的那个点：所有点被一起点亮时，它靠加粗描边与实心填充区分出来 */
-.dt-point.is-active {
-    fill: currentColor;
-    fill-opacity: 1;
-    stroke-width: 2.5;
-}
-
-/* 悬停读数面板：位置由 js/datatrace.js 跟着光标摆（近边缘自动翻边），
-   这里只管外观。fixed 而不是绝对定位：面板在 SVG 里定位要处理 viewBox 缩放，
-   而它是纯展示层，跟随视口反而不会跑偏。 */
-.dt-chart-readout {
-    position: fixed;
-    top: 0;
-    left: 0;
-    z-index: 1300;
-    max-width: 320px;
-    padding: 4px 8px;
-    border: 1px solid var(--mud-palette-lines-default);
-    border-radius: var(--dt-radius);
-    background: var(--mud-palette-surface);
-    color: var(--mud-palette-text-primary);
-    box-shadow: 0 4px 14px rgba(15, 32, 51, .18);
-    font-size: .8125rem;
-    line-height: 1.4;
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-    /* 压在图上但不能截走 hover：否则面板自己会把 mousemove 吃掉，读数一出现就卡住 */
-    pointer-events: none;
 }
 
 .dt-legend {
@@ -687,6 +650,110 @@ h5:focus,
 }
 
 /* ---------- 实时看板 ---------- */
+
+.dt-station-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px 16px;
+    margin: 18px 0 12px;
+}
+
+.dt-station-toolbar-heading {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    white-space: nowrap;
+}
+
+.dt-station-toolbar-heading h2 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.dt-station-toolbar-count {
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.dt-station-filter-scroll {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.dt-station-toolbar-controls {
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
+}
+
+.dt-station-search {
+    flex: 0 1 240px;
+    min-width: 180px;
+}
+
+.dt-station-filters {
+    display: flex;
+    width: max-content;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--dt-radius);
+}
+
+.dt-station-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 34px;
+    padding: 4px 10px;
+    border: 0;
+    border-radius: var(--dt-radius);
+    background: transparent;
+    color: var(--mud-palette-text-primary);
+    font: inherit;
+    font-size: 0.8125rem;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.dt-station-filter:hover {
+    background: var(--mud-palette-action-default-hover);
+}
+
+.dt-station-filter:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: -2px;
+}
+
+.dt-station-filter[aria-pressed="true"],
+.dt-station-filter[aria-pressed="true"]:hover {
+    background: var(--mud-palette-primary);
+    color: var(--mud-palette-primary-text);
+}
+
+.dt-station-filter-alert:not([aria-pressed="true"]) {
+    color: var(--mud-palette-error);
+}
+
+.dt-station-filter-count {
+    font-variant-numeric: tabular-nums;
+    opacity: .8;
+}
+
+.dt-station-empty {
+    padding: 24px 12px;
+    color: var(--mud-palette-text-secondary);
+    text-align: center;
+}
 
 /* KPI 指标条：从页头那排 chip 里拎出来单独一行。
    混在状态芯片里时它们权重相同，扫一眼分不出主次。 */
@@ -793,47 +860,6 @@ h5:focus,
 .dt-live-cadence-secondary {
     margin-left: 4px;
     font-size: 0.875em;
-}
-
-.dt-station-toolbar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px 16px;
-    margin: 18px 0 12px;
-}
-
-.dt-station-toolbar-heading {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    white-space: nowrap;
-}
-
-.dt-station-toolbar-heading h2 {
-    margin: 0;
-    font-size: 1rem;
-    font-weight: 600;
-    line-height: 1.4;
-}
-
-.dt-station-toolbar-count {
-    color: var(--mud-palette-text-secondary);
-    font-size: 0.75rem;
-    font-variant-numeric: tabular-nums;
-}
-
-.dt-station-search {
-    flex: 0 1 240px;
-    min-width: min(100%, 180px);
-    max-width: 100%;
-}
-
-.dt-station-empty {
-    padding: 24px 12px;
-    color: var(--mud-palette-text-secondary);
-    text-align: center;
 }
 
 .dt-simulation-detail {
@@ -1152,6 +1178,16 @@ h5:focus,
     min-height: 520px;
 }
 
+.dt-station-actions {
+    position: sticky;
+    top: calc(var(--mud-appbar-height, 64px) + 8px);
+    z-index: 15;
+    flex-wrap: wrap;
+    padding: 8px 0;
+    background: var(--mud-palette-surface);
+    border-bottom: 1px solid var(--mud-palette-lines-default);
+}
+
 .station-list-item {
     display: flex;
     align-items: center;
@@ -1383,6 +1419,26 @@ h5:focus,
     cursor: pointer;
 }
 
+.login-remember-hint {
+    flex-basis: 100%;
+    margin-left: 26px;
+    color: var(--mud-palette-text-secondary);
+    font-size: .75rem;
+    line-height: 1.4;
+}
+
+.login-back {
+    display: block;
+    margin-top: 12px;
+    color: var(--mud-palette-text-secondary);
+    font-size: .875rem;
+    text-align: center;
+}
+
+.login-back:hover {
+    color: var(--mud-palette-text-primary);
+}
+
 .login-btn {
     width: 100%;
     margin-top: 20px;
@@ -1480,6 +1536,20 @@ h5:focus,
 }
 
 @media (max-width: 600px) {
+    .dt-station-toolbar-controls {
+        width: 100%;
+        justify-content: flex-start;
+    }
+
+    .dt-station-search {
+        flex: 1 1 100%;
+        min-width: 0;
+    }
+
+    .dt-station-filter-scroll {
+        width: 100%;
+    }
+
     .dt-kpi-card:first-child {
         grid-column: 1 / -1;
     }
@@ -1960,7 +2030,29 @@ h5:focus,
 .dt-settings-savebar-note {
     color: var(--mud-palette-warning);
     font-size: 0.85rem;
-    margin-right: auto;
+}
+
+.dt-settings-change-summary {
+    flex: 1 1 260px;
+    min-width: 0;
+    color: var(--mud-palette-text-secondary);
+    font-size: 0.82rem;
+}
+
+.dt-settings-change-summary summary {
+    width: fit-content;
+    cursor: pointer;
+}
+
+.dt-settings-change-summary ul {
+    max-height: min(32vh, 260px);
+    overflow: auto;
+    margin: 8px 0 0;
+    padding-left: 20px;
+}
+
+.dt-settings-change-summary li + li {
+    margin-top: 4px;
 }
 
 .dt-settings-section {

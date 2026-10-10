@@ -233,8 +233,7 @@ public class UiRegressionE2ETests : E2ETestBase
         await ClickTabUntilAsync("过程能力", "Cpk（组内）");
         await RefreshUntilCapabilityHasSamplesAsync();
 
-        // LineChart 的 svg 自己带 dt-chart 类，不是 .dt-chart 的子元素。
-        await Page.Locator("svg.dt-chart").First.WaitForAsync();
+        await Page.Locator(".dt-chart canvas").First.WaitForAsync();
         // 演示实例没改过规格限，只应该有一段：分段提示与分段表都不该出现。
         var body = await Page.InnerTextAsync("body");
         Assert.DoesNotContain("区间内规格限变更", body);
@@ -242,10 +241,7 @@ public class UiRegressionE2ETests : E2ETestBase
     }
 
     /// <summary>
-    /// 悬停读数：鼠标进入曲线后，读数面板要真的显形并带上那一点的数值。
-    /// 读数由 js/datatrace.js 绑（点位 → 找最近的点 → 挪面板），这条用例守住整条链路：
-    /// 服务端得渲染出点位与 data-tip，脚本得绑上，面板得从 hidden 变可见。
-    /// 不校验具体数值（那是 LineChartTests 的事）。
+    /// ECharts 的轴悬停提示显示当前采样点，并保留应用约定的读数顺序。
     /// </summary>
     [Fact]
     public async Task HoveringAChartShowsThePointReadout()
@@ -256,22 +252,15 @@ public class UiRegressionE2ETests : E2ETestBase
         await ClickTabUntilAsync("过程能力", "Cpk（组内）");
         await RefreshUntilCapabilityHasSamplesAsync();
 
-        var chart = Page.Locator("svg.dt-chart").First;
+        var chart = Page.Locator(".dt-chart canvas").First;
         await chart.WaitForAsync();
         await chart.ScrollIntoViewIfNeededAsync();
-
-        // 悬停读数由 JS 在图表渲完后绑定（见 dtChartReadout.bind：读数值取自点位自带的 data-tip）。
-        // 得等点位真的带上 data-tip 再悬停 —— 早悬停的话那一刻既没有可读点数、绑定也可能还没跑，
-        // "等面板可见"就会一直等不到（表现为 20s 超时）。
-        await Page.WaitForFunctionAsync(
-            "() => document.querySelector('.dt-chart-box circle.dt-point[data-tip]') !== null");
 
         var box = await chart.BoundingBoxAsync();
         Assert.NotNull(box);
         await Page.Mouse.MoveAsync(box.X + box.Width / 2, box.Y + box.Height / 2);
 
-        // 面板常驻 DOM 但带 hidden；等它可见就是等 JS 把读数填出来了。
-        var readout = Page.Locator(".dt-chart-readout").First;
+        var readout = Page.Locator(".echarts-tooltip").First;
         await readout.WaitForAsync(new() { Timeout = 5000 });
 
         var text = await readout.InnerTextAsync();

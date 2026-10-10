@@ -38,6 +38,8 @@ public class PieceYieldRulesTests
         Assert.Equal("压力", report.Drag.PointName);
         Assert.Equal(1, report.Drag.PieceCount);
         Assert.Equal("不合格多出在 ST020 压力，1 件", report.Drag.Text);
+        Assert.Equal(Judgement.Ng, PieceYieldRules.OutcomeAtStation(scrap, 20));
+        Assert.Equal(Judgement.None, PieceYieldRules.OutcomeAtStation(scrap, 99));
     }
 
     [Fact]
@@ -109,6 +111,7 @@ public class PieceYieldRulesTests
         Assert.Equal(2, report.ByShift.Count);
         var first = report.ByShift[0];
         Assert.Equal(new DateTime(2026, 9, 19, 20, 0, 0), first.Day);
+        Assert.Equal(new DateTime(2026, 9, 20, 8, 0, 0), first.ShiftEnd);
         Assert.Equal("09-19 20:00–09-20 08:00", first.ShiftLabel);
         Assert.Equal(2, first.Total);
         Assert.Equal(1, first.Ng);

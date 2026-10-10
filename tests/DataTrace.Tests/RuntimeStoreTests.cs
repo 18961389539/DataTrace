@@ -357,9 +357,10 @@ public class RuntimeStoreTests
     {
         await using var env = await RuntimeEnv.CreateAsync();
         var request = FirstStation("202609", "P0001", "S1", Day1, withCurve: true, removeActiveSession: true);
-        var store = new RuntimeStore(env.Factory, env.Curves, new ThrowOnRemoveActiveSessionStore());
+        var store = new RuntimeStore(env.Factory, env.Curves, new ThrowOnRemoveActiveSessionStore(request.Record.SerialNo));
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => store.SaveAsync(request));
+        var failure = await Assert.ThrowsAsync<PostCommitStateUpdateException>(() => store.SaveAsync(request));
+        Assert.IsType<InvalidOperationException>(failure.InnerException);
 
         var relativePath = Assert.Single(request.Record.Curves).RelativePath;
         Assert.True(File.Exists(Path.Combine(env.CurveRoot, relativePath.Replace('/', Path.DirectorySeparatorChar))));
@@ -558,10 +559,16 @@ public class RuntimeStoreTests
         Assert.Equal(2, judgementCounts.Sum(x => x.Count));
     }
 
-    private sealed class ThrowOnRemoveActiveSessionStore : IActiveSessionStore
+    private sealed class ThrowOnRemoveActiveSessionStore(string serialNo) : IActiveSessionStore
     {
         public Task<ActiveSessionIndex?> FindByPalletAsync(string palletCode, CancellationToken cancellationToken = default)
-            => Task.FromResult<ActiveSessionIndex?>(null);
+            => Task.FromResult<ActiveSessionIndex?>(new ActiveSessionIndex
+            {
+                PalletCode = palletCode,
+                SerialNo = serialNo,
+                MonthKey = "202609",
+                StartTime = Day1
+            });
 
         public Task UpsertAsync(ActiveSessionIndex session, CancellationToken cancellationToken = default)
             => Task.CompletedTask;
@@ -648,6 +655,32 @@ public class RuntimeStoreTests
 
         Assert.Equal(0, result.Total);
         Assert.Empty(result.Items);
+    }
+
+    [Fact]
+    public async Task Query_can_match_current_and_historical_recipe_codes()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        var current = FirstStation("202609", "P0001", "S1", Day1);
+        current.Record.RecipeCode = "CURRENT";
+        var previous = FirstStation("202609", "P0002", "S2", Day1.AddMinutes(1));
+        previous.Record.RecipeCode = "PREVIOUS";
+        var other = FirstStation("202609", "P0003", "S3", Day1.AddMinutes(2));
+        other.Record.RecipeCode = "OTHER";
+        await env.Store.SaveAsync(current);
+        await env.Store.SaveAsync(previous);
+        await env.Store.SaveAsync(other);
+
+        var result = await env.Store.QueryAsync(new CollectQueryRequest
+        {
+            From = Day1,
+            To = Day1.AddMinutes(5),
+            RecipeCodes = ["CURRENT", "PREVIOUS"],
+            Take = 10
+        });
+
+        Assert.Equal(2, result.Total);
+        Assert.Equal(new[] { "CURRENT", "PREVIOUS" }, result.Items.Select(item => item.Record.RecipeCode).Order().ToArray());
     }
 
     [Fact]
@@ -1401,6 +1434,8 @@ public class RuntimeStoreTests
         var ngPiece = Assert.Single(pieces, piece => piece.SessionId == scrap.Record.PalletSessionId);
         Assert.Equal(Judgement.Ng, ngPiece.Judgement);
         Assert.Equal("A100", ngPiece.RecipeCode);
+        Assert.Equal("P0001", ngPiece.PalletCode);
+        Assert.Equal("S1", ngPiece.SerialNo);
         Assert.Equal(new[] { "ST010", "ST040" }, ngPiece.Stations.Select(station => station.StationCode));
         var fault = Assert.Single(ngPiece.Faults);
         Assert.Equal("ST010", fault.StationCode);

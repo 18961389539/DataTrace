@@ -26,7 +26,7 @@ public sealed class AuditRetentionArchiveTests
             EntityType = "Station",
             EntityKey = "ST010",
             OldValue = "old,value",
-            NewValue = "new"
+            NewValue = "=1+1"
         };
         var secondOldLog = new AuditLog
         {
@@ -81,6 +81,7 @@ public sealed class AuditRetentionArchiveTests
         var csv = await reader.ReadToEndAsync();
         Assert.StartsWith("\uFEFFId,Time,UserName", csv);
         Assert.Contains("\"old,value\"", csv);
+        Assert.Contains("'=1+1", csv);
         Assert.Contains("ST020", csv);
 
         // Simulate a crash after publishing the archive but before deleting its source rows.

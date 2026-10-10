@@ -77,11 +77,12 @@
         else
         {
             <MudPaper Class="pa-4 station-pane">
-                <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3 dt-station-actions">
                     <MudText Typo="Typo.h6">@_current.Code @_current.Name</MudText>
                     @if (Dirty)
                     {
-                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined"
+                                 role="status" aria-live="polite">
                             有未保存的改动
                         </MudChip>
                     }
@@ -541,6 +542,7 @@
     private string? _loadedSnapshot;
     private int _tab;
     private string _occupiedAddress = "";
+    private string _loadedOccupiedAddress = "";
 
     /// <summary>
     /// 表单字段是 @bind-Value 到活实体的，没有别的钩子能知道改了什么，
@@ -548,7 +550,8 @@
     /// </summary>
     private bool Dirty => _current is not null
         && _loadedSnapshot is not null
-        && Snapshot(_current) != _loadedSnapshot;
+        && (Snapshot(_current) != _loadedSnapshot
+            || !string.Equals(_occupiedAddress, _loadedOccupiedAddress, StringComparison.Ordinal));
 
     /// <summary>
     /// 点位/曲线/产品位实体上都带着回指 Station 的导航属性，默认选项会直接抛「检测到对象循环」，
@@ -949,8 +952,7 @@
                 isNew ? "Create" : "Save", "TagDefinition", $"{station.Code}/{edited.Name}", oldSnap,
                 $"source={edited.Source}; {edited.Address}; {edited.DataType}; limits={DisplayLabels.LimitRange(edited.LowerLimit, edited.UpperLimit)}"));
             var tab = _tab;
-            await Select(station, reload: true);
-            _tab = tab;
+            await RefreshAfterChildChange(station, tab);
             Toast.Add(isNew ? $"点位 {edited.Name} 已添加" : $"点位 {edited.Name} 已保存", Severity.Success);
         });
     }
@@ -982,8 +984,7 @@
         {
             var station = _current;
             var tab = _tab;
-            await Select(station, reload: true);
-            _tab = tab;
+            await RefreshAfterChildChange(station, tab);
         }
     });
 
@@ -1029,8 +1030,7 @@
                 isNew ? "Create" : "Save", "CurveDefinition", $"{station.Code}/{code}",
                 isNew ? null : summary, summary));
             var tab = _tab;
-            await Select(station, reload: true);
-            _tab = tab;
+            await RefreshAfterChildChange(station, tab);
             Toast.Add(isNew ? $"曲线 {code} 已添加" : $"曲线 {code} 已保存并下发采集器", Severity.Success);
         });
     }
@@ -1063,8 +1063,7 @@
         {
             var station = _current;
             var tab = _tab;
-            await Select(station, reload: true);
-            _tab = tab;
+            await RefreshAfterChildChange(station, tab);
         }
     });
 
@@ -1181,6 +1180,32 @@
             _loadedSnapshot = _current is null ? null : Snapshot(_current);
             ValidateStation();
         });
+    }
+
+    private async Task RefreshAfterChildChange(Station? station, int tab)
+    {
+        if (station is null)
+        {
+            return;
+        }
+
+        var stationId = station.Id;
+        await ReloadList();
+        var persisted = await Config.GetStationAsync(stationId);
+        if (persisted is null || _current?.Id != stationId)
+        {
+            return;
+        }
+
+        _current.PlcConnection = persisted.PlcConnection;
+        _current.Positions = persisted.Positions;
+        _current.Tags = persisted.Tags;
+        _current.Curves = persisted.Curves;
+        _loadedSnapshot = Snapshot(persisted);
+        _loadedOccupiedAddress = persisted.Positions.FirstOrDefault()?.OccupiedAddress ?? "";
+        ClearErrors();
+        ValidateStation();
+        _tab = tab;
     }
 
     /// <summary>换工站或重新加载后，上一台的校验残留必须清掉，否则会错标在新工站上。</summary>
@@ -1327,8 +1352,7 @@
         await Changes.DeleteTagAsync(tag.Id, await AuditOf(
             "Delete", "TagDefinition", $"{_current.Code}/{tag.Name}", tag.Address, null));
         var tab = _tab;
-        await Select(_current, reload: true);
-        _tab = tab;
+        await RefreshAfterChildChange(_current, tab);
         Toast.Add($"点位 {tag.Name} 已删除", Severity.Success);
     });
 
@@ -1370,8 +1394,7 @@
                 "Save", "CurveCriterion", $"{station.Code}/{curve.Code}",
                 $"count={beforeCount}", $"count={criteria.Count}"));
             var tab = _tab;
-            await Select(station, reload: true);
-            _tab = tab;
+            await RefreshAfterChildChange(station, tab);
             Toast.Add(
                 criteria.Count == 0
                     ? $"曲线 {curve.Code} 已关闭波形判定"
@@ -1397,8 +1420,7 @@
         await Changes.DeleteCurveAsync(curve.Id, await AuditOf(
             "Delete", "CurveDefinition", $"{_current.Code}/{curve.Code}", curve.Name, null));
         var tab = _tab;
-        await Select(_current, reload: true);
-        _tab = tab;
+        await RefreshAfterChildChange(_current, tab);
         Toast.Add($"曲线 {curve.Code} 已删除", Severity.Success);
     });
 

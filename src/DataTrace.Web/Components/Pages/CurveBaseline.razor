@@ -16,8 +16,20 @@
 <PageHeader Title="波形基线" Description="用较早的 OK 波形建基线，最近样本独立评估" HelpRoute="curve-baseline" Busy="@_loading">
     <ChildContent>
         <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Info">
-            @(_recipeCode == "" ? "未选型号（默认限值）" : $"型号 {_recipeCode}")
+            @RecipeText(_report?.RecipeCode ?? _recipeCode)
         </MudChip>
+        @if (AnalysisRecipeChanged)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning">
+                当前型号已切换，请刷新分析
+            </MudChip>
+        }
+        @if (_recipeRefreshError is not null)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning">
+                当前型号状态检查失败
+            </MudChip>
+        }
         <MudTooltip Text="采集流水线用它给每条新波形打分（只记录，不参与判定）">
             <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
                      Color="@OnlineCacheColor">
@@ -436,6 +448,7 @@ else
     private CurveBaselineReport? _report;
     private CurveTemplateScore? _selected;
     private string _recipeCode = "";
+    private string? _recipeRefreshError;
     private bool _loading;
     private bool _loadPending;
     private string? _loadError;
@@ -465,7 +478,37 @@ else
         {
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
-                await InvokeAsync(StateHasChanged);
+                try
+                {
+                    var snapshot = await Config.GetSnapshotAsync(cancellationToken);
+                    var recipeCode = snapshot.ActiveRecipe?.Code ?? "";
+                    await InvokeAsync(async () =>
+                    {
+                        var changed = !string.Equals(recipeCode, _recipeCode, StringComparison.Ordinal);
+                        _recipeCode = recipeCode;
+                        _recipeRefreshError = null;
+                        if (changed)
+                        {
+                            await Load();
+                        }
+                        else
+                        {
+                            StateHasChanged();
+                        }
+                    });
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch
+                {
+                    await InvokeAsync(() =>
+                    {
+                        _recipeRefreshError = "当前型号状态检查失败";
+                        StateHasChanged();
+                    });
+                }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -623,6 +666,12 @@ else
 
     private static string Num(double? value, string format = "0.####")
         => value is { } v ? Num(v, format) : "—";
+
+    private static string RecipeText(string recipeCode)
+        => string.IsNullOrEmpty(recipeCode) ? "未选型号（默认限值）" : $"型号 {recipeCode}";
+
+    private bool AnalysisRecipeChanged
+        => _report is { } report && !string.Equals(report.RecipeCode, _recipeCode, StringComparison.Ordinal);
 
     private static string Ratio(double? value)
         => value is { } v ? v.ToString("P0", CultureInfo.InvariantCulture) : "—";

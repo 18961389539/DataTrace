@@ -390,6 +390,22 @@ public sealed class DialogSpy
                 reference.SetupGet(r => r.Result).Returns(() => Task.FromResult(DialogResult));
                 return Task.FromResult(reference.Object);
             });
+
+        Mock.Setup(d => d.ShowAsync<RecipeEditDialog>(
+                It.IsAny<string>(),
+                It.IsAny<DialogParameters>(),
+                It.IsAny<DialogOptions>()))
+            .Returns((string title, DialogParameters parameters, DialogOptions _) =>
+            {
+                lock (Shown)
+                {
+                    Shown.Add((title, parameters));
+                }
+
+                var reference = new Mock<IDialogReference>();
+                reference.SetupGet(r => r.Result).Returns(() => Task.FromResult(DialogResult));
+                return Task.FromResult(reference.Object);
+            });
     }
 }
 

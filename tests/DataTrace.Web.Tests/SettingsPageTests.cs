@@ -105,6 +105,7 @@ public class SettingsPageTests : WebTestBase
         Assert.Empty(Config.SavedSettings);
         Assert.Equal(Severity.Warning, Toast.LastSeverity);
         Assert.Contains("不是合法的 http(s) 地址", Toast.LastMessage);
+        Assert.Contains("已启用 MES 推送，但地址不是合法的 http(s) 地址", cut.Markup);
     }
 
     [Theory]
@@ -138,6 +139,18 @@ public class SettingsPageTests : WebTestBase
         // 保存整条链是异步的（读快照 → 落库 → 通知模拟器）：断言要等它落定，
         // 否则机器一忙就变成"还没轮到就断言"的偶发失败。
         cut.WaitForAssertion(() => Assert.Equal(new[] { false }, Simulator.RunningChanges));
+    }
+
+    [Fact]
+    public void Unsaved_changes_show_a_summary_of_affected_settings()
+    {
+        var cut = Render();
+
+        TypeIntoAriaLabel(cut, "扫描间隔(ms)", "120");
+
+        Assert.Contains("查看本次改动 · 1 项", cut.Markup);
+        Assert.Contains("扫描间隔：", cut.Markup);
+        Assert.Contains("120 ms", cut.Markup);
     }
 
     [Fact]
@@ -252,6 +265,19 @@ public class SettingsPageTests : WebTestBase
         Assert.Empty(Config.SavedSettings);
         Assert.Contains("扫描间隔不能为空", cut.Markup);
         Assert.Equal(Severity.Warning, Toast.LastSeverity);
+    }
+
+    [Fact]
+    public void Invalid_scan_interval_scrolls_to_the_collection_settings_section()
+    {
+        var cut = Render(s => s.ScanIntervalMs = 200);
+        TypeIntoAriaLabel(cut, "扫描间隔(ms)", "");
+
+        ClickButton(cut, "保存");
+
+        cut.WaitForAssertion(() => Assert.Equal(
+            "sec-collect",
+            Context.JSInterop.VerifyInvoke("dtScrollIntoView").Arguments[0]));
     }
 
     [Fact]
@@ -399,6 +425,7 @@ public class SettingsPageTests : WebTestBase
         Assert.Empty(Config.SavedSettings);
         Assert.Equal(Severity.Warning, Toast.LastSeverity);
         Assert.Contains("异常呼叫地址不是合法的 http(s) 地址", Toast.LastMessage);
+        Assert.Contains("异常呼叫地址不是合法的 http(s) 地址", cut.Markup);
     }
 
     [Fact]

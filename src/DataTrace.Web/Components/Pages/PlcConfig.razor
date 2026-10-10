@@ -12,6 +12,10 @@
 <PageHeader Title="PLC 连接" HelpRoute="config/plc" Busy="@(_loading || _saving)">
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">共 @_items.Count 台，被工站引用的连接不能删除</MudText>
+        <MudTooltip Text="重新读取 PLC 连接">
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh" aria-label="刷新 PLC 连接"
+                           Disabled="@(_loading || _saving)" OnClick="Reload" />
+        </MudTooltip>
         <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="NewItem" Disabled="_saving"
                    StartIcon="@(_saving ? Icons.Material.Filled.Sync : Icons.Material.Filled.Add)">
             @(_saving ? "处理中…" : "新增连接")
@@ -19,7 +23,17 @@
     </Actions>
 </PageHeader>
 
-@if (_items.Count == 0)
+@if (_loadError is { } loadError)
+{
+    <MudAlert Severity="Severity.Error" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+        <div class="d-flex align-center flex-wrap gap-2">
+            <span>@loadError 上次成功读取的数据仍保留，当前列表可能不是最新。</span>
+            <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_loading" OnClick="Reload">重试</MudButton>
+        </div>
+    </MudAlert>
+}
+
+@if (_items.Count == 0 && _loadError is null)
 {
     <MudAlert Severity="Severity.Info" Dense="true" Class="mt-3">
         还没有 PLC 连接。先新增一台（或选择内置模拟器），再到「工站配置」把工站挂到这台 PLC 上。
@@ -75,7 +89,9 @@
         </MudTd>
     </RowTemplate>
     <NoRecordsContent>
-        <MudText Typo="Typo.body2" Class="dt-muted py-4">@(_loading ? "正在加载…" : "还没有 PLC 连接，点上方「新增连接」开始。")</MudText>
+        <MudText Typo="Typo.body2" Class="dt-muted py-4">
+            @(_loading ? "正在加载…" : _loadError is not null ? "读取失败，尚不能确认 PLC 列表为空。" : "还没有 PLC 连接，点上方「新增连接」开始。")
+        </MudText>
     </NoRecordsContent>
 </MudTable>
 
@@ -84,20 +100,25 @@
     private IReadOnlyList<Station> _stations = [];
     private bool _loading;
     private bool _saving;
+    private string? _loadError;
 
     protected override async Task OnInitializedAsync() => await Reload();
 
     private async Task Reload()
     {
         _loading = true;
+        _loadError = null;
         try
         {
-            _items = await Config.GetPlcConnectionsAsync();
-            _stations = await Config.GetStationsAsync();
+            var items = await Config.GetPlcConnectionsAsync();
+            var stations = await Config.GetStationsAsync();
+            _items = items;
+            _stations = stations;
         }
         catch (Exception ex)
         {
-            Toast.Add($"加载 PLC 连接失败：{ex.Message}", Severity.Error);
+            _loadError = $"加载 PLC 连接失败：{ex.Message}";
+            Toast.Add(_loadError, Severity.Error);
         }
         finally
         {
@@ -143,30 +164,41 @@
 
     private async Task ShowDialog(PlcConnection model, bool isNew, string heartbeatAddress, int heartbeatMs, string? oldValue = null)
     {
-        var parameters = new DialogParameters
+        while (true)
         {
-            ["Model"] = model,
-            ["IsNew"] = isNew,
-            ["HeartbeatAddress"] = heartbeatAddress,
-            ["HeartbeatIntervalMs"] = heartbeatMs
-        };
-        var dialog = await DialogService.ShowAsync<PlcEditDialog>(isNew ? "新增 PLC 连接" : "编辑 PLC 连接", parameters,
-            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
-        var result = await dialog.Result;
-        if (result is null || result.Canceled || result.Data is not PlcConnection saved)
-        {
-            return;
-        }
+            var parameters = new DialogParameters
+            {
+                ["Model"] = model,
+                ["IsNew"] = isNew,
+                ["HeartbeatAddress"] = heartbeatAddress,
+                ["HeartbeatIntervalMs"] = heartbeatMs
+            };
+            var dialog = await DialogService.ShowAsync<PlcEditDialog>(isNew ? "新增 PLC 连接" : "编辑 PLC 连接", parameters,
+                new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
+            var result = await dialog.Result;
+            if (result is null || result.Canceled || result.Data is not PlcConnection saved)
+            {
+                return;
+            }
 
-        await Write(isNew ? "新增" : "保存", async () =>
-        {
-            await Changes.SavePlcConnectionAsync(saved, await AuditOf(
-                isNew ? "Create" : "Save", "PlcConnection", saved.Name,
-                isNew ? null : oldValue,
-                SummarizePlc(saved)));
-            await Reload();
-            Toast.Add(isNew ? $"已新增 {saved.Name}" : $"已保存 {saved.Name}", Severity.Success);
-        });
+            var succeeded = await Write(isNew ? "新增" : "保存", async () =>
+            {
+                await Changes.SavePlcConnectionAsync(saved, await AuditOf(
+                    isNew ? "Create" : "Save", "PlcConnection", saved.Name,
+                    isNew ? null : oldValue,
+                    SummarizePlc(saved)));
+                await Reload();
+                Toast.Add(isNew ? $"已新增 {saved.Name}" : $"已保存 {saved.Name}", Severity.Success);
+            });
+            if (succeeded)
+            {
+                return;
+            }
+
+            model = saved;
+            heartbeatAddress = saved.Heartbeat?.Address ?? heartbeatAddress;
+            heartbeatMs = saved.Heartbeat?.IntervalMs > 0 ? saved.Heartbeat.IntervalMs : heartbeatMs;
+        }
     }
 
     private async Task<ConfigAudit> AuditOf(string action, string entityType, string key, string? oldValue, string? newValue)
@@ -216,21 +248,23 @@
     /// <summary>
     /// 写配置期间锁住本页按钮：连点不会重复下发，采集器也不会收到半路被改第二次的连接。
     /// </summary>
-    private async Task Write(string what, Func<Task> action)
+    private async Task<bool> Write(string what, Func<Task> action)
     {
         if (_saving)
         {
-            return;
+            return false;
         }
 
         _saving = true;
         try
         {
             await action();
+            return true;
         }
         catch (Exception ex)
         {
             Toast.Add($"{what}失败：{ex.Message}", Severity.Error);
+            return false;
         }
         finally
         {

@@ -62,13 +62,6 @@
     </Actions>
 </PageHeader>
 
-@if (_inProcessNote is not null)
-{
-    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
-        @_inProcessNote
-    </MudAlert>
-}
-
 @if (_configNote is not null)
 {
     <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3" Variant="Variant.Outlined">
@@ -149,13 +142,6 @@
     </MudAlert>
 }
 
-@if (_backupStale && _isAdmin)
-{
-    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
-        数据库备份异常或超过 48 小时未成功，请到「系统设置」查看并立即备份。
-    </MudAlert>
-}
-
 @if (!_collectEnabled)
 {
     <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
@@ -171,21 +157,40 @@
     </MudAlert>
 }
 
-@if (_openSessions.Count > 0)
-{
-    <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3" Variant="Variant.Outlined">
-        @foreach (var session in _openSessions)
-        {
-            <div>托盘 @session.PalletCode（@(string.IsNullOrWhiteSpace(session.SerialNo) ? "无序列号" : session.SerialNo)）已在制 @session.OpenMinutes 分钟，停在 @session.StationCode，还没走到末站。</div>
-        }
-    </MudAlert>
-}
-
 @foreach (var plc in _plcs.Where(p => !p.Connected || !string.IsNullOrEmpty(p.LastError)))
 {
     <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3" Variant="Variant.Outlined">
         @plc.Name 断开@(string.IsNullOrEmpty(plc.LastError) ? "" : $"：{plc.LastError}")
     </MudAlert>
+}
+
+@if (SecondaryAlertCount > 0)
+{
+    <MudExpansionPanels Class="mb-3 dt-dashboard-alerts" Dense="true" Elevation="0">
+        <MudExpansionPanel Text="@($"其他运行提醒 · {SecondaryAlertCount}")">
+            @if (_inProcessNote is not null)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-2" Variant="Variant.Outlined">
+                    @_inProcessNote
+                </MudAlert>
+            }
+            @if (_backupStale && _isAdmin)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-2" Variant="Variant.Outlined">
+                    数据库备份异常或超过 48 小时未成功，请到「系统设置」查看并立即备份。
+                </MudAlert>
+            }
+            @if (_openSessions.Count > 0)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-2" Variant="Variant.Outlined">
+                    @foreach (var session in _openSessions)
+                    {
+                        <div>托盘 @session.PalletCode（@(string.IsNullOrWhiteSpace(session.SerialNo) ? "无序列号" : session.SerialNo)）已在制 @session.OpenMinutes 分钟，停在 @session.StationCode，还没走到末站。</div>
+                    }
+                </MudAlert>
+            }
+        </MudExpansionPanel>
+    </MudExpansionPanels>
 }
 
 @if (_stations.Count == 0)
@@ -209,35 +214,54 @@
 else
 {
     var visibleStations = VisibleStations;
-    <div class="dt-station-toolbar">
-        <div class="dt-station-toolbar-heading">
-            <h2>工站</h2>
-            <span class="dt-station-toolbar-count">显示 @visibleStations.Count / @_stations.Count 台</span>
-        </div>
-        @if (!ShopFloor)
-        {
-            <MudTextField T="string" @bind-Value="_stationSearch" Label="查找工站"
-                          Placeholder="编号或名称" Immediate="true" Clearable="true"
-                          Variant="Variant.Outlined" Margin="Margin.Dense" Adornment="Adornment.Start"
-                          AdornmentIcon="@Icons.Material.Filled.Search" Class="dt-station-search"
-                          aria-label="按工站编号或名称查找" />
-        }
-    </div>
-    @if (visibleStations.Count == 0)
-    {
-        <div class="dt-station-empty" role="status">@StationEmptyText</div>
-    }
-    else
-    {
-        <MudGrid Class="dt-station-grid">
-            @foreach (var station in visibleStations)
+    <section aria-label="工站概况">
+        <div class="dt-station-toolbar">
+            <div class="dt-station-toolbar-heading">
+                <h2>工站</h2>
+                <span class="dt-station-toolbar-count">显示 @visibleStations.Count / @_stations.Count 台</span>
+            </div>
+            @if (!ShopFloor)
             {
-                <MudItem xs="12" md="6" lg="4">
-                    <StationCard Station="station" />
-                </MudItem>
+                <div class="dt-station-toolbar-controls">
+                    <MudTextField T="string" Value="_stationSearch" ValueChanged="OnStationSearchChanged"
+                                  Label="查找工站" Placeholder="编号或名称" Immediate="true" Clearable="true"
+                                  Variant="Variant.Outlined" Margin="Margin.Dense" Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Search" Class="dt-station-search"
+                                  aria-label="按工站编号或名称查找" />
+                    <div class="dt-station-filter-scroll">
+                        <div class="dt-station-filters" role="group" aria-label="筛选工站状态">
+                            @foreach (var filter in StationFilters)
+                            {
+                                <button type="button" class="dt-station-filter @(filter == StationFilter.Attention && FilterCount(filter) > 0 ? "dt-station-filter-alert" : null)"
+                                        aria-pressed="@(filter == _selectedFilter ? "true" : "false")"
+                                        @onclick="() => _selectedFilter = filter">
+                                    @FilterLabel(filter) <span class="dt-station-filter-count">@FilterCount(filter)</span>
+                                </button>
+                            }
+                        </div>
+                    </div>
+                </div>
             }
-        </MudGrid>
-    }
+        </div>
+        @if (visibleStations.Count == 0)
+        {
+            <div class="dt-station-empty" role="status">
+                @StationEmptyText
+                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ClearStationFilters">清除搜索与筛选</MudButton>
+            </div>
+        }
+        else
+        {
+            <MudGrid Class="dt-station-grid">
+                @foreach (var station in visibleStations)
+                {
+                    <MudItem xs="12" md="6" lg="4">
+                        <StationCard Station="station" />
+                    </MudItem>
+                }
+            </MudGrid>
+        }
+    </section>
 }
 
 
@@ -343,6 +367,8 @@ else
     private IReadOnlyList<StationRuntimeStatus> _stations = [];
     /// <summary>渲染用的工站顺序：异常在前，同级按工艺顺序（见 <see cref="SeverityRank"/>）。</summary>
     private IReadOnlyList<StationRuntimeStatus> _orderedStations = [];
+    private static readonly StationFilter[] StationFilters = Enum.GetValues<StationFilter>();
+    private StationFilter _selectedFilter;
     private string _stationSearch = "";
     private IReadOnlyList<CollectFeedItem> _recent = [];
     private IReadOnlyList<CollectFeedItem> _recentPreview = [];
@@ -376,6 +402,11 @@ else
     private Timer? _uiTimer;
 
     private void ToggleSimulationDetails() => _showSimulationDetails = !_showSimulationDetails;
+
+    private int SecondaryAlertCount
+        => (_inProcessNote is null ? 0 : 1)
+           + (_backupStale && _isAdmin ? 1 : 0)
+           + _openSessions.Count;
 
     protected override async Task OnInitializedAsync()
     {
@@ -637,23 +668,6 @@ else
 
     private string PaceHint => CurrentPace?.Hint ?? "还没有相邻的两件";
 
-    private IReadOnlyList<StationRuntimeStatus> VisibleStations
-    {
-        get
-        {
-            var query = ShopFloor ? "" : _stationSearch.Trim();
-            return query.Length == 0
-                ? _orderedStations
-                : _orderedStations.Where(station =>
-                    station.StationCode.Contains(query, StringComparison.OrdinalIgnoreCase)
-                    || station.StationName.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
-        }
-    }
-
-    private string StationEmptyText => string.IsNullOrWhiteSpace(_stationSearch)
-        ? "当前没有可显示的工站"
-        : $"没有找到“{_stationSearch.Trim()}”对应的工站";
-
     /// <summary>
     /// 工站严重度：故障 → NG → 采集中 → 空闲 → 停用。看板上最该被看见的工位排在最前，
     /// 否则一台 NG 可能落在最后一屏，大屏上等于没有报警。
@@ -667,6 +681,62 @@ else
         if (station.State == StationRuntimeState.Busy) return 2;
         return station.LastJudgement == Judgement.Ng ? 1 : 3;
     }
+
+    private enum StationFilter { All, Attention, Busy, Idle, Disabled }
+
+    private IReadOnlyList<StationRuntimeStatus> VisibleStations
+    {
+        get
+        {
+            IReadOnlyList<StationRuntimeStatus> stations = ShopFloor || _selectedFilter == StationFilter.All
+                ? _orderedStations
+                : _orderedStations.Where(station => MatchesFilter(station, _selectedFilter)).ToList();
+            var query = _stationSearch.Trim();
+            return query.Length == 0
+                ? stations
+                : stations.Where(station =>
+                    station.StationCode.Contains(query, StringComparison.OrdinalIgnoreCase)
+                    || station.StationName.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+    }
+
+    private string StationEmptyText => string.IsNullOrWhiteSpace(_stationSearch)
+        ? $"当前没有{FilterLabel(_selectedFilter)}的工站"
+        : $"没有找到“{_stationSearch.Trim()}”对应的工站{(_selectedFilter == StationFilter.All ? "" : $"（当前筛选：{FilterLabel(_selectedFilter)}）")}";
+
+    private void OnStationSearchChanged(string value) => _stationSearch = value;
+
+    private void ClearStationFilters()
+    {
+        _stationSearch = "";
+        _selectedFilter = StationFilter.All;
+    }
+
+    private int FilterCount(StationFilter filter) => filter == StationFilter.All
+        ? _stations.Count
+        : _orderedStations.Count(station => MatchesFilter(station, filter));
+
+    private static bool MatchesFilter(StationRuntimeStatus station, StationFilter filter)
+    {
+        var rank = SeverityRank(station);
+        return filter switch
+        {
+            StationFilter.Attention => rank <= 1,
+            StationFilter.Busy => rank == 2,
+            StationFilter.Idle => rank == 3,
+            StationFilter.Disabled => rank == 4,
+            _ => true
+        };
+    }
+
+    private static string FilterLabel(StationFilter filter) => filter switch
+    {
+        StationFilter.Attention => "需关注",
+        StationFilter.Busy => "采集中",
+        StationFilter.Idle => "空闲",
+        StationFilter.Disabled => "停用",
+        _ => "全部"
+    };
 
     private bool CanManageRecipes => _canManageRecipes;
 

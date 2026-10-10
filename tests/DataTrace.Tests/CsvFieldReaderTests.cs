@@ -15,6 +15,22 @@ public class CsvFieldReaderTests
     }
 
     [Fact]
+    public void Quoted_newline_stays_in_the_cell()
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes("name,force\n\"line 1\nline 2\",12.5\n");
+        Assert.True(CsvFieldReader.TryParse(bytes, out var row, out var error), error);
+        Assert.Equal("line 1\nline 2", row["name"]);
+    }
+
+    [Fact]
+    public void Unterminated_quoted_field_is_rejected()
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes("name\n\"unfinished");
+        Assert.False(CsvFieldReader.TryParse(bytes, out _, out var error));
+        Assert.Contains("CSV", error);
+    }
+
+    [Fact]
     public void Unit_text_is_not_a_number()
     {
         var bytes = System.Text.Encoding.UTF8.GetBytes("force\n12 kN\n");

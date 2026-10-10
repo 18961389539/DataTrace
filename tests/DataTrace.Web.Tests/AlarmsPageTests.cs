@@ -67,6 +67,46 @@ public class AlarmsPageTests : WebTestBase
         Assert.Empty(incidents.Acknowledged);
     }
 
+    [Fact]
+    public void Unacknowledged_and_acknowledged_open_alarms_are_separated()
+    {
+        var incidents = new FakeAlarmIncidents
+        {
+            Attention =
+            [
+                new AlarmIncidentDraft
+                {
+                    Id = 10,
+                    Key = "pending",
+                    Kind = LineAlarmKind.StationFault,
+                    Message = "待接手故障",
+                    RaisedAt = new DateTime(2026, 9, 28, 16, 0, 0)
+                },
+                new AlarmIncidentDraft
+                {
+                    Id = 11,
+                    Key = "owned",
+                    Kind = LineAlarmKind.MesBacklog,
+                    Message = "已接手积压",
+                    RaisedAt = new DateTime(2026, 9, 28, 16, 1, 0),
+                    AcknowledgedAt = new DateTime(2026, 9, 28, 16, 2, 0),
+                    AcknowledgedBy = "engineer"
+                }
+            ]
+        };
+        Context.Services.AddSingleton<IAlarmIncidents>(incidents);
+        Context.Services.AddSingleton<ILineAlarmBoard>(new LineAlarmBoard());
+
+        var cut = Context.RenderComponent<Alarms>();
+
+        Assert.Contains("待接手 1", cut.Markup);
+        Assert.Contains("已接手，尚未解除 1", cut.Markup);
+        var tables = cut.FindAll("table");
+        Assert.Equal(2, tables.Count);
+        Assert.Single(tables[0].QuerySelectorAll("button"));
+        Assert.Empty(tables[1].QuerySelectorAll("button"));
+    }
+
     private sealed class FakeAlarmIncidents : IAlarmIncidents
     {
         public List<AlarmIncidentDraft> Attention { get; set; } = [];
