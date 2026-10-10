@@ -123,12 +123,12 @@ public class AddressValidationPageTests : WebTestBase
         TypeInto(cut, "触发 / 回写地址", "M100");
         TypeInto(cut, "托盘码地址", "M200");
         ClickButton(cut, "保存");
-        Assert.Contains("工站未保存：2 项需要修正", cut.Markup);
+        cut.WaitForAssertion(() => Assert.Contains("工站未保存：2 项需要修正", cut.Markup));
         cut.FindAll("button").Single(button => button.TextContent.Contains("托盘码地址：")).Click();
-        Assert.Equal("pallet", Context.JSInterop.Invocations["dtFocusValidation"].Last().Arguments[0]);
+        cut.WaitForAssertion(() => Assert.Equal("pallet", Context.JSInterop.Invocations["dtFocusValidation"].Last().Arguments[0]));
         TypeInto(cut, "触发 / 回写地址", "D1000");
         TypeInto(cut, "托盘码地址", "D1010");
-        Assert.DoesNotContain("工站未保存：", cut.Markup);
+        cut.WaitForAssertion(() => Assert.DoesNotContain("工站未保存：", cut.Markup));
     }
 
     [Fact]
