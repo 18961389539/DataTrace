@@ -12,21 +12,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 为什么装两个：SDK 版本由仓库根的 global.json 定（10.0.x，slnx 解决方案格式需要它），
-      # 而测试与站点都 target net8.0，跑起来需要 8.0 的运行时 —— 用 8.0.x 这一档把它装上。
-      - name: 安装 .NET SDK（构建用 10.0.x，运行测试用 8.0.x）
+      # SDK 版本由仓库根的 global.json 固定（8.0.4xx，latestFeature）——构建与运行都在 .NET 8 一档。
+      # 仓库曾用 slnx + 10.0.x 构建的组合；slnx 需要 9.0.200+ 的 MSBuild，为把 SDK 钉回 8 已回退为 .sln。
+      - name: 安装 .NET SDK（8.0.x，与 global.json 一致）
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: |
             8.0.x
-            10.0.x
 
       # Release 构建：0 警告是硬门禁 —— Directory.Build.props 里 TreatWarningsAsErrors=true，
       # 多出一个告警这一步就红（需要临时放行时用 WarningsNotAsErrors 逐条列出，不要整体放宽）。
       # 构建盖章（1.1.0+<提交>）也在这里生效：CI 有 GITHUB_SHA，产物因此带着提交号，
       # 现场用 deploy\verify.ps1 就能核对"装的是哪次提交"。
       - name: 还原并构建
-        run: dotnet build DataTrace.slnx -c Release --nologo
+        run: dotnet build DataTrace.sln -c Release --nologo
 
       - name: 安装 Playwright Chromium
         run: pwsh tests\DataTrace.E2E.Tests\bin\Release\net8.0\playwright.ps1 install chromium

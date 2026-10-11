@@ -226,7 +226,8 @@ public class SimulatePageTests : WebTestBase
         foreach (var action in new[] { "TriggerStation", "RunPallet", "SaveOptions", "Enable" })
         {
             Audit.Verify(
-                a => a.WriteAsync(It.IsAny<string>(), action, "LineSimulator", It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+                a => a.WriteAsync(It.IsAny<string>(), action, "LineSimulator", It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(),
+                    "Success", "Blazor Server UI", null, null),
                 Times.Once,
                 $"动作 {action} 应留下审计记录");
         }
@@ -243,7 +244,8 @@ public class SimulatePageTests : WebTestBase
                 It.IsAny<string?>(),
                 It.IsAny<string?>(),
                 It.IsAny<string?>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                "Success", "Blazor Server UI", null, null))
             .ThrowsAsync(new InvalidOperationException("审计库只读"));
 
         var cut = Render();

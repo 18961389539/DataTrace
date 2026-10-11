@@ -51,13 +51,16 @@ public class CollectionHostedServiceTests
                 ctx.Provider.GetRequiredService<ICollectEventBus>(),
                 ctx.Provider.GetRequiredService<ICurveBaselineCache>(),
                 ctx.Provider.GetRequiredService<ICollectArchiveStore>(),
+                ctx.Provider.GetRequiredService<IPendingWriteBackStore>(),
                 ctx.Logger<StationCollectPipeline>()),
+            ctx.Provider.GetRequiredService<IPendingWriteBackStore>(),
+            ctx.Provider.GetRequiredService<ISpoolStore>(),
             ctx.Provider.GetRequiredService<IRuntimeStatusHub>(),
             ctx.Provider.GetRequiredService<ICollectorDiagnostics>(),
             ctx.Logger<CollectionHostedService>());
 
     /// <summary>启动后台服务，等条件成立再停机（比 HostedServiceProbe 更细，可分阶段断言）。</summary>
-    private static async Task RunUntilAsync(
+    internal static async Task RunUntilAsync(
         CollectionHostedService service,
         Func<bool> condition,
         Func<string>? diagnostics = null,
@@ -87,7 +90,7 @@ public class CollectionHostedServiceTests
         }
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition, int timeoutMs = 15000)
+    internal static async Task WaitUntilAsync(Func<bool> condition, int timeoutMs = 15000)
     {
         var startedAt = DateTime.UtcNow;
         while (!condition())
@@ -368,7 +371,7 @@ public class CollectionHostedServiceTests
     }
 
     /// <summary>把采集环境包装成与 InfrastructureContext 一致的两件事：服务实例 + 日志查询。</summary>
-    private sealed class HarnessServiceContext : IAsyncDisposable
+    internal sealed class HarnessServiceContext : IAsyncDisposable
     {
         private readonly CollectHarness _harness;
 
@@ -379,6 +382,8 @@ public class CollectionHostedServiceTests
                 harness.Provider.GetRequiredService<IServiceScopeFactory>(),
                 harness.Provider.GetRequiredService<IPlcDriverFactory>(),
                 harness.Pipeline,
+                harness.Provider.GetRequiredService<IPendingWriteBackStore>(),
+                harness.Provider.GetRequiredService<ISpoolStore>(),
                 harness.StatusHub,
                 harness.Provider.GetRequiredService<ICollectorDiagnostics>(),
                 harness.Provider.GetRequiredService<ILogger<CollectionHostedService>>());

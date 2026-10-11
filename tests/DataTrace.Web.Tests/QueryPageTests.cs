@@ -543,7 +543,8 @@ public class QueryPageTests : WebTestBase
 
         // 键=区间，变更列=过滤条件与条数：日志页的"键"列才不至于塞进一长串条件。
         _audit.Verify(
-            a => a.WriteAsync("admin", "Export", "Query", It.IsAny<string>(), null, It.IsAny<string>()),
+            a => a.WriteAsync("admin", "Export", "Query", It.IsAny<string>(), null, It.IsAny<string>(),
+                default, "Success", "Blazor Server UI", null, null),
             Times.Once);
         Assert.Equal("已导出 1 条", Toast.LastMessage);
     }
@@ -554,7 +555,8 @@ public class QueryPageTests : WebTestBase
         _audit
             .Setup(a => a.WriteAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(),
+                "Success", "Blazor Server UI", null, null))
             .ThrowsAsync(new InvalidOperationException("config.db 被占用"));
         var cut = Render();
 
@@ -705,7 +707,8 @@ public class QueryPageTests : WebTestBase
         Assert.Contains("其余记录不会包含", dialog.Message);
         Assert.Equal(confirmed, Context.JSInterop.Invocations.Any(invocation => invocation.Identifier == "dtDownload"));
         _audit.Verify(audit => audit.WriteAsync("admin", "Export", "Query", It.IsAny<string>(), null,
-            It.IsAny<string>(), It.IsAny<CancellationToken>()), confirmed ? Times.Once() : Times.Never());
+            It.IsAny<string>(), It.IsAny<CancellationToken>(),
+            "Success", "Blazor Server UI", null, null), confirmed ? Times.Once() : Times.Never());
         Assert.False(cut.FindAll("button").Single(button => button.TextContent.Contains("导出 CSV")).HasAttribute("disabled"));
     }
 

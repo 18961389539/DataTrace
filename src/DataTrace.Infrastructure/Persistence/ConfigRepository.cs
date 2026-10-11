@@ -1,6 +1,4 @@
 using DataTrace.Application.Configuration;
-using DataTrace.Application.Realtime;
-using DataTrace.Application.Evaluation;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
@@ -16,10 +14,6 @@ public sealed partial class ConfigRepository : IConfigRepository
 
     private readonly IDbContextFactory<ConfigDbContext> _factory;
 
-    private readonly ICurveBaselineCache _baselines;
-
-    private readonly IRuntimeStatusHub _status;
-
     /// <summary>上一个版本号的整图。只在本仓储（一个电路/一次作用域）内复用，见 <see cref="GetSnapshotAsync"/>。</summary>
     private readonly object _snapshotGate = new();
 
@@ -27,14 +21,10 @@ public sealed partial class ConfigRepository : IConfigRepository
 
     public ConfigRepository(
         ConfigDbContext db,
-        IDbContextFactory<ConfigDbContext> factory,
-        ICurveBaselineCache baselines,
-        IRuntimeStatusHub status)
+        IDbContextFactory<ConfigDbContext> factory)
     {
         _db = db;
         _factory = factory;
-        _baselines = baselines;
-        _status = status;
     }
 
     /// <summary>
@@ -82,14 +72,26 @@ public sealed partial class ConfigRepository : IConfigRepository
             }
         }
 
-        var snapshot = await ReadAsync(
-            db => LoadSnapshotAsync(db, version, cancellationToken),
-            cancellationToken).ConfigureAwait(false);
+        var snapshot = await LoadConsistentSnapshotAsync(cancellationToken).ConfigureAwait(false);
         lock (_snapshotGate)
         {
             _cachedSnapshot = snapshot;
         }
 
+        return snapshot;
+    }
+
+    private async Task<AppConfigurationSnapshot> LoadConsistentSnapshotAsync(CancellationToken cancellationToken)
+    {
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        // All component queries (including revision id) must observe one SQLite read snapshot.
+        // Otherwise a config transaction between the version/settings/tags/revision queries can
+        // create a hybrid snapshot that never existed and then cache it under the newer version.
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        var version = await db.ConfigVersions.AsNoTracking().Select(x => x.Version)
+            .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        var snapshot = await LoadSnapshotAsync(db, version, cancellationToken).ConfigureAwait(false);
+        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         return snapshot;
     }
 
@@ -126,6 +128,10 @@ public sealed partial class ConfigRepository : IConfigRepository
             ? recipes.FirstOrDefault(x => x.Id == activeId && x.Enabled)
             : null;
 
+        var revisionId = await db.ConfigurationRevisions.AsNoTracking()
+            .OrderByDescending(x => x.Id)
+            .Select(x => (long?)x.Id)
+            .FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
         return new AppConfigurationSnapshot
         {
             Settings = settings,
@@ -133,7 +139,8 @@ public sealed partial class ConfigRepository : IConfigRepository
             Stations = stations,
             Recipes = recipes,
             ActiveRecipe = activeRecipe,
-            Version = version
+            Version = version,
+            ConfigurationRevisionId = revisionId
         };
     }
 
@@ -148,9 +155,27 @@ public sealed partial class ConfigRepository : IConfigRepository
     public async Task<T> InTransactionAsync<T>(Func<CancellationToken, Task<T>> work, CancellationToken cancellationToken = default)
     {
         await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
-        var result = await work(cancellationToken).ConfigureAwait(false);
-        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        return result;
+        try
+        {
+            var result = await work(cancellationToken).ConfigureAwait(false);
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            return result;
+        }
+        catch
+        {
+            try
+            {
+                await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            finally
+            {
+                // A scoped DbContext can outlive the failed save in a Blazor circuit. Do not let
+                // its Added/Modified entries be silently committed by that circuit's next action.
+                _db.ChangeTracker.Clear();
+            }
+
+            throw;
+        }
     }
 }
 

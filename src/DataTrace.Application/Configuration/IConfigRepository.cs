@@ -19,7 +19,15 @@ public sealed class AppConfigurationSnapshot
     public Recipe? ActiveRecipe { get; init; }
 
     public int Version { get; init; }
+
+    /// <summary>Immutable configuration revision referenced by collection/session snapshots.</summary>
+    public long? ConfigurationRevisionId { get; init; }
 }
+
+public sealed record ConfigurationRevisionSummary(
+    long Id, int ConfigVersion, DateTime CreatedAt, string UserName, string Reason,
+    string Action, string EntityType, string? EntityKey, string ValidationResult,
+    long? ParentRevisionId, string DiffJson);
 
 /// <summary>
 /// 单个托盘会话的 MES 出站状态：时序视图的终点要用的那一节。
@@ -75,6 +83,8 @@ public interface IConfigRepository
     /// </remarks>
     Task<AppConfigurationSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default);
     Task<int> GetVersionAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<ConfigurationRevisionSummary>> GetRevisionHistoryAsync(int skip = 0, int take = 50, CancellationToken cancellationToken = default);
+    Task<ConfigurationRevision?> GetRevisionAsync(long revisionId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<PlcConnection>> GetPlcConnectionsAsync(CancellationToken cancellationToken = default);
     Task<PlcConnection?> GetPlcConnectionAsync(int id, CancellationToken cancellationToken = default);
     Task<int> SavePlcConnectionAsync(SavePlcConnectionCommand connection, CancellationToken cancellationToken = default);
@@ -106,6 +116,7 @@ public interface IConfigRepository
 
     /// <summary>MES 推送积压与最近一次推送结果，供设置页显示对接健康状态。</summary>
     Task<MesOutboxSnapshot> GetMesOutboxStatusAsync(CancellationToken cancellationToken = default);
+    Task<bool> HasPendingMesOutboxForMonthAsync(string monthKey, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 某个托盘会话的 MES 出站记录：推没推出去、试了几次、上次为什么没成。
@@ -148,6 +159,12 @@ public interface IConfigRepository
     /// 库里已经有了一次"改过但查不到是谁改的"变更。工作块内抛异常即整笔回滚。
     /// </remarks>
     Task<T> InTransactionAsync<T>(Func<CancellationToken, Task<T>> work, CancellationToken cancellationToken = default);
+
+    /// <summary>Records a full immutable configuration snapshot inside the caller's transaction.</summary>
+    Task AppendRevisionAsync(ConfigAudit audit, CancellationToken cancellationToken = default);
+
+    /// <summary>Restores a prior full snapshot; the caller appends a new revision in the same transaction.</summary>
+    Task RestoreRevisionAsync(long revisionId, CancellationToken cancellationToken = default);
 }
 
 public interface IAuditLogger

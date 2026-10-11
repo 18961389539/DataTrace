@@ -261,7 +261,7 @@ public sealed class QualityIncidentStore : IQualityIncidentService
     {
         QualityIncidentRules.RequireCanManage(actor);
         var assignedTo = QualityIncidentRules.RequiredText(owner, "负责人", 100);
-        var target = (await _users.ListAsync(cancellationToken).ConfigureAwait(false))
+        var target = (await _users.ListAssignableAsync(actor.UserName, cancellationToken).ConfigureAwait(false))
             .FirstOrDefault(user => string.Equals(user.UserName, assignedTo, StringComparison.OrdinalIgnoreCase));
         if (target is null || target.IsLocked
             || !target.Roles.Any(role => role == AppRoles.Administrator || role == AppRoles.Engineer || role == AppRoles.Operator))

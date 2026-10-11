@@ -17,6 +17,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Collections.Concurrent;
 
 namespace DataTrace.Collector;
 
@@ -26,12 +27,13 @@ public sealed class StationCollectPipeline
     private readonly IRuntimeStatusHub _status;
     private readonly ICollectEventBus _events;
     private readonly ICurveBaselineCache _baselines;
+    private readonly IPendingWriteBackStore _pending;
     private readonly ILogger<StationCollectPipeline> _logger;
     private readonly FileSourceReader _files;
     private readonly CollectSessionCoordinator _sessions;
+    private readonly ConcurrentDictionary<int, HeldPersistence> _heldPersistence = new();
     private readonly object _planGate = new();
-    private int _planVersion = -1;
-    private readonly Dictionary<int, StationAcquisitionPlan> _plans = new();
+    private readonly Dictionary<(int Version, long? RevisionId, int StationId, int ConnectionId), StationAcquisitionPlan> _plans = new();
 
     public StationCollectPipeline(
         IServiceScopeFactory scopeFactory,
@@ -39,12 +41,14 @@ public sealed class StationCollectPipeline
         ICollectEventBus events,
         ICurveBaselineCache baselines,
         ICollectArchiveStore archives,
+        IPendingWriteBackStore pending,
         ILogger<StationCollectPipeline> logger)
     {
         _scopeFactory = scopeFactory;
         _status = status;
         _events = events;
         _baselines = baselines;
+        _pending = pending;
         _logger = logger;
         _files = new FileSourceReader(archives, logger);
         _sessions = new CollectSessionCoordinator(scopeFactory, logger);
@@ -57,6 +61,9 @@ public sealed class StationCollectPipeline
         PlcRequestQueue queue,
         CancellationToken cancellationToken)
     {
+        await using var operationScope = _scopeFactory.CreateAsyncScope();
+        var barrier = operationScope.ServiceProvider.GetRequiredService<IDataMaintenanceBarrier>();
+        await using var maintenanceLease = await barrier.EnterReadAsync(cancellationToken).ConfigureAwait(false);
         var triggerTime = DateTime.Now;
         var sw = Stopwatch.StartNew();
 
@@ -73,8 +80,24 @@ public sealed class StationCollectPipeline
         string? error = null;
         CollectOutcome? outcome = null;
         CollectRecord? saved = null;
+        var storageHeld = false;
+        var suppressWriteBack = false;
+        CollectSaveRequest? unpersistedRequest = null;
 
         SetStatus(station, StationRuntimeState.Busy, null, null, null, Judgement.None, null, null);
+
+        if (_heldPersistence.TryGetValue(station.Id, out var existingHold))
+        {
+            SetStatus(station, StationRuntimeState.Fault, existingHold.Request.Record.PalletCode,
+                existingHold.Request.Record.SerialNo, ResultCodes.DatabaseWriteFailed,
+                existingHold.Request.Record.Judgement,
+                "该工站仍有未持久化的原始采集请求；禁止重读设备或分配新流水。",
+                existingHold.Request.Record.DurationMs,
+                monthKey: existingHold.Request.MonthKey,
+                recordId: existingHold.Request.Record.Id > 0 ? existingHold.Request.Record.Id : null,
+                writeBackOk: false);
+            return;
+        }
 
         try
         {
@@ -84,12 +107,40 @@ public sealed class StationCollectPipeline
             resultCode = saved.ResultCode;
             error = saved.ErrorMessage;
         }
+        catch (CollectPersistenceUnavailableException ex)
+        {
+            resultCode = ResultCodes.DatabaseWriteFailed;
+            error = "月库与本地 spool 均无法保存本次采集；触发位保持不变，原始采集请求已留在有界内存保护队列，恢复后只重试保存，不重读设备、不分配新流水、不回写响应码。";
+            ex.Request.RequiresWriteBack = true;
+            ex.Request.RequiresManualReviewOnPersistence = true;
+            unpersistedRequest = ex.Request;
+            var retained = _heldPersistence.TryAdd(station.Id, new HeldPersistence(ex.Request));
+            storageHeld = true;
+            suppressWriteBack = true;
+            if (!retained)
+                error = "月库与本地 spool 均无法保存本次采集，且工站已有内存保护请求；本件未确认，需立即检查。";
+            _logger.LogCritical(ex, "工站 {Station} 双持久化失败，触发位保持，流水 {Serial} 原始请求受保护={Protected}",
+                station.Code, ex.Request.Record.SerialNo, retained);
+        }
         catch (PlcDriverException ex)
         {
             resultCode = ResultCodes.PlcReadFailed;
             error = ex.Message;
             _logger.LogError(ex, "工站 {Station} PLC 通讯失败", station.Code);
             await WriteFailureAuditAsync(station, triggerTime, resultCode, error).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            resultCode = ResultCodes.InternalError;
+            error = "采集在设备响应码确认前取消；触发位保持，不写响应码。";
+            suppressWriteBack = true;
+            _logger.LogWarning("工站 {Station} 采集取消，按安全策略不写 PLC 响应码", station.Code);
+        }
+        catch (InvalidDataException ex)
+        {
+            resultCode = ResultCodes.InternalError;
+            error = ex.Message;
+            _logger.LogError(ex, "工站 {Station} 判定依据无效，采集已阻塞", station.Code);
         }
         catch (Exception ex)
         {
@@ -99,31 +150,35 @@ public sealed class StationCollectPipeline
         }
         finally
         {
-            var writeBack = await WriteResultAsync(station, connection, queue, resultCode, config.Settings, cancellationToken)
-                .ConfigureAwait(false);
+            var writeBack = suppressWriteBack
+                ? new WriteBackOutcome(0, false, storageHeld ? "双持久化失败，按安全策略不写 PLC" : "采集取消，按安全策略不写 PLC")
+                : await WriteResultAsync(station, queue, resultCode)
+                    .ConfigureAwait(false);
             // DurationMs 不在这里赋值：之前在 finally 里改内存对象、库早已写完，等于从没落库。
             // 现在它在 CollectAndSaveAsync 的记录构造时就取好了，这里直接把同一个值报给看板 ——
             // 看板节拍与明细/查询列表显示的是同一个数。
             // 通讯失败、文件读不到、归档失败、回写失败都要人去处理，标成故障。
             // 托盘码非法和判废是业务结果，工站本身没问题。
-            var fault = resultCode is ResultCodes.PlcReadFailed or ResultCodes.InternalError
+            var fault = resultCode is ResultCodes.PlcReadFailed or ResultCodes.InternalError or ResultCodes.DatabaseWriteFailed
                 or ResultCodes.FileSourceFailed or ResultCodes.ArchiveFailed
                 || !writeBack.Ok;
             var statusError = error;
             if (!writeBack.Ok)
             {
                 // 尝试 0 次说明连地址都没解析出来（位地址/解析失败），说"尝试 0 次"只会让人以为没重试够。
-                var detail = writeBack.Attempts == 0
-                    ? "响应码写回失败"
-                    : $"响应码写回失败（尝试 {writeBack.Attempts} 次）";
+                var detail = suppressWriteBack
+                    ? (storageHeld ? "双持久化失败，触发位保持且禁止响应码写回" : "采集取消，触发位保持且禁止响应码写回")
+                    : (writeBack.Attempts == 0
+                        ? "响应码写回失败"
+                        : $"响应码写回/核对失败（单次写入，尝试 {writeBack.Attempts} 次）");
                 statusError = string.IsNullOrWhiteSpace(error) ? detail : $"{error}；{detail}";
             }
 
             SetStatus(
                 station,
                 fault ? StationRuntimeState.Fault : StationRuntimeState.Idle,
-                saved?.PalletCode,
-                saved?.SerialNo,
+                saved?.PalletCode ?? unpersistedRequest?.Record.PalletCode,
+                saved?.SerialNo ?? unpersistedRequest?.Record.SerialNo,
                 resultCode,
                 saved?.Judgement ?? Judgement.None,
                 statusError,
@@ -131,12 +186,47 @@ public sealed class StationCollectPipeline
                 outcome?.Tags,
                 outcome?.Curves,
                 outcome?.MonthKey,
-                saved?.Id,
+                saved?.Id ?? (unpersistedRequest?.Record.Id > 0 ? unpersistedRequest.Record.Id : null),
                 writeBack.Attempts,
                 writeBack.Ok);
             if (saved is not null)
             {
                 _events.Publish(saved);
+
+                // "待确认"留证在落库事务里就已登记（见 RuntimeStore.SaveAsync，F04）：
+                // 精确回读成功才按实际月库销账；任何失败都把留证转为人工核对，禁止自动重写。
+                // 之前"finally 里才留证"的写法，提交后到留证前的断电仍会让同一件被重新采集。
+                if (writeBack.Ok)
+                {
+                    if (saved.Id > 0 && !string.IsNullOrWhiteSpace(outcome?.MonthKey))
+                    {
+                        await _pending.DeleteByRecordIdAsync(outcome.MonthKey, saved.Id, CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+                }
+                else
+                {
+                    if (saved.Id > 0 && !string.IsNullOrWhiteSpace(outcome?.MonthKey))
+                    {
+                        try
+                        {
+                            await _pending.RequireManualReviewByRecordIdAsync(
+                                outcome.MonthKey,
+                                saved.Id,
+                                "响应码单次写入或读回核对失败；设备事件身份未知，禁止自动重写并等待现场人工核对",
+                                CancellationToken.None).ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogCritical(ex, "工站 {Station} 回写不确定且未能持久标记人工核对；原待确认保护保留", station.Code);
+                        }
+                    }
+                    _logger.LogWarning(
+                        "工站 {Station} 回写未确认，留证保持人工核对阻塞：流水 {Serial} 结果 {Result}",
+                        station.Code,
+                        saved.SerialNo,
+                        ResultCodes.Describe(resultCode));
+                }
             }
 
             // 这一行是整条链路的锚点：现场报"某件丢了 / 某件慢了"时，先用流水号搜到它，
@@ -149,9 +239,115 @@ public sealed class StationCollectPipeline
                 ResultCodes.Describe(resultCode),
                 saved?.Judgement ?? Judgement.None,
                 sw.ElapsedMilliseconds,
-                writeBack.Ok ? $"{writeBack.Attempts} 次成功" : $"{writeBack.Attempts} 次失败");
+                writeBack.Ok ? "单次写入并核对成功" : suppressWriteBack ? "未写 PLC（采集/存储阻塞）" : $"单次写入/核对失败 {writeBack.Attempts}");
         }
     }
+
+    public bool HasHeldPersistence(int stationId) => _heldPersistence.ContainsKey(stationId);
+
+    /// <summary>
+    /// A trigger read from the poll round is supplied as current device-state evidence. The original
+    /// request is retried without any PLC acquisition or acknowledgement, regardless of trigger value.
+    /// </summary>
+    public async Task RetryHeldPersistenceAsync(int stationId, short observedTriggerValue, CancellationToken cancellationToken)
+    {
+        if (!_heldPersistence.TryGetValue(stationId, out var held) || DateTime.UtcNow < held.NextAttemptAtUtc)
+            return;
+
+        held.Attempts++;
+        var persisted = await _sessions.PersistHeldRequestAsync(held.Request, cancellationToken).ConfigureAwait(false);
+        if (persisted)
+        {
+            _heldPersistence.TryRemove(stationId, out _);
+            _status.UpsertStation(new StationRuntimeStatus
+            {
+                StationId = held.Request.Record.StationId,
+                StationCode = held.Request.Record.StationCode,
+                State = StationRuntimeState.Fault,
+                LastPalletCode = held.Request.Record.PalletCode,
+                LastSerialNo = held.Request.Record.SerialNo,
+                LastResultCode = ResultCodes.DatabaseWriteFailed,
+                LastJudgement = held.Request.Record.Judgement,
+                LastCompleteTime = held.Request.Record.CompleteTime,
+                LastDurationMs = held.Request.Record.DurationMs,
+                LastError = observedTriggerValue == held.Request.ConfirmationTriggerValue
+                    ? "原始采集请求已持久化；设备触发位仍处于触发值。已建立人工核对保护，未写响应码。"
+                    : $"原始采集请求已持久化；当前触发位为 {observedTriggerValue}，与原触发值不一致。已建立人工核对保护，未写响应码。",
+                LastMonthKey = held.Request.MonthKey,
+                LastRecordId = held.Request.Record.Id,
+                LastWriteBackOk = false
+            });
+            _logger.LogCritical("工站 {Station} 原始请求已持久化；当前 trigger={Trigger}；未向 PLC 写回，等待人工核对", stationId, observedTriggerValue);
+            return;
+        }
+
+        var seconds = Math.Min(60, 2 << Math.Min(held.Attempts - 1, 5));
+        held.NextAttemptAtUtc = DateTime.UtcNow.AddSeconds(seconds);
+        var previous = _status.Stations.FirstOrDefault(x => x.StationId == stationId);
+        if (previous is not null)
+        {
+            previous.State = StationRuntimeState.Fault;
+            previous.LastError = $"月库与 spool 仍不可写；原流水 {held.Request.Record.SerialNo} 保存在内存保护队列，当前触发位读值 {observedTriggerValue}；{seconds} 秒后只重试持久化。";
+            _status.UpsertStation(previous);
+        }
+    }
+
+    private sealed class HeldPersistence(CollectSaveRequest request)
+    {
+        public CollectSaveRequest Request { get; } = request;
+        public int Attempts { get; set; }
+        public DateTime NextAttemptAtUtc { get; set; } = DateTime.UtcNow.AddSeconds(2);
+    }
+
+    /// <summary>
+    /// 触发命中且留证尚未进入人工核对时，将它持久转为人工阻塞。
+    /// 当前 PLC 协议缺少稳定事件号，软件不能证明触发位仍属于原件；这里绝不写旧结果或销账。
+    /// </summary>
+    public async Task<bool> RetryPendingConfirmationAsync(
+        Station station,
+        PlcConnection connection,
+        AppConfigurationSnapshot config,
+        PlcRequestQueue queue,
+        PendingWriteBack pending,
+        CancellationToken cancellationToken)
+    {
+        await using var operationScope = _scopeFactory.CreateAsyncScope();
+        var barrier = operationScope.ServiceProvider.GetRequiredService<IDataMaintenanceBarrier>();
+        await using var maintenanceLease = await barrier.EnterReadAsync(cancellationToken).ConfigureAwait(false);
+        using var scope = _logger.BeginScope(new Dictionary<string, object>
+        {
+            [CollectionLogScope.Station] = station.Code,
+            [CollectionLogScope.Trigger] = pending.SerialNo
+        });
+
+        // 当前驱动契约没有稳定、递增的设备事件号。会话是否 Open、托盘码是否相同、回写寄存器读回，
+        // 都不能证明触发位仍对应这次采集（同托盘复用也无法区分）。因此所有未确认留证都进入
+        // 持久人工核对状态，绝不把旧结果码写给未知的新件。
+        if (!pending.ManualReviewRequired)
+        {
+            const string reason = "设备协议未提供可校验的稳定事件身份；请现场核对托盘/事件并处理触发位后人工解除";
+            await _pending.RequireManualReviewAsync(pending.MonthKey, pending.Id, reason, CancellationToken.None)
+                .ConfigureAwait(false);
+            pending.ManualReviewRequired = true;
+            pending.ManualReviewReason = reason;
+            _logger.LogWarning(
+                "工站 {Station} 留证 {Serial} 持久阻塞：设备事件身份不可验证，等待人工核对",
+                station.Code, pending.SerialNo);
+        }
+        SetStatus(station, StationRuntimeState.Fault, pending.PalletCode, pending.SerialNo, pending.ResultCode,
+            Judgement.None, pending.ManualReviewReason ?? "待人工核对设备事件身份", null,
+            monthKey: pending.MonthKey, recordId: pending.CollectRecordId, writeBackOk: false);
+        return false;
+    }
+
+    private static string DescribeSessionState(PalletSession? session)
+        => session is null
+            ? "不存在"
+            : session.Status == SessionStatus.Closed
+                ? $"已关闭（{session.EndTime:HH:mm:ss}）"
+                : session.EndTime is not null
+                    ? $"已结束（{session.EndTime:HH:mm:ss}）"
+                    : session.Status.ToString();
 
     private async Task<CollectOutcome> CollectAndSaveAsync(
         Station station,
@@ -170,23 +366,55 @@ public sealed class StationCollectPipeline
             return Live(station, Unrecorded(station, config, palletCode, triggerTime, ResultCodes.InvalidPalletCode, palletError));
         }
 
-        FileSourceRead? source = null;
-        if (station.Tags.Any(t => t.Enabled && t.Source == TagDataSource.JsonFile))
+        var frozen = station.IsFirstStation
+            ? FrozenSelection.ForFirstStation(config, _baselines.Current)
+            : await LookupFrozenSelectionAsync(config, palletCode, cancellationToken).ConfigureAwait(false);
+
+        // 快照损坏不能静默换规则：宁可本站故障留证，由人核查后恢复。
+        if (frozen.Kind == SessionRecipe.SelectionKind.Corrupted)
         {
-            source = await _files.ReadAsync(station, triggerTime, palletCode, cancellationToken).ConfigureAwait(false);
+            _logger.LogError("工站 {Station} {Error}", station.Code, frozen.Error);
+            throw new InvalidDataException(frozen.Error!);
+        }
+
+        var evaluatedStation = station;
+        var evaluatedConnection = connection;
+        var evaluatedPlan = plan;
+        var evaluatedBuffers = buffers;
+        if (frozen.Kind == SessionRecipe.SelectionKind.Frozen && frozen.FrozenConfiguration is { } frozenConfig)
+        {
+            evaluatedStation = frozenConfig.Stations.FirstOrDefault(x => x.Id == station.Id)
+                ?? throw new InvalidDataException("冻结配置中不存在当前工站，判定已阻塞");
+            evaluatedConnection = frozenConfig.PlcConnections.FirstOrDefault(x => x.Id == evaluatedStation.PlcConnectionId)
+                ?? throw new InvalidDataException("冻结配置中不存在工站 PLC，判定已阻塞");
+            if (!SameEndpoint(connection, evaluatedConnection))
+                throw new InvalidDataException("工站 PLC 品牌或连接端点已与在制快照不一致，无法安全读取历史点位，判定已阻塞");
+
+            var historical = AcquisitionPlan(frozenConfig, evaluatedStation, evaluatedConnection, queue);
+            evaluatedBuffers = await StationBlockReader.ReadAsync(historical, queue, cancellationToken).ConfigureAwait(false);
+            var historicalPallet = StationSampleDecoder.PalletCode(evaluatedStation, evaluatedConnection, historical.Plan, evaluatedBuffers);
+            if (!string.Equals(historicalPallet, palletCode, StringComparison.Ordinal))
+                throw new InvalidDataException("当前 PLC 配置与在制快照解码出的托盘码不一致，判定已阻塞");
+            evaluatedPlan = historical;
+        }
+
+        FileSourceRead? source = null;
+        if (evaluatedStation.Tags.Any(t => t.Enabled && t.Source == TagDataSource.JsonFile))
+        {
+            source = await _files.ReadAsync(evaluatedStation, triggerTime, palletCode, cancellationToken).ConfigureAwait(false);
             if (source.Error is not null)
             {
                 return Live(station, Unrecorded(station, config, palletCode, triggerTime, source.ErrorCode, source.Error));
             }
         }
 
-        var frozen = station.IsFirstStation
-            ? null
-            : await LookupFrozenRecipeAsync(palletCode, cancellationToken).ConfigureAwait(false);
-        var recipe = SessionRecipe.Select(config, station.IsFirstStation, frozen);
-        var assessment = CollectEvaluator.Evaluate(station, connection, plan.Plan, buffers, source, _baselines, recipe);
+        var assessment = CollectEvaluator.Evaluate(
+            evaluatedStation, evaluatedConnection, evaluatedPlan.Plan, evaluatedBuffers, source, _baselines,
+            frozen.Recipe, frozen.FrozenLimits, frozen.FrozenBaseline,
+            baselineIsFrozen: frozen.Kind != SessionRecipe.SelectionKind.LegacyFallback);
         var saved = await _sessions.PersistAsync(
-            station, config, palletCode, triggerTime, sw, source, assessment, cancellationToken).ConfigureAwait(false);
+            evaluatedStation, config, palletCode, triggerTime, sw, source, assessment, frozen.FrozenBaseline,
+            cancellationToken, station, connection, frozen.FrozenConfiguration).ConfigureAwait(false);
         return Live(station, saved.Record, saved.Curves, saved.MonthKey);
     }
 
@@ -198,22 +426,25 @@ public sealed class StationCollectPipeline
     {
         lock (_planGate)
         {
-            if (_planVersion != config.Version)
-            {
-                _plans.Clear();
-                _planVersion = config.Version;
-            }
-
-            if (_plans.TryGetValue(station.Id, out var cached))
+            var key = (config.Version, config.ConfigurationRevisionId, station.Id, connection.Id);
+            if (_plans.TryGetValue(key, out var cached))
             {
                 return cached;
             }
 
             var compiled = StationAcquisitionPlanner.Compile(station, connection, queue.Driver);
-            _plans[station.Id] = compiled;
+            if (_plans.Count >= 256)
+                _plans.Clear();
+            _plans[key] = compiled;
             return compiled;
         }
     }
+
+    private static bool SameEndpoint(PlcConnection current, PlcConnection frozen)
+        => current.Id == frozen.Id
+            && current.Brand == frozen.Brand
+            && string.Equals(current.Host, frozen.Host, StringComparison.OrdinalIgnoreCase)
+            && current.Port == frozen.Port;
 
     private static CollectRecord Unrecorded(
         Station station,
@@ -235,32 +466,38 @@ public sealed class StationCollectPipeline
             RecipeCode = RecipeCode(config)
         };
 
-    private async Task<string?> LookupFrozenRecipeAsync(string palletCode, CancellationToken cancellationToken)
+    /// <summary>后续工站的判定限值来源：读在制索引的冻结快照并解析成选择结果。</summary>
+    private async Task<FrozenSelection> LookupFrozenSelectionAsync(
+        AppConfigurationSnapshot config,
+        string palletCode,
+        CancellationToken cancellationToken)
     {
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
             var sessions = scope.ServiceProvider.GetRequiredService<IActiveSessionStore>();
             var existing = await sessions.FindByPalletAsync(palletCode, cancellationToken).ConfigureAwait(false);
-            return existing?.RecipeCode;
+            return existing is null
+                ? FrozenSelection.ForFirstStation(config)
+                : SessionRecipe.SelectFrozen(config, firstStation: false, existing.RecipeCode, existing.RecipeSnapshot);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.LogWarning(ex, "读取在制型号失败，本站改用当前型号");
-            return null;
+            // 读取在制型号失败绝不能静默改用当前型号：那等于在配置库故障时
+            // 用一套没人知道的规则给在制件判定、落库。宁可本站故障留证，
+            // 由人核对后重采/补录 —— 配置库恢复后下一轮自然恢复。
+            _logger.LogError(ex, "读取在制型号失败（托盘 {Pallet}），本件判定阻塞", palletCode);
+            throw new InvalidOperationException("读取在制型号失败，判定已阻塞：请检查配置数据库后重试", ex);
         }
     }
 
-    /// <summary>响应码回写的结果：试了几次、最后成没成、失败原因。</summary>
+    /// <summary>响应码只做一次写入及读回核对；失败后保留留证，等待人工处理。</summary>
     private readonly record struct WriteBackOutcome(int Attempts, bool Ok, string? Error);
 
     private async Task<WriteBackOutcome> WriteResultAsync(
         Station station,
-        PlcConnection connection,
         PlcRequestQueue queue,
-        short resultCode,
-        SystemSettings settings,
-        CancellationToken cancellationToken)
+        short resultCode)
     {
         if (!queue.Driver.TryParseAddress(station.TriggerAddress, out var address))
         {
@@ -274,36 +511,25 @@ public sealed class StationCollectPipeline
             return new WriteBackOutcome(0, false, "触发地址是位地址");
         }
 
-        var retries = Math.Max(1, settings.WriteRetryCount);
-        Exception? last = null;
-        for (var i = 0; i < retries; i++)
+        try
         {
-            try
-            {
-                await queue.WriteWordsAsync(address, ValueCodec.EncodeInt16(resultCode), cancellationToken)
-                    .ConfigureAwait(false);
-                var readBack = await queue.ReadWordsAsync(address, 1, cancellationToken).ConfigureAwait(false);
-                if (readBack.Length > 0 && (short)readBack[0] == resultCode)
-                {
-                    return new WriteBackOutcome(i + 1, true, null);
-                }
+            // A lost acknowledgement can mean the write took effect on the old part. Never resend
+            // a result code: a later trigger may belong to a different event even on the same pallet.
+            await queue.WriteWordsAsync(address, ValueCodec.EncodeInt16(resultCode), CancellationToken.None)
+                .ConfigureAwait(false);
+            var readBack = await queue.ReadWordsAsync(address, 1, CancellationToken.None).ConfigureAwait(false);
+            if (readBack.Length > 0 && (short)readBack[0] == resultCode)
+                return new WriteBackOutcome(1, true, null);
 
-                last = new PlcDriverException("写回校验不一致");
-            }
-            catch (Exception ex)
-            {
-                last = ex;
-            }
-
-            // 等的是"下一次重试"：最后一次失败后没有下一次，再等就只是白拖工站的采集周期。
-            if (i < retries - 1)
-            {
-                await Task.Delay(settings.WriteRetryDelayMs, cancellationToken).ConfigureAwait(false);
-            }
+            var mismatch = new PlcDriverException("单次写入后读回不一致；为避免覆盖新事件，不自动重写");
+            _logger.LogError(mismatch, "工站 {Station} 响应码单次写入后核对失败", station.Code);
+            return new WriteBackOutcome(1, false, mismatch.Message);
         }
-
-        _logger.LogError(last, "工站 {Station} 响应码写回失败", station.Code);
-        return new WriteBackOutcome(retries, false, last?.Message);
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "工站 {Station} 响应码单次写入/核对失败；不自动重写", station.Code);
+            return new WriteBackOutcome(1, false, ex.Message);
+        }
     }
 
     private async Task WriteFailureAuditAsync(Station station, DateTime triggerTime, short resultCode, string error)

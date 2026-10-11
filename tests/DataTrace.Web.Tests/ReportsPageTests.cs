@@ -398,7 +398,7 @@ public class ReportsPageTests : WebTestBase
     }
 
     [Fact]
-    public async Task A_failed_reload_clears_every_table_including_the_recipe_breakdown()
+    public void A_failed_reload_clears_every_table_including_the_recipe_breakdown()
     {
         var cut = Render();
         Assert.Contains("A100", cut.Markup);
@@ -496,7 +496,8 @@ public class ReportsPageTests : WebTestBase
         Assert.Equal("admin", saved.ControlCapturedBy);
         Assert.NotNull(saved.ControlCapturedAt);
         _audit.Verify(
-            a => a.WriteAsync("admin", "SaveSpcSettings", "TagDefinition", It.IsAny<string?>(), "未冻结", It.IsAny<string?>())!,
+            a => a.WriteAsync("admin", "SaveSpcSettings", "TagDefinition", It.IsAny<string?>(), "未冻结", It.IsAny<string?>(),
+                default, "Success", "Blazor Server UI", null, null)!,
             Times.Once);
     }
 
@@ -615,7 +616,8 @@ public class ReportsPageTests : WebTestBase
         await cut.InvokeAsync(() => Task.CompletedTask);
 
         _audit.Verify(
-            a => a.WriteAsync("admin", "Export", "Report", It.IsAny<string>(), null, It.IsAny<string>()),
+            a => a.WriteAsync("admin", "Export", "Report", It.IsAny<string>(), null, It.IsAny<string>(),
+                default, "Success", "Blazor Server UI", null, null),
             Times.Once);
         Assert.Equal("已导出 1 个趋势点", Toast.LastMessage);
     }
@@ -626,7 +628,8 @@ public class ReportsPageTests : WebTestBase
         _audit
             .Setup(a => a.WriteAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(),
+                "Success", "Blazor Server UI", null, null))
             .ThrowsAsync(new InvalidOperationException("config.db 被占用"));
         var cut = Render();
         OpenTrendTab(cut);

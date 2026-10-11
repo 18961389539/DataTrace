@@ -99,6 +99,16 @@ public sealed class IoTClientPlcDriver : IPlcDriver
                 throw new PlcDriverException(result.Err ?? "PLC 读取失败");
             }
 
+            // 短帧必须报错而不是补零：把“没读到”补成 0，上层试读的长度防御和采集校验
+            // 都无法再区分“设备真的是零”与“响应被截断”，触发、占位、测量、曲线会全体解码出错。
+            // 上层把 PlcDriverException 标为通讯失败并进故障缓存，与真实的全零读数明确区分。
+            if (result.Value.Length < wordCount * 2)
+            {
+                _connected = false;
+                throw new PlcDriverException(
+                    $"PLC 响应长度不足：请求 {ToClientAddress(start)} 共 {wordCount} 字（{wordCount * 2} 字节），实收 {result.Value.Length} 字节");
+            }
+
             var words = ToWords(result.Value, wordCount);
             // 西门子读路径会把整段响应字节倒序（IoTClient 的已知行为，见其 Read：result.Value = responseData.Reverse()）。
             // ToWords 按小端组字，正好把每个字的字节序还原，但多字读取的"字与字"顺序会整体颠倒，

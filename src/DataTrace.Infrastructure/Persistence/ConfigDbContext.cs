@@ -24,6 +24,7 @@ public sealed class ConfigDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<SerialCounter> SerialCounters => Set<SerialCounter>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<ConfigVersion> ConfigVersions => Set<ConfigVersion>();
+    public DbSet<ConfigurationRevision> ConfigurationRevisions => Set<ConfigurationRevision>();
     public DbSet<MesOutboxItem> MesOutbox => Set<MesOutboxItem>();
     public DbSet<AlarmIncident> AlarmIncidents => Set<AlarmIncident>();
     public DbSet<QualityIncident> QualityIncidents => Set<QualityIncident>();
@@ -124,6 +125,13 @@ public sealed class ConfigDbContext : IdentityDbContext<ApplicationUser>
 
         builder.Entity<SerialCounter>(e => e.HasIndex(x => x.DayKey).IsUnique());
         builder.Entity<AuditLog>(e => e.HasIndex(x => x.Time));
+        builder.Entity<ConfigurationRevision>(e =>
+        {
+            e.HasIndex(x => x.CreatedAt);
+            e.HasIndex(x => x.ParentRevisionId);
+            e.Property(x => x.SnapshotJson).IsRequired();
+            e.Property(x => x.DiffJson).IsRequired();
+        });
         builder.Entity<AlarmIncident>(e => e.HasIndex(x => x.RaisedAt));
         builder.Entity<MesOutboxItem>(e =>
         {

@@ -32,7 +32,8 @@ if ($existing) {
 }
 
 # 确保 Production 配置含端口
-Write-ProductionAppsettings -InstallDir $InstallDir -Port ([int]$meta.Port) -DataRoot 'data'
+$dataRoot = Get-DtDataRootSetting -InstallDir $InstallDir -CustomerMeta $meta
+Write-ProductionAppsettings -InstallDir $InstallDir -Port ([int]$meta.Port) -DataRoot $dataRoot
 
 # binPath：引号包裹；环境变量通过服务 registry Environment 写入
 $binPath = "`"$exe`""
@@ -44,7 +45,7 @@ $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\$name"
 $envValues = @(
     "ASPNETCORE_ENVIRONMENT=Production",
     "Kestrel__Endpoints__Http__Url=http://0.0.0.0:$($meta.Port)",
-    "DataRoot=data"
+    "DataRoot=$dataRoot"
 )
 New-ItemProperty -Path $regPath -Name Environment -PropertyType MultiString -Value $envValues -Force | Out-Null
 

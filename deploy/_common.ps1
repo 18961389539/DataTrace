@@ -38,6 +38,24 @@ function Read-CustomerMeta {
     return (Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json)
 }
 
+function Get-DtDataRootSetting {
+    param([Parameter(Mandatory)][string]$InstallDir, $CustomerMeta = $null)
+    if (-not $CustomerMeta) { $CustomerMeta = Read-CustomerMeta -InstallDir $InstallDir }
+    if ($CustomerMeta.PSObject.Properties['DataRoot'] -and -not [string]::IsNullOrWhiteSpace([string]$CustomerMeta.DataRoot)) {
+        return [string]$CustomerMeta.DataRoot
+    }
+    return 'data'
+}
+
+function Resolve-DtDataRoot {
+    param([Parameter(Mandatory)][string]$InstallDir, [string]$DataRoot = '')
+    if ([string]::IsNullOrWhiteSpace($DataRoot)) { $DataRoot = Get-DtDataRootSetting -InstallDir $InstallDir }
+    if ([System.IO.Path]::IsPathRooted($DataRoot)) {
+        return [System.IO.Path]::GetFullPath($DataRoot)
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $InstallDir $DataRoot))
+}
+
 function Write-CustomerMeta {
     param(
         [Parameter(Mandatory)][string]$InstallDir,
@@ -317,6 +335,22 @@ function Update-CustomerMetaVersion {
     [System.IO.File]::WriteAllText($metaPath, $json, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Get-DtDataRootBinaryExclusion {
+    param([Parameter(Mandatory)][string]$InstallDir, [Parameter(Mandatory)][string]$DataRootPath)
+    $binaryInstallPath = [IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
+    $binaryDataPath = [IO.Path]::GetFullPath($DataRootPath).TrimEnd('\')
+    if ([string]::Equals($binaryInstallPath, $binaryDataPath, [StringComparison]::OrdinalIgnoreCase) -or
+        $binaryInstallPath.StartsWith($binaryDataPath + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'DataRoot must not be the installation directory or its parent.'
+    }
+    if ($binaryDataPath.StartsWith($binaryInstallPath + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        # Robocopy exclusions must match both source and destination, even when they
+        # have different absolute prefixes. Protect the containing top-level folder.
+        return $binaryDataPath.Substring($binaryInstallPath.Length + 1).Split('\')[0]
+    }
+    return $binaryDataPath
+}
+
 function Backup-DtUpgrade {
     <#
     .SYNOPSIS
@@ -331,13 +365,20 @@ function Backup-DtUpgrade {
     $dest = Join-Path $backupRoot ("upgrade-" + $Stamp)
     New-Item -ItemType Directory -Path $dest -Force | Out-Null
 
-    $dataSrc = Join-Path $InstallDir 'data'
-    if (Test-Path -LiteralPath $dataSrc) {
-        $dataDest = Join-Path $dest 'data'
-        New-Item -ItemType Directory -Path $dataDest -Force | Out-Null
-        & robocopy $dataSrc $dataDest /E /NFL /NDL /NJH /NJS /NC /NS | Out-Null
-        if ($LASTEXITCODE -ge 8) { throw "Backup data robocopy failed: $LASTEXITCODE" }
+    $meta = Read-CustomerMeta -InstallDir $InstallDir
+    $dataRootSetting = Get-DtDataRootSetting -InstallDir $InstallDir -CustomerMeta $meta
+    $dataSrc = Resolve-DtDataRoot -InstallDir $InstallDir -DataRoot $dataRootSetting
+    $dataBinaryExclusion = Get-DtDataRootBinaryExclusion -InstallDir $InstallDir -DataRootPath $dataSrc
+    if ([IO.Path]::GetFullPath($dest).StartsWith($dataSrc.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Upgrade backup must not be stored inside the configured DataRoot.'
     }
+    if (-not (Test-Path -LiteralPath $dataSrc -PathType Container)) {
+        throw "Configured DataRoot does not exist; upgrade backup refused: $dataSrc"
+    }
+    $dataDest = Join-Path $dest 'data'
+    New-Item -ItemType Directory -Path $dataDest -Force | Out-Null
+    & robocopy $dataSrc $dataDest /E /R:2 /W:1 /NFL /NDL /NJH /NJS /NC /NS | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "Backup configured DataRoot robocopy failed: $LASTEXITCODE ($dataSrc)" }
 
     $cust = Join-Path $InstallDir 'customer.json'
     if (Test-Path -LiteralPath $cust) {
@@ -356,8 +397,8 @@ function Backup-DtUpgrade {
     New-Item -ItemType Directory -Path $binDest -Force | Out-Null
     $rcArgs = @(
         $InstallDir, $binDest,
-        '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NC', '/NS',
-        '/XD', 'data', 'branding', 'backups',
+        '/E', '/R:2', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS', '/NC', '/NS',
+        '/XD', 'data', 'branding', 'backups', $dataBinaryExclusion,
         '/XF', 'customer.json', 'appsettings.Production.json', '.datatrace.pid',
         'console.out.log', 'console.err.log', 'version.json'
     )
@@ -367,6 +408,10 @@ function Backup-DtUpgrade {
     $manifest = [ordered]@{
         Stamp       = $Stamp
         InstallDir  = $InstallDir
+        DataRootSetting = $dataRootSetting
+        DataRootPath = $dataSrc
+        DataBackupPath = 'data'
+        DataIncluded = $true
         CreatedAt   = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         AppVersion  = (Get-DtAppVersion -ExePath (Join-Path $InstallDir 'DataTrace.Web.exe'))
     }

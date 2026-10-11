@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using DataTrace.Application.Backup;
 using DataTrace.Application.Configuration;
+using DataTrace.Application.Runtime;
 using DataTrace.Infrastructure.Persistence;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -28,6 +29,8 @@ public sealed partial class DatabaseBackupService : IDatabaseBackupService
 
     private readonly RuntimeDbFactory _runtime;
 
+    private readonly IDataMaintenanceBarrier _maintenance;
+
     private readonly ILogger<DatabaseBackupService> _logger;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -40,11 +43,13 @@ public sealed partial class DatabaseBackupService : IDatabaseBackupService
         DataRootPaths paths,
         IOptionsMonitor<BackupOptions> options,
         RuntimeDbFactory runtime,
+        IDataMaintenanceBarrier maintenance,
         ILogger<DatabaseBackupService> logger)
     {
         _paths = paths;
         _options = options;
         _runtime = runtime;
+        _maintenance = maintenance;
         _logger = logger;
         TryLoadStatusFromDisk();
     }
@@ -111,6 +116,7 @@ public sealed partial class DatabaseBackupService : IDatabaseBackupService
         string? incompleteSet = null;
         try
         {
+            await using var maintenanceLease = await _maintenance.EnterWriteAsync(cancellationToken).ConfigureAwait(false);
             var opts = _options.CurrentValue;
             var backupRoot = opts.ResolveBackupDirectory(_paths.Root);
             Directory.CreateDirectory(backupRoot);

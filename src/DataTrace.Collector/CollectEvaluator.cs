@@ -28,8 +28,17 @@ public static class CollectEvaluator
         ushort[][] buffers,
         FileSourceRead? source,
         ICurveBaselineCache baselines,
-        Recipe? recipe)
+        Recipe? recipe,
+        IReadOnlyDictionary<int, TagLimits>? frozenLimits = null,
+        CurveBaselineSnapshot? frozenBaseline = null,
+        bool baselineIsFrozen = false)
     {
+        var baselineSnapshot = frozenBaseline;
+        if (!baselineIsFrozen && baselineSnapshot is null && frozenLimits is null)
+        {
+            var current = baselines.Current;
+            if (current?.IsFresh(DateTime.Now) == true) baselineSnapshot = current;
+        }
         var occupied = new Dictionary<int, bool>();
         for (var i = 1; i <= station.PositionCount; i++)
         {
@@ -94,7 +103,11 @@ public static class CollectEvaluator
                     validationError = true;
                 }
 
-                var limits = RecipeLimitResolver.Resolve(tag, recipe);
+                // 冻结的生效限值优先：后续工站用首站固化的那套判旧件，配置怎么改都不影响；
+                // 表里没有的点位（会话开始后新加）才回落当前定义，并按现状解析默认+覆盖。
+                var limits = frozenLimits is not null && frozenLimits.TryGetValue(tag.Id, out var frozenTagLimits)
+                    ? frozenTagLimits
+                    : RecipeLimitResolver.Resolve(tag, recipe);
                 var status = tag.DataType == PlcDataType.String
                     ? LimitStatus.None
                     : LimitEvaluator.Evaluate(limits, numeric, tag.IsRequired);
@@ -173,7 +186,7 @@ public static class CollectEvaluator
                     else
                     {
                         var featureRow = CurveFeatureExtractor.ToEntity(series.Name, series.Role, features);
-                        ApplyBaselineDeviation(featureRow, curve.Id, recipe, baselines);
+                        ApplyBaselineDeviation(featureRow, curve.Id, recipe, baselineSnapshot);
                         featureRows.Add(featureRow);
 
                         foreach (var criterion in curve.Criteria)
@@ -245,10 +258,9 @@ public static class CollectEvaluator
         CurveFeature row,
         int curveDefinitionId,
         Recipe? recipe,
-        ICurveBaselineCache baselines)
+        CurveBaselineSnapshot? baseline)
     {
-        var baseline = baselines.Current;
-        if (baseline is null || !baseline.IsFresh(DateTime.Now))
+        if (baseline is null)
         {
             return;
         }

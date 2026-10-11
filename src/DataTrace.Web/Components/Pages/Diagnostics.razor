@@ -4,12 +4,14 @@
 @using DataTrace.Application.Realtime
 @using DataTrace.Application.Configuration
 @using DataTrace.Application.Runtime
+@using DataTrace.Application.Identity
 @using DataTrace.Collector
 @using DataTrace.Domain.Constants
 @using DataTrace.Domain.Entities
 @using DataTrace.Shared
 @implements IAsyncDisposable
 @inject ICollectorDiagnostics Diag
+@inject IRuntimeStatusHub RuntimeStatus
 @inject IHealthProbe Probe
 @inject ISpoolStore Spool
 @inject SpoolReplayRunner Runner
@@ -17,6 +19,9 @@
 @inject DtToast Toast
 @inject IJSRuntime Js
 @inject IConfigRepository Config
+@inject IConfigurationAuthorizer Authorizer
+@inject AuthenticationStateProvider Auth
+@inject IConfirmationRecoveryService ConfirmationRecovery
 
 @* 这一页的职责是回答"为什么变慢了、为什么没采上"，不是"这一件为什么判废"。
    所以三块内容都只读、只活在内存里，不参与看板的实时推送 —— 观测手段不该反过来成为负担。 *@
@@ -44,6 +49,15 @@
                        StartIcon="@Icons.Material.Filled.Refresh"
                        OnClick="@(() => RefreshAsync(showBusy: true))">重试</MudButton>
         </div>
+    </MudAlert>
+}
+
+@if (RuntimeStatus.CollectionReadiness is { Ready: false } readiness)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Filled" Class="mb-3">
+        <MudText Typo="Typo.subtitle2">采集启动核对未完成，当前扫描被阻止</MudText>
+        <MudText Typo="Typo.body2">@(readiness.Reason ?? "请检查运行日志并完成数据核对。")</MudText>
+        <MudText Typo="Typo.caption">最近检查 @readiness.CheckedAt.ToString("yyyy-MM-dd HH:mm:ss")；此阻塞会在诊断页刷新时更新。</MudText>
     </MudAlert>
 }
 
@@ -268,6 +282,66 @@ else
 }
 
 <MudText Typo="Typo.subtitle1" Class="mb-2">
+    待人工核对的 PLC 回写
+</MudText>
+@if (_manualReviewError is not null)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true" Class="mb-2">
+        人工核对清单读取失败：@_manualReviewError
+    </MudAlert>
+}
+@if (_manualReviewPending.Count == 0)
+{
+    <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true" Class="mb-4">
+        没有因设备事件身份不明而阻塞的回写。
+    </MudAlert>
+}
+else
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mb-2">
+        这些留证会阻塞对应工站继续采集。请先现场核对设备和旧事件，再选择处置方式；本页不会自动清除未知事件。
+    </MudAlert>
+    <MudExpansionPanels MultiExpansion="true" Class="mb-4">
+        @foreach (var pending in _manualReviewPending)
+        {
+            var form = ManualFormFor(pending);
+            <MudExpansionPanel>
+                <TitleContent>
+                    <div class="d-flex flex-wrap gap-2 align-center">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Filled">待人工核对</MudChip>
+                        <MudText>@pending.StationCode · @pending.PalletCode · @pending.SerialNo</MudText>
+                        <MudText Typo="Typo.caption" Class="dt-muted">@pending.MonthKey · 留证 @pending.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</MudText>
+                    </div>
+                </TitleContent>
+                <ChildContent>
+                    <MudStack Spacing="2">
+                        <MudText Typo="Typo.body2">阻塞原因：@(pending.ManualReviewReason ?? "需要现场核对")</MudText>
+                        <MudText Typo="Typo.caption" Class="dt-muted">
+                            原目标：工站 @pending.StationCode / 地址 @(pending.TriggerAddress ?? "未留存") / 原结果码 @pending.ResultCode
+                        </MudText>
+                        <MudSelect T="PendingConfirmationResolutionMode" @bind-Value="form.Mode" Label="现场核对后的处置方式" Variant="Variant.Outlined">
+                            <MudSelectItem T="PendingConfirmationResolutionMode" Value="PendingConfirmationResolutionMode.DeviceAlreadyAcknowledged">设备已自行确认（触发位已清）</MudSelectItem>
+                            <MudSelectItem T="PendingConfirmationResolutionMode" Value="PendingConfirmationResolutionMode.SameEventConfirmed">仍是原事件（核对身份后重写原结果码）</MudSelectItem>
+                        </MudSelect>
+                        <MudTextField T="string" @bind-Value="form.Reason" Label="核对说明（必填）" Required="true" Immediate="true"
+                                      HelperText="说明谁核对了什么，以及现场如何处置旧事件。" />
+                        <MudTextField T="string" @bind-Value="form.DeviceStateEvidence" Label="设备状态证据（必填）" Required="true" Immediate="true"
+                                      HelperText="记录实际观察到的触发位读值和事件身份依据；服务还会读取原 PLC 目标并验证状态。" />
+                        <MudCheckBox T="bool" @bind-Value="form.PhysicalCheckConfirmed" Color="Color.Warning"
+                                     Label="@ManualCheckText(form.Mode)" />
+                        <MudButton Variant="Variant.Filled" Color="Color.Warning"
+                                   Disabled="@(_resolvingManualReview || string.IsNullOrWhiteSpace(form.Reason) || string.IsNullOrWhiteSpace(form.DeviceStateEvidence) || !form.PhysicalCheckConfirmed)"
+                                   OnClick="@(() => ResolveManualReviewAsync(pending, form))">
+                            @(_resolvingManualReview ? "正在核对设备…" : "核对设备并解除阻塞")
+                        </MudButton>
+                    </MudStack>
+                </ChildContent>
+            </MudExpansionPanel>
+        }
+    </MudExpansionPanels>
+}
+
+<MudText Typo="Typo.subtitle1" Class="mb-2">
     补传队列 <InfoHint Topic="HelpTexts.SpoolQueue" />
 </MudText>
 @if (_spoolCount == 0)
@@ -383,6 +457,9 @@ else
     /// </remarks>
     private const int SpoolDetailTickMs = 10_000;
 
+    /// <summary>人工核对留证读取节拍。该列表跨月库查询，不跟随两秒的诊断刷新频率。</summary>
+    private const int ManualReviewRefreshMs = 10_000;
+
     /// <summary>
     /// 探活的复查节拍。
     /// </summary>
@@ -406,6 +483,11 @@ else
     private IReadOnlyList<PlcTrafficView> FocusedTraffic => _focusedStation is null
         ? _traffic : _traffic.Where(plc => plc.PlcConnectionId == _focusedStation.PlcConnectionId).ToList();
     private IReadOnlyList<SpoolEntry> _entries = [];
+    private IReadOnlyList<PendingWriteBack> _manualReviewPending = [];
+    private readonly Dictionary<string, ManualReviewForm> _manualReviewForms = new(StringComparer.Ordinal);
+    private DateTime? _manualReviewAt;
+    private string? _manualReviewError;
+    private bool _resolvingManualReview;
     private int _spoolCount;
     private DateTime? _spoolOldest;
     private int _entriesCount;
@@ -650,6 +732,26 @@ else
             _loop = Diag.Loop;
             _traffic = Diag.PlcTraffic;
 
+            if (_manualReviewAt is null
+                || (DateTime.Now - _manualReviewAt.Value).TotalMilliseconds >= ManualReviewRefreshMs)
+            {
+                try
+                {
+                    _manualReviewPending = await ConfirmationRecovery.ListPendingAsync();
+                    _manualReviewAt = DateTime.Now;
+                    _manualReviewError = null;
+                    var activeKeys = _manualReviewPending.Select(ManualReviewKey).ToHashSet(StringComparer.Ordinal);
+                    foreach (var staleKey in _manualReviewForms.Keys.Where(key => !activeKeys.Contains(key)).ToList())
+                    {
+                        _manualReviewForms.Remove(staleKey);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _manualReviewError = ex.Message;
+                }
+            }
+
             // 探活按自己的节拍来（见 HealthTickMs），不跟着 2 秒的主刷新跑。
             if (_health is null || _healthAt is not { } checkedAt
                 || (DateTime.Now - checkedAt).TotalMilliseconds >= HealthTickMs)
@@ -831,6 +933,11 @@ else
 
     private async Task ReplayAllAsync()
     {
+        if (!await AuthorizeManualActionAsync())
+        {
+            return;
+        }
+
         _replayingAll = true;
         _replayDone = 0;
         _replayCts = new CancellationTokenSource();
@@ -901,6 +1008,11 @@ else
 
     private async Task ReplayOneAsync(SpoolEntry entry)
     {
+        if (!await AuthorizeManualActionAsync())
+        {
+            return;
+        }
+
         _workingFile = entry.FileName;
         try
         {
@@ -937,6 +1049,11 @@ else
             return;
         }
 
+        if (!await AuthorizeManualActionAsync())
+        {
+            return;
+        }
+
         _workingFile = entry.FileName;
         try
         {
@@ -952,6 +1069,118 @@ else
             _workingFile = null;
             await RefreshAsync();
         }
+    }
+
+    private async Task<bool> AuthorizeManualActionAsync()
+    {
+        try
+        {
+            var actor = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            await Authorizer.AuthorizeChangeAsync(actor);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"当前会话已无此操作权限：{ex.Message}", Severity.Error);
+            return false;
+        }
+    }
+
+    private async Task ResolveManualReviewAsync(PendingWriteBack pending, ManualReviewForm form)
+    {
+        if (string.IsNullOrWhiteSpace(form.Reason) || string.IsNullOrWhiteSpace(form.DeviceStateEvidence)
+            || !form.PhysicalCheckConfirmed)
+        {
+            Toast.Add("请填写核对说明和设备状态证据，并确认已完成现场核对", Severity.Warning);
+            return;
+        }
+
+        if (!await AuthorizeManualActionAsync())
+        {
+            return;
+        }
+
+        var actor = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name;
+        if (string.IsNullOrWhiteSpace(actor))
+        {
+            Toast.Add("当前会话身份无效，拒绝解除", Severity.Error);
+            return;
+        }
+
+        var modeDescription = form.Mode == PendingConfirmationResolutionMode.DeviceAlreadyAcknowledged
+            ? "由设备自行完成确认；服务将读取原触发位，并要求读到非触发值。"
+            : "现场已确认 PLC 上仍是这件原事件；服务将向冻结的原目标写入保存的结果码并读回校验。"
+                + "这会向 PLC 写入数据。";
+        var confirmed = await Dialogs.ConfirmDangerAsync(
+            "解除人工核对阻塞",
+            $"{pending.StationCode} / {pending.SerialNo}：{modeDescription}如果事件身份不确定或现场情况不符，请取消并继续保持阻塞。",
+            "我已现场核对设备状态与事件身份",
+            yesText: form.Mode == PendingConfirmationResolutionMode.SameEventConfirmed ? "写回并核验" : "确认设备已确认",
+            cancelText: "继续阻塞");
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        _resolvingManualReview = true;
+        try
+        {
+            var modeLabel = form.Mode == PendingConfirmationResolutionMode.DeviceAlreadyAcknowledged
+                ? "设备已自行确认"
+                : "现场确认仍是原事件并重写原结果码";
+            var result = await ConfirmationRecovery.ResolveAsync(
+                pending.MonthKey,
+                pending.Id,
+                actor,
+                $"处置方式：{modeLabel}。{form.Reason.Trim()}",
+                form.DeviceStateEvidence.Trim(),
+                form.Mode);
+            if (!result.Resolved)
+            {
+                Toast.Add(result.Error ?? "设备核对未通过，阻塞仍保留", Severity.Error);
+            }
+            else
+            {
+                Toast.Add("设备状态已验证，人工核对留证已解除；审计留证仍保留", Severity.Success);
+                _manualReviewAt = null;
+                await RefreshAsync(showBusy: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"人工核对失败，阻塞仍保留：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _resolvingManualReview = false;
+        }
+    }
+
+    private ManualReviewForm ManualFormFor(PendingWriteBack pending)
+    {
+        var key = ManualReviewKey(pending);
+        if (!_manualReviewForms.TryGetValue(key, out var form))
+        {
+            form = new ManualReviewForm();
+            _manualReviewForms[key] = form;
+        }
+
+        return form;
+    }
+
+    private static string ManualReviewKey(PendingWriteBack pending) => $"{pending.MonthKey}:{pending.Id}";
+
+    private static string ManualCheckText(PendingConfirmationResolutionMode mode)
+        => mode == PendingConfirmationResolutionMode.DeviceAlreadyAcknowledged
+            ? "我已现场处理旧事件，并确认触发位已清除；不确定时不会解除。"
+            : "我已现场确认触发位对应的仍是该流水原事件，不是新件；允许服务回写保存的原结果码。";
+
+    private sealed class ManualReviewForm
+    {
+        public PendingConfirmationResolutionMode Mode { get; set; } = PendingConfirmationResolutionMode.DeviceAlreadyAcknowledged;
+        public string Reason { get; set; } = "";
+        public string DeviceStateEvidence { get; set; } = "";
+        public bool PhysicalCheckConfirmed { get; set; }
     }
 
     /// <summary>

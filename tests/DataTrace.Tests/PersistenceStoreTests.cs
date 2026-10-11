@@ -423,7 +423,7 @@ public class AuditLoggerTests
 public class ConfigRepositoryTests
 {
     private static ConfigRepository Repo(ConfigDbContext db)
-        => new(db, TestDatabase.FactoryFor(db), new CurveBaselineCache(), new RuntimeStatusHub());
+        => new(db, TestDatabase.FactoryFor(db));
 
     private static async Task<(TempWorkspace Workspace, ConfigDbContext Db, PlcConnection Plc)> SeedAsync()
     {
@@ -520,6 +520,52 @@ public class ConfigRepositoryTests
         await using var verify = await TestDatabase.CreateConfigAsync(workspace.Path("config.db"));
         Assert.True(await verify.Tags.AnyAsync(t => t.Name == "新增点位"));
         Assert.True(await verify.AuditLogs.AnyAsync(a => a.Action == "Create" && a.EntityKey == "新增点位"));
+    }
+
+    [Fact]
+    public async Task Configuration_revisions_store_full_state_and_rollback_creates_a_new_revision()
+    {
+        var (workspace, db, plc) = await SeedAsync();
+        using var ws = workspace;
+        await using var dbScope = db;
+        var storedSettings = await db.SystemSettings.FirstAsync();
+        storedSettings.CollectEnabled = false;
+        await db.SaveChangesAsync();
+        var repo = Repo(db);
+        var changes = new ConfigurationChangeService(repo, new AuditLogger(db));
+        var stationId = plc.Stations.Single().Id;
+
+        await changes.SaveTagAsync(NewTag(stationId), new ConfigAudit("admin", "Create", "TagDefinition", "first", null, "D1200", "first revision"));
+        Assert.True(await db.Tags.AnyAsync(x => x.Name == "新增点位"));
+        var first = Assert.Single(await repo.GetRevisionHistoryAsync());
+        var firstFull = await repo.GetRevisionAsync(first.Id);
+        using (var snapshot = System.Text.Json.JsonDocument.Parse(firstFull!.SnapshotJson))
+        {
+            var snapshotNames = snapshot.RootElement.GetProperty("stations").EnumerateArray()
+                .SelectMany(station => station.GetProperty("tags").EnumerateArray())
+                .Select(tag => tag.GetProperty("name").GetString());
+            Assert.Contains("新增点位", snapshotNames);
+        }
+        using (var diff = System.Text.Json.JsonDocument.Parse(firstFull.DiffJson))
+        {
+            var diffChanges = diff.RootElement.GetProperty("changes").EnumerateArray().ToList();
+            Assert.Single(diffChanges);
+            Assert.Equal("$", diffChanges[0].GetProperty("path").GetString());
+        }
+        Assert.Equal("first revision", firstFull.Reason);
+
+        var secondTag = NewTag(stationId);
+        secondTag.Name = "second";
+        await changes.SaveTagAsync(secondTag, new ConfigAudit("admin", "Create", "TagDefinition", "second", null, "D1201"));
+        await changes.RestoreRevisionAsync(first.Id, new ConfigAudit("admin", "Rollback", "ConfigurationRevision", first.Id.ToString(), null, null, "restore verified revision"));
+
+        await using var verify = await TestDatabase.CreateConfigAsync(workspace.Path("config.db"));
+        Assert.True(await verify.Tags.AnyAsync(x => x.Name == "新增点位"));
+        Assert.False(await verify.Tags.AnyAsync(x => x.Name == "second"));
+        var revisions = await repo.GetRevisionHistoryAsync();
+        Assert.Equal(3, revisions.Count);
+        Assert.Equal("RestoreConfigurationRevision", revisions[0].Action);
+        Assert.Equal(first.Id, revisions[0].ParentRevisionId);
     }
 
     private static TagDefinition NewTag(int stationId) => new()

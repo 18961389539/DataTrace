@@ -2,11 +2,14 @@
 @attribute [Authorize(Roles = "Administrator,Engineer")]
 @using DataTrace.Application.Backup
 @using DataTrace.Application.Configuration
+@using DataTrace.Application.Identity
 @using DataTrace.Collector
 @using DataTrace.Web.Services
 @using DataTrace.Domain.Entities
 @using DataTrace.Domain.Validation
 @using DataTrace.Web.Options
+@using DataTrace.Domain.Constants
+@using System.Text.Json
 @inject IConfigRepository Config
 @inject IConfigurationChanges Changes
 @inject ISettingsSave SettingsSave
@@ -18,6 +21,7 @@
 @inject IAuditLogger Audit
 @inject IJSRuntime JS
 @inject AuthenticationStateProvider AuthState
+@inject IConfigurationAuthorizer Authorizer
 
 <PageHeader Title="系统设置" HelpRoute="config/settings" Busy="@(_loading || _saving)">
     <ChildContent>
@@ -204,27 +208,13 @@ else
                     </div>
                     <div class="dt-settings-row">
                         <div>
-                            <div class="dt-settings-row-name">写回重试次数 <InfoHint Topic="HelpTexts.WriteRetry" /></div>
-                            <div class="dt-settings-row-hint">总尝试次数：0 与 1 都只写一次；NG 位写失败会导致 PLC 侧不更新</div>
+                            <div class="dt-settings-row-name">旧版写回重试配置 <InfoHint Topic="HelpTexts.WriteRetry" /></div>
+                            <div class="dt-settings-row-hint">这是为兼容旧配置保留的记录值；当前没有稳定事件编号，PLC 结果码写回失败后不会自动重发。</div>
                         </div>
-                        <MudNumericField @bind-Value="_edit.WriteRetryCount" @bind-Value:after="() => _retryError = null"
-                                         Min="@SettingsLimits.MinWriteRetryCount" Max="@SettingsLimits.MaxWriteRetryCount"
-                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true"
-                                         Error="@(_retryError is not null)" ErrorText="@_retryError"
-                                         aria-label="写回重试次数" />
-                        <span class="dt-src-badge edit">可在此修改·配置库</span>
-                    </div>
-                    <div class="dt-settings-row">
-                        <div>
-                            <div class="dt-settings-row-name">写回重试间隔(ms)</div>
-                            <div class="dt-settings-row-hint">每次写回失败后等待多久再试；配得太大，一次写失败就把该工站的采集周期拖长</div>
+                        <div class="dt-settings-legacy-value">
+                            <MudText Typo="Typo.body2">保存值：@(_loaded.WriteRetryCount) 次 / @(_loaded.WriteRetryDelayMs) ms</MudText>
+                            <span class="dt-src-badge">旧配置·只读</span>
                         </div>
-                        <MudNumericField @bind-Value="_edit.WriteRetryDelayMs" @bind-Value:after="() => _retryDelayError = null"
-                                         Min="@SettingsLimits.MinWriteRetryDelayMs" Max="@SettingsLimits.MaxWriteRetryDelayMs" Step="10"
-                                         Margin="Margin.Dense" Variant="Variant.Outlined" Immediate="true"
-                                         Error="@(_retryDelayError is not null)" ErrorText="@_retryDelayError"
-                                         aria-label="写回重试间隔(ms)" />
-                        <span class="dt-src-badge edit">可在此修改·配置库</span>
                     </div>
                     <div class="dt-settings-row">
                         <div>
@@ -568,6 +558,109 @@ else
                     </div>
                 </MudPaper>
 
+                <MudPaper Class="pa-4 mb-3 dt-settings-section" id="sec-history" Elevation="1">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap">
+                        <MudText Typo="Typo.subtitle1">配置修订历史</MudText>
+                        <MudSpacer />
+                        <MudButton Variant="Variant.Outlined" Size="Size.Small" Color="Color.Primary"
+                                   Disabled="_revisionLoading" OnClick="@(() => LoadRevisionHistoryAsync(reset: true))">
+                            @(_revisionLoading ? "读取中…" : "刷新记录")
+                        </MudButton>
+                    </MudStack>
+                    <MudText Typo="Typo.caption" Class="dt-muted mb-2">
+                        每次配置事务都会保存完整快照和差异。选择“查看差异”可查看相对前一修订的变化；修订号、操作人、原因和校验结果用于追溯。
+                    </MudText>
+                    @if (_settings?.CollectEnabled == true)
+                    {
+                        <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mb-2">
+                            回滚会替换整份 PLC、工站、点位、曲线、型号和系统设置。必须先停用并保存采集，再执行回滚；有在制件时请先完成现场处置。
+                        </MudAlert>
+                    }
+                    else
+                    {
+                        <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-2">
+                            整份配置回滚仅允许在采集已停用时执行；回滚本身会生成一条新的审计修订，不会删除历史修订。
+                        </MudAlert>
+                    }
+                    @if (_revisionError is not null)
+                    {
+                        <MudAlert Severity="Severity.Error" Dense="true" Variant="Variant.Outlined" Class="mb-2">@_revisionError</MudAlert>
+                    }
+                    @if (_revisionHistory.Count == 0 && !_revisionLoading)
+                    {
+                        <MudText Typo="Typo.body2" Class="dt-muted mb-2">尚无配置修订记录。</MudText>
+                    }
+                    else
+                    {
+                        <MudTable Items="_revisionHistory" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-2">
+                            <HeaderContent>
+                                <MudTh>修订</MudTh>
+                                <MudTh>时间</MudTh>
+                                <MudTh>操作人</MudTh>
+                                <MudTh>动作 / 对象</MudTh>
+                                <MudTh>原因</MudTh>
+                                <MudTh>校验</MudTh>
+                                <MudTh>差异</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="修订">#@context.Id · v@context.ConfigVersion</MudTd>
+                                <MudTd DataLabel="时间" Class="dt-nowrap">@context.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+                                <MudTd DataLabel="操作人">@context.UserName</MudTd>
+                                <MudTd DataLabel="动作 / 对象">@context.Action · @context.EntityType @(context.EntityKey is null ? "" : $"/{context.EntityKey}")</MudTd>
+                                <MudTd DataLabel="原因">@context.Reason</MudTd>
+                                <MudTd DataLabel="校验">@context.ValidationResult</MudTd>
+                                <MudTd DataLabel="差异">
+                                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary"
+                                               Disabled="_revisionLoading" OnClick="@(() => OpenRevisionAsync(context))">查看差异</MudButton>
+                                </MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                        @if (_revisionHasMore)
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_revisionLoading"
+                                       OnClick="@(() => LoadRevisionHistoryAsync(reset: false))">加载更早记录</MudButton>
+                        }
+                    }
+
+                    @if (_selectedRevision is { } selected)
+                    {
+                        <MudDivider Class="my-3" />
+                        <MudText Typo="Typo.subtitle2" Class="mb-1">修订 #@selected.Id · 相对前一修订 #@(selected.ParentRevisionId?.ToString() ?? "—")</MudText>
+                        <MudText Typo="Typo.caption" Class="dt-muted mb-2">@selected.ValidationResult · 完整快照已留存；敏感凭据在差异视图中脱敏。</MudText>
+                        @if (_revisionDiff.Count == 0)
+                        {
+                            <MudText Typo="Typo.body2" Class="dt-muted">此修订与前一快照没有字段差异，或差异数据不可用。</MudText>
+                        }
+                        else
+                        {
+                            <MudTable Items="_revisionDiff" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-3">
+                                <HeaderContent><MudTh>配置路径</MudTh><MudTh>变更前</MudTh><MudTh>变更后</MudTh></HeaderContent>
+                                <RowTemplate>
+                                    <MudTd DataLabel="配置路径"><code>@context.Path</code></MudTd>
+                                    <MudTd DataLabel="变更前"><pre class="dt-revision-value">@context.Before</pre></MudTd>
+                                    <MudTd DataLabel="变更后"><pre class="dt-revision-value">@context.After</pre></MudTd>
+                                </RowTemplate>
+                            </MudTable>
+                            @if (_revisionDiffTruncated)
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Warning">差异超过 100 项，仅显示前 100 项；完整快照仍保存在该修订中。</MudText>
+                            }
+                        }
+
+                        <MudTextField T="string" @bind-Value="_revisionRestoreReason" Label="回滚原因（必填）" Required="true" Immediate="true"
+                                      HelperText="说明为什么恢复到该修订；原因与新的回滚修订及审计事务一起保存。" />
+                        <MudButton Class="mt-2" Variant="Variant.Filled" Color="Color.Error"
+                                   Disabled="@(_revisionRestoring || _settings?.CollectEnabled != false || Dirty || string.IsNullOrWhiteSpace(_revisionRestoreReason))"
+                                   OnClick="RestoreSelectedRevisionAsync">
+                            @(_revisionRestoring ? "正在回滚…" : $"回滚到修订 #{selected.Id}")
+                        </MudButton>
+                        @if (Dirty)
+                        {
+                            <MudText Typo="Typo.caption" Color="Color.Warning" Class="mt-1">请先保存或放弃本页未保存的设置，再进行回滚。</MudText>
+                        }
+                    }
+                </MudPaper>
+
                 <MudPaper Class="pa-4 mb-3 dt-settings-section" id="sec-about" Elevation="1">
                     <MudText Typo="Typo.subtitle1" Class="mb-3">关于</MudText>
                     <MudStack Row="true" Spacing="3" Class="flex-wrap">
@@ -637,6 +730,7 @@ else
         ("sec-mes", "MES 对接"),
         ("sec-alarm", "异常呼叫"),
         ("sec-security", "安全"),
+        ("sec-history", "修订历史"),
         ("sec-about", "关于"),
     ];
 
@@ -674,6 +768,17 @@ else
     private string? _shiftStartError;
     private string? _shiftLengthError;
     private string _activeSection = "sec-basic";
+    private const int _revisionTake = 50;
+    private int _revisionPage;
+    private IReadOnlyList<ConfigurationRevisionSummary> _revisionHistory = [];
+    private ConfigurationRevision? _selectedRevision;
+    private IReadOnlyList<RevisionDiffRow> _revisionDiff = [];
+    private string _revisionRestoreReason = "";
+    private string? _revisionError;
+    private bool _revisionLoading;
+    private bool _revisionHasMore;
+    private bool _revisionRestoring;
+    private bool _revisionDiffTruncated;
 
     private bool SettingsDirty => _settings is not null && _edit.DiffersFrom(_loaded);
 
@@ -863,7 +968,169 @@ else
         var auth = await AuthState.GetAuthenticationStateAsync();
         _canEditBrand = auth.User.IsInRole("Administrator");
         await Reload();
+        await LoadRevisionHistoryAsync(reset: true);
     }
+
+    private async Task LoadRevisionHistoryAsync(bool reset)
+    {
+        if (_revisionLoading) return;
+        _revisionLoading = true;
+        _revisionError = null;
+        try
+        {
+            await Authorizer.AuthorizeCurrentRoleAsync([AppRoles.Administrator, AppRoles.Engineer]);
+            if (reset)
+            {
+                _revisionPage = 0;
+                _revisionHistory = [];
+                _revisionHasMore = false;
+            }
+
+            var revisions = await Config.GetRevisionHistoryAsync(_revisionPage * _revisionTake, _revisionTake);
+            _revisionHistory = _revisionHistory.Concat(revisions).ToList();
+            _revisionHasMore = revisions.Count == _revisionTake;
+            if (revisions.Count > 0) _revisionPage++;
+        }
+        catch (Exception ex)
+        {
+            _revisionError = $"读取配置修订失败：{ex.Message}";
+        }
+        finally
+        {
+            _revisionLoading = false;
+        }
+    }
+
+    private async Task OpenRevisionAsync(ConfigurationRevisionSummary summary)
+    {
+        _revisionLoading = true;
+        _revisionError = null;
+        try
+        {
+            await Authorizer.AuthorizeCurrentRoleAsync([AppRoles.Administrator, AppRoles.Engineer]);
+            var revision = await Config.GetRevisionAsync(summary.Id);
+            if (revision is null)
+            {
+                _revisionError = $"修订 #{summary.Id} 已不存在，请刷新列表。";
+                return;
+            }
+
+            using var document = JsonDocument.Parse(revision.DiffJson);
+            List<JsonElement> changes = document.RootElement.TryGetProperty("changes", out var property)
+                && property.ValueKind == JsonValueKind.Array
+                    ? property.EnumerateArray().ToList()
+                    : [];
+            _revisionDiffTruncated = changes.Count > 100;
+            _revisionDiff = changes.Take(100).Select(change =>
+            {
+                var path = change.TryGetProperty("path", out var pathValue) ? pathValue.GetString() ?? "—" : "—";
+                var sensitive = IsSensitiveRevisionPath(path);
+                return new RevisionDiffRow(
+                    path,
+                    sensitive ? "[已脱敏]" : FormatRevisionValue(change, "before"),
+                    sensitive ? "[已脱敏]" : FormatRevisionValue(change, "after"));
+            }).ToList();
+            _selectedRevision = revision;
+            _revisionRestoreReason = "";
+        }
+        catch (Exception ex)
+        {
+            _selectedRevision = null;
+            _revisionDiff = [];
+            _revisionError = $"读取修订差异失败：{ex.Message}";
+        }
+        finally
+        {
+            _revisionLoading = false;
+        }
+    }
+
+    private async Task RestoreSelectedRevisionAsync()
+    {
+        if (_selectedRevision is not { } revision || _revisionRestoring) return;
+        if (Dirty)
+        {
+            Toast.Add("请先保存或放弃本页未保存的更改", Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            await Authorizer.AuthorizeCurrentRoleAsync([AppRoles.Administrator, AppRoles.Engineer]);
+            var current = await Config.GetSnapshotAsync();
+            if (current.Settings.CollectEnabled)
+            {
+                Toast.Add("整份配置回滚前必须先停用并保存采集", Severity.Warning);
+                return;
+            }
+
+            var actor = (await AuthState.GetAuthenticationStateAsync()).User.Identity?.Name;
+            if (string.IsNullOrWhiteSpace(actor))
+            {
+                Toast.Add("当前会话身份无效，拒绝回滚", Severity.Error);
+                return;
+            }
+
+            var confirmed = await DialogService.ConfirmDangerAsync(
+                "回滚整份 PLC 与工艺配置",
+                $"将完整恢复修订 #{revision.Id}（配置版本 v{revision.ConfigVersion}），替换 PLC、工站、点位、曲线、型号和系统设置。"
+                + "本次回滚会生成新的审计修订；在制件应先由现场完成处置。采集必须保持停用，回滚事务会等待正在执行的数据操作结束并再次校验。",
+                "我已检查差异、停用采集并确认整份配置覆盖范围",
+                yesText: "回滚并留审计",
+                cancelText: "取消");
+            if (confirmed != true) return;
+
+            _revisionRestoring = true;
+            await Changes.RestoreRevisionAsync(
+                revision.Id,
+                new ConfigAudit(
+                    actor,
+                    "RestoreConfigurationRevision",
+                    "ConfigurationRevision",
+                    revision.Id.ToString(),
+                    null,
+                    $"restore revision #{revision.Id}",
+                    _revisionRestoreReason.Trim()));
+            Toast.Add($"已回滚到修订 #{revision.Id}；回滚本身已作为新修订保存", Severity.Success);
+            _selectedRevision = null;
+            await Reload();
+            await LoadRevisionHistoryAsync(reset: true);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"配置未回滚：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _revisionRestoring = false;
+        }
+    }
+
+    private static string FormatRevisionValue(JsonElement change, string propertyName)
+    {
+        if (!change.TryGetProperty(propertyName, out var value) || value.ValueKind == JsonValueKind.Null)
+            return "[无]";
+        var text = value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : value.GetRawText();
+        return text.Length <= 500 ? text : text[..500] + "…";
+    }
+
+    private static bool IsSensitiveRevisionPath(string path)
+        => path.Contains("password", StringComparison.OrdinalIgnoreCase)
+           || path.Contains("secret", StringComparison.OrdinalIgnoreCase)
+           || path.Contains("token", StringComparison.OrdinalIgnoreCase)
+           || path.Contains("apikey", StringComparison.OrdinalIgnoreCase)
+           || path.Contains("privatekey", StringComparison.OrdinalIgnoreCase)
+           || path.Contains("credential", StringComparison.OrdinalIgnoreCase)
+           || path.Contains("webhook", StringComparison.OrdinalIgnoreCase)
+           || path.Contains("connectionstring", StringComparison.OrdinalIgnoreCase)
+           // Opaque driver options and endpoint URLs can embed credentials without naming them.
+           || path.Split(['.', '[', ']', '"'], StringSplitOptions.RemoveEmptyEntries)
+               .Any(segment => string.Equals(segment, "extra", StringComparison.OrdinalIgnoreCase))
+           || path.Contains("endpoint", StringComparison.OrdinalIgnoreCase)
+           || path.EndsWith("url", StringComparison.OrdinalIgnoreCase)
+           || path.EndsWith("uri", StringComparison.OrdinalIgnoreCase);
+
+    private sealed record RevisionDiffRow(string Path, string Before, string After);
 
     private async Task ScrollTo(string id)
     {
@@ -1108,6 +1375,7 @@ else
         if (settingsSaved)
         {
             await RefreshMesOutboxStatusAsync();
+            await LoadRevisionHistoryAsync(reset: true);
         }
 
         if (settingsErr is null && brandErr is null)

@@ -23,6 +23,7 @@ public sealed record SourceTagValue(double? Numeric, string? Text);
 
 public sealed class FileSourceReader
 {
+    public const long MaxInputBytes = 16L * 1024 * 1024;
     private readonly ICollectArchiveStore _archives;
     private readonly ILogger _logger;
 
@@ -44,7 +45,26 @@ public sealed class FileSourceReader
         byte[] bytes;
         try
         {
-            bytes = await File.ReadAllBytesAsync(station.DataFilePath, cancellationToken).ConfigureAwait(false);
+            var info = new FileInfo(station.DataFilePath);
+            if (info.Length > MaxInputBytes)
+            {
+                return FileSourceRead.Failure(Domain.Constants.ResultCodes.FileSourceFailed,
+                    $"数据文件超过 {MaxInputBytes} 字节上限");
+            }
+
+            await using var stream = new FileStream(station.DataFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 81920, useAsync: true);
+            using var buffer = new MemoryStream((int)Math.Min(info.Length, MaxInputBytes));
+            var chunk = new byte[81920];
+            while (true)
+            {
+                var read = await stream.ReadAsync(chunk, cancellationToken).ConfigureAwait(false);
+                if (read == 0) break;
+                if (buffer.Length + read > MaxInputBytes)
+                    return FileSourceRead.Failure(Domain.Constants.ResultCodes.FileSourceFailed,
+                        $"数据文件超过 {MaxInputBytes} 字节上限");
+                buffer.Write(chunk, 0, read);
+            }
+            bytes = buffer.ToArray();
         }
         catch (Exception ex)
         {

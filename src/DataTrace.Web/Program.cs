@@ -108,6 +108,10 @@ builder.Services.Configure<BackupOptions>(builder.Configuration.GetSection(Backu
 builder.Services.AddSingleton<CustomerBrandingStore>();
 
 builder.Services.AddDataTraceInfrastructure(dataRoot);
+// Blazor Server 的 circuit 不会因后续 Cookie 请求自动重新验证；周期检查用户、密码凭据和角色，
+// 删除/锁定/撤权/改密后让已打开页面的旧主体失效。
+builder.Services.AddScoped<Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider,
+    IdentityRevalidatingAuthenticationStateProvider>();
 builder.Services.AddScoped<DataTrace.Application.Quality.IQualityIncidentActorProvider,
     DataTrace.Web.Services.QualityIncidentActorProvider>();
 builder.Services.AddDataTracePlc();

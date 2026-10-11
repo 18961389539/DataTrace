@@ -40,10 +40,11 @@ public sealed class PlcRequestQueue : IAsyncDisposable
         _driver = driver;
         _ownsDriver = ownsDriver;
         _monotonicMs = monotonicMs ?? (static () => Environment.TickCount64);
-        _channel = Channel.CreateUnbounded<WorkItem>(new UnboundedChannelOptions
+        _channel = Channel.CreateBounded<WorkItem>(new BoundedChannelOptions(256)
         {
             SingleReader = true,
-            SingleWriter = false
+            SingleWriter = false,
+            FullMode = BoundedChannelFullMode.Wait
         });
         _loop = Task.Run(ProcessLoopAsync);
     }
@@ -173,9 +174,11 @@ public sealed class PlcRequestQueue : IAsyncDisposable
     {
         try
         {
-            await foreach (var item in _channel.Reader.ReadAllAsync(_cts.Token).ConfigureAwait(false))
+            // 排空模式：DisposeAsync 会先 Complete 再取消 —— 这里不能让取消直接打断读取，
+            // 否则通道里残留请求的 TCS 永远没有结局，等待方（无令牌的调用方）会永久悬挂。
+            await foreach (var item in _channel.Reader.ReadAllAsync(CancellationToken.None).ConfigureAwait(false))
             {
-                if (item.Cancellation.IsCancellationRequested)
+                if (_cts.IsCancellationRequested || item.Cancellation.IsCancellationRequested)
                 {
                     item.Completion.TrySetCanceled(item.Cancellation);
                     continue;

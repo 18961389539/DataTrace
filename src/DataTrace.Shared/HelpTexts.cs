@@ -182,9 +182,9 @@ public static class HelpTexts
         $"范围 {SettingsLimits.MinScanIntervalMs}–{SettingsLimits.MaxScanIntervalMs} 毫秒；太小常表现为通讯超时或丢点。");
 
     public static readonly HelpTopic WriteRetry = new(
-        "写回重试",
-        "「次数」是总尝试次数：填 0 或 1 都只写一次；「间隔」是两次尝试之间的等待。",
-        $"次数 {SettingsLimits.MinWriteRetryCount}–{SettingsLimits.MaxWriteRetryCount}，间隔 {SettingsLimits.MinWriteRetryDelayMs}–{SettingsLimits.MaxWriteRetryDelayMs} 毫秒；间隔离太久会拖长该工站周期。");
+        "旧版写回重试配置",
+        "次数和间隔仅作旧配置兼容，当前只读。响应码只写一次；确认不明时保留留证，等待现场核对。",
+        $"旧配置仍按次数 {SettingsLimits.MinWriteRetryCount}–{SettingsLimits.MaxWriteRetryCount}、间隔 {SettingsLimits.MinWriteRetryDelayMs}–{SettingsLimits.MaxWriteRetryDelayMs} 毫秒校验；修改其他参数不会改变它们。");
 
     public static readonly HelpTopic ConfigSource = new(
         "配置来源",

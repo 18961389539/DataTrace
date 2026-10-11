@@ -101,7 +101,6 @@ partial class ConfigRepository
                 prev.RemoveAll(c => string.Equals(c, newCode, StringComparison.Ordinal));
                 existing.PreviousCodes = prev.Count == 0 ? null : string.Join(',', prev);
                 existing.Code = newCode;
-                _baselines.RetagRecipeCode(oldCode, newCode);
             }
 
             // 新码若正被别的型号记作历史编码，要收回来：一个编码在某一刻只能属于一个型号，
@@ -126,7 +125,6 @@ partial class ConfigRepository
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
-        await PushActiveRecipeToHubAsync(cancellationToken).ConfigureAwait(false);
         return new SavedRecipe(recipe.Id, recipe.Code, recipe.Name);
     }
 
@@ -240,7 +238,6 @@ partial class ConfigRepository
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
-        await PushActiveRecipeToHubAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task SetActiveRecipeAsync(int? recipeId, CancellationToken cancellationToken = default)
@@ -271,7 +268,6 @@ partial class ConfigRepository
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         // 自增版本号 → 采集器下一次轮询就会拉到新快照、换用新限值。
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
-        await PushActiveRecipeToHubAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -354,24 +350,4 @@ partial class ConfigRepository
         to.TargetValue = from.TargetValue;
     }
 
-    /// <summary>
-    /// 把当前生效型号立刻推到运行时看板 hub，不依赖采集器队列重建。
-    /// 采集关闭或工站 Busy 时也能让 Dashboard 芯片即时刷新。
-    /// </summary>
-    private async Task PushActiveRecipeToHubAsync(CancellationToken cancellationToken)
-    {
-        var settings = await _db.SystemSettings.AsNoTracking()
-            .FirstOrDefaultAsync(cancellationToken)
-            .ConfigureAwait(false);
-        if (settings?.ActiveRecipeId is not { } activeId)
-        {
-            _status.SetActiveRecipe(null, null);
-            return;
-        }
-
-        var recipe = await _db.Recipes.AsNoTracking()
-            .FirstOrDefaultAsync(x => x.Id == activeId && x.Enabled, cancellationToken)
-            .ConfigureAwait(false);
-        _status.SetActiveRecipe(recipe?.Code, recipe?.Name);
-    }
 }

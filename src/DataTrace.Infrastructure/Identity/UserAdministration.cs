@@ -13,15 +13,43 @@ public sealed class UserAdministration : IUserAdministration
     private readonly UserManager<ApplicationUser> _users;
     private readonly IAuditLogger _audit;
     private readonly ConfigDbContext _db;
+    private readonly IConfigurationAuthorizer _authorizer;
 
-    public UserAdministration(UserManager<ApplicationUser> users, IAuditLogger audit, ConfigDbContext db)
+    public UserAdministration(
+        UserManager<ApplicationUser> users,
+        IAuditLogger audit,
+        ConfigDbContext db,
+        IConfigurationAuthorizer authorizer)
     {
         _users = users;
         _audit = audit;
         _db = db;
+        _authorizer = authorizer;
     }
 
     public async Task<IReadOnlyList<UserAccount>> ListAsync(CancellationToken cancellationToken = default)
+    {
+        await _authorizer.AuthorizeCurrentRoleAsync([AppRoles.Administrator], cancellationToken).ConfigureAwait(false);
+        return await ListAccountsAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<UserAccount>> ListAssignableAsync(
+        string actor,
+        CancellationToken cancellationToken = default)
+    {
+        await _authorizer.AuthorizeRoleAsync(
+            actor,
+            [AppRoles.Administrator, AppRoles.Engineer],
+            cancellationToken).ConfigureAwait(false);
+
+        var accounts = await ListAccountsAsync(cancellationToken).ConfigureAwait(false);
+        return accounts
+            .Where(account => !account.IsLocked
+                              && account.Roles.Any(role => role is AppRoles.Administrator or AppRoles.Engineer or AppRoles.Operator))
+            .ToList();
+    }
+
+    private async Task<IReadOnlyList<UserAccount>> ListAccountsAsync(CancellationToken cancellationToken)
     {
         var list = await _users.Users.ToListAsync(cancellationToken).ConfigureAwait(false);
         if (list.Count == 0)
@@ -76,6 +104,7 @@ public sealed class UserAdministration : IUserAdministration
         string actor,
         CancellationToken cancellationToken = default)
     {
+        await _authorizer.AuthorizeRoleAsync(actor, [AppRoles.Administrator], cancellationToken).ConfigureAwait(false);
         if (await _users.FindByNameAsync(userName).ConfigureAwait(false) is not null)
         {
             return UserAdminResult.Fail("该用户名已存在");
@@ -134,6 +163,7 @@ public sealed class UserAdministration : IUserAdministration
         string actor,
         CancellationToken cancellationToken = default)
     {
+        await _authorizer.AuthorizeRoleAsync(actor, [AppRoles.Administrator], cancellationToken).ConfigureAwait(false);
         if (UserRoleRules.Error(roles) is { } roleError)
         {
             return UserAdminResult.Warn(roleError);
@@ -207,6 +237,7 @@ public sealed class UserAdministration : IUserAdministration
 
     public async Task<UserAdminResult> UnlockAsync(string userName, string actor, CancellationToken cancellationToken = default)
     {
+        await _authorizer.AuthorizeRoleAsync(actor, [AppRoles.Administrator], cancellationToken).ConfigureAwait(false);
         var user = await _users.FindByNameAsync(userName).ConfigureAwait(false);
         if (user is null)
         {
@@ -249,6 +280,7 @@ public sealed class UserAdministration : IUserAdministration
         string actor,
         CancellationToken cancellationToken = default)
     {
+        await _authorizer.AuthorizeRoleAsync(actor, [AppRoles.Administrator], cancellationToken).ConfigureAwait(false);
         var user = await _users.FindByNameAsync(userName).ConfigureAwait(false);
         if (user is null)
         {
@@ -291,6 +323,16 @@ public sealed class UserAdministration : IUserAdministration
         string actor,
         CancellationToken cancellationToken = default)
     {
+        if (!string.Equals(userName, actor, StringComparison.OrdinalIgnoreCase))
+        {
+            await _authorizer.AuthorizeRoleAsync(actor, [AppRoles.Administrator], cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await _authorizer.AuthorizeRoleAsync(
+                actor, AppRoles.All, cancellationToken, allowMustChangePassword: true).ConfigureAwait(false);
+        }
+
         var user = await _users.FindByNameAsync(userName).ConfigureAwait(false);
         if (user is null)
         {
@@ -351,6 +393,7 @@ public sealed class UserAdministration : IUserAdministration
 
     public async Task<UserAdminResult> DeleteAsync(string userName, string actor, CancellationToken cancellationToken = default)
     {
+        await _authorizer.AuthorizeRoleAsync(actor, [AppRoles.Administrator], cancellationToken).ConfigureAwait(false);
         if (string.Equals(userName, actor, StringComparison.Ordinal))
         {
             return UserAdminResult.Warn("不能删除当前登录账号");

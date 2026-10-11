@@ -1,4 +1,5 @@
 using DataTrace.Application.Mes;
+using DataTrace.Application.Runtime;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using Microsoft.EntityFrameworkCore;
@@ -8,10 +9,12 @@ namespace DataTrace.Infrastructure.Persistence;
 public sealed class MesOutboxQueue : IMesOutboxQueue
 {
     private readonly IDbContextFactory<ConfigDbContext> _factory;
+    private readonly IDataMaintenanceBarrier? _maintenance;
 
-    public MesOutboxQueue(IDbContextFactory<ConfigDbContext> factory)
+    public MesOutboxQueue(IDbContextFactory<ConfigDbContext> factory, IDataMaintenanceBarrier? maintenance = null)
     {
         _factory = factory;
+        _maintenance = maintenance;
     }
 
     public async Task EnqueueIfMissingAsync(MesOutboxMessage message, CancellationToken cancellationToken = default)
@@ -60,6 +63,7 @@ public sealed class MesOutboxQueue : IMesOutboxQueue
             return;
         }
 
+        await using var lease = _maintenance is null ? null : await _maintenance.EnterReadAsync(cancellationToken).ConfigureAwait(false);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
         var ids = attempts.Select(x => x.Id).ToList();
         var rows = await db.MesOutbox

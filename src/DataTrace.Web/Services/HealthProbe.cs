@@ -1,11 +1,13 @@
 using System.Data;
 using System.Diagnostics;
 using DataTrace.Application.Realtime;
+using DataTrace.Domain.Enums;
 using DataTrace.Domain.Constants;
 using DataTrace.Infrastructure.Backup;
 using DataTrace.Infrastructure.Persistence;
 using DataTrace.Shared;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace DataTrace.Web.Services;
 
@@ -27,7 +29,7 @@ public sealed record HealthReport(
 /// <c>/healthz</c> 的判据：只回答"现在能不能干活"，不查业务数据。
 /// </summary>
 /// <remarks>
-/// 三项独立检查，任何一项失败即视为不健康：
+/// 独立检查，任何一项失败即视为不健康：
 /// <list type="bullet">
 /// <item><c>config-db</c>：配置库连得上、读得动。</item>
 /// <item><c>data-root</c> / <c>runtime-dir</c>：数据盘可写 —— 装到 Program Files 下、或数据盘掉线时，
@@ -36,8 +38,12 @@ public sealed record HealthReport(
 /// 而按月分库 + 曲线文件 + 归档是持续吃盘的。</item>
 /// <item><c>collector</c>：采集器主循环的心跳还新鲜。心跳停了意味着 PLC 扫描不再推进，
 /// 界面看起来一切正常但数据早就停更了。</item>
+/// <item><c>collection-readiness</c>：启动时的会话/持久化对账已完成。该项独立于心跳：循环可以仍然活着，
+/// 但只要未完成安全对账，扫描就必须保持阻塞。</item>
+/// <item><c>collection-stations</c>：没有工站处于明确的 <see cref="StationRuntimeState.Fault"/> 状态。
+/// 不对 Idle、Busy 或 Disabled 猜测超时。</item>
 /// </list>
-/// 为了不向未认证的调用方泄露安装路径，成功项只回 <c>ok</c>，失败项只回异常消息（不含路径）。
+/// 失败明细使用固定短语，不向未认证的调用方回显异常、路径或启动对账细节；完整异常写到本机日志。
 /// </remarks>
 /// <summary>
 /// 探活能力的端口。
@@ -62,17 +68,20 @@ public sealed class HealthProbe : IHealthProbe
     private readonly DataRootPaths _paths;
     private readonly IRuntimeStatusHub _status;
     private readonly IHostEnvironment _environment;
+    private readonly ILogger<HealthProbe> _logger;
 
     public HealthProbe(
         IDbContextFactory<ConfigDbContext> configFactory,
         DataRootPaths paths,
         IRuntimeStatusHub status,
-        IHostEnvironment environment)
+        IHostEnvironment environment,
+        ILogger<HealthProbe> logger)
     {
         _configFactory = configFactory;
         _paths = paths;
         _status = status;
         _environment = environment;
+        _logger = logger;
     }
 
     public async Task<HealthReport> CheckAsync(CancellationToken cancellationToken = default)
@@ -83,7 +92,9 @@ public sealed class HealthProbe : IHealthProbe
             CheckDirectoryWritable("data-root", _paths.Root),
             CheckDirectoryWritable("runtime-dir", _paths.RuntimeDirectory),
             CheckDiskFree(_paths.Root),
-            CheckCollector()
+            CheckCollector(),
+            CheckCollectionReadiness(),
+            CheckCollectionStations()
         };
 
         var healthy = checks.TrueForAll(check => check.Healthy);
@@ -114,11 +125,12 @@ public sealed class HealthProbe : IHealthProbe
         }
         catch (Exception ex)
         {
-            return new HealthCheck("config-db", false, ex.Message);
+            _logger.LogError(ex, "Health check could not query the configuration database");
+            return new HealthCheck("config-db", false, "配置库检查失败");
         }
     }
 
-    private static HealthCheck CheckDirectoryWritable(string name, string directory)
+    private HealthCheck CheckDirectoryWritable(string name, string directory)
     {
         var probe = Path.Combine(directory, $".health-{Guid.NewGuid():N}.tmp");
         try
@@ -129,7 +141,8 @@ public sealed class HealthProbe : IHealthProbe
         }
         catch (Exception ex)
         {
-            return new HealthCheck(name, false, ex.Message);
+            _logger.LogError(ex, "Health check could not write to directory {DirectoryName}", name);
+            return new HealthCheck(name, false, name == "runtime-dir" ? "运行数据目录不可写" : "数据目录不可写");
         }
         finally
         {
@@ -176,5 +189,24 @@ public sealed class HealthProbe : IHealthProbe
                 "collector",
                 false,
                 $"采集器已 {age.TotalSeconds:F0} 秒没有心跳（阈值 {CollectorStaleAfter.TotalSeconds:F0} 秒）");
+    }
+
+    private HealthCheck CheckCollectionReadiness()
+    {
+        var readiness = _status.CollectionReadiness;
+        if (readiness.Ready)
+        {
+            return new HealthCheck("collection-readiness", true, "ok");
+        }
+
+        return new HealthCheck("collection-readiness", false, "启动核对未完成，采集已阻止");
+    }
+
+    private HealthCheck CheckCollectionStations()
+    {
+        var faultCount = _status.Stations.Count(station => station.State == StationRuntimeState.Fault);
+        return faultCount == 0
+            ? new HealthCheck("collection-stations", true, "ok")
+            : new HealthCheck("collection-stations", false, $"{faultCount} 个工站处于故障状态");
     }
 }

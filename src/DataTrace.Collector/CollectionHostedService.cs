@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using DataTrace.Application.Configuration;
 using DataTrace.Application.Realtime;
+using DataTrace.Application.Runtime;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
@@ -20,6 +21,7 @@ namespace DataTrace.Collector;
 
 public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
 {
+    private const string StartupTriggerBlockedReason = "启动时触发已有效，需现场核对并使设备先回到非触发状态";
     /// <summary>
     /// 一轮干完到下一轮开始之间至少留出的时间（毫秒）。
     /// </summary>
@@ -32,22 +34,35 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IPlcDriverFactory _driverFactory;
     private readonly StationCollectPipeline _pipeline;
+    private readonly IPendingWriteBackStore _pending;
+    private readonly ISpoolStore _spool;
     private readonly IRuntimeStatusHub _status;
     private readonly ICollectorDiagnostics _diagnostics;
     private readonly ILogger<CollectionHostedService> _logger;
-    private readonly ConcurrentDictionary<int, byte> _busy = new();
+    // 在途采集任务表：值是任务本身，停机时能限时汇合（复审 R07：先停循环、汇合在途、再释放队列）。
+    private readonly ConcurrentDictionary<int, Task?> _busy = new();
     // 并发字典：采集循环在改（配置变更时重建连接），试读从外部读 —— 普通 Dictionary 在并发读写会抛。
     private readonly ConcurrentDictionary<int, PlcRequestQueue> _queues = new();
-    private readonly Dictionary<int, HeartbeatState> _heartbeats = new();
+    private readonly ConcurrentDictionary<int, HeartbeatState> _heartbeats = new();
+    // One polling job per connection. A stalled PLC never holds up another connection's
+    // next scan; its own queue remains serial and cannot accumulate polling jobs.
+    private readonly ConcurrentDictionary<int, Task<PlcPollRound>> _pollRounds = new();
+    private readonly ConcurrentDictionary<int, StartupTriggerGate> _startupTriggerGates = new();
+    private readonly object _startupTriggerGateLock = new();
+    private long _completedScanMs;
+    private long _completedHeartbeatMs;
     private readonly Dictionary<int, string> _signatures = new();
     private readonly WarningThrottle _warnings = new();
     private AppConfigurationSnapshot? _snapshot;
     private int _configVersion = -1;
+    private bool _recoveryReady;
 
     public CollectionHostedService(
         IServiceScopeFactory scopeFactory,
         IPlcDriverFactory driverFactory,
         StationCollectPipeline pipeline,
+        IPendingWriteBackStore pending,
+        ISpoolStore spool,
         IRuntimeStatusHub status,
         ICollectorDiagnostics diagnostics,
         ILogger<CollectionHostedService> logger)
@@ -55,12 +70,22 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
         _scopeFactory = scopeFactory;
         _driverFactory = driverFactory;
         _pipeline = pipeline;
+        _pending = pending;
+        _spool = spool;
         _status = status;
         _diagnostics = diagnostics;
         _logger = logger;
     }
 
     internal IReadOnlyDictionary<int, PlcRequestQueue> Queues => _queues;
+
+    internal bool HasArmedStartupTrigger(int stationId)
+    {
+        lock (_startupTriggerGateLock)
+        {
+            return _startupTriggerGates.TryGetValue(stationId, out var gate) && gate.Armed;
+        }
+    }
 
     /// <summary>
     /// 试读用：取该 PLC 现成的队列 —— 队列是这台 PLC 的唯一连接收口，自己新建一个会和扫描抢连接。
@@ -91,6 +116,10 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
     {
         _logger.LogInformation("采集服务已启动");
         await NgStreakStartup.EnsureAsync(_scopeFactory, _status, _logger, stoppingToken).ConfigureAwait(false);
+
+        // First scan waits for complete reconciliation; a Deferred intent is a durable readiness block.
+        _recoveryReady = await ReconcileBeforeCollectionAsync(stoppingToken).ConfigureAwait(false);
+
         while (!stoppingToken.IsCancellationRequested)
         {
             var roundSw = Stopwatch.StartNew();
@@ -102,6 +131,15 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
             var timing = false;
             try
             {
+                if (!_recoveryReady)
+                {
+                    _recoveryReady = await ReconcileBeforeCollectionAsync(stoppingToken).ConfigureAwait(false);
+                    if (!_recoveryReady)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken).ConfigureAwait(false);
+                        continue;
+                    }
+                }
                 _status.NoteCollectorTick();
                 await using var scope = _scopeFactory.CreateAsyncScope();
                 var configRepo = scope.ServiceProvider.GetRequiredService<IConfigRepository>();
@@ -127,13 +165,19 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
                 timing = true;
                 await EnsureQueuesAsync(snapshot, stoppingToken).ConfigureAwait(false);
 
-                var scan = Stopwatch.StartNew();
-                stats = await ScanTriggersAsync(snapshot, stoppingToken).ConfigureAwait(false);
-                scanMs = scan.ElapsedMilliseconds;
+                // EnsureQueuesAsync can defer a connection swap while an old scan/work round
+                // drains. Never dispatch the new snapshot through the previous target's queue.
+                if (_configVersion != snapshot.Version)
+                {
+                    await Task.Delay(20, stoppingToken).ConfigureAwait(false);
+                    continue;
+                }
 
-                var heartbeat = Stopwatch.StartNew();
-                await WriteHeartbeatsAsync(snapshot, stoppingToken).ConfigureAwait(false);
-                heartbeatMs = heartbeat.ElapsedMilliseconds;
+                stats = await ScanTriggersAsync(snapshot, stoppingToken).ConfigureAwait(false);
+                // Network durations come from completed connection rounds, not from the
+                // scheduler's short dispatch pass. Heartbeats share each PLC's polling job.
+                scanMs = _completedScanMs;
+                heartbeatMs = _completedHeartbeatMs;
 
                 // 先取读数，再等。以前是在 finally 里读秒表，而 finally 跑在等待之后 ——
                 // 于是"每轮工作耗时"恒等于扫描间隔（实测：平均 200ms、配置 200ms、28 轮超时，
@@ -231,6 +275,11 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
 
     private async Task EnsureQueuesAsync(AppConfigurationSnapshot snapshot, CancellationToken cancellationToken)
     {
+        if (_configVersion != snapshot.Version)
+        {
+            PruneStartupTriggerGates(snapshot);
+        }
+
         if (_configVersion == snapshot.Version && _queues.Count > 0)
         {
             return;
@@ -247,7 +296,8 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
                          || _signatures.GetValueOrDefault(id) != signature)
             .ToList();
 
-        if (obsolete.Count > 0 && !_busy.IsEmpty)
+        if (obsolete.Count > 0 && (!_busy.IsEmpty
+            || obsolete.Any(id => _pollRounds.TryGetValue(id, out var round) && !round.IsCompleted)))
         {
             // 有采集任务正在用这些队列，等它跑完再换，避免把请求丢在半路。
             return;
@@ -261,7 +311,8 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
                 await queue.DisposeAsync().ConfigureAwait(false);
             }
 
-            _heartbeats.Remove(id);
+            _heartbeats.TryRemove(id, out _);
+            _pollRounds.TryRemove(id, out _);
             _signatures.Remove(id);
             // 连接没了就把它的流水一起撤掉，否则诊断页会一直挂着一台已经不存在的 PLC。
             _diagnostics.ForgetPlc(id);
@@ -334,7 +385,11 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
                 StationCode = station.Code,
                 StationName = station.Name,
                 Sequence = station.Sequence,
-                State = station.Enabled ? StationRuntimeState.Idle : StationRuntimeState.Disabled,
+                State = !station.Enabled
+                    ? StationRuntimeState.Disabled
+                    : previous?.State is StationRuntimeState.Busy or StationRuntimeState.Fault
+                        ? previous.State
+                        : StationRuntimeState.Idle,
                 LastPalletCode = previous?.LastPalletCode,
                 LastSerialNo = previous?.LastSerialNo,
                 LastResultCode = previous?.LastResultCode,
@@ -353,12 +408,183 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
         }
     }
 
+    private void PruneStartupTriggerGates(AppConfigurationSnapshot snapshot)
+    {
+        var activeStationIds = snapshot.Stations.Where(x => x.Enabled).Select(x => x.Id).ToHashSet();
+        lock (_startupTriggerGateLock)
+        {
+            foreach (var stationId in _startupTriggerGates.Keys)
+            {
+                if (!activeStationIds.Contains(stationId))
+                {
+                    _startupTriggerGates.TryRemove(stationId, out _);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// New process/target must observe a non-trigger state before treating an active value as a new event.
+    /// Returns true while the startup gate blocks an active trigger.
+    /// </summary>
+    private bool ObserveStartupTrigger(
+        Station station,
+        PlcConnection plc,
+        short observedValue,
+        out bool firstActiveObservation)
+    {
+        firstActiveObservation = false;
+        var targetKey = $"{ConfirmationTargetFingerprint.Of(plc)}|{station.TriggerAddress}|{station.TriggerValue}";
+        lock (_startupTriggerGateLock)
+        {
+            _startupTriggerGates.TryGetValue(station.Id, out var gate);
+            if (gate is null || gate.TargetKey != targetKey)
+            {
+                var hadStartupGateFault = gate?.BlockedByStartupGate == true;
+                gate = new StartupTriggerGate(targetKey)
+                {
+                    // A prior startup-gate fault still belongs to this station. If the target
+                    // changes and the new target is observed inactive, that observation is
+                    // enough to clear only that gate-owned fault.
+                    BlockedByStartupGate = hadStartupGateFault
+                };
+                _startupTriggerGates[station.Id] = gate;
+            }
+
+            if (observedValue != station.TriggerValue)
+            {
+                gate.Armed = true;
+                if (gate.BlockedByStartupGate)
+                {
+                    gate.BlockedByStartupGate = false;
+                    ClearStartupTriggerFault(station);
+                }
+
+                return false;
+            }
+
+            if (gate.Armed)
+            {
+                return false;
+            }
+
+            if (!gate.BlockedByStartupGate)
+            {
+                gate.BlockedByStartupGate = true;
+                firstActiveObservation = true;
+            }
+
+            return true;
+        }
+    }
+
+    private void SetStartupTriggerFault(Station station)
+    {
+        var previous = _status.Stations.FirstOrDefault(x => x.StationId == station.Id);
+        _status.UpsertStation(new StationRuntimeStatus
+        {
+            StationId = station.Id,
+            StationCode = station.Code,
+            StationName = station.Name,
+            Sequence = station.Sequence,
+            State = StationRuntimeState.Fault,
+            LastPalletCode = previous?.LastPalletCode,
+            LastSerialNo = previous?.LastSerialNo,
+            LastResultCode = previous?.LastResultCode,
+            LastJudgement = previous?.LastJudgement ?? Judgement.None,
+            LastCompleteTime = previous?.LastCompleteTime,
+            LastPieceGap = previous?.LastPieceGap,
+            LastDurationMs = previous?.LastDurationMs,
+            LastError = StartupTriggerBlockedReason,
+            LastMonthKey = previous?.LastMonthKey,
+            LastRecordId = previous?.LastRecordId,
+            LastWriteBackAttempts = previous?.LastWriteBackAttempts ?? 0,
+            LastWriteBackOk = previous?.LastWriteBackOk ?? false,
+            LastTags = previous?.LastTags ?? [],
+            LastCurves = previous?.LastCurves ?? []
+        });
+    }
+
+    private void ClearStartupTriggerFault(Station station)
+    {
+        var previous = _status.Stations.FirstOrDefault(x => x.StationId == station.Id);
+        // Only undo the fault this gate itself published. Pending/spool and unrelated faults
+        // remain visible until their own recovery path completes.
+        if (previous is null || previous.State != StationRuntimeState.Fault || previous.LastError != StartupTriggerBlockedReason)
+        {
+            return;
+        }
+
+        _status.UpsertStation(new StationRuntimeStatus
+        {
+            StationId = station.Id,
+            StationCode = station.Code,
+            StationName = station.Name,
+            Sequence = station.Sequence,
+            State = StationRuntimeState.Idle,
+            LastPalletCode = previous.LastPalletCode,
+            LastSerialNo = previous.LastSerialNo,
+            LastResultCode = previous.LastResultCode,
+            LastJudgement = previous.LastJudgement,
+            LastCompleteTime = previous.LastCompleteTime,
+            LastPieceGap = previous.LastPieceGap,
+            LastDurationMs = previous.LastDurationMs,
+            LastError = null,
+            LastMonthKey = previous.LastMonthKey,
+            LastRecordId = previous.LastRecordId,
+            LastWriteBackAttempts = previous.LastWriteBackAttempts,
+            LastWriteBackOk = previous.LastWriteBackOk,
+            LastTags = previous.LastTags,
+            LastCurves = previous.LastCurves
+        });
+    }
+
     /// <summary>同一个问题最多每分钟记一条：采集循环很快，配置类告警不能每轮都刷。</summary>
     private void WarnSkipped(string key, string message)
     {
         if (_warnings.ShouldWarn(key))
         {
             _logger.LogWarning("{Message}", message);
+        }
+    }
+
+    private async Task<bool> ReconcileBeforeCollectionAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var scope = _scopeFactory.CreateAsyncScope();
+            var relay = scope.ServiceProvider.GetRequiredService<ISessionIndexRelay>();
+            while (true)
+            {
+                var before = await relay.CountPendingAsync(cancellationToken).ConfigureAwait(false);
+                if (before == 0)
+                {
+                    _status.SetCollectionReadiness(true);
+                    return true;
+                }
+                var applied = await relay.RelayPendingAsync(200, cancellationToken).ConfigureAwait(false);
+                var after = await relay.CountPendingAsync(cancellationToken).ConfigureAwait(false);
+                if (applied > 0) _logger.LogWarning("启动对账追回 {Count} 条在制索引意图，剩余 {Remaining}", applied, after);
+                if (after == 0)
+                {
+                    _status.SetCollectionReadiness(true);
+                    return true;
+                }
+                if (after >= before)
+                {
+                    var reason = $"在制索引对账仍有 {after} 条未决意图且本轮无进展，采集保持未就绪";
+                    _status.SetCollectionReadiness(false, reason);
+                    _logger.LogError("{Reason}", reason);
+                    return false;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            _status.SetCollectionReadiness(false, $"在制索引启动对账失败：{ex.Message}");
+            _logger.LogError(ex, "在制索引对账失败，采集保持未就绪");
+            return false;
         }
     }
 
@@ -394,13 +620,54 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
         }
     }
 
-    private async Task<ScanStats> ScanTriggersAsync(AppConfigurationSnapshot snapshot, CancellationToken cancellationToken)
+    private sealed record PlcPollRound(ScanStats Stats, long ScanMs, long HeartbeatMs);
+
+    private Task<ScanStats> ScanTriggersAsync(AppConfigurationSnapshot snapshot, CancellationToken cancellationToken)
+    {
+        var combined = ScanStats.None;
+        _completedScanMs = 0;
+        _completedHeartbeatMs = 0;
+        foreach (var plc in snapshot.PlcConnections.Where(x => x.Enabled))
+        {
+            if (_pollRounds.TryGetValue(plc.Id, out var previous))
+            {
+                if (!previous.IsCompleted) continue;
+                try
+                {
+                    var round = previous.GetAwaiter().GetResult();
+                    combined = new ScanStats(combined.Triggered + round.Stats.Triggered,
+                        combined.CoolingDownPlcs + round.Stats.CoolingDownPlcs,
+                        combined.SkippedStations + round.Stats.SkippedStations);
+                    _completedScanMs = Math.Max(_completedScanMs, round.ScanMs);
+                    _completedHeartbeatMs = Math.Max(_completedHeartbeatMs, round.HeartbeatMs);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+                catch (Exception ex) { _logger.LogError(ex, "PLC {Name} 独立轮询异常", plc.Name); }
+                _pollRounds.TryRemove(plc.Id, out _);
+            }
+
+            if (!_queues.ContainsKey(plc.Id) || cancellationToken.IsCancellationRequested) continue;
+            _pollRounds[plc.Id] = Task.Run(async () =>
+            {
+                var scanWatch = Stopwatch.StartNew();
+                var stats = await ScanPlcTriggersAsync(snapshot, plc.Id, cancellationToken).ConfigureAwait(false);
+                var scanElapsed = scanWatch.ElapsedMilliseconds;
+                var heartbeatWatch = Stopwatch.StartNew();
+                await WriteHeartbeatsAsync(snapshot, plc.Id, cancellationToken).ConfigureAwait(false);
+                return new PlcPollRound(stats, scanElapsed, heartbeatWatch.ElapsedMilliseconds);
+            }, cancellationToken);
+        }
+
+        return Task.FromResult(combined);
+    }
+
+    private async Task<ScanStats> ScanPlcTriggersAsync(AppConfigurationSnapshot snapshot, int plcConnectionId, CancellationToken cancellationToken)
     {
         var triggered = 0;
         var coolingDown = 0;
         var skipped = 0;
 
-        foreach (var plc in snapshot.PlcConnections.Where(x => x.Enabled))
+        foreach (var plc in snapshot.PlcConnections.Where(x => x.Enabled && x.Id == plcConnectionId))
         {
             if (!_queues.TryGetValue(plc.Id, out var queue))
             {
@@ -496,34 +763,108 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
                     }
 
                     var words = plan.GetWords($"t_{station.Id}", buffers);
-                    if (words.Length == 0 || (short)words[0] != station.TriggerValue)
+                    if (words.Length == 0)
                     {
                         continue;
                     }
 
-                    if (!_busy.TryAdd(station.Id, 0))
+                    var observedTrigger = (short)words[0];
+                    if (_pipeline.HasHeldPersistence(station.Id))
+                    {
+                        // The poll round has read the current trigger state. Retry only durable
+                        // persistence of the exact held request; never reacquire measurements or ack.
+                        await _pipeline.RetryHeldPersistenceAsync(station.Id, observedTrigger, cancellationToken)
+                            .ConfigureAwait(false);
+                        continue;
+                    }
+
+                    if (observedTrigger != station.TriggerValue)
+                    {
+                        ObserveStartupTrigger(station, plc, observedTrigger, out _);
+                        continue;
+                    }
+
+                    // 回写未确认的已提交件：设备无事件号时只转人工核对，绝不自动重写或重新采集 —— 重新采集会让首站
+                    // 把旧会话标异常、新建流水号，其他站新增重复记录。留证查询发生在触发命中
+                    // 之后（每件一次），不在每轮扫描的公共路径上。
+                    if (await _spool.HasPendingForStationAsync(station.Id, cancellationToken).ConfigureAwait(false))
+                    {
+                        var previous = _status.Stations.FirstOrDefault(x => x.StationId == station.Id);
+                        _status.UpsertStation(new StationRuntimeStatus
+                        {
+                            StationId = station.Id, StationCode = station.Code, StationName = station.Name,
+                            Sequence = station.Sequence, State = StationRuntimeState.Fault,
+                            LastPalletCode = previous?.LastPalletCode, LastSerialNo = previous?.LastSerialNo,
+                            LastResultCode = ResultCodes.DatabaseWriteFailed,
+                            LastJudgement = previous?.LastJudgement ?? Judgement.None,
+                            LastCompleteTime = previous?.LastCompleteTime, LastDurationMs = previous?.LastDurationMs,
+                            LastError = "该工站存在待补传 spool 事件，补传入库前禁止重新采集",
+                            LastMonthKey = previous?.LastMonthKey, LastRecordId = previous?.LastRecordId,
+                            LastWriteBackAttempts = previous?.LastWriteBackAttempts ?? 0,
+                            LastWriteBackOk = false, LastTags = previous?.LastTags ?? [], LastCurves = previous?.LastCurves ?? []
+                        });
+                        continue;
+                    }
+
+                    var pending = await _pending.FindOldestUnconfirmedAsync(station.Id, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (pending is not null)
+                    {
+                        if (pending.ManualReviewRequired)
+                        {
+                            var previous = _status.Stations.FirstOrDefault(x => x.StationId == station.Id);
+                            _status.UpsertStation(new StationRuntimeStatus
+                            {
+                                StationId = station.Id, StationCode = station.Code, StationName = station.Name,
+                                Sequence = station.Sequence, State = StationRuntimeState.Fault,
+                                LastPalletCode = pending.PalletCode, LastSerialNo = pending.SerialNo,
+                                LastResultCode = pending.ResultCode, LastJudgement = previous?.LastJudgement ?? Judgement.None,
+                                LastCompleteTime = previous?.LastCompleteTime, LastDurationMs = previous?.LastDurationMs,
+                                LastError = pending.ManualReviewReason ?? "存在待人工核对的设备事件身份留证",
+                                LastMonthKey = pending.MonthKey, LastRecordId = pending.CollectRecordId ?? previous?.LastRecordId,
+                                LastWriteBackAttempts = pending.Attempts, LastWriteBackOk = false,
+                                LastTags = previous?.LastTags ?? [], LastCurves = previous?.LastCurves ?? []
+                            });
+                            continue;
+                        }
+
+                        if (DateTime.Now < pending.NextAttemptAt)
+                        {
+                            // 指数退避窗口内不动作：回写失败多数是通讯断了，别把重试打成报文风暴。
+                            continue;
+                        }
+
+                        if (!StartStationWork(station.Id, async () =>
+                        {
+                            await _pipeline.RetryPendingConfirmationAsync(station, plc, snapshot, queue, pending, cancellationToken).ConfigureAwait(false);
+                        })) continue;
+
+                        triggered++;
+                        continue;
+                    }
+
+                    if (ObserveStartupTrigger(station, plc, observedTrigger, out var firstActiveObservation))
+                    {
+                        if (firstActiveObservation)
+                        {
+                            SetStartupTriggerFault(station);
+                            _logger.LogCritical(
+                                "工站 {Station} 启动或目标变更后首次观测到触发值有效；没有待确认证据，保持触发并等待现场回到非触发状态",
+                                station.Code);
+                        }
+                        continue;
+                    }
+
+                    if (!StartStationWork(station.Id, async () =>
+                    {
+                        await _pipeline.ExecuteAsync(station, plc, snapshot, queue, cancellationToken).ConfigureAwait(false);
+                    }))
                     {
                         // 上一件还在跑：不计入"跳过"，它不是配置问题，是节拍本身跟不上。
                         continue;
                     }
 
                     triggered++;
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await _pipeline.ExecuteAsync(station, plc, snapshot, queue, cancellationToken)
-                                .ConfigureAwait(false);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "工站 {Station} 采集任务崩溃", station.Code);
-                        }
-                        finally
-                        {
-                            _busy.TryRemove(station.Id, out _);
-                        }
-                    }, cancellationToken);
                 }
             }
             catch (Exception ex)
@@ -542,9 +883,9 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
         return new ScanStats(triggered, coolingDown, skipped);
     }
 
-    private async Task WriteHeartbeatsAsync(AppConfigurationSnapshot snapshot, CancellationToken cancellationToken)
+    private async Task WriteHeartbeatsAsync(AppConfigurationSnapshot snapshot, int plcConnectionId, CancellationToken cancellationToken)
     {
-        foreach (var plc in snapshot.PlcConnections.Where(x => x.Enabled && x.Heartbeat is { Enabled: true }))
+        foreach (var plc in snapshot.PlcConnections.Where(x => x.Enabled && x.Id == plcConnectionId && x.Heartbeat is { Enabled: true }))
         {
             if (!_queues.TryGetValue(plc.Id, out var queue) || plc.Heartbeat is null)
             {
@@ -610,22 +951,83 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
         }
     }
 
+    private bool StartStationWork(int stationId, Func<Task> work)
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var task = completion.Task;
+        if (!_busy.TryAdd(stationId, task)) return false;
+
+        // Install the stable completion task before scheduling. A fast operation can no longer
+        // finish/remove a placeholder before its real Task is assigned back into _busy.
+        _ = Task.Run(async () =>
+        {
+            try { await work().ConfigureAwait(false); }
+            catch (Exception ex) { _logger.LogError(ex, "工站 {StationId} 在途任务崩溃", stationId); }
+            finally
+            {
+                ((ICollection<KeyValuePair<int, Task?>>)_busy).Remove(new KeyValuePair<int, Task?>(stationId, task));
+                completion.TrySetResult();
+            }
+        });
+        return true;
+    }
+
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
+        // 停机顺序（复审 R07）：先停扫描循环（不再发起新采集）→ 限时汇合在途任务（已提交件的
+        // 确认/索引收尾有机会完成）→ 最后才释放队列。旧顺序先 Dispose 队列，在途任务的
+        // PLC 请求与回写全被腰斩，宿主退出后留下"库已提交、确认没做"的半成品状态。
+        try
+        {
+            await base.StopAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("采集循环未在宿主停机期限内退出，继续按当前期限收尾");
+        }
+
+        var inflight = _busy.Values.Where(t => t is not null).Select(t => t!)
+            .Concat(_pollRounds.Values.Cast<Task>()).ToArray();
+        if (inflight.Length > 0)
+        {
+            var drain = Task.WhenAll(inflight);
+            var timeout = Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+            var finished = await Task.WhenAny(drain, timeout).ConfigureAwait(false);
+            if (finished != drain)
+            {
+                _logger.LogWarning("停机等待 {Count} 个在途采集任务超时，继续释放队列", inflight.Length);
+            }
+        }
+
         foreach (var queue in _queues.Values)
         {
-            await queue.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                await queue.DisposeAsync().AsTask().WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogWarning("PLC 队列释放达到宿主停机期限");
+                break;
+            }
         }
 
         _queues.Clear();
         _heartbeats.Clear();
+        _pollRounds.Clear();
         _signatures.Clear();
-        await base.StopAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private sealed class HeartbeatState
     {
         public DateTime LastWrite { get; set; }
         public short Value { get; set; }
+    }
+
+    private sealed class StartupTriggerGate(string targetKey)
+    {
+        public string TargetKey { get; } = targetKey;
+        public bool Armed { get; set; }
+        public bool BlockedByStartupGate { get; set; }
     }
 }

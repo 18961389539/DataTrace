@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using DataTrace.Application.Alarms;
 using DataTrace.Application.Configuration;
+using DataTrace.Application.Evaluation;
 using DataTrace.Application.Mes;
 using DataTrace.Application.Runtime;
 using DataTrace.Domain.Constants;
@@ -17,6 +18,14 @@ public sealed record PersistedCollect(
     IReadOnlyList<CurvePayloadWrite> Curves,
     string MonthKey);
 
+public sealed class CollectPersistenceUnavailableException : IOException
+{
+    public CollectPersistenceUnavailableException(CollectSaveRequest request, Exception innerException)
+        : base("月库和本地 spool 均未能持久化本次采集", innerException) => Request = request;
+
+    public CollectSaveRequest Request { get; }
+}
+
 /// <summary>会话、落库、补传和 MES 出站。判定结果已经算完。</summary>
 public sealed class CollectSessionCoordinator
 {
@@ -29,7 +38,7 @@ public sealed class CollectSessionCoordinator
         _logger = logger;
     }
 
-    public async Task<PersistedCollect> PersistAsync(
+    public Task<PersistedCollect> PersistAsync(
         Station station,
         AppConfigurationSnapshot config,
         string palletCode,
@@ -38,6 +47,21 @@ public sealed class CollectSessionCoordinator
         FileSourceRead? source,
         CollectAssessment assessment,
         CancellationToken cancellationToken)
+        => PersistAsync(station, config, palletCode, triggerTime, sw, source, assessment, null, cancellationToken);
+
+    public async Task<PersistedCollect> PersistAsync(
+        Station station,
+        AppConfigurationSnapshot config,
+        string palletCode,
+        DateTime triggerTime,
+        Stopwatch sw,
+        FileSourceRead? source,
+        CollectAssessment assessment,
+        CurveBaselineSnapshot? baseline,
+        CancellationToken cancellationToken,
+        Station? confirmationStation = null,
+        PlcConnection? confirmationConnection = null,
+        AppConfigurationSnapshot? sessionDefinition = null)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var sessions = scope.ServiceProvider.GetRequiredService<IActiveSessionStore>();
@@ -74,7 +98,8 @@ public sealed class CollectSessionCoordinator
                 SerialNo = serialNo,
                 PalletCode = palletCode,
                 StartTime = triggerTime,
-                Status = SessionStatus.Open
+                Status = SessionStatus.Open,
+                RecipeSnapshot = SessionRecipe.Snapshot(config, baseline)
             };
             active = new ActiveSessionIndex
             {
@@ -82,7 +107,10 @@ public sealed class CollectSessionCoordinator
                 SerialNo = serialNo,
                 MonthKey = monthKey,
                 StartTime = triggerTime,
-                RecipeCode = config.ActiveRecipe?.Code ?? ""
+                RecipeCode = config.ActiveRecipe?.Code ?? "",
+                // 首站固化当时的判定依据：全线启用点位的生效限值（默认 + 型号覆盖解析结果）
+                // 加型号身份。没选型号也是一套明确的冻结状态，中途选型/改限值都不影响已开件。
+                RecipeSnapshot = upsertSession.RecipeSnapshot
             };
         }
         else
@@ -92,7 +120,11 @@ public sealed class CollectSessionCoordinator
             {
                 processAbnormal = true;
                 processError = "未找到在制托盘会话（可能跳站）";
-                serialNo = $"ORPHAN-{triggerTime:yyyyMMddHHmmss}";
+                // 孤儿流水号必须自带唯一性：SerialNo 有唯一索引，多个孤儿托盘同秒触发
+                // 若只有秒级时间戳，第二条会撞库失败且重试永远撞同一个号，
+                // 还可能阻塞随后正常件的会话落库。毫秒 + 工站 + 随机段三重区分，
+                // ORPHAN 前缀保留给查询/展示的异常标识语义。
+                serialNo = $"ORPHAN-{triggerTime:yyyyMMddHHmmssfff}-{station.Id}-{Guid.NewGuid().ToString("N")[..6]}";
                 monthKey = PersistenceMonth(triggerTime);
                 upsertSession = new PalletSession
                 {
@@ -122,9 +154,10 @@ public sealed class CollectSessionCoordinator
                     SessionId = existing.SessionId,
                     MonthKey = existing.MonthKey,
                     StartTime = existing.StartTime,
-                    RecipeCode = SessionRecipe.RecordCode(false, existing.RecipeCode, config.ActiveRecipe)
+                    RecipeCode = SessionRecipe.RecordCodeForSession(existing.RecipeCode, existing.RecipeSnapshot, config.ActiveRecipe),
+                    RecipeSnapshot = existing.RecipeSnapshot
                 };
-                var previous = config.Stations
+                var previous = (sessionDefinition ?? config).Stations
                     .Where(s => s.Enabled && s.Sequence < station.Sequence)
                     .Select(s => s.Id)
                     .ToList();
@@ -178,7 +211,9 @@ public sealed class CollectSessionCoordinator
             ResultCode = result,
             Judgement = recordJudgement,
             ErrorMessage = assessment.ValidationMessage ?? processError,
-            RecipeCode = SessionRecipe.RecordCode(station.IsFirstStation, frozenRecipe, config.ActiveRecipe),
+            RecipeCode = station.IsFirstStation
+                ? SessionRecipe.RecordCode(true, frozenRecipe, config.ActiveRecipe)
+                : SessionRecipe.RecordCodeForSession(frozenRecipe, active?.RecipeSnapshot, config.ActiveRecipe),
             ArchivePath = source?.ArchivePath ?? "",
             ArchiveFileSize = source?.ArchiveSize ?? 0,
             ArchiveCrc32 = source?.ArchiveCrc ?? 0,
@@ -225,8 +260,17 @@ public sealed class CollectSessionCoordinator
             Record = record,
             Curves = assessment.Curves,
             MesOutbox = mesOutbox,
+            ConfigurationRevisionId = (sessionDefinition ?? config).ConfigurationRevisionId,
             ActiveSession = active,
-            RemoveActiveSession = removeActive
+            RemoveActiveSession = removeActive,
+            ConfirmationPlcConnectionId = (confirmationStation ?? station).PlcConnectionId,
+            ConfirmationTriggerAddress = (confirmationStation ?? station).TriggerAddress,
+            ConfirmationTriggerValue = (confirmationStation ?? station).TriggerValue,
+            ConfirmationConnectionFingerprint = confirmationConnection is { } exactPlc
+                ? ConfirmationTargetFingerprint.Of(exactPlc)
+                : config.PlcConnections.FirstOrDefault(x => x.Id == (confirmationStation ?? station).PlcConnectionId) is { } sourcePlc
+                ? ConfirmationTargetFingerprint.Of(sourcePlc)
+                : null
         };
 
         // 流水号到这一刻才定下来（首站是刚生成的，其余站取自 在制会话），所以内层作用域从这里开始：
@@ -243,17 +287,34 @@ public sealed class CollectSessionCoordinator
         }
         catch (PostCommitStateUpdateException ex)
         {
-            var spool = scope.ServiceProvider.GetRequiredService<ISpoolStore>();
-            var spoolFile = await spool.SaveAsync(save, cancellationToken).ConfigureAwait(false);
-            _logger.LogWarning(ex, "工站 {Station} 记录已入库（{Serial}），会话索引更新失败，已转存 {SpoolFile} 待补传", station.Code, serialNo, spoolFile);
+            try
+            {
+                var spool = scope.ServiceProvider.GetRequiredService<ISpoolStore>();
+                var spoolFile = await spool.SaveAsync(save, cancellationToken).ConfigureAwait(false);
+                _logger.LogWarning(ex, "工站 {Station} 记录已入库（{Serial}），会话索引更新失败，已转存 {SpoolFile} 待补传", station.Code, serialNo, spoolFile);
+            }
+            catch (Exception spoolError) when (spoolError is not OperationCanceledException)
+            {
+                _logger.LogError(spoolError, "工站 {Station} 月库提交后修复及 spool 持久化均失败（{Serial}）", station.Code, serialNo);
+                throw new CollectPersistenceUnavailableException(save, new AggregateException(ex, spoolError));
+            }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "工站 {Station} 写库失败（{Serial}），转入本地缓存", station.Code, serialNo);
-            var spool = scope.ServiceProvider.GetRequiredService<ISpoolStore>();
-            // 文件名同时记进日志：补传那边只有文件名，"写库失败"与"补传成功/失败"这两行
-            // 除了它再没有别的共同字段，事后想对上只能靠时间戳。
-            var spoolFile = await spool.SaveAsync(save, cancellationToken).ConfigureAwait(false);
+            string spoolFile;
+            try
+            {
+                var spool = scope.ServiceProvider.GetRequiredService<ISpoolStore>();
+                // 文件名同时记进日志：补传那边只有文件名，"写库失败"与"补传成功/失败"这两行
+                // 除了它再没有别的共同字段，事后想对上只能靠时间戳。
+                spoolFile = await spool.SaveAsync(save, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception spoolError) when (spoolError is not OperationCanceledException)
+            {
+                _logger.LogError(spoolError, "工站 {Station} 月库与 spool 持久化均失败（{Serial}）", station.Code, serialNo);
+                throw new CollectPersistenceUnavailableException(save, new AggregateException(ex, spoolError));
+            }
             _logger.LogWarning("已转存本地缓存 {SpoolFile}（{Serial}），补传循环会重试", spoolFile, serialNo);
             record.ResultCode = ResultCodes.DatabaseWriteFailed;
             record.ErrorMessage = ex.Message;
@@ -261,6 +322,62 @@ public sealed class CollectSessionCoordinator
         }
 
         return new PersistedCollect(record, assessment.Curves, monthKey);
+    }
+
+    /// <summary>
+    /// Retry persistence for the exact request captured before a dual-storage failure.
+    /// This method never reacquires PLC data and never writes a result code.
+    /// </summary>
+    public async Task<bool> PersistHeldRequestAsync(CollectSaveRequest request, CancellationToken cancellationToken)
+    {
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var barrier = scope.ServiceProvider.GetRequiredService<IDataMaintenanceBarrier>();
+        await using var lease = await barrier.EnterReadAsync(cancellationToken).ConfigureAwait(false);
+        var query = scope.ServiceProvider.GetRequiredService<ICollectQuery>();
+        var writer = scope.ServiceProvider.GetRequiredService<ICollectWriter>();
+        var spool = scope.ServiceProvider.GetRequiredService<ISpoolStore>();
+        var pending = scope.ServiceProvider.GetRequiredService<IPendingWriteBackStore>();
+
+        request.RequiresWriteBack = true;
+        request.RequiresManualReviewOnPersistence = true;
+        try
+        {
+            if (await query.ExistsCollectAsync(request.MonthKey, request.Record.SerialNo,
+                    request.Record.StationId, request.Record.TriggerTime, cancellationToken).ConfigureAwait(false))
+            {
+                if (request.Record.Id <= 0)
+                {
+                    request.Record.Id = await query.FindCollectRecordIdAsync(request.MonthKey, request.Record.SerialNo,
+                        request.Record.StationId, request.Record.TriggerTime, cancellationToken).ConfigureAwait(false)
+                        ?? throw new InvalidOperationException("已检测到采集记录，但无法恢复其数据库 ID；保持保护并等待重试");
+                }
+                await writer.RepairPostCommitStateAsync(request, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await writer.SaveAsync(request, cancellationToken).ConfigureAwait(false);
+            }
+
+            await pending.RequireManualReviewByRecordIdAsync(request.MonthKey, request.Record.Id,
+                "月库与本地缓存曾同时不可用；设备事件身份未经确认，等待现场人工核对",
+                cancellationToken).ConfigureAwait(false);
+
+            return true;
+        }
+        catch (Exception databaseError) when (databaseError is not OperationCanceledException)
+        {
+            try
+            {
+                await spool.SaveAsync(request, cancellationToken).ConfigureAwait(false);
+                return true;
+            }
+            catch (Exception spoolError) when (spoolError is not OperationCanceledException)
+            {
+                _logger.LogError(new AggregateException(databaseError, spoolError),
+                    "原始采集请求持久化重试仍失败，流水 {Serial} 保留在内存保护队列", request.Record.SerialNo);
+                return false;
+            }
+        }
     }
 
     private static async Task<IReadOnlyList<MesRejectPoint>> RejectsAsync(

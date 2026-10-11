@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.Sqlite;
 
 namespace DataTrace.Infrastructure.Persistence;
 
@@ -117,6 +118,14 @@ public sealed class RuntimeDbFactory
     public void DeleteMonth(string monthKey)
     {
         var path = GetPath(monthKey);
+        // SQLite pools keep native handles after DbContext disposal. Clear only this month's
+        // pool so the database and its WAL sidecars can be deleted on Windows without
+        // disrupting connections to other retained months.
+        using (var connection = new SqliteConnection($"Data Source={path}"))
+        {
+            SqliteConnection.ClearPool(connection);
+        }
+
         foreach (var suffix in new[] { "", "-wal", "-shm" })
         {
             var file = suffix == "" ? path : path + suffix;

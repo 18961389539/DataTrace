@@ -45,6 +45,9 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Config
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("RecipeSnapshot")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("SerialNo")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -164,6 +167,61 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Config
                     b.HasKey("Id");
 
                     b.ToTable("ConfigVersions");
+                });
+
+            modelBuilder.Entity("DataTrace.Domain.Entities.ConfigurationRevision", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ConfigVersion")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DiffJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EntityKey")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EntityType")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("ParentRevisionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ValidationResult")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("ParentRevisionId");
+
+                    b.ToTable("ConfigurationRevisions");
                 });
 
             modelBuilder.Entity("DataTrace.Domain.Entities.CurveCriterion", b =>

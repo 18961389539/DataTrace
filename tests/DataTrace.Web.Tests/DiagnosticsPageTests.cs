@@ -1,5 +1,6 @@
 using DataTrace.Application.Realtime;
 using DataTrace.Application.Runtime;
+using DataTrace.Infrastructure.Storage;
 using DataTrace.Collector;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
@@ -22,6 +23,7 @@ namespace DataTrace.Web.Tests;
 public class DiagnosticsPageTests : WebTestBase
 {
     private readonly FakeHealthProbe _health = new();
+    private readonly FakeConfirmationRecovery _confirmationRecovery = new();
 
     /// <summary>补传写入替身：整队补传的进度与取消用例要能挂住某一条。</summary>
     private readonly RecordingWriter Writer = new();
@@ -34,6 +36,45 @@ public class DiagnosticsPageTests : WebTestBase
         Assert.Contains("还没有采集循环记录", cut.Markup);
         Assert.Contains("还没有 PLC 通信记录", cut.Markup);
         Assert.Contains("补传队列是空的", cut.Markup);
+    }
+
+    [Fact]
+    public void Manual_confirmation_blocker_requires_explicit_physical_review()
+    {
+        _confirmationRecovery.Pending.Add(new PendingWriteBack
+        {
+            Id = 71,
+            MonthKey = "202610",
+            PalletCode = "P-REVIEW",
+            SerialNo = "SN-REVIEW",
+            StationCode = "ST010",
+            TriggerAddress = "D100",
+            TriggerValue = 1,
+            ResultCode = 2,
+            CreatedAt = new DateTime(2026, 10, 11, 8, 30, 0),
+            ManualReviewRequired = true,
+            ManualReviewReason = "PLC event identity is unavailable"
+        });
+
+        var (cut, _, _) = Render(new FakeSpool());
+
+        Assert.Contains("待人工核对的 PLC 回写", cut.Markup);
+        Assert.Contains("SN-REVIEW", cut.Markup);
+        Assert.Contains("PLC event identity is unavailable", cut.Markup);
+        Assert.Contains("设备已自行确认", cut.Markup);
+        Assert.Contains("设备状态证据（必填）", cut.Markup);
+        Assert.Contains("我已现场处理旧事件，并确认触发位已清除", cut.Markup);
+    }
+
+    [Fact]
+    public void Shows_startup_reconciliation_block_reason()
+    {
+        RuntimeStatus.SetCollectionReadiness(false, "SessionIndex 日志存在未对账项");
+
+        var (cut, _, _) = Render(new FakeSpool());
+
+        Assert.Contains("采集启动核对未完成，当前扫描被阻止", cut.Markup);
+        Assert.Contains("SessionIndex 日志存在未对账项", cut.Markup);
     }
 
     [Fact]
@@ -740,8 +781,10 @@ public class DiagnosticsPageTests : WebTestBase
         Context.Services.AddLogging();
         Context.Services.AddSingleton<ICollectorDiagnostics>(diag);
         Context.Services.AddSingleton<IHealthProbe>(_health);
+        Context.Services.AddSingleton<IConfirmationRecoveryService>(_confirmationRecovery);
         Context.Services.AddSingleton<ISpoolStore>(spool);
         Context.Services.AddSingleton<ICollectWriter>(Writer);
+        Context.Services.AddSingleton<IDataMaintenanceBarrier, DataMaintenanceBarrier>();
         // 补传前的幂等查重：这一页验的是补传流程本身，"库里有没有"由用例之外的场景决定，
         // 这里统一返"没有"。查重行为在 DataTrace.Tests 用真库验证。
         Context.Services.AddSingleton(new Mock<ICollectQuery>().Object);
@@ -757,6 +800,24 @@ public class DiagnosticsPageTests : WebTestBase
         }
         var cut = Context.Render<Diagnostics>();
         return (cut, spool, diag);
+    }
+
+    private sealed class FakeConfirmationRecovery : IConfirmationRecoveryService
+    {
+        public List<PendingWriteBack> Pending { get; } = [];
+
+        public Task<IReadOnlyList<PendingWriteBack>> ListPendingAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<PendingWriteBack>>(Pending.ToList());
+
+        public Task<ManualConfirmationResolutionResult> ResolveAsync(
+            string monthKey,
+            long pendingId,
+            string operatorName,
+            string reason,
+            string deviceStateEvidence,
+            PendingConfirmationResolutionMode mode,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new ManualConfirmationResolutionResult(false, "test fake"));
     }
 
     /// <summary>探活替身：报告内容由用例给定。</summary>
@@ -837,6 +898,17 @@ public class DiagnosticsPageTests : WebTestBase
             CancellationToken cancellationToken = default)
             => Task.FromResult<IReadOnlyList<(string, CollectSaveRequest)>>(
                 Entries.Select(entry => (entry.FileName, RequestFor(entry))).ToList());
+
+        public Task<IReadOnlyList<(string FileName, CollectSaveRequest Request)>> ListPageAsync(
+            int skip, int take, CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<(string, CollectSaveRequest)>>(
+                Entries.Skip(skip).Take(take).Select(entry => (entry.FileName, RequestFor(entry))).ToList());
+
+        public Task<bool> HasMonthEntriesAsync(string monthKey, CancellationToken cancellationToken = default)
+            => Task.FromResult(false);
+
+        public Task<bool> HasPendingForStationAsync(int stationId, CancellationToken cancellationToken = default)
+            => Task.FromResult(false);
 
         /// <summary>手动补传单条：按文件名回一条；不在时回 null，由执行器翻成"已经不在了"。</summary>
         public Task<CollectSaveRequest?> ReadOneAsync(string fileName, CancellationToken cancellationToken = default)

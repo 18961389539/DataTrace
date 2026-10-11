@@ -88,6 +88,7 @@ function createOption(element, model) {
             trigger: 'axis',
             triggerOn: 'mousemove',
             renderMode: 'html',
+            className: 'echarts-tooltip',
             confine: true,
             axisPointer: { type: 'line', lineStyle: { color: axisColor } },
             backgroundColor: surfaceColor,

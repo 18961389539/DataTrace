@@ -1,4 +1,8 @@
 using DataTrace.Domain.Entities;
+using DataTrace.Application.Evaluation;
+using DataTrace.Application.Identity;
+using DataTrace.Application.Realtime;
+using DataTrace.Application.Runtime;
 
 namespace DataTrace.Application.Configuration;
 
@@ -6,11 +10,30 @@ public sealed class ConfigurationChangeService : IConfigurationChanges
 {
     private readonly IConfigRepository _repository;
     private readonly IAuditLogger _audit;
+    private readonly IConfigurationAuthorizer? _authorizer;
+    private readonly IDataMaintenanceBarrier? _maintenance;
+    private readonly IRuntimeStatusHub? _status;
+    private readonly ICurveBaselineCache? _baselines;
 
     public ConfigurationChangeService(IConfigRepository repository, IAuditLogger audit)
+        : this(repository, audit, null, null, null, null)
+    {
+    }
+
+    public ConfigurationChangeService(
+        IConfigRepository repository,
+        IAuditLogger audit,
+        IConfigurationAuthorizer? authorizer,
+        IDataMaintenanceBarrier? maintenance,
+        IRuntimeStatusHub? status,
+        ICurveBaselineCache? baselines)
     {
         _repository = repository;
         _audit = audit;
+        _authorizer = authorizer;
+        _maintenance = maintenance;
+        _status = status;
+        _baselines = baselines;
     }
 
     public Task SaveStationAsync(Station station, ConfigAudit audit, CancellationToken cancellationToken = default)
@@ -61,6 +84,15 @@ public sealed class ConfigurationChangeService : IConfigurationChanges
     public Task SaveSettingsAsync(SystemSettings settings, ConfigAudit audit, CancellationToken cancellationToken = default)
         => Change(() => _repository.SaveSettingsAsync(SaveSettingsCommand.From(settings), cancellationToken), audit, cancellationToken);
 
+    public Task RestoreRevisionAsync(long revisionId, ConfigAudit audit, CancellationToken cancellationToken = default)
+        => Change(() => _repository.RestoreRevisionAsync(revisionId, cancellationToken), audit with
+        {
+            Action = "RestoreConfigurationRevision",
+            EntityType = "ConfigurationRevision",
+            EntityKey = revisionId.ToString(),
+            Reason = string.IsNullOrWhiteSpace(audit.Reason) ? $"回滚到修订 {revisionId}" : audit.Reason
+        }, cancellationToken);
+
     /// <summary>
     /// 配置写入 + 审计写入，同一个事务提交：要么都落库，要么都不落。
     /// </summary>
@@ -71,8 +103,24 @@ public sealed class ConfigurationChangeService : IConfigurationChanges
     /// </remarks>
     private async Task Change(Func<Task> save, ConfigAudit audit, CancellationToken cancellationToken)
     {
+        IAsyncDisposable? maintenanceLease = null;
+        AppConfigurationSnapshot? previous = null;
+        var committed = false;
         try
         {
+            await (_authorizer?.AuthorizeChangeAsync(audit.UserName, cancellationToken) ?? Task.CompletedTask).ConfigureAwait(false);
+            var restoringRevision = string.Equals(audit.Action, "RestoreConfigurationRevision", StringComparison.Ordinal);
+            if (_maintenance is not null)
+            {
+                // Restore replaces the entire configuration graph. Exclusive access drains any
+                // in-flight collection and prevents another one starting during the replacement.
+                maintenanceLease = restoringRevision
+                    ? await _maintenance.EnterWriteAsync(cancellationToken).ConfigureAwait(false)
+                    : await _maintenance.EnterReadAsync(cancellationToken).ConfigureAwait(false);
+            }
+            previous = await _repository.GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
+            if (restoringRevision && previous.Settings.CollectEnabled)
+                throw new InvalidOperationException("请先停用采集，再回滚完整配置修订；恢复期间不能继续采集。");
             await _repository.InTransactionAsync(async token =>
             {
                 await save().ConfigureAwait(false);
@@ -85,12 +133,46 @@ public sealed class ConfigurationChangeService : IConfigurationChanges
                         audit.NewValue,
                         token)
                     .ConfigureAwait(false);
+                await _repository.AppendRevisionAsync(audit, token).ConfigureAwait(false);
                 return true;
             }, cancellationToken).ConfigureAwait(false);
+            committed = true;
+
+            var current = await _repository.GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
+            PublishCommittedState(previous!, current);
         }
         catch (Exception ex)
         {
-            throw new ConfigurationChangeFailedException($"改动已回滚，未生效：{ex.Message}", ex);
+            if (committed)
+                throw new ConfigurationChangeFailedException($"配置已提交为修订，运行状态刷新失败：{ex.Message}", ex);
+            throw new ConfigurationChangeFailedException($"改动已回滚或未写入，配置未生效：{ex.Message}", ex);
+        }
+        finally
+        {
+            if (maintenanceLease is not null)
+            {
+                await maintenanceLease.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    private void PublishCommittedState(AppConfigurationSnapshot previous, AppConfigurationSnapshot current)
+    {
+        if (_status is not null)
+        {
+            _status.SetActiveRecipe(current.ActiveRecipe?.Code, current.ActiveRecipe?.Name);
+            _status.NotifyChanged();
+        }
+
+        if (_baselines is null) return;
+        var before = previous.Recipes.ToDictionary(x => x.Id, x => x.Code);
+        foreach (var recipe in current.Recipes)
+        {
+            if (before.TryGetValue(recipe.Id, out var oldCode)
+                && !string.Equals(oldCode, recipe.Code, StringComparison.Ordinal))
+            {
+                _baselines.RetagRecipeCode(oldCode, recipe.Code);
+            }
         }
     }
 }

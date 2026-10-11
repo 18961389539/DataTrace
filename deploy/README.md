@@ -53,16 +53,11 @@ cd D:\SourceCode\DataTrace\deploy
 
 浏览器打开：`http://127.0.0.1:5080/`
 
-### 默认账号（仅首次无 config.db 时由种子创建）
+### 首次管理员账号
 
-| 用户       | 密码           | 角色  |
-| -------- | ------------ | --- |
-| admin    | Admin@123    | 管理员 |
-| engineer | Engineer@123 | 工程师 |
-| operator | Operator@123 | 操作员 |
-| viewer   | Viewer@123   | 访客  |
+Production 首次初始化只创建 `admin` 管理员，不创建固定演示账号。未设置 `Seed__AdminPassword` 时，应用生成一次性随机口令并写入 `{DataRoot}\logs\datatrace-*.log`；也可在首次启动前通过受控环境变量 `Seed__AdminPassword` 提供引导口令。两种方式都会要求首次登录立即改密。请由授权运维人员从本机日志或安全交付渠道取得口令，并在交付后按现场策略处理临时凭据。
 
-**请首次登录后立即修改密码。** 脚本与文档从不把口令写回源码。
+`admin/Admin@123` 等固定账号只用于 Development / 明确启用演示账号的 Staging 与自动化测试，不适用于 Production。
 
 ## 安装第二个客户（另一目录）
 
@@ -89,7 +84,7 @@ cd D:\SourceCode\DataTrace\deploy
 | 厂名 SiteName | `customer.json` + `appsettings.Production.json` → `Customer:SiteName` | 顶栏 / 登录页 / 浏览器标题                    |
 | Logo        | 安装目录 `branding\` + `LogoPath`                                         | 如 `logo.png` → `/branding/logo.png` |
 | 端口          | `Kestrel:Endpoints:Http:Url` + `customer.json` Port                   | `install.ps1 -Port`                 |
-| 数据目录        | `DataRoot`（相对安装目录或绝对路径）                                               | 默认 `data`；环境变量 `DataRoot` 可覆盖       |
+| 数据目录        | `DataRoot`（相对安装目录或绝对路径）                                               | 默认 `data`；控制台与 Windows 服务均读取客户配置       |
 | 环境          | `ASPNETCORE_ENVIRONMENT=Production`                                   | `start.ps1` / 服务安装写入                |
 | 仿真自动跑       | `Customer:SimulatorAutoRun=false`                                     | **现场默认关**；开发演示（Development）仍默认开     |
 
@@ -136,7 +131,7 @@ cd D:\SourceCode\DataTrace\deploy
 | 步骤  | 说明                                                                                             |
 | --- | ---------------------------------------------------------------------------------------------- |
 | 停止  | 只停本 `InstallDir`（PID 文件 / 本目录 exe），**不杀其它端口**（如演示 5080）                                        |
-| 备份  | `InstallDir\backups\upgrade-yyyyMMdd-HHmmss\`：含 `data\`、`customer.json`、`binaries\`            |
+| 备份  | `InstallDir\backups\upgrade-yyyyMMdd-HHmmss\`：含实际配置 DataRoot 的完整副本（归档在备份集 `data\`）、来源路径清单、`customer.json`、`binaries\`            |
 | 换程序 | robocopy 覆盖程序文件；**保留** `data\`、`branding\`、`customer.json`、`appsettings.Production.json`       |
 | 库结构 | 与正常启动相同：`DatabaseSeeder` 的 `EnsureCreated` + `SqliteSchema.AddColumnIfMissing`（无独立 EF Migrate） |
 | 版本  | 写入 `version.json` + `customer.json` 的 AppVersion                                               |
@@ -175,7 +170,9 @@ cd D:\SourceCode\DataTrace\deploy
   -BackupDir D:\Apps\DataTrace\CustomerA\backups\upgrade-20260924-120000 -RestoreData
 ```
 
-**说明**：当前库变更是**向前加列**，一般回程序即可；若未来出现破坏性迁移，必须 **binaries + data 成套回滚**。禁止在未备份时对生产使用 `-ForceData`。
+**说明**：只回程序前，应确认目标旧程序能够读取当前数据库；本次待确认记录的索引也发生了变更，不能仅凭“加列”推断兼容。若选择 `-RestoreData`，脚本按升级备份清单核对原 DataRoot 路径，并把完整数据集恢复回该路径。当前数据先改名为同级带时间戳和随机后缀的 `*-bad-*`，恢复来源与目标写入 `rollback-restore-manifest.json`。不认识 DataRoot 的旧备份会拒绝恢复，不会退回安装目录下的 `data\` 假设。破坏性或不兼容迁移必须 **binaries + data 成套回滚**。禁止在未备份时对生产使用 `-ForceData`。
+
+升级备份、程序覆盖和程序回滚都排除实际 DataRoot；相对路径的自定义数据目录同样不会混入二进制副本。复制最多重试两次、每次等待一秒；数据恢复复制失败时保留部分恢复目录并放回恢复前的数据目录。DataRoot 不允许等于安装目录或包含安装目录，备份来源也不能位于恢复目标内部。
 
 ### Soft 许可提示（可选）
 
@@ -202,8 +199,8 @@ Start-Service -Name DataTrace-CustomerA
 - `start.ps1` / 服务还设置环境变量（双重保险）：
   - `ASPNETCORE_ENVIRONMENT=Production`
   - `Kestrel__Endpoints__Http__Url=http://0.0.0.0:{端口}`
-  - `DataRoot=data`（或 customer.json 中的 DataRoot）
-- 应用 ContentRoot 固定为 exe 所在目录，数据在安装目录的 `data\`
+  - `DataRoot`（`customer.json` 中配置的相对或绝对路径）
+- 应用 ContentRoot 固定为 exe 所在目录；未配置时数据默认在安装目录的 `data\`。外置 DataRoot 会由控制台启动和服务注册共同使用。
 
 ## 冒烟测试（不打扰演示 5080）
 
@@ -240,9 +237,10 @@ Start-Service -Name DataTrace-CustomerA
 | `Backup:RetentionDays`   | `30`                     | 按天保留           |
 | `Backup:MaxBackups`      | `60`                     | 最多保留套数（0=不限数量） |
 
-采集记录与曲线文件的长期保留由系统设置页「保留年数」控制（配置库 `SystemSettings.RetentionYears`），由 `RetentionHostedService` 约每 6 小时删除超过年限的整月 `runtime/data_yyyyMM.db` 及对应曲线目录；与备份套数保留（`Backup:RetentionDays` / `MaxBackups`）是两套机制，互不替代。已废弃的 `Backup:RecordRetention` 配置键若仍存在会被忽略。
+采集记录与曲线文件的长期保留由系统设置页「保留年数」控制（配置库 `SystemSettings.RetentionYears`）。`RetentionHostedService` 约每 6 小时检查旧月库；含较新记录、未闭合会话、未决确认、在制索引、MES 意图或 spool 的月份会保留。清理文件前还会检查其他保留月库的跨月引用。与备份套数保留（`Backup:RetentionDays` / `MaxBackups`）是两套机制，互不替代。已废弃的 `Backup:RecordRetention` 配置键若仍存在会被忽略。
 
 - 全量数据范围：`config.db`（含 Identity）、`runtime/` 月库及其它文件、`curves/`、`archive/`、`audit-archive/`、`spool/`。数据库使用 SQLite Online Backup API；其它文件逐项记录大小和 SHA-256。备份目录本身不递归纳入。
+- 在线备份获取独占维护锁，等待正在执行的采集、补传和出站转移完成，并在快照期间阻止新的业务写入与保留清理；较大的数据集会相应延长采集等待，应在维护窗口执行并实测节拍影响。
 - 每套备份目录形如 `data/backups/2026-09-24_0230/`，只在完整清单写入后发布；`manifest.json` 的 `formatVersion=2`、`backupType=full-data`、`complete=true` 表明这是可验证的全量数据集。
 - **不包含**应用程序二进制、安装目录的 `customer.json` / `appsettings.Production.json` 和运行日志；这些部署资产应按客户运维策略单独备份。
 - **强烈建议**把 `backups` 目录定期拷到其它磁盘或 NAS；本机同盘不能防磁盘损坏。

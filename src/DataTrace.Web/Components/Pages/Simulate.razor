@@ -5,9 +5,11 @@
 @using DataTrace.Collector
 @using DataTrace.Domain.Entities
 @using DataTrace.Domain.Validation
+@using DataTrace.Application.Identity
 @using DataTrace.Plc.Simulator
 @inject IConfigRepository Config
 @inject IConfigurationChanges Changes
+@inject IConfigurationAuthorizer Authorizer
 @inject ILineSimulator Simulator
 @inject SimulatorCatalog Simulators
 @inject IDialogService DialogService
@@ -402,6 +404,8 @@
         _running = true;
         try
         {
+            var actor = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            await Authorizer.AuthorizeChangeAsync(actor);
             // 按真实结果提示：中途超时只走了半条线，不能报成"已走线"。
             var result = await Simulator.RunOnePalletAsync(_pallet.Trim());
             await AuditSafe("RunPallet", _pallet.Trim(), null,
@@ -451,6 +455,8 @@
         _triggering = station.Code;
         try
         {
+            var actor = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            await Authorizer.AuthorizeChangeAsync(actor);
             var driver = Simulators.Get(plc.Id);
             if (!driver.IsConnected)
             {

@@ -72,6 +72,52 @@ public class ShadowModeTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Later_station_uses_the_baseline_frozen_at_first_station(bool baselineExistedAtFirstStation)
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+        var first = harness.Station(0);
+        var later = harness.Station(1);
+        var laterCurve = later.Curves.First();
+
+        if (baselineExistedAtFirstStation)
+        {
+            // The frozen snapshot may contain templates for curves collected at later stations.
+            ReplaceBaseline(harness, laterCurve.Id, "压力", recipeCode: "", center: 1, sigma: 0.01);
+        }
+
+        SimulatorScenario.LoadStationCycle(harness.Simulator, harness.Plc, first, "P0056",
+            new SimulatedCycleOptions { Random = new Random(56), InjectNg = false });
+        Assert.Equal(ResultCodes.Success, await harness.RunAsync(first));
+
+        // Change or introduce the live cache only after the first station has persisted its recipe snapshot.
+        ReplaceBaseline(harness, laterCurve.Id, "压力", recipeCode: "", center: 1000, sigma: 100);
+        SimulatorScenario.LoadStationCycle(harness.Simulator, harness.Plc, later, "P0056",
+            new SimulatedCycleOptions { Random = new Random(57), InjectNg = false });
+        Assert.Equal(ResultCodes.Success, await harness.RunAsync(later));
+
+        var item = Assert.Single((await harness.QueryAsync("P0056")).Items, x => x.Record.StationId == later.Id);
+        var store = harness.Scope.ServiceProvider.GetRequiredService<IRuntimeStore>();
+        var record = await store.GetRecordAsync(item.MonthKey, item.Record.Id);
+        var feature = record!.Curves.First().Features.Single(x => x.SeriesName == "压力");
+        if (!baselineExistedAtFirstStation)
+        {
+            // Frozen null means "no baseline then"; the later live-cache population cannot add one.
+            Assert.False(feature.HasDeviation);
+            Assert.Null(feature.DeviationVerdict);
+            Assert.Equal(0, feature.BaselineSampleCount);
+        }
+        else
+        {
+            // The old template (center=1, 50 samples) remains in force despite the live cache replacement.
+            Assert.True(feature.HasDeviation);
+            Assert.Equal(50, feature.BaselineSampleCount);
+            Assert.Equal(CurveTemplateVerdict.Abnormal, feature.DeviationVerdict);
+        }
+    }
+
+    [Theory]
     [InlineData("NaN")]
     [InlineData("Infinity")]
     [InlineData("-Infinity")]

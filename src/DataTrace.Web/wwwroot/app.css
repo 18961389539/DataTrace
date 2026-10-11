@@ -2069,6 +2069,14 @@ h5:focus,
     line-height: 1.35;
 }
 
+.dt-settings-legacy-value {
+    grid-column: span 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
 .dt-path-trunc {
     display: block;
     max-width: 100%;
@@ -2166,6 +2174,10 @@ h5:focus,
     .dt-settings-row {
         grid-template-columns: 1fr;
         gap: 6px;
+    }
+
+    .dt-settings-legacy-value {
+        grid-column: auto;
     }
 }
 

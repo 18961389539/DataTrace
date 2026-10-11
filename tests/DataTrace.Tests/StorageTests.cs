@@ -379,6 +379,31 @@ public class FileSpoolStoreTests
     }
 
     [Fact]
+    public async Task List_page_reads_only_requested_oldest_entries()
+    {
+        using var workspace = new TempWorkspace();
+        var store = new FileSpoolStore(workspace.Path("spool"));
+        await store.SaveAsync(BuildRequest("P1", "S1"));
+        await store.SaveAsync(BuildRequest("P2", "S2"));
+        await store.SaveAsync(BuildRequest("P3", "S3"));
+
+        var page = await store.ListPageAsync(1, 1);
+        Assert.Equal("P2", Assert.Single(page).Request.Record.PalletCode);
+    }
+
+    [Fact]
+    public async Task Quota_rejection_does_not_publish_spool_file()
+    {
+        using var workspace = new TempWorkspace();
+        var root = workspace.Path("spool");
+        var store = new FileSpoolStore(root, maxBacklogBytes: 1);
+
+        await Assert.ThrowsAsync<IOException>(() => store.SaveAsync(BuildRequest("P1", "S1")));
+
+        Assert.Empty(Directory.GetFiles(root));
+    }
+
+    [Fact]
     public async Task Delete_removes_single_entry_and_ignores_unknown_name()
     {
         using var workspace = new TempWorkspace();

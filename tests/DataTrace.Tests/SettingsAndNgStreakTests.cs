@@ -16,7 +16,7 @@ namespace DataTrace.Tests;
 public class SettingsSaveServiceTests
 {
     private static ConfigRepository Repo(ConfigDbContext db)
-        => new(db, TestDatabase.FactoryFor(db), new CurveBaselineCache(), new RuntimeStatusHub());
+        => new(db, TestDatabase.FactoryFor(db));
 
     [Fact]
     public async Task Retention_changes_need_the_deletion_authorization()

@@ -36,6 +36,9 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Runtime
                     b.Property<DateTime>("CompleteTime")
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("ConfigurationRevisionId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("DurationMs")
                         .HasColumnType("INTEGER");
 
@@ -76,6 +79,8 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Runtime
                     b.HasKey("Id");
 
                     b.HasIndex("PalletSessionId");
+
+                    b.HasIndex("ConfigurationRevisionId");
 
                     b.HasIndex("SerialNo");
 
@@ -276,6 +281,9 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Runtime
                     b.Property<short?>("FirstNgResultCode")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("RecipeSnapshot")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("FirstNgStationCode")
                         .HasColumnType("TEXT");
 
@@ -306,6 +314,95 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Runtime
                     b.ToTable("PalletSessions");
                 });
 
+            modelBuilder.Entity("DataTrace.Domain.Entities.PendingWriteBack", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("CollectRecordId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("ManualReviewRequired")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("ManualReviewRequiredAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ManualReviewReason")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ManualReviewResolvedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ManualReviewResolvedBy")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ManualReviewResolution")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ManualReviewDeviceStateEvidence")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("PlcConnectionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("TriggerAddress")
+                        .HasColumnType("TEXT");
+
+                    b.Property<short?>("TriggerValue")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ConnectionFingerprint")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ConfirmedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MonthKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PalletCode")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("PalletSessionId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<short>("ResultCode")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("NextAttemptAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SerialNo")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("StationId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("StationCode")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("StationId", "ConfirmedAt");
+
+                    b.HasIndex("CollectRecordId")
+                        .IsUnique();
+
+                    b.ToTable("PendingWriteBacks");
+                });
+
             modelBuilder.Entity("DataTrace.Domain.Entities.ProductRecord", b =>
                 {
                     b.Property<long>("Id")
@@ -332,6 +429,44 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Runtime
                     b.HasIndex("CollectRecordId");
 
                     b.ToTable("ProductRecords");
+                });
+
+            modelBuilder.Entity("DataTrace.Domain.Entities.SessionIndexIntent", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("AppliedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Operation")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MonthKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PalletCode")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SerialNo")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AppliedAt", "CreatedAt");
+
+                    b.ToTable("SessionIndexIntents");
                 });
 
             modelBuilder.Entity("DataTrace.Domain.Entities.TagValue", b =>

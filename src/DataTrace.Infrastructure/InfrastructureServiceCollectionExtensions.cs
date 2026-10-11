@@ -66,6 +66,7 @@ public static class InfrastructureServiceCollectionExtensions
     {
         Directory.CreateDirectory(dataRoot);
         services.AddSingleton(new DataRootPaths(dataRoot));
+        services.AddSingleton<IDataMaintenanceBarrier, DataMaintenanceBarrier>();
         services.AddSingleton<IDatabaseBackupService, DatabaseBackupService>();
         services.AddQuartz();
         services.AddQuartzHostedService(options => options.WaitForJobsToComplete = true);
@@ -96,6 +97,12 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddSingleton<ISpoolStore>(_ => new FileSpoolStore(spoolPath));
         services.AddSingleton<IMesOutboxQueue, MesOutboxQueue>();
         services.AddSingleton<IMesOutboxRelay, MesOutboxRelay>();
+        // 在制索引意图对账：启动对账 + 周期兜底（见 SessionIndexReconciler）。
+        // 必须是 Scoped：它依赖 Scoped 的 IActiveSessionStore（持 ConfigDbContext），
+        // 注册成 Singleton 会在 Development 的 ValidateScopes 下直接让 builder.Build() 失败。
+        services.AddScoped<ISessionIndexRelay, SessionIndexRelay>();
+        // 待确认回写留证：采集幂等的月库存取。
+        services.AddSingleton<IPendingWriteBackStore, PendingWriteBackStore>();
         // 基线缓存必须是单例：后台服务写、采集流水线读，两边看到的必须是同一份。
         services.AddSingleton<ICurveBaselineCache, CurveBaselineCache>();
 
@@ -103,6 +110,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddScoped<IConfigurationChanges, ConfigurationChangeService>();
         services.AddScoped<ISettingsSave, SettingsSaveService>();
         services.AddScoped<IUserAdministration, UserAdministration>();
+        services.AddScoped<IConfigurationAuthorizer, ConfigurationAuthorizer>();
         services.AddScoped<IAuditLogger, AuditLogger>();
         services.AddScoped<IAlarmIncidents, AlarmIncidentStore>();
         services.AddScoped<IQualityIncidentService, QualityIncidentStore>();

@@ -9,7 +9,8 @@ public sealed record ConfigAudit(
     string EntityType,
     string? EntityKey,
     string? OldValue,
-    string? NewValue);
+    string? NewValue,
+    string? Reason = null);
 
 /// <summary>
 /// 配置写入整体失败：事务已回滚，库里没有这次改动，也没有缺一条审计。
@@ -31,6 +32,7 @@ public sealed class ConfigurationChangeFailedException(string message, Exception
 /// </remarks>
 public interface IConfigurationChanges
 {
+    Task RestoreRevisionAsync(long revisionId, ConfigAudit audit, CancellationToken cancellationToken = default);
     Task SaveStationAsync(Station station, ConfigAudit audit, CancellationToken cancellationToken = default);
     Task DeleteStationAsync(int id, ConfigAudit audit, CancellationToken cancellationToken = default);
     Task SaveTagAsync(TagDefinition tag, ConfigAudit audit, CancellationToken cancellationToken = default);

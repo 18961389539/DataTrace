@@ -1,5 +1,4 @@
 using DataTrace.Application.Configuration;
-using DataTrace.Application.Realtime;
 using DataTrace.Application.Evaluation;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
@@ -42,13 +41,14 @@ partial class ConfigRepository
 
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
-        // 采集开关等运行态字段变更时立刻唤醒看板，不依赖采集器循环。
-        _status.NotifyChanged();
-        await PushActiveRecipeToHubAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public Task<MesOutboxSnapshot> GetMesOutboxStatusAsync(CancellationToken cancellationToken = default)
         => ReadAsync(db => LoadMesOutboxStatusAsync(db, cancellationToken), cancellationToken);
+
+    public Task<bool> HasPendingMesOutboxForMonthAsync(string monthKey, CancellationToken cancellationToken = default)
+        => ReadAsync(db => db.MesOutbox.AsNoTracking()
+            .AnyAsync(x => x.MonthKey == monthKey && x.Status == MesOutboxStatus.Pending, cancellationToken), cancellationToken);
 
     public Task<MesSessionOutbox?> FindMesOutboxAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default)
         => ReadAsync(

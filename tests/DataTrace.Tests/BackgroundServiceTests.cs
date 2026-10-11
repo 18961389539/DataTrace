@@ -59,6 +59,7 @@ public class RetentionServiceTests
         ctx.ScopeFactory,
         ctx.Provider.GetRequiredService<ICurveFileStore>(),
         ctx.Provider.GetRequiredService<ICollectArchiveStore>(),
+        ctx.Provider.GetRequiredService<IDataMaintenanceBarrier>(),
         ctx.Logger<RetentionHostedService>());
 
     [Fact]
@@ -138,6 +139,54 @@ public class RetentionServiceTests
         // 月份键必须正好 6 位才能拆成 yyyy/mm 去清曲线目录；短键只删库，不猜目录。
         Assert.False(File.Exists(path));
         Assert.False(Directory.Exists(Path.Combine(ctx.Workspace.Root, "curves", "1999")));
+    }
+
+    [Fact]
+    public async Task Retention_keeps_external_file_months_referenced_by_another_runtime_database()
+    {
+        await using var ctx = await InfrastructureContext.CreateAsync();
+        await SetRetentionAsync(ctx, 3);
+        var expired = DateTime.Now.AddMonths(-40);
+        var retained = DateTime.Now;
+        var expiredKey = MonthKey(expired);
+        var retainedKey = MonthKey(retained);
+        var factory = ctx.Provider.GetRequiredService<RuntimeDbFactory>();
+        await SeedMonthAsync(ctx, expired);
+        await SeedMonthAsync(ctx, retained);
+
+        var curvePath = $"{expired:yyyy}/{expired:MM}/01/SN-CROSS-1_1_1.curve";
+        var archivePath = $"{expired:yyyy}/{expired:MM}/01/SN-CROSS-1_1.json";
+        var curveFile = Path.Combine(ctx.Workspace.Root, "curves", curvePath.Replace('/', Path.DirectorySeparatorChar));
+        var archiveFile = Path.Combine(ctx.Workspace.Root, "archive", archivePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(curveFile)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(archiveFile)!);
+        await File.WriteAllTextAsync(curveFile, "curve");
+        await File.WriteAllTextAsync(archiveFile, "archive");
+
+        await using (var db = factory.Open(retainedKey))
+        {
+            var session = new PalletSession
+            {
+                SerialNo = "SN-CROSS-1", PalletCode = "P-CROSS-1", StartTime = retained,
+                EndTime = retained.AddMinutes(1), Status = SessionStatus.Closed
+            };
+            var record = new CollectRecord
+            {
+                SerialNo = session.SerialNo, PalletCode = session.PalletCode, StationId = 1,
+                StationCode = "ST001", TriggerTime = expired, CompleteTime = expired,
+                PalletSession = session, ArchivePath = archivePath
+            };
+            record.Curves.Add(new CurveRecord { CurveDefinitionId = 1, RelativePath = curvePath });
+            db.PalletSessions.Add(session);
+            db.CollectRecords.Add(record);
+            await db.SaveChangesAsync();
+        }
+
+        await ctx.RunAsync(CreateService(ctx), () => !factory.Exists(expiredKey));
+
+        Assert.False(factory.Exists(expiredKey));
+        Assert.True(File.Exists(curveFile));
+        Assert.True(File.Exists(archiveFile));
     }
 }
 

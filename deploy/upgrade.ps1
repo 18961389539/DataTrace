@@ -106,10 +106,12 @@ $PublishDir = (Resolve-Path -LiteralPath $PublishDir).Path
 
 # 4) Copy binaries WITHOUT wiping data\ / branding\ / customer.json
 Write-DtInfo "Copying binaries (preserve data/branding/customer.json)..."
+$upgradeDataRoot = Resolve-DtDataRoot -InstallDir $InstallDir -DataRoot (Get-DtDataRootSetting -InstallDir $InstallDir -CustomerMeta $meta)
+$upgradeBinaryExclusion = Get-DtDataRootBinaryExclusion -InstallDir $InstallDir -DataRootPath $upgradeDataRoot
 $rcArgs = @(
     $PublishDir, $InstallDir,
-    '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NC', '/NS',
-    '/XD', 'data', 'branding', 'backups',
+    '/E', '/R:2', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS', '/NC', '/NS',
+    '/XD', 'data', 'branding', 'backups', $upgradeBinaryExclusion,
     '/XF', 'customer.json', 'appsettings.Production.json', '.datatrace.pid',
     'console.out.log', 'console.err.log', 'version.json'
 )

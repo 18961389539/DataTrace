@@ -1,4 +1,5 @@
 using DataTrace.Application.Configuration;
+using DataTrace.Application.Identity;
 using DataTrace.Collector;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
@@ -10,6 +11,25 @@ using Microsoft.Extensions.DependencyInjection;
 using Moq;
 
 namespace DataTrace.Web.Tests;
+
+internal sealed class AllowConfigurationAuthorizer : IConfigurationAuthorizer
+{
+    public Task AuthorizeChangeAsync(string actor, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
+    public Task AuthorizeRoleAsync(
+        string actor,
+        IReadOnlyCollection<string> allowedRoles,
+        CancellationToken cancellationToken = default,
+        bool allowMustChangePassword = false)
+        => Task.CompletedTask;
+
+    public Task AuthorizeCurrentRoleAsync(
+        IReadOnlyCollection<string> allowedRoles,
+        CancellationToken cancellationToken = default,
+        bool allowMustChangePassword = false)
+        => Task.CompletedTask;
+}
 
 /// <summary>内存配置仓库：暴露一份快照，记录写入调用。</summary>
 public sealed class FakeConfigRepository : IConfigRepository
@@ -27,10 +47,43 @@ public sealed class FakeConfigRepository : IConfigRepository
 
     public List<CurveDefinition> SavedCurves { get; } = [];
 
+    public List<ConfigurationRevisionSummary> RevisionHistory { get; } = [];
+
+    public Dictionary<long, ConfigurationRevision> RevisionDetails { get; } = [];
+
     /// <summary>置为异常工厂即可让读取/保存失败，用于验证页面的降级分支。</summary>
     public Func<Exception>? FailWith { get; set; }
 
     public int SnapshotReads => Calls.Count(c => c == nameof(GetSnapshotAsync));
+
+    // R13 配置修订链：组件层替身只保留最小形状（空历史），真库行为由 PersistenceStoreTests 覆盖。
+    public Task<IReadOnlyList<ConfigurationRevisionSummary>> GetRevisionHistoryAsync(
+        int skip = 0, int take = 50, CancellationToken cancellationToken = default)
+    {
+        Calls.Add(nameof(GetRevisionHistoryAsync));
+        return Task.FromResult<IReadOnlyList<ConfigurationRevisionSummary>>(RevisionHistory.Skip(skip).Take(take).ToList());
+    }
+
+    public Task<ConfigurationRevision?> GetRevisionAsync(long revisionId, CancellationToken cancellationToken = default)
+    {
+        Calls.Add(nameof(GetRevisionAsync));
+        return Task.FromResult(RevisionDetails.GetValueOrDefault(revisionId));
+    }
+
+    public Task<bool> HasPendingMesOutboxForMonthAsync(string monthKey, CancellationToken cancellationToken = default)
+        => Task.FromResult(false);
+
+    public Task AppendRevisionAsync(ConfigAudit audit, CancellationToken cancellationToken = default)
+    {
+        Calls.Add(nameof(AppendRevisionAsync));
+        return Task.CompletedTask;
+    }
+
+    public Task RestoreRevisionAsync(long revisionId, CancellationToken cancellationToken = default)
+    {
+        Calls.Add(nameof(RestoreRevisionAsync));
+        return Task.CompletedTask;
+    }
 
     public Task<AppConfigurationSnapshot> GetSnapshotAsync(CancellationToken cancellationToken = default)
     {

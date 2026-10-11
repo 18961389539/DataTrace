@@ -47,22 +47,16 @@ public sealed class SpoolReplayRunner
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var items = await _spool.ListAsync(cancellationToken).ConfigureAwait(false);
             var done = 0;
-            foreach (var (file, request) in items)
+            while (true)
             {
+                var items = await _spool.ListPageAsync(0, 1, cancellationToken).ConfigureAwait(false);
+                if (items.Count == 0 || cancellationToken.IsCancellationRequested) break;
+                var (file, request) = items[0];
                 // 取消只在两条之间生效：单条必须整件做完 —— 记录写进去了却没删掉缓存，
                 // 下一轮补传会把它再写一遍，正是这把锁要防的那种重复。
-                if (cancellationToken.IsCancellationRequested)
-                {
-                    break;
-                }
-
                 var result = await TryReplayAsync(file, request).ConfigureAwait(false);
-                if (!result.Ok)
-                {
-                    break;
-                }
+                if (!result.Ok) break;
 
                 done++;
                 onProgress?.Invoke(done);
@@ -111,9 +105,13 @@ public sealed class SpoolReplayRunner
         // 流水号与文件名都要带上：补传发生在另一个后台循环里，作用域早没了，
         // 只有这两个字段能把它接回"这件当初为什么没入库"那一行。
         var serial = request.Record.SerialNo;
+        // Spool may represent a database outage while PLC confirmation also failed.
+        // Keep unknown device state so replay atomically creates a pending confirmation.
         try
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
+            var maintenance = scope.ServiceProvider.GetRequiredService<IDataMaintenanceBarrier>();
+            await using var lease = await maintenance.EnterReadAsync(CancellationToken.None).ConfigureAwait(false);
 
             // 按同一次采集查重：流水号属于托盘会话，会被多个工站复用。
             // 数据已写入但缓存没删掉时，命中才按已入库收尾。
@@ -121,7 +119,19 @@ public sealed class SpoolReplayRunner
             var runtime = scope.ServiceProvider.GetRequiredService<ICollectWriter>();
             if (await query.ExistsCollectAsync(request.MonthKey, serial, request.Record.StationId, request.Record.TriggerTime).ConfigureAwait(false))
             {
+                if (request.Record.Id <= 0)
+                {
+                    request.Record.Id = await query.FindCollectRecordIdAsync(request.MonthKey, serial,
+                        request.Record.StationId, request.Record.TriggerTime).ConfigureAwait(false)
+                        ?? throw new InvalidOperationException("已检测到采集记录，但无法恢复其数据库 ID；保留 spool 继续重试");
+                }
                 await runtime.RepairPostCommitStateAsync(request).ConfigureAwait(false);
+                if (request.RequiresManualReviewOnPersistence && request.Record.Id > 0)
+                {
+                    var pending = scope.ServiceProvider.GetRequiredService<IPendingWriteBackStore>();
+                    await pending.RequireManualReviewByRecordIdAsync(request.MonthKey, request.Record.Id,
+                        "月库与本地缓存曾同时不可用；设备事件身份未经确认，等待现场人工核对").ConfigureAwait(false);
+                }
                 await _spool.DeleteAsync(file).ConfigureAwait(false);
                 _logger.LogInformation("补传跳过 {SpoolFile} {Serial}：记录已在库（上次写库已成功、缓存没删掉），清掉这条缓存", file, serial);
                 return SpoolReplayResult.Success;

@@ -31,6 +31,9 @@ public sealed class ActiveSessionStore : IActiveSessionStore
             existing.MonthKey = session.MonthKey;
             existing.StartTime = session.StartTime;
             existing.RecipeCode = session.RecipeCode ?? "";
+            // 快照只在首站写一次：后续工站的索引更新不带快照，null 时保留首站固化的参数，
+            // 不能被覆盖成空 —— 否则“冻结”就只剩名字。
+            existing.RecipeSnapshot = session.RecipeSnapshot ?? existing.RecipeSnapshot;
             existing.LastStationId = session.LastStationId;
             existing.LastStationCode = session.LastStationCode ?? "";
             existing.LastActivityAt = session.LastActivityAt;

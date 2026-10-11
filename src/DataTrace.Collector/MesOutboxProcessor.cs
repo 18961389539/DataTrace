@@ -71,7 +71,7 @@ public sealed class MesOutboxProcessor : BackgroundService
                             request.Headers.TryAddWithoutValidation("Idempotency-Key", item.EventId);
                         }
 
-                        var response = await client.SendAsync(request, stoppingToken)
+                        using var response = await client.SendAsync(request, stoppingToken)
                             .ConfigureAwait(false);
                         attempts.Add(new MesOutboxAttempt
                         {
@@ -83,6 +83,7 @@ public sealed class MesOutboxProcessor : BackgroundService
                             NextAttemptAt = response.IsSuccessStatusCode ? null : NextAttemptAt(attemptedAt, attemptCount)
                         });
                     }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { throw; }
                     catch (Exception ex)
                     {
                         attempts.Add(new MesOutboxAttempt
@@ -100,6 +101,7 @@ public sealed class MesOutboxProcessor : BackgroundService
 
                 await queue.SaveAttemptsAsync(attempts, stoppingToken).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "MES Outbox 循环异常");

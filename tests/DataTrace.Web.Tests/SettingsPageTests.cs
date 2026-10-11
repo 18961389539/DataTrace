@@ -35,6 +35,60 @@ public class SettingsPageTests : WebTestBase
     }
 
     [Fact]
+    public void Legacy_write_retry_values_are_read_only_and_say_that_automatic_resend_is_disabled()
+    {
+        var cut = Render();
+
+        Assert.Contains("旧版写回重试配置", cut.Markup);
+        Assert.Contains("旧配置·只读", cut.Markup);
+        Assert.Contains("不会自动重发", cut.Markup);
+        Assert.DoesNotContain(cut.FindAll("input"), input =>
+            input.GetAttribute("aria-label") is "写回重试次数" or "写回重试间隔(ms)");
+    }
+
+    [Fact]
+    public void Configuration_revision_history_shows_changes_with_credentials_redacted()
+    {
+        const string oldSecret = "old-secret-value";
+        const string newSecret = "new-secret-value";
+        const string driverCredential = "driver-credential-value";
+        const string mesEndpointCredential = "https://mes.local/push?token=endpoint-token";
+        var summary = new ConfigurationRevisionSummary(
+            9, 4, new DateTime(2026, 10, 11, 9, 30, 0), "admin", "修正工站地址", "Save",
+            "Station", "ST010", "Passed: full snapshot", 8,
+            "{\"changes\":[{\"path\":\"$.plcConnections[0].password\",\"before\":\"old-secret-value\",\"after\":\"new-secret-value\"},{\"path\":\"$.plcConnections[0].extra\",\"before\":\"driver-credential-value\",\"after\":\"new-driver-credential-value\"},{\"path\":\"$.settings.mesEndpoint\",\"before\":\"https://mes.local/push?token=endpoint-token\",\"after\":\"https://mes.local/push?token=new-endpoint-token\"},{\"path\":\"$.stations[0].triggerAddress\",\"before\":\"D100\",\"after\":\"D110\"}]}");
+        Config.RevisionHistory.Add(summary);
+        Config.RevisionDetails[summary.Id] = new ConfigurationRevision
+        {
+            Id = summary.Id,
+            ParentRevisionId = summary.ParentRevisionId,
+            ValidationResult = summary.ValidationResult,
+            DiffJson = summary.DiffJson,
+            SnapshotJson = "{}"
+        };
+
+        var cut = Render();
+
+        Assert.Contains("配置修订历史", cut.Markup);
+        Assert.Contains("修正工站地址", cut.Markup);
+        cut.FindAll("button").Single(button => button.TextContent.Contains("查看差异", StringComparison.Ordinal)).Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("$.plcConnections[0].password", cut.Markup);
+            Assert.Contains("[已脱敏]", cut.Markup);
+            Assert.DoesNotContain(oldSecret, cut.Markup);
+            Assert.DoesNotContain(newSecret, cut.Markup);
+            Assert.DoesNotContain(driverCredential, cut.Markup);
+            Assert.DoesNotContain("new-driver-credential-value", cut.Markup);
+            Assert.DoesNotContain(mesEndpointCredential, cut.Markup);
+            Assert.DoesNotContain("new-endpoint-token", cut.Markup);
+            Assert.Contains("D100", cut.Markup);
+            Assert.Contains("D110", cut.Markup);
+        });
+    }
+
+    [Fact]
     public void ShowsFullBackupCoverageAndVerifiedFileCounts()
     {
         Backup.Setup(backup => backup.GetStatus()).Returns(new BackupStatusSnapshot
@@ -358,7 +412,8 @@ public class SettingsPageTests : WebTestBase
                 It.IsAny<string?>(),
                 It.IsAny<string?>(),
                 It.IsAny<string?>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                "Success", "Blazor Server UI", null, null))
             .ThrowsAsync(new InvalidOperationException("审计库只读"));
 
         var cut = Render();

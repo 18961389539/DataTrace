@@ -52,6 +52,8 @@ public sealed partial class RuntimeStatusHub : IRuntimeStatusHub, ICollectEventB
 
     private DateTime _lastCollectorAt = DateTime.Now;
 
+    private CollectionReadinessStatus _collectionReadiness = new(false, "启动对账尚未完成", DateTime.Now);
+
     private readonly object _notifyGate = new();
 
     private bool _notifyPending;
@@ -91,6 +93,23 @@ public sealed partial class RuntimeStatusHub : IRuntimeStatusHub, ICollectEventB
                 return _recentSnapshot;
             }
         }
+    }
+
+    public CollectionReadinessStatus CollectionReadiness
+    {
+        get { lock (_gate) { return _collectionReadiness; } }
+    }
+
+    public void SetCollectionReadiness(bool ready, string? reason = null)
+    {
+        var normalized = ready ? null : string.IsNullOrWhiteSpace(reason) ? "采集服务尚未就绪" : reason.Trim();
+        lock (_gate)
+        {
+            if (_collectionReadiness.Ready == ready
+                && string.Equals(_collectionReadiness.Reason, normalized, StringComparison.Ordinal)) return;
+            _collectionReadiness = new CollectionReadinessStatus(ready, normalized, DateTime.Now);
+        }
+        ScheduleChanged();
     }
 
     public string? ActiveRecipeCode

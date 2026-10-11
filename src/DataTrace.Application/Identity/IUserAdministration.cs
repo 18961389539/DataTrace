@@ -41,6 +41,9 @@ public interface IUserAdministration
 {
     Task<IReadOnlyList<UserAccount>> ListAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>Gets eligible quality-incident assignees after revalidating the current Admin/Engineer actor.</summary>
+    Task<IReadOnlyList<UserAccount>> ListAssignableAsync(string actor, CancellationToken cancellationToken = default);
+
     Task<UserAdminResult> CreateAsync(
         string userName,
         string displayName,

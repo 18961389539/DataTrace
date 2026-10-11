@@ -1,7 +1,11 @@
 using System.Security.Claims;
 using DataTrace.Application.Backup;
 using DataTrace.Application.Configuration;
+using DataTrace.Application.Identity;
+using DataTrace.Application.Realtime;
 using DataTrace.Collector;
+using DataTrace.Infrastructure.Realtime;
+using DataTrace.Infrastructure.Storage;
 using DataTrace.Domain.Constants;
 using DataTrace.Plc.Simulator;
 using DataTrace.Web.Options;
@@ -51,6 +55,8 @@ public abstract class WebTestBase : IAsyncLifetime
     /// <summary>页面与断言共用同一个模拟 PLC 目录，便于回读寄存器。</summary>
     protected SimulatorCatalog Simulators { get; } = new();
 
+    protected RuntimeStatusHub RuntimeStatus { get; }
+
     protected WebTestBase()
     {
         Context = new TestContext();
@@ -73,6 +79,10 @@ public abstract class WebTestBase : IAsyncLifetime
         Context.JSInterop.Mode = JSRuntimeMode.Loose;
         Context.Services.AddMudServices();
         Context.Services.AddSingleton<IConfigRepository>(Config);
+        RuntimeStatus = new RuntimeStatusHub();
+        RuntimeStatus.SetCollectionReadiness(ready: true);
+        Context.Services.AddSingleton<IRuntimeStatusHub>(RuntimeStatus);
+        Context.Services.AddSingleton<IConfigurationAuthorizer, AllowConfigurationAuthorizer>();
         Context.Services.AddSingleton<IConfigurationChanges>(sp =>
             new ConfigurationChangeService(sp.GetRequiredService<IConfigRepository>(), sp.GetRequiredService<IAuditLogger>()));
         Context.Services.AddSingleton<ISettingsSave>(sp =>

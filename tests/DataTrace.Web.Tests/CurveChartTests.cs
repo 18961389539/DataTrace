@@ -55,7 +55,8 @@ public class CurveChartTests : WebTestBase
             a => a.WriteAsync(
                 "admin", "Export", "CurveDefinition", "202609/7/ST010_PD", null,
                 It.Is<string>(s => s.Contains("series=位移/压力") && s.Contains("points=3")),
-                It.IsAny<CancellationToken>()),
+                It.IsAny<CancellationToken>(),
+                "Success", "Blazor Server UI", null, null),
             Times.Once);
         Assert.Equal("已导出 3 个采样点", Toast.LastMessage);
     }
@@ -66,7 +67,8 @@ public class CurveChartTests : WebTestBase
         Audit
             .Setup(a => a.WriteAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(),
+                "Success", "Blazor Server UI", null, null))
             .ThrowsAsync(new InvalidOperationException("config.db 被占用"));
         var cut = Render();
 
@@ -94,7 +96,8 @@ public class CurveChartTests : WebTestBase
         Audit.Verify(
             a => a.WriteAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(),
+                "Success", "Blazor Server UI", null, null),
             Times.Never);
         Assert.Contains("没有可导出的成对数据", Toast.LastMessage);
     }

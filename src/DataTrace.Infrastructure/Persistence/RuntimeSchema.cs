@@ -12,7 +12,7 @@ namespace DataTrace.Infrastructure.Persistence;
 /// </remarks>
 public static class RuntimeSchema
 {
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 8;
 
     public static void Upgrade(RuntimeDbContext ctx)
     {
@@ -28,6 +28,48 @@ public static class RuntimeSchema
         {
             ApplyVersion2(ctx);
             WriteVersion(ctx, 2);
+        }
+
+        if (version < 3)
+        {
+            ApplyVersion3(ctx);
+            WriteVersion(ctx, 3);
+        }
+
+        if (version < 4)
+        {
+            ApplyVersion4(ctx);
+            WriteVersion(ctx, 4);
+        }
+
+        if (version < 5)
+        {
+            SqliteSchema.AddColumnIfMissing(ctx, "PalletSessions", "RecipeSnapshot", """ALTER TABLE "PalletSessions" ADD COLUMN "RecipeSnapshot" TEXT NULL""");
+            WriteVersion(ctx, 5);
+        }
+
+        if (version < 6)
+        {
+            SqliteSchema.AddColumnIfMissing(ctx, "PendingWriteBacks", "PlcConnectionId", """ALTER TABLE "PendingWriteBacks" ADD COLUMN "PlcConnectionId" INTEGER NULL""");
+            SqliteSchema.AddColumnIfMissing(ctx, "PendingWriteBacks", "TriggerAddress", """ALTER TABLE "PendingWriteBacks" ADD COLUMN "TriggerAddress" TEXT NULL""");
+            SqliteSchema.AddColumnIfMissing(ctx, "PendingWriteBacks", "TriggerValue", """ALTER TABLE "PendingWriteBacks" ADD COLUMN "TriggerValue" INTEGER NULL""");
+            SqliteSchema.AddColumnIfMissing(ctx, "PendingWriteBacks", "ConnectionFingerprint", """ALTER TABLE "PendingWriteBacks" ADD COLUMN "ConnectionFingerprint" TEXT NULL""");
+            WriteVersion(ctx, 6);
+        }
+
+        if (version < 7)
+        {
+            SqliteSchema.AddColumnIfMissing(ctx, "CollectRecords", "ConfigurationRevisionId", """ALTER TABLE "CollectRecords" ADD COLUMN "ConfigurationRevisionId" INTEGER NULL""");
+            ctx.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_CollectRecords_ConfigurationRevisionId" ON "CollectRecords" ("ConfigurationRevisionId")""");
+            WriteVersion(ctx, 7);
+        }
+
+        if (version < 8)
+        {
+            SqliteSchema.AddColumnIfMissing(ctx, "PendingWriteBacks", "CollectRecordId", """ALTER TABLE "PendingWriteBacks" ADD COLUMN "CollectRecordId" INTEGER NULL""");
+            ctx.Database.ExecuteSqlRaw("DROP INDEX IF EXISTS \"IX_PendingWriteBacks_SerialNo_StationId\"");
+            ctx.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_PendingWriteBacks_CollectRecordId" ON "PendingWriteBacks" ("CollectRecordId")""");
+            WriteVersion(ctx, 8);
         }
     }
 
@@ -233,5 +275,60 @@ public static class RuntimeSchema
             "PalletSessions",
             "FirstNgReason",
             """ALTER TABLE "PalletSessions" ADD COLUMN "FirstNgReason" TEXT NULL""");
+    }
+
+    /// <summary>
+    /// 在制索引意图表：月库提交与 config.db ActiveSessions 更新之间的硬退出窗口，
+    /// 由同事务写入的意图在重启后对账重放（仿 MES Outbox）。
+    /// 待确认回写表：回写失败的事件留证，触发命中时只重试确认、不重新采集（R01 采集幂等）。
+    /// </summary>
+    private static void ApplyVersion3(RuntimeDbContext ctx)
+    {
+        ctx.Database.ExecuteSqlRaw("""
+            CREATE TABLE IF NOT EXISTS "SessionIndexIntents" (
+                "Id"          INTEGER NOT NULL CONSTRAINT "PK_SessionIndexIntents" PRIMARY KEY AUTOINCREMENT,
+                "PalletCode"  TEXT    NOT NULL,
+                "SerialNo"    TEXT    NOT NULL,
+                "MonthKey"    TEXT    NOT NULL,
+                "Operation"   INTEGER NOT NULL,
+                "PayloadJson" TEXT    NOT NULL DEFAULT '',
+                "CreatedAt"   TEXT    NOT NULL,
+                "AppliedAt"   TEXT    NULL
+            );
+            """);
+        ctx.Database.ExecuteSqlRaw(
+            """CREATE INDEX IF NOT EXISTS "IX_SessionIndexIntents_AppliedAt_CreatedAt" ON "SessionIndexIntents" ("AppliedAt", "CreatedAt");""");
+
+        ctx.Database.ExecuteSqlRaw("""
+            CREATE TABLE IF NOT EXISTS "PendingWriteBacks" (
+                "Id"              INTEGER NOT NULL CONSTRAINT "PK_PendingWriteBacks" PRIMARY KEY AUTOINCREMENT,
+                "PalletCode"      TEXT    NOT NULL,
+                "SerialNo"        TEXT    NOT NULL,
+                "StationId"       INTEGER NOT NULL,
+                "StationCode"     TEXT    NOT NULL DEFAULT '',
+                "MonthKey"        TEXT    NOT NULL,
+                "PalletSessionId" INTEGER NOT NULL DEFAULT 0,
+                "ResultCode"      INTEGER NOT NULL,
+                "CreatedAt"       TEXT    NOT NULL,
+                "ConfirmedAt"     TEXT    NULL,
+                "Attempts"        INTEGER NOT NULL DEFAULT 0,
+                "NextAttemptAt"   TEXT    NOT NULL
+            );
+            """);
+        ctx.Database.ExecuteSqlRaw(
+            """CREATE INDEX IF NOT EXISTS "IX_PendingWriteBacks_StationId_ConfirmedAt" ON "PendingWriteBacks" ("StationId", "ConfirmedAt");""");
+        ctx.Database.ExecuteSqlRaw(
+            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PendingWriteBacks_SerialNo_StationId" ON "PendingWriteBacks" ("SerialNo", "StationId");""");
+    }
+
+    private static void ApplyVersion4(RuntimeDbContext ctx)
+    {
+        SqliteSchema.AddColumnIfMissing(ctx, "PendingWriteBacks", "ManualReviewRequired", """ALTER TABLE "PendingWriteBacks" ADD COLUMN "ManualReviewRequired" INTEGER NOT NULL DEFAULT 0""");
+        SqliteSchema.AddColumnIfMissing(ctx, "PendingWriteBacks", "ManualReviewRequiredAt", """ALTER TABLE "PendingWriteBacks" ADD COLUMN "ManualReviewRequiredAt" TEXT NULL""");
+        SqliteSchema.AddColumnIfMissing(ctx, "PendingWriteBacks", "ManualReviewReason", """ALTER TABLE "PendingWriteBacks" ADD COLUMN "ManualReviewReason" TEXT NULL""");
+        SqliteSchema.AddColumnIfMissing(ctx, "PendingWriteBacks", "ManualReviewResolvedAt", """ALTER TABLE "PendingWriteBacks" ADD COLUMN "ManualReviewResolvedAt" TEXT NULL""");
+        SqliteSchema.AddColumnIfMissing(ctx, "PendingWriteBacks", "ManualReviewResolvedBy", """ALTER TABLE "PendingWriteBacks" ADD COLUMN "ManualReviewResolvedBy" TEXT NULL""");
+        SqliteSchema.AddColumnIfMissing(ctx, "PendingWriteBacks", "ManualReviewResolution", """ALTER TABLE "PendingWriteBacks" ADD COLUMN "ManualReviewResolution" TEXT NULL""");
+        SqliteSchema.AddColumnIfMissing(ctx, "PendingWriteBacks", "ManualReviewDeviceStateEvidence", """ALTER TABLE "PendingWriteBacks" ADD COLUMN "ManualReviewDeviceStateEvidence" TEXT NULL""");
     }
 }

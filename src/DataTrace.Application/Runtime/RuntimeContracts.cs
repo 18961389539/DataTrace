@@ -15,6 +15,26 @@ public sealed class CollectSaveRequest
     public MesOutboxIntent? MesOutbox { get; init; }
     public ActiveSessionIndex? ActiveSession { get; init; }
     public bool RemoveActiveSession { get; init; }
+    public long? ConfigurationRevisionId { get; init; }
+
+    /// <summary>
+    /// 这件是否需要登记 PLC 响应码确认留证。实时采集为 true：提交时就在月库事务里登记，
+    /// 避免提交后、留证前硬退出造成重复采集。历史导入等不需要确认的请求才设为 false；
+    /// spool 重放保留原值，以便未确认事件在补传后继续受保护。
+    /// </summary>
+    public bool RequiresWriteBack { get; set; } = true;
+
+    /// <summary>
+    /// In-memory dual-storage recovery only: when this exact request is eventually persisted,
+    /// its confirmation row must remain blocked for an operator because device event identity
+    /// was not established while storage was unavailable. Older spool files default to false.
+    /// </summary>
+    public bool RequiresManualReviewOnPersistence { get; set; }
+
+    public int? ConfirmationPlcConnectionId { get; set; }
+    public string? ConfirmationTriggerAddress { get; set; }
+    public short? ConfirmationTriggerValue { get; set; }
+    public string? ConfirmationConnectionFingerprint { get; set; }
 }
 
 public sealed class CurvePayloadWrite
@@ -213,6 +233,7 @@ public interface ICollectQuery
     Task<bool> ExistsBySerialAsync(string monthKey, string serialNo, CancellationToken cancellationToken = default);
     /// <summary>补传幂等判断：同一流水号下的不同工站或不同触发必须分别入库。</summary>
     Task<bool> ExistsCollectAsync(string monthKey, string serialNo, int stationId, DateTime triggerTime, CancellationToken cancellationToken = default);
+    Task<long?> FindCollectRecordIdAsync(string monthKey, string serialNo, int stationId, DateTime triggerTime, CancellationToken cancellationToken = default);
     Task<PalletSession?> GetSessionAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<CollectRecord>> GetSessionRecordsAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesBySerialNoAsync(string serialNo, CancellationToken cancellationToken = default);
@@ -324,6 +345,19 @@ public interface IRuntimeAnalytics
 public interface IRuntimeRetention
 {
     IReadOnlyList<string> ListMonthKeys();
+
+    /// <summary>
+    /// 删除前的阻断检查（R10）：未确认回写留证、未决索引意图、未发布 MES 意图、
+    /// 未关闭会话、以及截止之后仍有写入的跨月记录 —— 任何一项存在都说明这个月库
+    /// 还被业务或恢复链路引用，整月删除会撕碎防重复证据或丢投递。
+    /// </summary>
+    Task<IReadOnlyList<string>> GetDeletionBlockersAsync(string monthKey, DateTime cutoff, CancellationToken cancellationToken = default);
+
+    /// <summary>Counts curve/raw-file references in all retained month DBs except the candidate DB being removed.</summary>
+    Task<(int Curves, int Archives)> GetExternalFileReferenceCountsAsync(
+        string fileMonthKey, string excludingRuntimeMonthKey, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<string>> GetExternalFileMonthKeysAsync(string runtimeMonthKey, CancellationToken cancellationToken = default);
+
     Task DeleteMonthAsync(string monthKey, CancellationToken cancellationToken = default);
 }
 
@@ -338,6 +372,70 @@ public interface IActiveSessionStore
     Task UpsertAsync(ActiveSessionIndex session, CancellationToken cancellationToken = default);
     Task RemoveByPalletAsync(string palletCode, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ActiveSessionIndex>> ListAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// 在制索引意图对账：月库提交后、config.db 索引更新前的硬退出窗口留下的未决意图，
+/// 由它按产生顺序条件重放（仿 MES Outbox）。启动时先跑一轮，再周期兜底。
+/// </summary>
+public interface ISessionIndexRelay
+{
+    /// <summary>处理各月库未决意图，返回成功应用（而非作废）的条数。</summary>
+    Task<int> RelayPendingAsync(int takePerMonth, CancellationToken cancellationToken = default);
+    Task<int> CountPendingAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// "已提交、待回写确认"事件的留证存取。留证落在记录所在月库，重启后依然生效；
+/// 触发命中时查到未确认留证就只重试确认，绝不重新采集。
+/// </summary>
+public interface IPendingWriteBackStore
+{
+    /// <summary>留证一件已提交但回写未确认的事件；(流水号, 工站) 唯一，重复留证幂等。</summary>
+    Task SaveAsync(PendingWriteBack pending, CancellationToken cancellationToken = default);
+
+    /// <summary>某工站最早的未确认留证；没有返回 null。跨月份库查找。</summary>
+    Task<PendingWriteBack?> FindOldestUnconfirmedAsync(int stationId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<PendingWriteBack>> ListManualReviewAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<PendingWriteBack>> ListUnconfirmedAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>仅用于可证明事件身份的兼容路径；当前设备无稳定事件号时不得调用。</summary>
+    Task DeleteAsync(string monthKey, long id, CancellationToken cancellationToken = default);
+
+    /// <summary>只销账与当前月库记录精确匹配的非人工留证。</summary>
+    Task DeleteByRecordIdAsync(string monthKey, long collectRecordId, CancellationToken cancellationToken = default);
+
+    /// <summary>兼容留证重试元数据；当前无事件身份协议时人工阻塞不会推进自动重试。</summary>
+    Task RecordFailedAttemptAsync(string monthKey, long id, int attempts, DateTime nextAttemptAt, CancellationToken cancellationToken = default);
+
+    Task RequireManualReviewAsync(string monthKey, long id, string reason, CancellationToken cancellationToken = default);
+    Task RequireManualReviewByRecordIdAsync(string monthKey, long collectRecordId, string reason, CancellationToken cancellationToken = default);
+
+    Task<bool> ResolveManualReviewAsync(string monthKey, long id, string operatorName, string reason, string deviceStateEvidence, DateTime resolvedAt, CancellationToken cancellationToken = default);
+}
+
+public sealed record ManualConfirmationResolutionResult(bool Resolved, string? Error = null);
+
+public enum PendingConfirmationResolutionMode
+{
+    /// <summary>Operator verified the original physical event is still present; write and read back its saved result code.</summary>
+    SameEventConfirmed,
+    /// <summary>Operator verified the original device already cleared the trigger; require the configured target to read non-trigger.</summary>
+    DeviceAlreadyAcknowledged
+}
+
+/// <summary>Explicit operator resolution after the physical trigger/event has been checked and handled.</summary>
+public interface IConfirmationRecoveryService
+{
+    Task<IReadOnlyList<PendingWriteBack>> ListPendingAsync(CancellationToken cancellationToken = default);
+    Task<ManualConfirmationResolutionResult> ResolveAsync(
+        string monthKey,
+        long pendingId,
+        string operatorName,
+        string reason,
+        string deviceStateEvidence,
+        PendingConfirmationResolutionMode mode,
+        CancellationToken cancellationToken = default);
 }
 
 public interface ISerialNumberGenerator
@@ -459,6 +557,10 @@ public interface ISpoolStore
     Task<string> SaveAsync(CollectSaveRequest request, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<(string FileName, CollectSaveRequest Request)>> ListAsync(CancellationToken cancellationToken = default);
+    /// <summary>只反序列化有限页的最早缓存，避免大积压一次性载入所有曲线载荷。</summary>
+    Task<IReadOnlyList<(string FileName, CollectSaveRequest Request)>> ListPageAsync(int skip, int take, CancellationToken cancellationToken = default);
+    Task<bool> HasMonthEntriesAsync(string monthKey, CancellationToken cancellationToken = default);
+    Task<bool> HasPendingForStationAsync(int stationId, CancellationToken cancellationToken = default);
     Task DeleteAsync(string fileName, CancellationToken cancellationToken = default);
 
     /// <summary>

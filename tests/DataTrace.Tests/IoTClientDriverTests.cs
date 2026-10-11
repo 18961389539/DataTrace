@@ -380,19 +380,38 @@ public class IoTClientDriverTests
     }
 
     [Fact]
-    public async Task Modbus_readWords_truncatedResponse_padsRemainingWordsWithZero()
+    public async Task Modbus_readWords_truncatedResponse_throws_instead_of_padding()
     {
         await using var server = new FakeModbusTcpServer();
         await using var driver = new IoTClientPlcDriver(Connection(PlcBrand.ModbusTcp, server.Port));
         await driver.ConnectAsync();
 
-        // 请求 3 个字但只回 3 个字节：反转后末字取到单字节，第 3 字补零。
+        // 请求 3 个字但只回 3 个字节：短帧补零会把"没读到"伪装成"设备真的是零"，
+        // 触发、占位、测量和曲线都会被错误解码 —— 必须报通讯失败，绝不把缺失数据当 0。
         server.RawReadOverride = [0x11, 0x22, 0x33];
+        Assert.True(driver.TryParseAddress("40001", out var address));
+
+        var ex = await Assert.ThrowsAsync<PlcDriverException>(() => driver.ReadWordsAsync(address, 3));
+
+        Assert.Contains("长度不足", ex.Message);
+        Assert.Contains("3 字", ex.Message);
+        Assert.False(driver.IsConnected);
+    }
+
+    [Fact]
+    public async Task Modbus_readWords_fullLengthAllZeroPayload_is_normal_success()
+    {
+        await using var server = new FakeModbusTcpServer();
+        await using var driver = new IoTClientPlcDriver(Connection(PlcBrand.ModbusTcp, server.Port));
+        await driver.ConnectAsync();
+
+        // 长度完整、内容全零是合法读数（设备真的就是 0），与短帧有本质区别，必须正常返回。
+        server.RawReadOverride = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
         Assert.True(driver.TryParseAddress("40001", out var address));
 
         var words = await driver.ReadWordsAsync(address, 3);
 
-        Assert.Equal(new ushort[] { 0x2233, 0x0011, 0x0000 }, words);
+        Assert.Equal(new ushort[] { 0, 0, 0 }, words);
     }
 
     [Fact]

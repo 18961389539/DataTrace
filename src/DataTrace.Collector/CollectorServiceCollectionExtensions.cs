@@ -1,4 +1,5 @@
 using DataTrace.Application.Realtime;
+using DataTrace.Application.Runtime;
 using DataTrace.Domain.Validation;
 using DataTrace.Plc;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,6 +25,7 @@ public static class CollectorServiceCollectionExtensions
     {
         services.AddDataTraceMesHttpClient();
         services.AddSingleton<StationCollectPipeline>();
+        services.AddScoped<IConfirmationRecoveryService, ConfirmationRecoveryService>();
         services.AddScoped<CurveBaselineFactory>();
         services.AddSingleton<CollectionHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<CollectionHostedService>());
@@ -40,6 +42,8 @@ public static class CollectorServiceCollectionExtensions
         services.AddSingleton<SpoolReplayRunner>();
         services.AddHostedService<SpoolReplayService>();
         services.AddHostedService<MesOutboxProcessor>();
+        // 在制索引意图对账：启动先跑一轮，回收硬退出窗口留下的未决索引更新。
+        services.AddHostedService<SessionIndexReconciler>();
         services.AddHostedService<RetentionHostedService>();
         services.AddHostedService<CurveBaselineRefresher>();
         return services;

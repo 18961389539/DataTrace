@@ -2,6 +2,7 @@ using DataTrace.Application.Backup;
 using DataTrace.Application.Configuration;
 using DataTrace.Infrastructure.Backup;
 using DataTrace.Infrastructure.Persistence;
+using DataTrace.Infrastructure.Storage;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Quartz;
@@ -90,11 +91,31 @@ public class DatabaseBackupTests
         Assert.False(status.LastSucceeded);
     }
 
-    private static DatabaseBackupService CreateService(DataRootPaths paths) =>
+    [Fact]
+    public async Task Backup_waits_for_the_shared_business_operation_barrier()
+    {
+        using var workspace = new TempWorkspace();
+        var paths = new DataRootPaths(workspace.Path("data"));
+        await CreateSqliteAsync(paths.ConfigDbPath);
+        var barrier = new DataMaintenanceBarrier();
+        var service = CreateService(paths, barrier);
+
+        var activeOperation = await barrier.EnterReadAsync();
+        var backupTask = service.RunBackupAsync();
+        await Task.Delay(100);
+        Assert.False(backupTask.IsCompleted);
+
+        await activeOperation.DisposeAsync();
+        var result = await backupTask.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(result.Success, result.Error);
+    }
+
+    private static DatabaseBackupService CreateService(DataRootPaths paths, DataMaintenanceBarrier? barrier = null) =>
         new(
             paths,
             new StubBackupOptions(new BackupOptions()),
             new RuntimeDbFactory(paths.RuntimeDirectory),
+            barrier ?? new DataMaintenanceBarrier(),
             NullLogger<DatabaseBackupService>.Instance);
 
     private static async Task CreateSqliteAsync(string path)

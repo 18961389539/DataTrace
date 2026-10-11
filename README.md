@@ -5,11 +5,12 @@
 ## 构建
 
 ```bat
-dotnet build DataTrace.slnx -c Release
+dotnet build DataTrace.sln -c Release
 ```
 
-- **SDK 版本由 `global.json` 固定为 .NET 10**（`.slnx` 解决方案格式需要它），各工程仍 target `net8.0`，
-  跑起来需要 8.0 运行时。CI 因此同时装 8.0.x 与 10.0.x（见 `.github/workflows/dotnet-test.yml`）。
+- **SDK 版本由 `global.json` 固定为 .NET 8**（8.0.4xx，`latestFeature`），各工程 target `net8.0`，
+  SDK / MSBuild / TFM 三者一致。解决方案是 `.sln` 格式：`.slnx` 需要 9.0.200+ 的 MSBuild，
+  与固定 .NET 8 SDK 互斥，因此已回退（见 `.github/workflows/dotnet-test.yml`）。
 - 包版本集中在 `Directory.Packages.props`（CPM）：`.csproj` 里只写 `Include`，改版本改一处。
 - `TreatWarningsAsErrors=true`：多出一个告警构建就红。确有需要临时放行时用 `WarningsNotAsErrors` 逐条列出。
 
@@ -174,7 +175,15 @@ set Kestrel__Endpoints__Http__Url=http://0.0.0.0:5100
 `DataRoot` 可以指到别的盘（相对路径按 exe 目录解析），**日志也一起跟着走**——
 装在 `C:\Program Files` 下时服务对安装目录通常没有写权限。
 
-保留策略默认 3 年，按整月删除。
+保留策略默认 3 年，按整月检查。含较新记录、未完成会话或未决意图的月份保留；删除文件前检查跨月引用。
+
+### 故障核对与配置修订
+
+PLC 响应码只做单次写入及读回核对。确认不明时保留待确认记录、阻止重采，Admin/Engineer 可在诊断页核对原设备并填写处理证据。设备协议没有稳定事件号，不能自动把旧结果重发给可能已经换件的设备。
+
+启动或更换 PLC 目标后，若首次读取的触发值已经有效且没有持久留证，工站会阻塞；现场先核对原物料与设备，让设备回到非触发状态，程序实际观察到后再接受新触发。数据库与本地缓存同时不可写时停止确认，原请求每工站保留一份于内存，只重试保存；这份内存不能抵抗断电。
+
+系统设置页提供配置修订历史、脱敏差异与完整回滚。回滚前停用采集并处理设备在途状态；每次回滚生成新的审计修订。工程质量修复、验证证据及现场验收限制见 [修复验收记录](docs/QUALITY_FIX_VERIFICATION_2026-10-11.md)。
 
 ### 按一次采集查日志
 

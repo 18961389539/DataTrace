@@ -1,4 +1,5 @@
 using DataTrace.Application.Mes;
+using DataTrace.Application.Runtime;
 using Microsoft.EntityFrameworkCore;
 
 namespace DataTrace.Infrastructure.Persistence;
@@ -7,15 +8,18 @@ public sealed class MesOutboxRelay : IMesOutboxRelay
 {
     private readonly RuntimeDbFactory _runtimeFactory;
     private readonly IMesOutboxQueue _queue;
+    private readonly IDataMaintenanceBarrier? _maintenance;
 
-    public MesOutboxRelay(RuntimeDbFactory runtimeFactory, IMesOutboxQueue queue)
+    public MesOutboxRelay(RuntimeDbFactory runtimeFactory, IMesOutboxQueue queue, IDataMaintenanceBarrier? maintenance = null)
     {
         _runtimeFactory = runtimeFactory;
         _queue = queue;
+        _maintenance = maintenance;
     }
 
     public async Task<int> RelayPendingAsync(int takePerMonth, CancellationToken cancellationToken = default)
     {
+        await using var lease = _maintenance is null ? null : await _maintenance.EnterReadAsync(cancellationToken).ConfigureAwait(false);
         var relayed = 0;
         foreach (var monthKey in _runtimeFactory.ListMonthKeys().Where(RuntimeDbFactory.IsValidMonthKey))
         {

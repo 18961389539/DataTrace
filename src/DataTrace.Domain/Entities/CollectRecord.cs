@@ -25,6 +25,9 @@ public class CollectRecord
     /// </summary>
     public string RecipeCode { get; set; } = "";
 
+    /// <summary>Immutable configuration revision captured by the pallet session for this record.</summary>
+    public long? ConfigurationRevisionId { get; set; }
+
     /// <summary>
     /// 本次采集读到的原始 JSON 文件的归档相对路径。空串表示该工站点位不来自文件。
     /// 设备每件覆写同一个文件，归档是唯一能事后回看"设备当时到底写了什么"的东西。

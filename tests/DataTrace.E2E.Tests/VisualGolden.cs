@@ -51,14 +51,14 @@ public static class VisualGolden
     private static string ResolveGoldenDirectory()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "DataTrace.slnx")))
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "DataTrace.sln")))
         {
             directory = directory.Parent;
         }
 
         return directory is null
             ? throw new InvalidOperationException(
-                $"从 {AppContext.BaseDirectory} 往上找不到 DataTrace.slnx，无法确定基线目录。")
+                $"从 {AppContext.BaseDirectory} 往上找不到 DataTrace.sln，无法确定基线目录。")
             : Path.Combine(directory.FullName, "tests", "DataTrace.E2E.Tests", "golden");
     }
 

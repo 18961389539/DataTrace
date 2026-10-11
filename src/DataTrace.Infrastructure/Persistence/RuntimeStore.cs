@@ -1,3 +1,4 @@
+using System.Text.Json;
 using DataTrace.Application.Alarms;
 using DataTrace.Application.Reporting;
 using DataTrace.Application.Runtime;
@@ -11,6 +12,8 @@ namespace DataTrace.Infrastructure.Persistence;
 // 报表/统计见 RuntimeStore.Analytics.cs，按月保留见 RuntimeStore.Retention.cs。
 public sealed partial class RuntimeStore : IRuntimeStore
 {
+    private static readonly JsonSerializerOptions IndexIntentJsonOptions = new(JsonSerializerDefaults.Web);
+
     private readonly RuntimeDbFactory _factory;
 
     private readonly ICurveFileStore _curves;
@@ -26,6 +29,7 @@ public sealed partial class RuntimeStore : IRuntimeStore
 
     public async Task SaveAsync(CollectSaveRequest request, CancellationToken cancellationToken = default)
     {
+        request.Record.ConfigurationRevisionId ??= request.ConfigurationRevisionId;
         var writtenFiles = new List<string>();
         var databaseCommitted = false;
         try
@@ -65,6 +69,7 @@ public sealed partial class RuntimeStore : IRuntimeStore
                         existing.Status = request.UpsertSession.Status;
                         existing.EndTime = request.UpsertSession.EndTime;
                         existing.Judgement = request.UpsertSession.Judgement;
+                        existing.RecipeSnapshot ??= request.UpsertSession.RecipeSnapshot;
                     }
 
                     request.Record.PalletSessionId = request.UpsertSession.Id;
@@ -83,6 +88,68 @@ public sealed partial class RuntimeStore : IRuntimeStore
 
             db.CollectRecords.Add(request.Record);
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+
+            // 在制索引更新意图与业务数据同事务落库：commit 之后、config.db 索引更新之前
+            // 硬退出（断电/杀进程）不会走任何 catch，索引会永久错位。有了这条意图，
+            // 重启后的对账器能重放这次索引更新，窗口收敛为"索引晚一点追上"。
+            // 放在首次 SaveChanges 之后：新会话（首站）的 PalletSessionId 要等它生成；
+            // ActiveSession.SessionId 也要在这里填上 —— 它原本要到提交后的 UpdateActiveSessionAsync
+            // 才赋值，序列化进载荷的就会是 0，重放时查不到会话、意图被误作废。
+            SessionIndexIntent? indexIntent = null;
+            if (request.RemoveActiveSession || request.ActiveSession is not null)
+            {
+                if (request.ActiveSession is not null)
+                {
+                    request.ActiveSession.SessionId = request.Record.PalletSessionId;
+                }
+
+                indexIntent = new SessionIndexIntent
+                {
+                    PalletCode = request.Record.PalletCode,
+                    SerialNo = request.Record.SerialNo,
+                    MonthKey = request.MonthKey,
+                    Operation = request.RemoveActiveSession ? 1 : 0,
+                    PayloadJson = request.ActiveSession is null
+                        ? ""
+                        : JsonSerializer.Serialize(request.ActiveSession, IndexIntentJsonOptions),
+                    CreatedAt = DateTime.Now
+                };
+                db.SessionIndexIntents.Add(indexIntent);
+                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            // 提交即登记"待回写确认"（与业务数据同事务）：回写发生在落库之后，
+            // 留证晚于提交的话，提交后到留证前的硬退出会让同一件被重新采集 ——
+            // 首站把旧会话标异常、新建流水，其他站新增重复记录。登记后回写成功销账
+            // （StationCollectPipeline.finally）；协议没有事件号时，后续会转持久人工核对，
+            // 不会自动把旧结果重写到可能已变化的触发事件。
+            if (request.RequiresWriteBack)
+            {
+                db.PendingWriteBacks.Add(new PendingWriteBack
+                {
+                    CollectRecordId = request.Record.Id,
+                    PalletCode = request.Record.PalletCode,
+                    SerialNo = request.Record.SerialNo,
+                    StationId = request.Record.StationId,
+                    StationCode = request.Record.StationCode,
+                    MonthKey = request.MonthKey,
+                    PalletSessionId = request.Record.PalletSessionId,
+                    ResultCode = request.Record.ResultCode,
+                    PlcConnectionId = request.ConfirmationPlcConnectionId,
+                    TriggerAddress = request.ConfirmationTriggerAddress,
+                    TriggerValue = request.ConfirmationTriggerValue,
+                    ConnectionFingerprint = request.ConfirmationConnectionFingerprint,
+                    CreatedAt = DateTime.Now,
+                    Attempts = 0,
+                    NextAttemptAt = DateTime.Now,
+                    ManualReviewRequired = request.RequiresManualReviewOnPersistence,
+                    ManualReviewRequiredAt = request.RequiresManualReviewOnPersistence ? DateTime.Now : null,
+                    ManualReviewReason = request.RequiresManualReviewOnPersistence
+                        ? "月库与本地缓存曾同时不可用；设备事件身份未经确认，等待现场人工核对"
+                        : null
+                });
+                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            }
 
             if (request.MesOutbox is not null)
             {
@@ -151,6 +218,11 @@ public sealed partial class RuntimeStore : IRuntimeStore
             try
             {
                 await UpdateActiveSessionAsync(request, replay: false, cancellationToken).ConfigureAwait(false);
+                // 索引更新成功，意图完成使命。删除失败无害：重放时会按相同条件判定为已完成/作废。
+                if (indexIntent is not null)
+                {
+                    await DeleteIndexIntentAsync(request.MonthKey, indexIntent.Id, cancellationToken).ConfigureAwait(false);
+                }
             }
             catch (Exception ex)
             {
@@ -187,6 +259,26 @@ public sealed partial class RuntimeStore : IRuntimeStore
 
     public Task RepairPostCommitStateAsync(CollectSaveRequest request, CancellationToken cancellationToken = default)
         => UpdateActiveSessionAsync(request, replay: true, cancellationToken);
+
+    /// <summary>索引更新成功后删除已完成的意图；重放对账见 <c>SessionIndexRelay</c>。</summary>
+    private async Task DeleteIndexIntentAsync(string monthKey, long intentId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var db = _factory.Open(monthKey);
+            var intent = await db.SessionIndexIntents.FirstOrDefaultAsync(x => x.Id == intentId, cancellationToken)
+                .ConfigureAwait(false);
+            if (intent is not null)
+            {
+                db.SessionIndexIntents.Remove(intent);
+                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // 意图删不掉只会让对账器多做一次幂等重放，不影响业务正确性，不值得让本次保存报错。
+        }
+    }
 
     private async Task UpdateActiveSessionAsync(CollectSaveRequest request, bool replay, CancellationToken cancellationToken)
     {

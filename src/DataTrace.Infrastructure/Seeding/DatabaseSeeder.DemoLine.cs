@@ -80,7 +80,7 @@ partial class DatabaseSeeder
             "ST010", "上料工站", 10, first: true, last: false,
             trigger: "D1000", pallet: "D1010",
             press: "D1100", temp: "D1110",
-            y: "D2000", x: "D2400"));
+            y: "D2200", x: "D2400"));
 
         plc.Stations.Add(CreateStation(
             "ST020", "压装工站", 20, first: false, last: false,

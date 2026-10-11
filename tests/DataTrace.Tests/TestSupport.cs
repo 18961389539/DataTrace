@@ -85,12 +85,16 @@ internal static class ConfigMigrationTestSupport
 {
     public static async Task RewindMesOutboxDeliveryStateAsync(ConfigDbContext db)
     {
+        // 语义：把用当前模型 EnsureCreated 出来的库退回「baseline 之后、后续迁移之前」的老结构。
+        // 之后每加一个配置库迁移，这里都要把对应的列/索引退回去，否则迁移重放会撞 duplicate column。
         await db.Database.ExecuteSqlRawAsync("DROP INDEX IF EXISTS \"IX_MesOutbox_EventId\"");
         await db.Database.ExecuteSqlRawAsync("DROP INDEX IF EXISTS \"IX_MesOutbox_Status_NextAttemptAt_CreatedAt\"");
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"MesOutbox\" DROP COLUMN \"EventId\"");
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"MesOutbox\" DROP COLUMN \"NextAttemptAt\"");
         await db.Database.ExecuteSqlRawAsync(
             "CREATE INDEX \"IX_MesOutbox_Status_CreatedAt\" ON \"MesOutbox\" (\"Status\", \"CreatedAt\")");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"ActiveSessions\" DROP COLUMN \"RecipeSnapshot\"");
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE IF EXISTS \"ConfigurationRevisions\"");
     }
 }
 
@@ -135,7 +139,7 @@ internal sealed class CollectHarness : IAsyncDisposable
     /// <summary>常驻作用域，用于解析 IRuntimeStore / IConfigRepository 等 Scoped 服务。</summary>
     public IServiceScope Scope { get; private set; } = null!;
 
-    public static async Task<CollectHarness> CreateAsync(bool configureMes = false)
+    public static async Task<CollectHarness> CreateAsync(bool configureMes = false, Action<IServiceCollection>? configureServices = null)
     {
         var workspace = new TempWorkspace();
         var root = workspace.Root;
@@ -151,6 +155,7 @@ internal sealed class CollectHarness : IAsyncDisposable
         services.AddSingleton<StationCollectPipeline>();
         // 采集侧运行时观测：与 AddDataTraceCollector 里的注册保持一致。
         services.AddSingleton<ICollectorDiagnostics, CollectorDiagnostics>();
+        configureServices?.Invoke(services);
         var provider = services.BuildServiceProvider();
 
         using (var seedScope = provider.CreateScope())
@@ -260,6 +265,13 @@ internal class FakeRuntimeStore : IRuntimeStore
         => Task.FromResult(Records.Any(x =>
             x.MonthKey == monthKey && string.Equals(x.Record.SerialNo, serialNo, StringComparison.Ordinal)
             && x.Record.StationId == stationId && x.Record.TriggerTime == triggerTime));
+
+    public Task<long?> FindCollectRecordIdAsync(string monthKey, string serialNo, int stationId, DateTime triggerTime, CancellationToken cancellationToken = default)
+        => Task.FromResult(Records
+            .Where(x => x.MonthKey == monthKey && string.Equals(x.Record.SerialNo, serialNo, StringComparison.Ordinal)
+                        && x.Record.StationId == stationId && x.Record.TriggerTime == triggerTime)
+            .Select(x => (long?)x.Record.Id)
+            .FirstOrDefault());
 
     public Task<DataTrace.Domain.Entities.PalletSession?> GetSessionAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default)
         => Task.FromResult<DataTrace.Domain.Entities.PalletSession?>(null);
@@ -440,6 +452,18 @@ internal class FakeRuntimeStore : IRuntimeStore
 
     public IReadOnlyList<string> ListMonthKeys()
         => Records.Select(x => x.MonthKey).Distinct(StringComparer.Ordinal).OrderBy(x => x, StringComparer.Ordinal).ToList();
+
+    public Task<IReadOnlyList<string>> GetDeletionBlockersAsync(
+        string monthKey, DateTime cutoff, CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<string>>([]);
+
+    public Task<(int Curves, int Archives)> GetExternalFileReferenceCountsAsync(
+        string fileMonthKey, string excludingRuntimeMonthKey, CancellationToken cancellationToken = default)
+        => Task.FromResult((0, 0));
+
+    public Task<IReadOnlyList<string>> GetExternalFileMonthKeysAsync(
+        string runtimeMonthKey, CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<string>>([]);
 
     public Task DeleteMonthAsync(string monthKey, CancellationToken cancellationToken = default)
     {

@@ -12,6 +12,9 @@ public class PalletSession
     public SessionStatus Status { get; set; } = SessionStatus.Open;
     public Judgement Judgement { get; set; } = Judgement.None;
 
+    /// <summary>Immutable rule snapshot created at the first station; retained after active index removal.</summary>
+    public string? RecipeSnapshot { get; set; }
+
     /// <summary>
     /// 会话判定为 NG 时，第一条触发 NG 的工站编码（按触发时刻，同一时刻再按记录 Id）。
     /// 判定本身只说"任一站 NG 即 NG"，事后区分不了"首站就废"和"末站才废" ——

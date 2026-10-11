@@ -17,6 +17,8 @@ public sealed class CurveFileStore : ICurveFileStore
 
     /// <summary>单条曲线的序列数上限，同为防御性上限。</summary>
     private const int MaxSeriesPerCurve = 64;
+    private const int MaxCompressedBytes = 32 * 1024 * 1024;
+    private const int MaxExpandedBytes = 64 * 1024 * 1024;
 
     private static readonly byte[] Magic = "DTCR"u8.ToArray();
 
@@ -66,7 +68,24 @@ public sealed class CurveFileStore : ICurveFileStore
     public async Task<CurvePayload> ReadAsync(string relativePath, uint? expectedCrc = null, CancellationToken cancellationToken = default)
     {
         var full = Path.Combine(_root, relativePath.Replace('/', Path.DirectorySeparatorChar));
-        var compressed = await File.ReadAllBytesAsync(full, cancellationToken).ConfigureAwait(false);
+        var info = new FileInfo(full);
+        if (info.Length > MaxCompressedBytes)
+            throw new InvalidDataException($"曲线文件超过压缩大小上限：{relativePath}");
+        byte[] compressed;
+        await using (var inputFile = new FileStream(full, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 81920, useAsync: true))
+        using (var compressedBuffer = new MemoryStream((int)Math.Min(info.Length, MaxCompressedBytes)))
+        {
+            var compressedReadChunk = new byte[81920];
+            while (true)
+            {
+                var read = await inputFile.ReadAsync(compressedReadChunk, cancellationToken).ConfigureAwait(false);
+                if (read == 0) break;
+                if (compressedBuffer.Length + read > MaxCompressedBytes)
+                    throw new InvalidDataException($"曲线文件超过压缩大小上限：{relativePath}");
+                await compressedBuffer.WriteAsync(compressedReadChunk.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+            }
+            compressed = compressedBuffer.ToArray();
+        }
 
         // 校验的是压缩后的字节，与写入口径一致。损坏与缺失必须区分开：
         // 都报"文件缺失"的话，现场会去查备份而不是查磁盘。
@@ -79,7 +98,15 @@ public sealed class CurveFileStore : ICurveFileStore
         using var input = new MemoryStream(compressed);
         using var brotli = new BrotliStream(input, CompressionMode.Decompress);
         using var output = new MemoryStream();
-        await brotli.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+        var chunk = new byte[81920];
+        while (true)
+        {
+            var read = await brotli.ReadAsync(chunk, cancellationToken).ConfigureAwait(false);
+            if (read == 0) break;
+            if (output.Length + read > MaxExpandedBytes)
+                throw new InvalidDataException($"曲线文件超过解压大小上限：{relativePath}");
+            await output.WriteAsync(chunk.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+        }
         return Deserialize(output.ToArray());
     }
 

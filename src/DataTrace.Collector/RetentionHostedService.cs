@@ -12,17 +12,20 @@ public sealed class RetentionHostedService : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ICurveFileStore _curves;
     private readonly ICollectArchiveStore _archives;
+    private readonly IDataMaintenanceBarrier _maintenance;
     private readonly ILogger<RetentionHostedService> _logger;
 
     public RetentionHostedService(
         IServiceScopeFactory scopeFactory,
         ICurveFileStore curves,
         ICollectArchiveStore archives,
+        IDataMaintenanceBarrier maintenance,
         ILogger<RetentionHostedService> logger)
     {
         _scopeFactory = scopeFactory;
         _curves = curves;
         _archives = archives;
+        _maintenance = maintenance;
         _logger = logger;
     }
 
@@ -33,27 +36,82 @@ public sealed class RetentionHostedService : BackgroundService
             try
             {
                 await using var scope = _scopeFactory.CreateAsyncScope();
-                var snapshot = await scope.ServiceProvider.GetRequiredService<IConfigRepository>()
-                    .GetSnapshotAsync(stoppingToken).ConfigureAwait(false);
+                var configuration = scope.ServiceProvider.GetRequiredService<IConfigRepository>();
+                var snapshot = await configuration.GetSnapshotAsync(stoppingToken).ConfigureAwait(false);
                 var years = Math.Max(1, snapshot.Settings.RetentionYears);
                 var cutoff = DateTime.Now.AddYears(-years);
                 var cutoffKey = cutoff.ToString("yyyyMM");
                 var runtime = scope.ServiceProvider.GetRequiredService<IRuntimeRetention>();
                 var audit = scope.ServiceProvider.GetRequiredService<IAuditLogger>();
+                var activeSessions = scope.ServiceProvider.GetRequiredService<IActiveSessionStore>();
+                var spool = scope.ServiceProvider.GetRequiredService<ISpoolStore>();
 
                 foreach (var month in runtime.ListMonthKeys())
                 {
                     if (string.CompareOrdinal(month, cutoffKey) < 0)
                     {
+                        var retainedCurveReferences = 0;
+                        var retainedArchiveReferences = 0;
+                        var retainedSpoolFileMonths = 0;
                         try
                         {
-                            await runtime.DeleteMonthAsync(month, stoppingToken).ConfigureAwait(false);
-                            if (month.Length == 6)
+                            await using var maintenanceLease = await _maintenance.EnterWriteAsync(stoppingToken).ConfigureAwait(false);
+                            var blockers = (await runtime.GetDeletionBlockersAsync(month, cutoff, stoppingToken).ConfigureAwait(false)).ToList();
+                            if ((await activeSessions.ListAsync(stoppingToken).ConfigureAwait(false)).Any(x => x.MonthKey == month))
                             {
-                                await _curves.DeleteMonthAsync(month[..4], month[4..], stoppingToken).ConfigureAwait(false);
-                                // 归档与曲线同样是"记录之外的大对象"：记录被清理后它们再无引用方，
-                                // 不一起删就会在数据盘上无声堆积。
-                                await _archives.DeleteMonthAsync(month[..4], month[4..], stoppingToken).ConfigureAwait(false);
+                                blockers.Add("active session index still references this month");
+                            }
+
+                            if (await spool.HasMonthEntriesAsync(month, stoppingToken).ConfigureAwait(false))
+                            {
+                                blockers.Add("spool entry or unreadable spool file may reference this month");
+                            }
+
+                            if (await configuration.HasPendingMesOutboxForMonthAsync(month, stoppingToken).ConfigureAwait(false))
+                            {
+                                blockers.Add("pending MES delivery still references this month");
+                            }
+
+                            if (blockers.Count > 0)
+                            {
+                                var detail = string.Join("; ", blockers.Distinct(StringComparer.Ordinal));
+                                await audit.WriteAsync(
+                                    "system", "RetainRuntimeMonth", "RuntimeData", month,
+                                    null, detail, stoppingToken, outcome: "Blocked", source: "Runtime retention service",
+                                    correlationId: Guid.NewGuid().ToString("N")).ConfigureAwait(false);
+                                _logger.LogWarning("保留月份库 {Month}：仍有数据或外部引用 {Blockers}", month, detail);
+                                continue;
+                            }
+
+                            var referencedFileMonths = await runtime.GetExternalFileMonthKeysAsync(month, stoppingToken)
+                                .ConfigureAwait(false);
+                            if (month.Length == 6 && month.All(char.IsAsciiDigit))
+                                referencedFileMonths = referencedFileMonths.Append(month).Distinct(StringComparer.Ordinal).ToList();
+                            await runtime.DeleteMonthAsync(month, stoppingToken).ConfigureAwait(false);
+                            foreach (var fileMonth in referencedFileMonths)
+                            {
+                                // 文件目录按采集触发月分区，而运行库按会话起始月分区：另一
+                                // 个保留月库的跨月记录可能仍引用本目录，必须先做全库引用核验。
+                                if (await spool.HasMonthEntriesAsync(fileMonth, stoppingToken).ConfigureAwait(false))
+                                {
+                                    retainedSpoolFileMonths++;
+                                    _logger.LogWarning(
+                                        "已清理运行库 {Month}，保留仍被 spool 引用的外置文件目录 {FileMonth}",
+                                        month, fileMonth);
+                                    continue;
+                                }
+                                var externalReferences = await runtime.GetExternalFileReferenceCountsAsync(fileMonth, month, stoppingToken)
+                                    .ConfigureAwait(false);
+                                retainedCurveReferences += externalReferences.Curves;
+                                retainedArchiveReferences += externalReferences.Archives;
+                                if (externalReferences.Curves == 0)
+                                    await _curves.DeleteMonthAsync(fileMonth[..4], fileMonth[4..], stoppingToken).ConfigureAwait(false);
+                                if (externalReferences.Archives == 0)
+                                    await _archives.DeleteMonthAsync(fileMonth[..4], fileMonth[4..], stoppingToken).ConfigureAwait(false);
+                                if (externalReferences.Curves > 0 || externalReferences.Archives > 0)
+                                    _logger.LogWarning(
+                                        "已清理运行库 {Month}，保留仍被其他月份引用的外置文件目录（曲线 {CurveRefs}，归档 {ArchiveRefs}）",
+                                        month, externalReferences.Curves, externalReferences.Archives);
                             }
                         }
                         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -89,7 +147,7 @@ public sealed class RetentionHostedService : BackgroundService
                                 "RuntimeData",
                                 month,
                                 null,
-                                "runtime month, curves, and raw archive deleted",
+                                $"runtime month deleted; curve references in other months={retainedCurveReferences}; archive references in other months={retainedArchiveReferences}; spool-referenced file months={retainedSpoolFileMonths}",
                                 stoppingToken,
                                 source: "Runtime retention service",
                                 correlationId: Guid.NewGuid().ToString("N")).ConfigureAwait(false);

@@ -139,6 +139,21 @@ partial class RuntimeStore
             .ConfigureAwait(false);
     }
 
+    public async Task<long?> FindCollectRecordIdAsync(string monthKey, string serialNo, int stationId, DateTime triggerTime, CancellationToken cancellationToken = default)
+    {
+        if (!_factory.Exists(monthKey))
+        {
+            return null;
+        }
+
+        await using var db = _factory.Open(monthKey);
+        return await db.CollectRecords.AsNoTracking()
+            .Where(x => x.SerialNo == serialNo && x.StationId == stationId && x.TriggerTime == triggerTime)
+            .Select(x => (long?)x.Id)
+            .FirstOrDefaultAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public async Task<PalletSession?> GetSessionAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default)
     {
         if (!_factory.Exists(monthKey))

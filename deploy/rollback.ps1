@@ -91,10 +91,15 @@ Write-DtWarn "Schema is forward-only (additive columns). Restore binaries+data t
 Start-Sleep -Seconds 1
 
 Write-DtInfo "Restoring binaries from backup..."
+$currentBinaryData = Resolve-DtDataRoot -InstallDir $InstallDir -DataRoot (Get-DtDataRootSetting -InstallDir $InstallDir -CustomerMeta (Read-CustomerMeta -InstallDir $InstallDir))
+$currentBinaryExclusion = Get-DtDataRootBinaryExclusion -InstallDir $InstallDir -DataRootPath $currentBinaryData
+$backupBinaryMeta = if (Test-Path -LiteralPath (Join-Path $BackupDir 'customer.json')) { Read-CustomerMeta -InstallDir $BackupDir } else { $null }
+$backupBinaryData = Resolve-DtDataRoot -InstallDir $InstallDir -DataRoot (Get-DtDataRootSetting -InstallDir $BackupDir -CustomerMeta $backupBinaryMeta)
+$backupBinaryExclusion = Get-DtDataRootBinaryExclusion -InstallDir $InstallDir -DataRootPath $backupBinaryData
 $rcArgs = @(
     $binSrc, $InstallDir,
-    '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NC', '/NS',
-    '/XD', 'data', 'branding', 'backups',
+    '/E', '/R:2', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS', '/NC', '/NS',
+    '/XD', 'data', 'branding', 'backups', $currentBinaryExclusion, $backupBinaryExclusion,
     '/XF', 'customer.json', 'appsettings.Production.json', '.datatrace.pid',
     'console.out.log', 'console.err.log', 'version.json'
 )
@@ -119,19 +124,79 @@ if ($RestoreData) {
         Write-DtFail "Backup has no data\: $dataBak"
         exit 1
     }
-    $dataDir = Join-Path $InstallDir 'data'
+    $manifestPath = Join-Path $BackupDir 'backup-manifest.json'
+    $manifest = $null
+    if (Test-Path -LiteralPath $manifestPath) {
+        try { $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json }
+        catch { Write-DtFail "Invalid backup manifest: $manifestPath"; exit 1 }
+    }
+    $snapshotMetaPath = Join-Path $BackupDir 'customer.json'
+    $snapshotMeta = $null
+    if (Test-Path -LiteralPath $snapshotMetaPath) {
+        try { $snapshotMeta = Get-Content -LiteralPath $snapshotMetaPath -Raw -Encoding UTF8 | ConvertFrom-Json }
+        catch { Write-DtFail "Invalid backup customer.json: $snapshotMetaPath"; exit 1 }
+    }
+    if ($manifest -and $manifest.DataRootPath) {
+        $dataDir = [System.IO.Path]::GetFullPath([string]$manifest.DataRootPath)
+        if ($snapshotMeta) {
+            $snapshotRoot = Resolve-DtDataRoot -InstallDir $InstallDir -DataRoot (Get-DtDataRootSetting -InstallDir $InstallDir -CustomerMeta $snapshotMeta)
+            if (-not [string]::Equals($dataDir.TrimEnd('\'), $snapshotRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
+                Write-DtFail "Backup DataRoot metadata mismatch: manifest=$dataDir customer.json=$snapshotRoot"
+                exit 1
+            }
+        }
+    } elseif ($snapshotMeta) {
+        # Legacy upgrade backups have no manifest path; use the saved deployment setting, never InstallDir\data by assumption.
+        $dataDir = Resolve-DtDataRoot -InstallDir $InstallDir -DataRoot (Get-DtDataRootSetting -InstallDir $InstallDir -CustomerMeta $snapshotMeta)
+    } else {
+        Write-DtFail "Backup does not identify its DataRoot; refusing to restore into an assumed directory."
+        exit 1
+    }
+
+    Write-DtInfo "Restore source: $dataBak"
+    Write-DtInfo "Restore target: $dataDir"
+    $validatedRestoreRoot = [IO.Path]::GetFullPath($dataDir).TrimEnd('\')
+    $validatedBackupPath = [IO.Path]::GetFullPath($BackupDir).TrimEnd('\')
+    if ([string]::Equals($validatedRestoreRoot, $validatedBackupPath, [StringComparison]::OrdinalIgnoreCase) -or
+        $validatedBackupPath.StartsWith($validatedRestoreRoot + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Restore backup must not be contained in the DataRoot being replaced.'
+    }
+    $bad = $null
     if (Test-Path -LiteralPath $dataDir) {
-        $bad = Join-Path $InstallDir ("data-bad-" + (Get-Date).ToString('yyyyMMdd-HHmmss'))
+        $bad = $dataDir.TrimEnd('\') + "-bad-" + (Get-Date).ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
         Write-DtWarn "Moving current data to $bad"
         Move-Item -LiteralPath $dataDir -Destination $bad -Force
     }
+    $dataParent = Split-Path -Parent $dataDir
+    if ($dataParent) { New-Item -ItemType Directory -Path $dataParent -Force | Out-Null }
     New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
-    & robocopy $dataBak $dataDir /E /NFL /NDL /NJH /NJS /NC /NS | Out-Null
-    if ($LASTEXITCODE -ge 8) {
-        Write-DtFail "restore data robocopy failed: $LASTEXITCODE"
+    & robocopy $dataBak $dataDir /E /R:2 /W:1 /NFL /NDL /NJH /NJS /NC /NS | Out-Null
+    $restoreRc = $LASTEXITCODE
+    if ($restoreRc -ge 8) {
+        $partial = $dataDir.TrimEnd('\') + "-restore-failed-" + (Get-Date).ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
+        if (Test-Path -LiteralPath $dataDir) {
+            Move-Item -LiteralPath $dataDir -Destination $partial -Force
+        }
+        if ($bad -and (Test-Path -LiteralPath $bad)) {
+            Move-Item -LiteralPath $bad -Destination $dataDir -Force
+            Write-DtWarn "Restore failed; the pre-rollback DataRoot was put back. Partial restore preserved at $partial"
+        } else {
+            Write-DtWarn "Restore failed; partial data preserved at $partial"
+        }
+        Write-DtFail "restore data robocopy failed: $restoreRc"
         exit 1
     }
-    Write-DtOk "data\ restored from backup"
+    $restoreManifest = [ordered]@{
+        RestoredAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+        DataBackupPath = (Resolve-Path -LiteralPath $dataBak).Path
+        DataRootTarget = $dataDir
+        InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
+    }
+    [System.IO.File]::WriteAllText(
+        (Join-Path $BackupDir 'rollback-restore-manifest.json'),
+        ($restoreManifest | ConvertTo-Json -Depth 5),
+        [System.Text.UTF8Encoding]::new($false))
+    Write-DtOk "configured DataRoot restored from backup"
 } else {
     Write-DtInfo "data\ left as-is (pass -RestoreData to restore DB from backup)"
 }

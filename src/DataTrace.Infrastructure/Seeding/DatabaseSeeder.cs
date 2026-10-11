@@ -5,6 +5,7 @@ using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
 using DataTrace.Infrastructure.Identity;
 using DataTrace.Infrastructure.Persistence;
+using DataTrace.Application.Configuration;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -16,6 +17,7 @@ namespace DataTrace.Infrastructure.Seeding;
 public sealed partial class DatabaseSeeder
 {
     private readonly ConfigDbContext _db;
+    private readonly IConfigRepository _configuration;
 
     private readonly UserManager<ApplicationUser> _users;
 
@@ -25,11 +27,13 @@ public sealed partial class DatabaseSeeder
 
     public DatabaseSeeder(
         ConfigDbContext db,
+        IConfigRepository configuration,
         UserManager<ApplicationUser> users,
         RoleManager<IdentityRole> roles,
         ILogger<DatabaseSeeder> logger)
     {
         _db = db;
+        _configuration = configuration;
         _users = users;
         _roles = roles;
         _logger = logger;
@@ -186,6 +190,16 @@ public sealed partial class DatabaseSeeder
 
         // 演示型号必须在点位落库拿到主键之后才能建（限值覆盖行要引用 TagId）。
         await SeedDemoRecipeAsync(cancellationToken).ConfigureAwait(false);
+        if (!await _db.ConfigurationRevisions.AnyAsync(cancellationToken).ConfigureAwait(false))
+        {
+            await _configuration.InTransactionAsync(async token =>
+            {
+                await _configuration.AppendRevisionAsync(
+                    new ConfigAudit("system", "InitializeConfiguration", "Configuration", null, null, null,
+                        "首次建库或升级时记录当前完整配置基线"), token).ConfigureAwait(false);
+                return true;
+            }, cancellationToken).ConfigureAwait(false);
+        }
         _logger.LogInformation("配置库初始化完成");
     }
 

@@ -90,11 +90,14 @@ public sealed class PlcRuntimeStatus
     public string? LastError { get; set; }
 }
 
+public sealed record CollectionReadinessStatus(bool Ready, string? Reason, DateTime CheckedAt);
+
 public interface IRuntimeStatusHub
 {
     IReadOnlyList<StationRuntimeStatus> Stations { get; }
     IReadOnlyList<PlcRuntimeStatus> Plcs { get; }
     IReadOnlyList<CollectFeedItem> Recent { get; }
+    CollectionReadinessStatus CollectionReadiness { get; }
 
     /// <summary>当前生效型号编码；null/空表示未选择（按点位默认限值）。</summary>
     string? ActiveRecipeCode { get; }
@@ -105,6 +108,7 @@ public interface IRuntimeStatusHub
     event Action? Changed;
     void UpsertStation(StationRuntimeStatus status);
     void UpsertPlc(PlcRuntimeStatus status);
+    void SetCollectionReadiness(bool ready, string? reason = null);
 
     /// <summary>
     /// 更新当前型号指示（配置切换或采集器加载快照时调用）。

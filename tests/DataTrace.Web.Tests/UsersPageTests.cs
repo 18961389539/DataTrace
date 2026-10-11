@@ -153,7 +153,8 @@ public class UsersPageTests : WebTestBase
         Audit
             .Setup(a => a.WriteAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(),
+                "Success", "Blazor Server UI", null, null))
             .ThrowsAsync(new InvalidOperationException("审计库只读"));
 
         var provider = RenderDialogHost();
@@ -248,7 +249,8 @@ public class UsersPageTests : WebTestBase
             a => a.WriteAsync("admin", "Update", "User", "zhang",
                 It.Is<string?>(old => old != null && old.Contains("Operator")),
                 It.Is<string?>(@new => @new != null && @new.Contains("Engineer")),
-                It.IsAny<CancellationToken>()),
+                It.IsAny<CancellationToken>(),
+                "Success", "Blazor Server UI", null, null),
             Times.Once);
     }
 

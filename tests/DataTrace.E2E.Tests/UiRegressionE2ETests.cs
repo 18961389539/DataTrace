@@ -439,14 +439,51 @@ public class UiRegressionE2ETests : E2ETestBase
         await ClickTabUntilAsync("过程能力", "Cpk（组内）");
         await RefreshUntilCapabilityHasSamplesAsync();
 
-        var chart = Page.Locator(".dt-chart canvas").First;
-        await chart.WaitForAsync();
+        // MudTabs may retain an inactive panel. A hidden chart still has an ECharts instance and
+        // tooltip node, so selecting the first DOM match can move the real mouse over a zero-sized
+        // canvas while waiting on that hidden tooltip forever.
+        var chart = Page.Locator(".dt-chart:visible").First;
+        await chart.Locator("canvas").WaitForAsync();
         await chart.ScrollIntoViewIfNeededAsync();
-        var box = await chart.BoundingBoxAsync();
-        Assert.NotNull(box);
-        await Page.Mouse.MoveAsync(box.X + box.Width / 2, box.Y + box.Height / 2);
+        await Page.WaitForFunctionAsync("""
+            () => [...document.querySelectorAll('.dt-chart')].some(element => {
+                const rect = element.getBoundingClientRect();
+                const instance = window.echarts?.getInstanceByDom(element);
+                if (!instance || rect.width <= 0 || rect.height <= 0) return false;
+                return (instance.getOption()?.series ?? []).some(series =>
+                    (series.data ?? []).some(point => point?.tip && Array.isArray(point.value)));
+            })
+            """);
+        var point = await chart.EvaluateAsync<double[]>("""
+            element => {
+                const instance = window.echarts?.getInstanceByDom(element);
+                const option = instance?.getOption();
+                if (!instance || instance.getWidth() <= 0 || instance.getHeight() <= 0) return [];
+                const seriesIndex = (option.series ?? []).findIndex(series =>
+                    (series.data ?? []).some(point => point?.tip && Array.isArray(point.value)));
+                if (seriesIndex < 0) return [];
+                const data = option.series[seriesIndex].data.filter(point => point?.tip && Array.isArray(point.value));
+                if (data.length === 0) return [];
 
-        var readout = Page.Locator(".echarts-tooltip").First;
+                // Stay away from the x-axis endpoints, where an axis pointer can land on the
+                // border instead of inside the grid. Use a real plotted x value and the grid's
+                // vertical midpoint so the mouse is unambiguously inside the plot area.
+                const sample = data[Math.floor(data.length / 2)];
+                const x = instance.convertToPixel({ xAxisIndex: 0 }, sample.value[0]);
+                const yAxis = Array.isArray(option.yAxis) ? option.yAxis[0] : option.yAxis;
+                const y = instance.convertToPixel(
+                    { yAxisIndex: 0 },
+                    (Number(yAxis.min) + Number(yAxis.max)) / 2);
+                if (!instance.containPixel({ gridIndex: 0 }, [x, y])) return [];
+
+                const rect = element.getBoundingClientRect();
+                return [rect.left + x, rect.top + y];
+            }
+            """);
+        Assert.Equal(2, point.Length);
+        await Page.Mouse.MoveAsync((float)point[0], (float)point[1]);
+
+        var readout = Page.Locator(".echarts-tooltip:visible").First;
         await readout.WaitForAsync(new() { Timeout = 5000 });
 
         var text = await readout.InnerTextAsync();
@@ -526,7 +563,8 @@ public class UiRegressionE2ETests : E2ETestBase
 
             await WaitForAsync("text=未保存");
 
-            await ClickAsync("保存");
+            // 页面已处于交互状态。ClickAsync 会重复等初始标题焦点信号，输入框操作后焦点已不在标题上。
+            await Page.GetByRole(AriaRole.Button, new() { Name = "保存" }).ClickAsync();
             await WaitBodyContainsAsync("已保存并下发采集端");
 
             // 胶囊是标题的兄弟节点而不是子孙，所以按文字等它消失。
@@ -541,7 +579,7 @@ public class UiRegressionE2ETests : E2ETestBase
             await scanInterval.ClickAsync();
             await scanInterval.FillAsync(original);
             await scanInterval.PressAsync("Tab");
-            await ClickAsync("保存");
+            await Page.GetByRole(AriaRole.Button, new() { Name = "保存" }).ClickAsync();
         }
     }
 

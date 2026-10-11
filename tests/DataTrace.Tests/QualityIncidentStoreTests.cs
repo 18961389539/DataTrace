@@ -36,8 +36,7 @@ public class QualityIncidentStoreTests
         };
 
         var factory = context.Scope.ServiceProvider.GetRequiredService<IDbContextFactory<ConfigDbContext>>();
-        var users = context.Scope.ServiceProvider.GetRequiredService<IUserAdministration>();
-        var store = new QualityIncidentStore(factory, collectQuery, users);
+        var store = new QualityIncidentStore(factory, collectQuery, new EmptyUserAdministration());
         var config = context.Scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
         var qualityAlarm = new AlarmIncident
         {
@@ -210,6 +209,9 @@ public class QualityIncidentStoreTests
         public Task<bool> ExistsCollectAsync(string monthKey, string serialNo, int stationId, DateTime triggerTime, CancellationToken cancellationToken = default)
             => Task.FromResult(false);
 
+        public Task<long?> FindCollectRecordIdAsync(string monthKey, string serialNo, int stationId, DateTime triggerTime, CancellationToken cancellationToken = default)
+            => Task.FromResult<long?>(null);
+
         public Task<PalletSession?> GetSessionAsync(string monthKey, long sessionId, CancellationToken cancellationToken = default)
             => Task.FromResult<PalletSession?>(null);
 
@@ -221,5 +223,32 @@ public class QualityIncidentStoreTests
 
         public Task<IReadOnlyList<CollectSessionTrace>> FindSessionTracesBySessionIdAsync(long sessionId, CancellationToken cancellationToken = default)
             => Task.FromResult<IReadOnlyList<CollectSessionTrace>>([]);
+    }
+
+    private sealed class EmptyUserAdministration : IUserAdministration
+    {
+        public Task<IReadOnlyList<UserAccount>> ListAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<UserAccount>>([]);
+
+        public Task<IReadOnlyList<UserAccount>> ListAssignableAsync(string actor, CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<UserAccount>>([]);
+
+        public Task<UserAdminResult> CreateAsync(string userName, string displayName, string password, string role, string actor, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<UserAdminResult> UpdateAsync(string userName, string displayName, IReadOnlyList<string> roles, string actor, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<UserAdminResult> UnlockAsync(string userName, string actor, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<UserAdminResult> ResetPasswordAsync(string userName, string password, string actor, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<UserAdminResult> ChangePasswordAsync(string userName, string currentPassword, string newPassword, string actor, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<UserAdminResult> DeleteAsync(string userName, string actor, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
     }
 }
