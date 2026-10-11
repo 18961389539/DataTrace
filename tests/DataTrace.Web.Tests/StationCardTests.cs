@@ -96,9 +96,9 @@ public class StationCardTests
         Assert.True(cut.RenderCount > before);
     }
 
-    /// <summary>曲线以标签选择器呈现：每条曲线带自己的判定（文字+图标），异常曲线默认选中。</summary>
+    /// <summary>所有曲线同时展示，并保留各自的判定和异常原因。</summary>
     [Fact]
-    public async Task Shows_curve_tabs_with_per_curve_judgement_and_selects_ng_by_default()
+    public async Task Shows_all_curves_with_per_curve_judgement()
     {
         await using var ctx = NewContext();
         var station = Station();
@@ -115,21 +115,20 @@ public class StationCardTests
 
         var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station));
 
-        // 三条曲线全部以标签呈现（不再只画第一条、其余藏进明细）。
+        Assert.Equal(3, cut.FindAll(".dt-station-curve").Count);
+        Assert.Equal(3, cut.FindComponents<StationSparkChart>().Count);
         Assert.Contains("压力曲线", cut.Markup);
         Assert.Contains("位移曲线", cut.Markup);
         Assert.Contains("压装曲线", cut.Markup);
-        // 每条曲线自己的判定文字；异常标签默认选中并在图下给出原因。
         Assert.Contains("OK", cut.Markup);
         Assert.Contains("未判定", cut.Markup);
-        var selected = cut.Find(".dt-station-curve");
-        Assert.Contains("压装曲线", selected.GetAttribute("aria-label"));
         Assert.Contains("峰值超基线 3σ", cut.Find(".dt-curve-reason").TextContent);
+        Assert.Empty(cut.FindAll("[role=tablist]"));
     }
 
-    /// <summary>选中态按曲线 Key 保持：切换到某条曲线后，数据刷新（同 Key）不弹回默认。</summary>
+    /// <summary>换件后每条可见曲线都更新到同一份新快照。</summary>
     [Fact]
-    public async Task Curve_selection_survives_a_snapshot_refresh()
+    public async Task All_curves_refresh_together_for_the_next_record()
     {
         await using var ctx = NewContext();
         var station = Station();
@@ -140,10 +139,10 @@ public class StationCardTests
         ];
         var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station));
 
-        cut.FindAll(".dt-curve-tab")[1].Click();
-        Assert.Contains("曲线 位移曲线", cut.Find(".dt-station-curve").GetAttribute("aria-label"));
+        station.LastRecordId = 1;
 
         var next = Station();
+        next.LastRecordId = 2;
         next.LastCurves =
         [
             new StationLiveCurve { Name = "压力曲线", Key = "1:1", Values = [2f, 3f, 4f], Judgement = Judgement.Ok },
@@ -151,7 +150,11 @@ public class StationCardTests
         ];
         cut.Render(p => p.Add(x => x.Station, next));
 
-        Assert.Contains("曲线 位移曲线", cut.Find(".dt-station-curve").GetAttribute("aria-label"));
+        var charts = cut.FindComponents<StationSparkChart>();
+        Assert.Equal(2, charts.Count);
+        Assert.Equal(new float[] { 2f, 3f, 4f }, charts[0].Instance.Values);
+        Assert.Equal(new float[] { 5f, 6f, 7f }, charts[1].Instance.Values);
+        Assert.All(charts, chart => Assert.Contains(":2:", chart.Instance.VersionKey));
     }
 
     /// <summary>无数据与未配置判定不能归为「正常」：汇总单独计数，行上带文字芯片。</summary>
@@ -292,7 +295,7 @@ public class StationCardTests
     }
 
     [Fact]
-    public async Task Prioritizes_attention_points_and_expands_the_remaining_list()
+    public async Task Shows_all_points_in_configuration_order_without_expansion()
     {
         await using var ctx = NewContext();
         var station = Station();
@@ -309,21 +312,13 @@ public class StationCardTests
 
         var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station));
 
-        var previewRows = cut.FindAll(".dash-tag");
-        Assert.Equal(4, previewRows.Count);
-        Assert.Contains("out", previewRows[0].GetAttribute("class"));
-        Assert.Contains("warn", previewRows[1].GetAttribute("class"));
-        Assert.Equal(2, cut.FindAll(".dt-limit-scale").Count);
-        Assert.Contains("查看其余 3 个点位", cut.Markup);
-
-        var expandButton = cut.Find("button.dt-point-expand");
-        Assert.Equal("false", expandButton.GetAttribute("aria-expanded"));
-        expandButton.Click();
-
-        Assert.Equal(7, cut.FindAll(".dash-tag").Count);
+        var rows = cut.FindAll(".dash-tag");
+        Assert.Equal(7, rows.Count);
+        Assert.Contains("正常1", rows[0].TextContent);
+        Assert.Contains("超限", rows[5].TextContent);
+        Assert.Contains("预警", rows[6].TextContent);
         Assert.Equal(7, cut.FindAll(".dt-limit-scale").Count);
-        Assert.Equal("true", cut.Find("button.dt-point-expand").GetAttribute("aria-expanded"));
-        Assert.Contains("收起点位", cut.Markup);
+        Assert.Empty(cut.FindAll(".dt-point-expand"));
     }
 
     [Fact]
@@ -337,57 +332,66 @@ public class StationCardTests
 
         // 全部正常才说「均正常」；有任意异常/无数据/未判定时按类计数。
         Assert.Contains("参数 7 项：均正常", cut.Find(".dt-point-summary-label").TextContent);
-        Assert.Equal(4, cut.FindAll(".dash-tag").Count);
-    }
-
-    [Fact]
-    public async Task Caps_attention_rows_and_offers_the_hidden_abnormal_list()
-    {
-        // 异常数量超过可见行数时不再全部铺开（旧行为会把卡片顶高）：
-        // 概览保持 4 行，隐藏的异常数量进「还有 N 项异常」，点开即完整异常列表。
-        await using var ctx = NewContext();
-        var station = Station();
-        station.LastTags =
-        [
-            Point("超限1", outOfLimit: true),
-            Point("超限2", outOfLimit: true),
-            Point("预警1", warning: true),
-            Point("预警2", warning: true),
-            Point("预警3", warning: true),
-            Point("正常1"),
-            Point("正常2")
-        ];
-
-        var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station));
-
-        Assert.Equal(4, cut.FindAll(".dash-tag").Count);
-        Assert.Contains("还有 1 项异常", cut.Markup);
-
-        cut.Find("button.dt-point-expand").Click();
-
         Assert.Equal(7, cut.FindAll(".dash-tag").Count);
-        Assert.Contains("收起点位", cut.Markup);
     }
 
-    /// <summary>概览行数可配置（看板工具栏 3–6 行）：配置改了卡片立刻按新行数重排。</summary>
     [Fact]
-    public async Task Honors_preview_row_override()
+    public async Task No_curve_station_has_no_chart_section()
+    {
+        await using var ctx = NewContext();
+        var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, Station())
+            .Add(x => x.ConfiguredCurves, Array.Empty<StationLiveCurve>()));
+        Assert.Empty(cut.FindAll(".dt-station-curves"));
+        Assert.Empty(cut.FindComponents<StationSparkChart>());
+        Assert.Contains("未配置曲线", cut.Markup);
+    }
+
+    [Fact]
+    public async Task Configured_curve_without_samples_keeps_a_no_data_notice()
+    {
+        await using var ctx = NewContext();
+        var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, Station())
+            .Add(x => x.ConfiguredCurves, new[] {
+                new StationLiveCurve { Key = "1:1", Name = "压力曲线", Values = [] }
+            }));
+        Assert.Single(cut.FindAll(".dt-station-curves"));
+        Assert.Contains("压力曲线", cut.Markup);
+        Assert.Contains("本次暂无可显示数据", cut.Markup);
+        Assert.Empty(cut.FindComponents<StationSparkChart>());
+    }
+
+    [Fact]
+    public async Task Live_curve_replaces_its_configuration_placeholder()
     {
         await using var ctx = NewContext();
         var station = Station();
-        station.LastTags = Enumerable.Range(1, 7).Select(i => Point($"点位{i}")).ToArray();
+        var configured = new[] { new StationLiveCurve { Key = "1:1", Name = "压力曲线", Values = [] } };
+        var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station)
+            .Add(x => x.ConfiguredCurves, configured));
+        var next = Station();
+        next.LastRecordId = 3;
+        next.LastCurves = [new StationLiveCurve { Key = "1:1", Name = "压力曲线", Values = [1f, 2f], Judgement = Judgement.Ok }];
+        cut.Render(p => p.Add(x => x.Station, next));
+        Assert.Single(cut.FindAll(".dt-station-curve"));
+        Assert.Single(cut.FindComponents<StationSparkChart>());
+        Assert.Empty(cut.FindAll(".dt-curve-empty"));
+        Assert.DoesNotContain("本次暂无可显示数据", cut.Markup);
+    }
 
-        var cut = ctx.Render<StationCard>(p => p
-            .Add(x => x.Station, station)
-            .Add(x => x.PreviewTagLimitOverride, 3));
-
-        Assert.Equal(3, cut.FindAll(".dash-tag").Count);
-        Assert.Contains("查看其余 4 个点位", cut.Markup);
-
-        cut.Render(p => p.Add(x => x.PreviewTagLimitOverride, 5));
-
-        Assert.Equal(5, cut.FindAll(".dash-tag").Count);
-        Assert.Contains("查看其余 2 个点位", cut.Markup);
+    [Fact]
+    public async Task Repaints_when_writeback_or_curve_reason_changes()
+    {
+        await using var ctx = NewContext();
+        var station = Station();
+        station.LastCurves = [new StationLiveCurve { Key = "1:1", Name = "压力曲线", Values = [1f, 2f], Judgement = Judgement.Ng, JudgementReason = "旧原因" }];
+        var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station));
+        var next = Station();
+        next.LastWriteBackAttempts = 3;
+        next.LastWriteBackOk = true;
+        next.LastCurves = [new StationLiveCurve { Key = "1:1", Name = "压力曲线", Values = [1f, 2f], Judgement = Judgement.Ng, JudgementReason = "新原因" }];
+        cut.Render(p => p.Add(x => x.Station, next));
+        Assert.Contains("新原因", cut.Find(".dt-curve-reason").TextContent);
+        Assert.Contains("3 次 · 成功", cut.Find(".dt-station-diagnostics").TextContent);
     }
 
     /// <summary>模拟器跑出来的单件耗时只有几十毫秒，按秒格式化会塌成「0.0 s」。</summary>

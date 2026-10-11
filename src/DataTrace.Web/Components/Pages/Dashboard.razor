@@ -228,15 +228,6 @@ else
                                   Variant="Variant.Outlined" Margin="Margin.Dense" Adornment="Adornment.Start"
                                   AdornmentIcon="@Icons.Material.Filled.Search" Class="dt-station-search"
                                   aria-label="按工站编号或名称查找" />
-                    <MudSelect T="int?" Value="_cardPreviewRows" ValueChanged="OnCardPreviewRowsChanged"
-                               Label="概览行数" Variant="Variant.Outlined" Margin="Margin.Dense"
-                               Class="dt-card-rows-select" aria-label="工站卡片概览参数行数">
-                        <MudSelectItem T="int?" Value="null">默认 4</MudSelectItem>
-                        <MudSelectItem T="int?" Value="3">3 行</MudSelectItem>
-                        <MudSelectItem T="int?" Value="4">4 行</MudSelectItem>
-                        <MudSelectItem T="int?" Value="5">5 行</MudSelectItem>
-                        <MudSelectItem T="int?" Value="6">6 行</MudSelectItem>
-                    </MudSelect>
                     <div class="dt-station-filter-scroll">
                         <div class="dt-station-filters" role="group" aria-label="筛选工站状态">
                             @foreach (var filter in StationFilters)
@@ -264,8 +255,8 @@ else
             <MudGrid Class="dt-station-grid">
                 @foreach (var station in visibleStations)
                 {
-                    <MudItem xs="12" md="6" lg="4">
-                        <StationCard Station="station" PreviewTagLimitOverride="_cardPreviewRows"
+                    <MudItem xs="12">
+                        <StationCard Station="station" ConfiguredCurves="@_configuredCurves.GetValueOrDefault(station.StationId)"
                                      OnOpenDetails="@(() => OpenStationDetails(station.StationId))" />
                     </MudItem>
                 }
@@ -384,19 +375,21 @@ else
     /// <summary>侧边详情面板当前打开的工站。存 Id 而非引用：面板在「跟随最新」时要拿到实时状态。</summary>
     private int? _detailStationId;
 
-    /// <summary>工站卡片概览参数行数（3–6，用户偏好存 localStorage）；null = 系统默认 4。</summary>
-    private int? _cardPreviewRows;
+    private Dictionary<int, IReadOnlyList<StationLiveCurve>> _configuredCurves = [];
 
     private StationRuntimeStatus? DetailStation
         => _detailStationId is { } id ? _stations.FirstOrDefault(s => s.StationId == id) : null;
 
     private void OpenStationDetails(int stationId) => _detailStationId = stationId;
 
-    private Task OnCardPreviewRowsChanged(int? rows)
-    {
-        _cardPreviewRows = rows;
-        return Js.InvokeVoidAsync("dtStationCardRows.set", rows ?? 0).AsTask();
-    }
+    private void RefreshCurveConfiguration(AppConfigurationSnapshot snapshot)
+        => _configuredCurves = snapshot.Stations.ToDictionary(station => station.Id,
+            station => (IReadOnlyList<StationLiveCurve>)station.Curves
+                .Where(curve => curve.Enabled)
+                .Select(curve => new StationLiveCurve
+                {
+                    Key = $"{curve.Id}:{curve.PositionIndex}", Name = curve.Name, Values = []
+                }).ToList());
     private static readonly StationFilter[] StationFilters = Enum.GetValues<StationFilter>();
     private StationFilter _selectedFilter;
     private string _stationSearch = "";
@@ -444,6 +437,7 @@ else
         {
             var snap = await Config.GetSnapshotAsync();
             _configVersion = snap.Version;
+            RefreshCurveConfiguration(snap);
             _collectEnabled = snap.Settings.CollectEnabled;
             _productionSimWarning = Branding.EnvironmentName.Equals("Production", StringComparison.OrdinalIgnoreCase)
                 && snap.Settings.SimulatorAutoRun;
@@ -486,12 +480,11 @@ else
         try
         {
             _recentOpenPref = await Js.InvokeAsync<bool>("dtRecentOpen.get");
-            _cardPreviewRows = await Js.InvokeAsync<int?>("dtStationCardRows.get");
             StateHasChanged();
         }
         catch
         {
-            // JS not ready: keep defaults (recent collapsed, card rows = system default)
+            // JS not ready: keep recent records collapsed.
         }
     }
     private void OnChanged() => _ = InvokeAsync(async () =>
@@ -585,6 +578,7 @@ else
         {
             var snap = await Config.GetSnapshotAsync();
             _configVersion = snap.Version;
+            RefreshCurveConfiguration(snap);
             _collectEnabled = snap.Settings.CollectEnabled;
             _productionSimWarning = Branding.EnvironmentName.Equals("Production", StringComparison.OrdinalIgnoreCase)
                 && snap.Settings.SimulatorAutoRun;

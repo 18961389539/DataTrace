@@ -318,20 +318,3 @@ window.dtVisibility = (function () {
         }
     };
 })();
-
-// 看板工站卡片概览参数行数（3–6）：用户级偏好，存 localStorage；null = 用系统默认。
-window.dtStationCardRows = {
-    key: 'dt-station-card-rows',
-    get: function () {
-        try {
-            var value = parseInt(localStorage.getItem(this.key), 10);
-            return value >= 3 && value <= 6 ? value : null;
-        } catch (e) { return null; }
-    },
-    set: function (rows) {
-        try {
-            localStorage.setItem(this.key, String(rows));
-            return true;
-        } catch (e) { return false; }
-    }
-};

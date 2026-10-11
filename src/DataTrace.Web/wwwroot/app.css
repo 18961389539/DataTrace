@@ -1037,9 +1037,9 @@ h5:focus,
 
 /* 左边框标状态：车间一眼扫过哪台不对 */
 .dash-station {
-    padding: 12px;
+    padding: 18px 20px;
     border-left: 4px solid var(--mud-palette-lines-default);
-    height: 100%;
+    height: auto;
 }
 
     .dash-station.ok {
@@ -1216,7 +1216,7 @@ h5:focus,
     margin-left: 6px;
 }
 
-/* 多点位工站只紧凑呈现关键行；异常行保留限值刻度，普通行明确标注正常。 */
+/* 全部参数的分类汇总。 */
 .dt-point-summary {
     display: flex;
     justify-content: space-between;
@@ -1229,34 +1229,6 @@ h5:focus,
 
 .dt-point-summary-label {
     min-width: 0;
-}
-
-.dash-tags.dense {
-    margin-top: 3px;
-}
-
-.dash-tags.dense .dash-tag {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 8px;
-    padding: 2px 0;
-}
-
-.dash-tags.dense .dash-tag-label {
-    overflow-wrap: anywhere;
-}
-
-.dash-tags.dense .dash-tag-value {
-    font-size: 0.875rem;
-}
-
-.dt-point-expand {
-    margin-top: 4px;
-}
-
-.dash-tags.dense .dt-limit-scale {
-    margin: 1px 0 3px;
 }
 
 /* ---------- 工站配置：左设备列表 ---------- */
@@ -2221,7 +2193,7 @@ body.dt-shopfloor .dt-alarm-bar {
 body.dt-shopfloor .dash-station {
     font-size: clamp(1rem, 1.35vw, 1.5rem);
     padding: 14px !important;
-    min-height: 180px;
+    min-height: 0;
 }
 body.dt-shopfloor .dt-kpi-value {
     font-size: clamp(1.5rem, 2.6vw, 2.75rem);
@@ -2235,14 +2207,10 @@ body.dt-shopfloor .dt-station-meta-value {
 body.dt-shopfloor .dt-station-meta-label {
     font-size: clamp(0.6875rem, 0.75vw, 0.8125rem);
 }
-/* 固定 3 列在 1080p 上会剩半屏空白，改按屏宽自动分列。
-   .mud-grid 是 flex 容器，栅格宽度由 .mud-grid-item 的 flex-basis / max-width 决定，
-   grid-template-columns 对 flex 容器是无效声明 —— 上一版写的正是它，所以这条一直没生效。
-   作用域限定到工站栅格：页里其余 MudItem（整行的告警、面板）不能被一起拉成 1/3 宽。 */
-body.dt-shopfloor .dt-station-grid .mud-grid-item {
-    flex-basis: clamp(320px, 24%, 33%);
-    flex-grow: 1;
-    max-width: none;
+/* 日常与大屏模式均为一行一个设备。 */
+.dt-station-grid .mud-grid-item {
+    flex-basis: 100%;
+    max-width: 100%;
 }
 body.dt-shopfloor .mud-chip {
     font-size: 0.95rem;
@@ -2958,26 +2926,6 @@ html.dt-theme-dark button.dt-settings-nav-btn.active {
     color: var(--mud-palette-error);
 }
 
-/* 曲线标签选择器（看板 UX 审查）：每条曲线用自己的判定着色 + 图标 + 文字（三通道），
-   选中态按曲线 Key 在刷新之间保持；「全部 N 条」走明细页。 */
-.dt-curve-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  margin: 10px 0 4px;
-}
-
-.dt-curve-tabs .mud-chip {
-  cursor: pointer;
-}
-
-.dt-curve-all-link {
-  margin-left: auto;
-  font-size: 0.8rem;
-  white-space: nowrap;
-}
-
 .dt-curve-reason {
   margin-top: 2px;
 }
@@ -3010,11 +2958,7 @@ html.dt-theme-dark button.dt-settings-nav-btn.active {
   color: var(--mud-palette-text-secondary, #64748b);
 }
 
-/* 卡片概览行数选择与详情面板多曲线堆叠。 */
-.dt-card-rows-select {
-  min-width: 110px;
-  flex: 0 0 auto;
-}
+/* 详情面板多曲线堆叠。 */
 
 .dt-curve-block {
   margin-bottom: 12px;
@@ -3029,4 +2973,70 @@ html.dt-theme-dark button.dt-settings-nav-btn.active {
 
 .dt-curve-block-points {
   font-size: 0.8rem;
+}
+
+/* 实时看板：参数全宽平铺，曲线区按内容出现，设备卡片自然增高。 */
+.dash-station .dt-station-title { white-space: normal; overflow-wrap: anywhere; font-size: 1.125rem; }
+.dt-station-header { flex-wrap: wrap; }
+.dt-station-heading { flex: 1 1 280px; }
+.dt-station-parameters {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+}
+.dt-station-parameters .dash-tag {
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    align-items: start;
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--dt-radius);
+    background: var(--mud-palette-background-gray);
+}
+.dt-station-parameters .dash-tag.out {
+    border-color: var(--mud-palette-error);
+    background: rgba(var(--dt-danger-rgb), .04);
+}
+.dt-station-parameters .dash-tag.warn {
+    border-color: var(--mud-palette-warning);
+    background: rgba(var(--dt-warning-rgb), .04);
+}
+.dt-station-parameters .dash-tag-label { font-size: .8125rem; overflow-wrap: anywhere; }
+.dt-station-parameters .dash-tag-value {
+    font-size: 1.625rem;
+    line-height: 1.3;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+.dt-tag-spec { color: var(--mud-palette-text-secondary); font-size: .75rem; }
+.dt-station-curves { border-top: 1px solid var(--mud-palette-lines-default); margin-top: 18px; padding-top: 12px; }
+.dt-station-curves-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+    gap: 12px;
+    margin-top: 8px;
+}
+.dt-station-curves-grid .dt-station-curve { padding: 12px; margin: 0; border: 1px solid var(--mud-palette-lines-default); border-radius: var(--dt-radius); }
+.dt-station-curves .dt-curve-block-head { flex-wrap: wrap; }
+.dt-station-curves .dt-chart { height: 160px; aspect-ratio: auto !important; }
+.dt-curve-empty { padding: 12px 0; }
+.dt-station-diagnostics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 28px;
+    border-top: 1px solid var(--mud-palette-lines-default);
+    margin: 14px 0 0;
+    padding-top: 10px;
+    font-size: .75rem;
+}
+.dt-station-diagnostics dt { color: var(--mud-palette-text-secondary); }
+.dt-station-diagnostics dd { margin: 3px 0 0; overflow-wrap: anywhere; }
+body.dt-shopfloor .dt-station-parameters .dash-tag-value { font-size: clamp(1.5rem, 2vw, 2rem); }
+@media (max-width: 600px) {
+    .dash-station { padding: 14px; }
+    .dt-station-parameters { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .dt-station-parameters .dash-tag { padding: 10px; }
+    .dt-point-summary { flex-wrap: wrap; }
 }

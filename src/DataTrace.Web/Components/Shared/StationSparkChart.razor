@@ -1,13 +1,15 @@
 @* 工站迷你曲线：按 VersionKey（采集快照标识）与判定色判断是否重画，
    替代旧的"首/中/末三点指纹"——三点之外的波形变化不再漏刷，
    同一条曲线在同一件产品内也不因无关刷新而反复抽稀。 *@
-<LineChart Series="_series" ViewWidth="240" Height="48"
-           ShowAxis="false" ShowLegend="false" ShowPoints="false" MaxPoints="80"
+<LineChart Series="_series" ViewWidth="600" Height="@Height"
+           ShowAxis="@ShowAxis" ShowLegend="false" ShowPoints="false" MaxPoints="@(ShowAxis ? 600 : 80)"
            EmptyText="无曲线点" />
 
 @code {
     [Parameter] public string CurveName { get; set; } = "";
     [Parameter] public float[] Values { get; set; } = [];
+    [Parameter] public int Height { get; set; } = 48;
+    [Parameter] public bool ShowAxis { get; set; }
 
     /// <summary>判定三态：ng=判据违例（红）、ok=判据全过（主色）、none=未判定（中性色）。
     /// 整站 NG 不改变曲线自己的颜色 —— 颜色之外，标签上的文字与图标同步表达结果（WCAG 1.4.1）。</summary>
@@ -23,7 +25,7 @@
 
     protected override void OnParametersSet()
     {
-        var fingerprint = $"{VersionKey}|{Tone}";
+        var fingerprint = $"{VersionKey}|{Tone}|{CurveName}|{Height}|{ShowAxis}";
         if (fingerprint == _fingerprint)
         {
             _render = false;

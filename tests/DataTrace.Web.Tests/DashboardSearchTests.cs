@@ -44,6 +44,36 @@ public class DashboardSearchTests : WebTestBase
     }
 
     [Fact]
+    public void Uses_full_width_cards_and_only_enabled_curve_configuration()
+    {
+        Config.Snapshot = new DataTrace.Application.Configuration.AppConfigurationSnapshot
+        {
+            Stations =
+            [
+                new DataTrace.Domain.Entities.Station
+                {
+                    Id = 1, Code = "ST010", Name = "上料工站",
+                    Curves =
+                    [
+                        new DataTrace.Domain.Entities.CurveDefinition { Id = 10, PositionIndex = 1, Name = "定位曲线", Enabled = true },
+                        new DataTrace.Domain.Entities.CurveDefinition { Id = 11, PositionIndex = 1, Name = "停用曲线", Enabled = false }
+                    ]
+                },
+                new DataTrace.Domain.Entities.Station { Id = 2, Code = "ST020", Name = "压装工站" }
+            ]
+        };
+        var cut = Render();
+        var items = cut.FindAll(".dt-station-grid > .mud-grid-item");
+        Assert.Equal(2, items.Count);
+        Assert.All(items, item => Assert.Contains("mud-grid-item-xs-12", item.ClassName));
+        Assert.Single(cut.FindAll(".dt-station-curves"));
+        Assert.Contains("定位曲线", cut.Markup);
+        Assert.Contains("本次暂无可显示数据", cut.Markup);
+        Assert.DoesNotContain("停用曲线", cut.Markup);
+        Assert.DoesNotContain("概览行数", cut.Markup);
+    }
+
+    [Fact]
     public void SearchesByStationCodeOrNameAndRecoversFromNoResults()
     {
         var cut = Render();
