@@ -233,6 +233,9 @@ public sealed class StationCollectPipeline
             // 再顺着同一个作用域看它前后那些行（读取、落库、补传、回写）。
             // 正常件也要记：只记异常的话，来查一件正常件时会发现根本没有锚点可搜。
             // 代价是每件一行 —— 而这一轮顺带消掉了每轮好几条 EF Core SQL 行，净日志量是下降的。
+            // 这一行的耗时与 dt.collect.e2e_duration 直方图同源（同一个 sw）：
+            // 日志给单件的锚点，直方图给监控端聚合 P95/P99。
+            CollectMetrics.RecordE2E(sw.Elapsed.TotalMilliseconds, station.Code, resultCode);
             _logger.LogInformation(
                 "采集完成 {Serial} 结果 {Result} 判定 {Judgement} 耗时 {DurationMs}ms 回写 {WriteBack}",
                 string.IsNullOrWhiteSpace(saved?.SerialNo) ? "（未落库）" : saved.SerialNo,
@@ -359,16 +362,20 @@ public sealed class StationCollectPipeline
         CancellationToken cancellationToken)
     {
         var plan = AcquisitionPlan(config, station, connection, queue);
+        var stageSw = Stopwatch.StartNew();
         var buffers = await StationBlockReader.ReadAsync(plan, queue, cancellationToken).ConfigureAwait(false);
+        CollectMetrics.RecordStage(CollectMetrics.StagePlcRead, stageSw, station.Code, connection.Id.ToString());
         var palletCode = StationSampleDecoder.PalletCode(station, connection, plan.Plan, buffers);
         if (!PalletCodeValidator.IsValid(palletCode, out var palletError))
         {
             return Live(station, Unrecorded(station, config, palletCode, triggerTime, ResultCodes.InvalidPalletCode, palletError));
         }
 
+        stageSw.Restart();
         var frozen = station.IsFirstStation
             ? FrozenSelection.ForFirstStation(config, _baselines.Current)
             : await LookupFrozenSelectionAsync(config, palletCode, cancellationToken).ConfigureAwait(false);
+        CollectMetrics.RecordStage(CollectMetrics.StageFrozenLookup, stageSw, station.Code);
 
         // 快照损坏不能静默换规则：宁可本站故障留证，由人核查后恢复。
         if (frozen.Kind == SessionRecipe.SelectionKind.Corrupted)
@@ -391,7 +398,9 @@ public sealed class StationCollectPipeline
                 throw new InvalidDataException("工站 PLC 品牌或连接端点已与在制快照不一致，无法安全读取历史点位，判定已阻塞");
 
             var historical = AcquisitionPlan(frozenConfig, evaluatedStation, evaluatedConnection, queue);
+            stageSw.Restart();
             evaluatedBuffers = await StationBlockReader.ReadAsync(historical, queue, cancellationToken).ConfigureAwait(false);
+            CollectMetrics.RecordStage(CollectMetrics.StagePlcRead, stageSw, station.Code, evaluatedConnection.Id.ToString());
             var historicalPallet = StationSampleDecoder.PalletCode(evaluatedStation, evaluatedConnection, historical.Plan, evaluatedBuffers);
             if (!string.Equals(historicalPallet, palletCode, StringComparison.Ordinal))
                 throw new InvalidDataException("当前 PLC 配置与在制快照解码出的托盘码不一致，判定已阻塞");
@@ -401,20 +410,26 @@ public sealed class StationCollectPipeline
         FileSourceRead? source = null;
         if (evaluatedStation.Tags.Any(t => t.Enabled && t.Source == TagDataSource.JsonFile))
         {
+            stageSw.Restart();
             source = await _files.ReadAsync(evaluatedStation, triggerTime, palletCode, cancellationToken).ConfigureAwait(false);
+            CollectMetrics.RecordStage(CollectMetrics.StageFileSource, stageSw, station.Code);
             if (source.Error is not null)
             {
                 return Live(station, Unrecorded(station, config, palletCode, triggerTime, source.ErrorCode, source.Error));
             }
         }
 
+        stageSw.Restart();
         var assessment = CollectEvaluator.Evaluate(
             evaluatedStation, evaluatedConnection, evaluatedPlan.Plan, evaluatedBuffers, source, _baselines,
             frozen.Recipe, frozen.FrozenLimits, frozen.FrozenBaseline,
             baselineIsFrozen: frozen.Kind != SessionRecipe.SelectionKind.LegacyFallback);
+        CollectMetrics.RecordStage(CollectMetrics.StageEvaluate, stageSw, station.Code);
+        stageSw.Restart();
         var saved = await _sessions.PersistAsync(
             evaluatedStation, config, palletCode, triggerTime, sw, source, assessment, frozen.FrozenBaseline,
             cancellationToken, station, connection, frozen.FrozenConfiguration).ConfigureAwait(false);
+        CollectMetrics.RecordStage(CollectMetrics.StagePersist, stageSw, station.Code);
         return Live(station, saved.Record, saved.Curves, saved.MonthKey);
     }
 
@@ -499,36 +514,44 @@ public sealed class StationCollectPipeline
         PlcRequestQueue queue,
         short resultCode)
     {
-        if (!queue.Driver.TryParseAddress(station.TriggerAddress, out var address))
-        {
-            _logger.LogError("工站 {Station} 触发地址无法解析: {Address}", station.Code, station.TriggerAddress);
-            return new WriteBackOutcome(0, false, "触发地址无法解析");
-        }
-
-        if (address.IsBit)
-        {
-            _logger.LogError("工站 {Station} 触发地址是位地址，响应码无法写回: {Address}", station.Code, station.TriggerAddress);
-            return new WriteBackOutcome(0, false, "触发地址是位地址");
-        }
-
+        var stageSw = Stopwatch.StartNew();
         try
         {
-            // A lost acknowledgement can mean the write took effect on the old part. Never resend
-            // a result code: a later trigger may belong to a different event even on the same pallet.
-            await queue.WriteWordsAsync(address, ValueCodec.EncodeInt16(resultCode), CancellationToken.None)
-                .ConfigureAwait(false);
-            var readBack = await queue.ReadWordsAsync(address, 1, CancellationToken.None).ConfigureAwait(false);
-            if (readBack.Length > 0 && (short)readBack[0] == resultCode)
-                return new WriteBackOutcome(1, true, null);
+            if (!queue.Driver.TryParseAddress(station.TriggerAddress, out var address))
+            {
+                _logger.LogError("工站 {Station} 触发地址无法解析: {Address}", station.Code, station.TriggerAddress);
+                return new WriteBackOutcome(0, false, "触发地址无法解析");
+            }
 
-            var mismatch = new PlcDriverException("单次写入后读回不一致；为避免覆盖新事件，不自动重写");
-            _logger.LogError(mismatch, "工站 {Station} 响应码单次写入后核对失败", station.Code);
-            return new WriteBackOutcome(1, false, mismatch.Message);
+            if (address.IsBit)
+            {
+                _logger.LogError("工站 {Station} 触发地址是位地址，响应码无法写回: {Address}", station.Code, station.TriggerAddress);
+                return new WriteBackOutcome(0, false, "触发地址是位地址");
+            }
+
+            try
+            {
+                // A lost acknowledgement can mean the write took effect on the old part. Never resend
+                // a result code: a later trigger may belong to a different event even on the same pallet.
+                await queue.WriteWordsAsync(address, ValueCodec.EncodeInt16(resultCode), CancellationToken.None)
+                    .ConfigureAwait(false);
+                var readBack = await queue.ReadWordsAsync(address, 1, CancellationToken.None).ConfigureAwait(false);
+                if (readBack.Length > 0 && (short)readBack[0] == resultCode)
+                    return new WriteBackOutcome(1, true, null);
+
+                var mismatch = new PlcDriverException("单次写入后读回不一致；为避免覆盖新事件，不自动重写");
+                _logger.LogError(mismatch, "工站 {Station} 响应码单次写入后核对失败", station.Code);
+                return new WriteBackOutcome(1, false, mismatch.Message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "工站 {Station} 响应码单次写入/核对失败；不自动重写", station.Code);
+                return new WriteBackOutcome(1, false, ex.Message);
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            _logger.LogError(ex, "工站 {Station} 响应码单次写入/核对失败；不自动重写", station.Code);
-            return new WriteBackOutcome(1, false, ex.Message);
+            CollectMetrics.RecordStage(CollectMetrics.StageWriteBack, stageSw, station.Code);
         }
     }
 
@@ -641,6 +664,7 @@ public sealed class StationCollectPipeline
             Display = v.TextValue ?? v.NumericValue?.ToString("0.###") ?? "-",
             Unit = units.GetValueOrDefault(v.TagId),
             NumericValue = v.NumericValue,
+            TextValue = v.TextValue,
             LowerLimit = v.LowerLimit,
             UpperLimit = v.UpperLimit,
             WarningLowerLimit = v.WarningLowerLimit,
@@ -664,9 +688,13 @@ public sealed class StationCollectPipeline
             return new StationLiveCurve
             {
                 Name = write.Record.CurveName,
+                // 跨记录稳定的曲线标识：卡片曲线标签按它保持选中态（曲线定义 Id + 产品位）。
+                Key = $"{write.Record.CurveDefinitionId}:{write.Record.PositionIndex}",
                 // 无效浮点保留在原始曲线文件用于追溯，但不能进入实时 JSON 状态，
                 // 否则 SignalR 序列化会失败且看板也无法绘制可信曲线。
-                Values = y is not null && y.Values.All(float.IsFinite) ? y.Values.ToArray() : []
+                Values = y is not null && y.Values.All(float.IsFinite) ? y.Values.ToArray() : [],
+                Judgement = write.Judgement,
+                JudgementReason = write.JudgementReason
             };
         }).ToList();
     }

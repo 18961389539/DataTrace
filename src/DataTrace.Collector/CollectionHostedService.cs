@@ -210,6 +210,8 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
                 // 记进去会把诊断页的均值拉低，看着像采集变快了。
                 if (timing && workMs is { } spent && _snapshot is { } current)
                 {
+                    // 与诊断页同一份数字，交给监控端聚合出轮次耗时的 P95/P99。
+                    CollectMetrics.RecordPollRound(spent);
                     PublishDiagnostics(current, spent, scanMs, heartbeatMs, stats);
                 }
             }

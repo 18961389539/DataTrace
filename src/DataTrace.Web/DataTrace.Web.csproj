@@ -45,6 +45,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" />
     <PackageReference Include="MudBlazor" />
+    <PackageReference Include="QuestPDF" />
     <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="SkiaSharp" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" />
   </ItemGroup>
 </Project>

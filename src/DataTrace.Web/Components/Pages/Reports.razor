@@ -13,6 +13,7 @@
 @inject IConfigurationChanges Changes
 @inject IRuntimeStore Store
 @using DataTrace.Application.Runtime
+@using DataTrace.Web.Services
 @inject IAuditLogger Audit
 @inject AuthenticationStateProvider Auth
 @inject DtToast Toast
@@ -65,6 +66,21 @@
                        StartIcon="@Icons.Material.Filled.Refresh" Disabled="_loading">
                 @(_loading ? "统计中…" : "刷新报表")
             </MudButton>
+            @* PDF 报告是整份报表的存档出口：跟「刷新报表」同一排，站在任何页签都够得着。
+               直通率没取到（统计中/区间内没有件）时禁用 —— 没有数据的"报表"不值得存档。
+               趋势与过程能力在生成前按需补取，失败不阻断：PDF 照常出，只是没有那两节。 *@
+            @if (_canExport)
+            {
+                <MudTooltip Arrow="true" Text="导出整份报表为 PDF（直通率、型号汇总、不良与预警榜、过程能力、趋势摘要）">
+                    <ChildContent>
+                        <MudButton Variant="Variant.Outlined" OnClick="ExportPdfReport" Color="Color.Primary"
+                                   Disabled="@(_loading || _exportingPdf || _fpy.Count == 0)"
+                                   StartIcon="@(_exportingPdf ? Icons.Material.Filled.Sync : Icons.Material.Filled.PictureAsPdf)">
+                            @(_exportingPdf ? "生成中…" : "导出 PDF 报告")
+                        </MudButton>
+                    </ChildContent>
+                </MudTooltip>
+            }
             @* 「导出趋势」不在这里：它导出的是「参数趋势」页签的数据，挂在全局筛选区时，
                站在直通率页签上也能看见它，而且趋势没取完之前一直灰着、没人知道为什么。 *@
             <MudText Typo="Typo.caption" Class="dt-muted align-self-center">改任一条件即自动重算</MudText>
@@ -1426,6 +1442,173 @@ private async Task OnStationChanged(int? stationId)
         >= 0.95 => Color.Warning,
         _ => Color.Error
     };
+
+    /// <summary>PDF 报告生成中：同一时刻只允许一次，期间按钮禁用。</summary>
+    private bool _exportingPdf;
+
+    /// <summary>
+    /// 整份报表导出为 PDF：直通率、型号汇总、不良与预警榜是首屏已有数据；
+    /// 趋势与过程能力用户可能没开过页签，生成前按需补取（失败不阻断，
+    /// LoadTrendAsync 自己会把原因报出来，PDF 只是少两节）。
+    /// </summary>
+    private async Task ExportPdfReport()
+    {
+        if (_exportingPdf)
+        {
+            return;
+        }
+
+        if (!_canExport)
+        {
+            Toast.Add("当前角色无权导出报表（需要管理员或工程师）", Severity.Warning);
+            return;
+        }
+
+        if (!_trendLoaded)
+        {
+            await LoadTrendAsync();
+        }
+
+        _exportingPdf = true;
+        try
+        {
+            var model = await BuildPdfModelAsync();
+            var pdf = ReportPdfBuilder.Build(model);
+            await Js.InvokeVoidAsync("dtDownload", ReportPdfBuilder.FileName(),
+                Convert.ToBase64String(pdf), "application/pdf");
+        }
+        catch (Exception ex)
+        {
+            // 与导出 CSV 同一套口径：JS 互操失败不能断掉整条 circuit。
+            Toast.Add($"导出失败：{ex.Message}", Severity.Error);
+            return;
+        }
+        finally
+        {
+            _exportingPdf = false;
+        }
+
+        var message = "已导出 PDF 报告";
+
+        // 文件已经下载完了：审计写库失败不能报成"导出失败"，现场会以为没导出去而重导。
+        try
+        {
+            await WritePdfExportAuditAsync();
+            Toast.Add(message, Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"{message}，但审计记录写入失败：{ex.Message}", Severity.Warning);
+        }
+    }
+
+    /// <summary>把页面当前状态映射成排版就绪的 PDF 模型。口径一律与屏显相同（同一批字段、同一套格式串）。</summary>
+    private async Task<ReportPdfModel> BuildPdfModelAsync()
+    {
+        var auth = await Auth.GetAuthenticationStateAsync();
+        var totalNg = _fpy.Sum(x => x.Ng);
+        var tag = _tags.FirstOrDefault(t => t.Id == _tagId);
+
+        ReportPdfModel.CapabilityBlock? capability = null;
+        if (_spc is { } spc)
+        {
+            capability = new ReportPdfModel.CapabilityBlock(
+                spc.TagName,
+                spc.Unit,
+                spc.TargetValue?.ToString("0.###", CultureInfo.InvariantCulture) ?? "未配置",
+                _trendTruncated,
+                spc.Segments.Select(s => new ReportPdfModel.CapabilitySegmentRow(
+                    SegmentRangeText(s),
+                    LimitPair(s.LowerLimit, s.UpperLimit),
+                    s.Count,
+                    SpcCalculator.Format(s.Summary.Cp),
+                    SpcCalculator.Format(s.Summary.Cpk),
+                    SpcCalculator.Format(s.Summary.Ppk),
+                    VerdictLabel(s.Summary.Verdict))).ToList(),
+                spc.Segments.Select(s => VerdictHexColor(s.Summary.Verdict)).ToList(),
+                spc.Violations.Count);
+        }
+
+        ReportPdfModel.TrendBlock? trend = null;
+        if (_trend.Count > 0 && tag is not null)
+        {
+            trend = new ReportPdfModel.TrendBlock(
+                tag.Name,
+                tag.Unit,
+                _trend.Count,
+                _trendAverage,
+                _trendMin,
+                _trendMax,
+                _trendRangeText,
+                _trendTruncated,
+                [.. _trend.Select(p => new ReportPdfModel.TrendSample(p.Time, p.Value))]);
+        }
+
+        return new ReportPdfModel
+        {
+            GeneratedAt = DateTime.Now,
+            GeneratedBy = auth.User.Identity?.Name ?? "",
+            RangeText = DateRangeFilter.Format(_from, _to),
+            StationText = _stationId is { } stationId ? StationLabel(stationId) : "全部工站",
+            RecipeText = _recipeFilter switch
+            {
+                null => "全部型号",
+                "" => "未选型号",
+                var code => FormatRecipeRow(code.Trim())
+            },
+            TotalRecords = _fpy.Sum(x => x.Total),
+            YieldRows = [.. _fpy.Select(x => new ReportPdfModel.YieldRow(
+                string.IsNullOrEmpty(x.ShiftLabel) ? x.Day.ToString("yyyy-MM-dd HH:mm") : x.ShiftLabel,
+                x.Total, x.Ok, x.Ng, x.None, x.FirstPassYield))],
+            YieldTotal = _fpy.Sum(x => x.Total),
+            YieldOk = _fpy.Sum(x => x.Ok),
+            YieldAverage = AverageYield(),
+            NgSourceText = totalNg > 0
+                ? PieceYieldRules.NgSourceText(_fpy.Sum(x => x.QualityNg), _fpy.Sum(x => x.CollectNg))
+                : "",
+            RecipeRows = [.. _byRecipe.Select(x => new ReportPdfModel.RecipeRow(
+                FormatRecipeRow(x.RecipeCode), x.Total, x.Ok, x.Ng, x.Pending, x.PassRate))],
+            DefectRows = [.. _defects.Items.Select(i => new ReportPdfModel.IssueRow(i.Name, i.Count, DefectShare(i.Count)))],
+            DefectTotal = _defects.Total,
+            MissingRows = [.. _defects.MissingItems.Select(i => new ReportPdfModel.IssueRow(i.Name, i.Count, MissingShare(i.Count)))],
+            MissingTotal = _defects.MissingTotal,
+            WarningRows = [.. _warnings.Items.Select(i => new ReportPdfModel.IssueRow(i.Name, i.Count, WarningShare(i.Count)))],
+            WarningTotal = _warnings.Total,
+            Capability = capability,
+            Trend = trend
+        };
+    }
+
+    /// <summary>结论着色与 <see cref="VerdictColor"/> 同一套阈值，只是换成了 PDF 用的十六进制。</summary>
+    private static string VerdictHexColor(SpcVerdict verdict) => verdict switch
+    {
+        SpcVerdict.Capable => "#15803d",
+        SpcVerdict.Marginal => "#b45309",
+        SpcVerdict.Incapable => "#dc2626",
+        _ => ""
+    };
+
+    private async Task WritePdfExportAuditAsync()
+    {
+        var auth = await Auth.GetAuthenticationStateAsync();
+        var user = auth.User.Identity?.Name ?? "";
+        var recipe = _recipeFilter switch
+        {
+            null => "全部",
+            "" => "未选型号",
+            var code => code.Trim()
+        };
+        var tag = _tags.FirstOrDefault(t => t.Id == _tagId);
+        // 键放"导的是哪个区间"，条件与包含的节放变更列：与导出趋势、查询页的写法一致。
+        var key = $"{DateRangeFilter.StartOf(_from):yyyy-MM-dd}~{DateRangeFilter.StartOf(_to):yyyy-MM-dd}";
+        var sections = "yield,recipe,issues"
+            + (_spc is not null ? ",spc" : "")
+            + (_trend.Count > 0 ? ",trend" : "");
+        var summary =
+            $"station={_stationId?.ToString() ?? "全部"};tag={tag?.Name ?? "-"};" +
+            $"recipe={recipe};sections={sections};records={_fpy.Sum(x => x.Total)}";
+        await Audit.WriteAsync(user, "Export", "ReportPdf", key, null, summary);
+    }
 
     private bool _exporting;
 

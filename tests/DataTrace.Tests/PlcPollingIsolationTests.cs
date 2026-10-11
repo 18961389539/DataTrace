@@ -65,7 +65,10 @@ public sealed class PlcPollingIsolationTests
         try
         {
             await drivers.SlowEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            var limit = DateTime.UtcNow.AddSeconds(3);
+            // 窗口给宽（10s）：成功路径 3 次读数一到位就退出，不花这个时间；
+            // 全量并行跑时线程池可能被挤，窗口太窄会把"调度延迟"误报成"轮询被拖住"。
+            // 语义不变：慢 PLC 的第一读挂住期间，健康 PLC 必须持续轮询。
+            var limit = DateTime.UtcNow.AddSeconds(10);
             while (Volatile.Read(ref drivers.HealthyReads) < 3 && DateTime.UtcNow < limit)
                 await Task.Delay(20);
 

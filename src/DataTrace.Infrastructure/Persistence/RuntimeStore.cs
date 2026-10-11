@@ -34,6 +34,7 @@ public sealed partial class RuntimeStore : IRuntimeStore
         var databaseCommitted = false;
         try
         {
+            var curveSw = System.Diagnostics.Stopwatch.StartNew();
             foreach (var curve in request.Curves)
             {
                 var written = await _curves.WriteAsync(
@@ -50,8 +51,11 @@ public sealed partial class RuntimeStore : IRuntimeStore
                 writtenFiles.Add(written.RelativePath);
             }
 
+            PersistenceMetrics.RecordCurveWrite(curveSw.Elapsed.TotalMilliseconds, request.Curves.Count);
+
             await using var db = _factory.Open(request.MonthKey);
             await using var tx = await db.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+            var txSw = System.Diagnostics.Stopwatch.StartNew();
 
             request.Record.PalletSession = null;
             if (request.UpsertSession is not null)
@@ -115,7 +119,6 @@ public sealed partial class RuntimeStore : IRuntimeStore
                     CreatedAt = DateTime.Now
                 };
                 db.SessionIndexIntents.Add(indexIntent);
-                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             }
 
             // 提交即登记"待回写确认"（与业务数据同事务）：回写发生在落库之后，
@@ -148,7 +151,6 @@ public sealed partial class RuntimeStore : IRuntimeStore
                         ? "月库与本地缓存曾同时不可用；设备事件身份未经确认，等待现场人工核对"
                         : null
                 });
-                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             }
 
             if (request.MesOutbox is not null)
@@ -211,8 +213,12 @@ public sealed partial class RuntimeStore : IRuntimeStore
                 }
             }
 
+            // 合并提交（性能审查 P2）：意图、留证、MES、会话收尾都只依赖首次 SaveChanges
+            // 生成的 Id（Record.Id / PalletSessionId），同事务里合成一次批量写入 ——
+            // 最坏情况（末站 + 意图 + 留证 + MES）从 4 次往返降到 2 次。
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+            PersistenceMetrics.RecordDbCommit(txSw.Elapsed.TotalMilliseconds);
             databaseCommitted = true;
 
             try

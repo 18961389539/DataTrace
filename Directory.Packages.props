@@ -30,6 +30,11 @@
     <!-- EF SQLite 的默认传递版本仍落在有漏洞的 2.1.11；显式提升到修复版。 -->
     <PackageVersion Include="SQLitePCLRaw.lib.e_sqlite3" Version="2.1.13" />
     <PackageVersion Include="CsvHelper" Version="33.1.0" />
+    <!-- 报表 PDF 导出。QuestPDF 2026 内嵌自有 Skia、不再传递 SkiaSharp，图表绘制按官方
+         "SkiaSharp Integration" 方案显式引用；Linux 主机/CI 需 NoDependencies 原生资产。 -->
+    <PackageVersion Include="QuestPDF" Version="2026.9.1" />
+    <PackageVersion Include="SkiaSharp" Version="4.153.1" />
+    <PackageVersion Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="4.153.1" />
     <PackageVersion Include="System.IO.Hashing" Version="8.0.0" />
     <PackageVersion Include="Quartz.Extensions.Hosting" Version="3.22.4" />
     <PackageVersion Include="MathNet.Numerics" Version="5.0.0" />

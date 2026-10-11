@@ -154,6 +154,9 @@ public static class CollectEvaluator
                 var seriesPayloads = new List<CurveSeriesPayload>();
                 var featureRows = new List<CurveFeature>();
                 var primarySeries = CurveCriterionEvaluator.PrimarySeries(curve);
+                // 每条曲线自己的判定（实时看板按曲线着色）：判据违例=NG、全过=OK、
+                // 未配判据=null（未判定）。整站 NG 不再把所有曲线染红。
+                string? curveNgReason = null;
                 foreach (var series in curve.Series)
                 {
                     var words = plan.GetWords($"curve_{curve.Id}_{series.Id}", buffers);
@@ -166,6 +169,7 @@ public static class CollectEvaluator
                         if (offset + typeWords > words.Length)
                         {
                             validationError = true;
+                            curveNgReason ??= $"{series.Name} 波形数据长度不足";
                             break;
                         }
 
@@ -182,6 +186,7 @@ public static class CollectEvaluator
                     {
                         validationError = true;
                         validationMessage ??= $"{curve.Name}波形序列 {series.Name} 包含 NaN 或 Infinity；已保留原始曲线，跳过特征与曲线判据";
+                        curveNgReason ??= $"{series.Name} 序列包含无效值，无法判定";
                     }
                     else
                     {
@@ -204,7 +209,9 @@ public static class CollectEvaluator
 
                             qualityRejected = true;
                             posJudgements.Add(Judgement.Ng);
-                            ngReason ??= $"{curve.Name}波形异常：{reasons[0]}";
+                            var reason = $"{curve.Name}波形异常：{reasons[0]}";
+                            ngReason ??= reason;
+                            curveNgReason ??= reason;
                         }
                     }
 
@@ -227,7 +234,11 @@ public static class CollectEvaluator
                         PointCount = curve.PointCount
                     },
                     Payload = new CurvePayload { PointCount = curve.PointCount, Series = seriesPayloads },
-                    Features = featureRows
+                    Features = featureRows,
+                    Judgement = curveNgReason is not null
+                        ? Judgement.Ng
+                        : curve.Criteria.Count > 0 ? Judgement.Ok : null,
+                    JudgementReason = curveNgReason
                 });
             }
 

@@ -42,6 +42,9 @@ public sealed class SpoolReplayRunner
     /// 继续往下试只会把同一条异常日志刷满，还把失败次数平摊到每一条上，
     /// 让"卡了几次"这个数字失去意义。
     /// </remarks>
+    /// <summary>一个批次的文件数：一次目录枚举喂一批，批内逐条补传并删除。</summary>
+    private const int ReplayBatchSize = 16;
+
     public async Task<int> ReplayAllAsync(CancellationToken cancellationToken = default, Action<int>? onProgress = null)
     {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -50,16 +53,23 @@ public sealed class SpoolReplayRunner
             var done = 0;
             while (true)
             {
-                var items = await _spool.ListPageAsync(0, 1, cancellationToken).ConfigureAwait(false);
-                if (items.Count == 0 || cancellationToken.IsCancellationRequested) break;
-                var (file, request) = items[0];
-                // 取消只在两条之间生效：单条必须整件做完 —— 记录写进去了却没删掉缓存，
-                // 下一轮补传会把它再写一遍，正是这把锁要防的那种重复。
-                var result = await TryReplayAsync(file, request).ConfigureAwait(false);
-                if (!result.Ok) break;
+                // 分批取（性能审查 P2）：以前每补一条都重新枚举+排序整个目录，
+                // 积压 N 条就是 O(N²) 次目录扫描。现在一次枚举喂一批，批内用已读的
+                // 文件名+请求逐条做；批与批之间重新对账 —— 删除让剩余文件名天然前移。
+                var batch = await _spool.ListPageAsync(0, ReplayBatchSize, cancellationToken).ConfigureAwait(false);
+                if (batch.Count == 0 || cancellationToken.IsCancellationRequested) break;
 
-                done++;
-                onProgress?.Invoke(done);
+                foreach (var (file, request) in batch)
+                {
+                    // 取消只在两条之间生效：单条必须整件做完 —— 记录写进去了却没删掉缓存，
+                    // 下一轮补传会把它再写一遍，正是这把锁要防的那种重复。
+                    if (cancellationToken.IsCancellationRequested) return done;
+                    var result = await TryReplayAsync(file, request).ConfigureAwait(false);
+                    if (!result.Ok) return done;
+
+                    done++;
+                    onProgress?.Invoke(done);
+                }
             }
 
             return done;

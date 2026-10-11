@@ -28,7 +28,7 @@ public sealed class CurveFileStore : ICurveFileStore
         Directory.CreateDirectory(_root);
     }
 
-    public async Task<(string RelativePath, long FileSize, uint Crc32)> WriteAsync(
+    public Task<(string RelativePath, long FileSize, uint Crc32)> WriteAsync(
         DateTime triggerTime,
         string serialNo,
         int stationId,
@@ -37,6 +37,7 @@ public sealed class CurveFileStore : ICurveFileStore
         CurvePayload payload,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var relative = Path.Combine(
             triggerTime.ToString("yyyy"),
             triggerTime.ToString("MM"),
@@ -52,17 +53,30 @@ public sealed class CurveFileStore : ICurveFileStore
         finalFull = AvailablePath(finalFull);
         var tempFull = finalFull + ".tmp";
 
-        var raw = Serialize(payload);
-        await using (var output = File.Create(tempFull))
-        await using (var brotli = new BrotliStream(output, CompressionLevel.Fastest, leaveOpen: true))
+        var crc = WriteCompressed(tempFull, payload);
+        var size = new FileInfo(tempFull).Length;
+        File.Move(tempFull, finalFull, overwrite: true);
+        return Task.FromResult((Path.GetRelativePath(_root, finalFull).Replace('\\', '/'), size, crc));
+    }
+
+    /// <summary>
+    /// 序列化直写压缩流并随写算 CRC。不再先在内存里拼出完整 raw 数组
+    /// （最坏 64MB 量级）再交给压缩 —— 中间只留压缩器自身的缓冲（性能审查 P2）。
+    /// </summary>
+    private static uint WriteCompressed(string tempFull, CurvePayload payload)
+    {
+        var crc32 = new Crc32();
+        using var output = File.Create(tempFull);
+        using var hashing = new HashingStream(output, crc32);
+        using (var brotli = new BrotliStream(hashing, CompressionLevel.Fastest, leaveOpen: true))
         {
-            await brotli.WriteAsync(raw, cancellationToken).ConfigureAwait(false);
+            using var writer = new BinaryWriter(brotli, Encoding.UTF8, leaveOpen: true);
+            WritePayloadFields(writer, payload);
+            writer.Flush();
         }
 
-        var bytes = await File.ReadAllBytesAsync(tempFull, cancellationToken).ConfigureAwait(false);
-        var crc = Crc32.HashToUInt32(bytes);
-        File.Move(tempFull, finalFull, overwrite: true);
-        return (Path.GetRelativePath(_root, finalFull).Replace('\\', '/'), bytes.LongLength, crc);
+        // hashing 在 brotli 之后关闭：帧尾字节也要进 CRC。两者关闭顺序由 using 嵌套保证。
+        return BinaryPrimitives.ReadUInt32LittleEndian(crc32.GetCurrentHash());
     }
 
     public async Task<CurvePayload> ReadAsync(string relativePath, uint? expectedCrc = null, CancellationToken cancellationToken = default)
@@ -136,6 +150,14 @@ public sealed class CurveFileStore : ICurveFileStore
     {
         using var ms = new MemoryStream();
         using var writer = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
+        WritePayloadFields(writer, payload);
+        writer.Flush();
+        return ms.ToArray();
+    }
+
+    /// <summary>字段布局的唯一写入口：文件直写与内存 Serialize 共用，两端口径永不漂移。</summary>
+    private static void WritePayloadFields(BinaryWriter writer, CurvePayload payload)
+    {
         writer.Write(Magic);
         writer.Write(Version);
         writer.Write(payload.PointCount);
@@ -152,8 +174,6 @@ public sealed class CurveFileStore : ICurveFileStore
                 writer.Write(v);
             }
         }
-
-        return ms.ToArray();
     }
 
     public static CurvePayload Deserialize(byte[] data)
@@ -236,5 +256,43 @@ public sealed class CurveFileStore : ICurveFileStore
                 return candidate;
             }
         }
+    }
+
+    /// <summary>
+    /// 把写过的每个字节喂给非加密哈希的转发流。与 Crc32.HashToUInt32（对整个文件内容）同值：
+    /// 字节序按 little-endian 取回，读回路径的 expectedCrc 校验就是这条一致性的验收口。
+    /// </summary>
+    private sealed class HashingStream(Stream inner, NonCryptographicHashAlgorithm hash) : Stream
+    {
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() => inner.Flush();
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            hash.Append(buffer.AsSpan(offset, count));
+            inner.Write(buffer, offset, count);
+        }
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            hash.Append(buffer);
+            inner.Write(buffer);
+        }
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            hash.Append(buffer.Span);
+            await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+        }
+
+        public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            => await WriteAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
     }
 }

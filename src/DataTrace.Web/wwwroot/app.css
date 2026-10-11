@@ -2957,3 +2957,76 @@ html.dt-theme-dark button.dt-settings-nav-btn.active {
 .dt-diag-health-bad {
     color: var(--mud-palette-error);
 }
+
+/* 曲线标签选择器（看板 UX 审查）：每条曲线用自己的判定着色 + 图标 + 文字（三通道），
+   选中态按曲线 Key 在刷新之间保持；「全部 N 条」走明细页。 */
+.dt-curve-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 10px 0 4px;
+}
+
+.dt-curve-tabs .mud-chip {
+  cursor: pointer;
+}
+
+.dt-curve-all-link {
+  margin-left: auto;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.dt-curve-reason {
+  margin-top: 2px;
+}
+
+/* 工站侧边详情：四页签（异常/参数/曲线/诊断）+ 跟随最新/固定本次。 */
+.dt-station-drawer .dt-detail-header {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dt-detail-search {
+  min-width: 220px;
+  flex: 1 1 220px;
+}
+
+.dt-detail-tag-row {
+  padding: 6px 8px;
+  margin-bottom: 4px;
+}
+
+.dt-detail-curve-issue {
+  padding: 8px;
+  margin: 8px 0;
+  border-left: 3px solid var(--mud-palette-error, #dc2626);
+  background: color-mix(in srgb, var(--mud-palette-error, #dc2626) 8%, transparent);
+}
+
+.dt-detail-diag td:first-child {
+  width: 40%;
+  color: var(--mud-palette-text-secondary, #64748b);
+}
+
+/* 卡片概览行数选择与详情面板多曲线堆叠。 */
+.dt-card-rows-select {
+  min-width: 110px;
+  flex: 0 0 auto;
+}
+
+.dt-curve-block {
+  margin-bottom: 12px;
+}
+
+.dt-curve-block-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.dt-curve-block-points {
+  font-size: 0.8rem;
+}

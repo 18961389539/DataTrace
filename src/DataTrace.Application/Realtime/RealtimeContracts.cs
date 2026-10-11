@@ -48,6 +48,9 @@ public sealed class StationLiveTag
     public required string Display { get; init; }
     public string? Unit { get; init; }
     public double? NumericValue { get; init; }
+
+    /// <summary>字符串类点位的原值。与 NumericValue 一起用于区分「文本点位」与「没读到数据」。</summary>
+    public string? TextValue { get; init; }
     public double? LowerLimit { get; init; }
     public double? UpperLimit { get; init; }
     public double? WarningLowerLimit { get; init; }
@@ -64,6 +67,15 @@ public sealed class StationLiveCurve
 {
     public required string Name { get; init; }
     public required float[] Values { get; init; }
+
+    /// <summary>跨采集记录稳定的曲线标识（曲线定义 Id + 产品位）：卡片曲线标签用它保持选中态。</summary>
+    public string Key { get; init; } = "";
+
+    /// <summary>这条曲线自己的判定：NG/OK 来自波形判据，null = 未判定（未配判据或无法判定）。</summary>
+    public Judgement? Judgement { get; init; }
+
+    /// <summary>NG 时的首条违例原因；OK/未判定为 null。</summary>
+    public string? JudgementReason { get; init; }
 }
 
 public sealed class CollectFeedItem

@@ -153,6 +153,14 @@ export function update(element, model) {
 
     optionsByElement.set(element, model);
     chart.setOption(createOption(element, model), { notMerge: true, lazyUpdate: true });
+    // 同组的图共享轴指针与提示（联动游标）：echarts.connect 对同组注册是幂等的。
+    const group = model.connectGroup || null;
+    if (group) {
+        chart.group = group;
+        window.echarts.connect(group);
+    } else if (chart.group) {
+        chart.group = null;
+    }
     chart.resize();
 }
 

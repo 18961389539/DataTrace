@@ -1,11 +1,14 @@
 @using DataTrace.Application.Realtime
 @using DataTrace.Domain.Constants
 @using DataTrace.Domain.Enums
+@inject NavigationManager Nav
 
 @* 工站卡片。
    看板每 5 秒有一次定时重画，用来推进相对时间；整页重画会把每张卡的点位、
    tooltip、迷你曲线全部 diff 一遍。这里用指纹把重画限制在「数据真的变了」的时候，
-   相对时间交给卡片内部的 LiveRelative 自己走。 *@
+   相对时间交给卡片内部的 LiveRelative 自己走。
+   布局口径（看板 UX 审查）：工站状态与产品判定分开显示；参数用「汇总 + 重点行」；
+   曲线用标签切换、每条曲线自己的判定着色；刷新按数据版本判断，不比采样点。 *@
 
 <MudPaper Class="@CardClass">
     <MudStack Row="true" AlignItems="AlignItems.Start" Class="dt-station-header">
@@ -14,10 +17,12 @@
                 <MudText Typo="Typo.subtitle1" Class="dt-station-title">@StationTitle</MudText>
             </MudTooltip>
             <div class="dt-station-subline">
+                @* 采集中仍显示上一件的完成数据：明确标注「最近完成」，避免被当成当前产品的实时值。 *@
                 <MudText Typo="Typo.caption" Class="dt-muted dt-flash dt-station-ident" @key="@BeatKey">
                     @(string.IsNullOrWhiteSpace(Station.LastPalletCode) ? "等待托盘" : Station.LastPalletCode)
                     · @(Station.LastSerialNo ?? "-")
-                    · <LiveRelative Time="Station.LastCompleteTime" />
+                    · @(Station.State == StationRuntimeState.Busy ? "最近完成 " : "")
+                    <LiveRelative Time="Station.LastCompleteTime" />
                 </MudText>
                 <div class="dt-station-meta">
                     <span class="dt-station-meta-label">节拍</span>
@@ -34,14 +39,25 @@
                 }
             </div>
         </div>
-        <MudChip T="string" Size="Size.Small" Color="@StateColor" Icon="@StateIcon"
-                 Class="dt-station-status">@StateLabel</MudChip>
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center" Class="dt-station-chips">
+            @* 双状态：左芯片是工站运行状态（采集中/空闲/故障），右芯片是最近一次产品判定（OK/NG/未判定）。
+               两者语义独立 —— 采集中不等于 NG，故障也不代表上一件被判废。 *@
+            <MudChip T="string" Size="Size.Small" Color="@StateColor" Icon="@StateIcon"
+                     Class="dt-station-status">@StateLabel</MudChip>
+            @if (HasLastOutcome)
+            {
+                <MudTooltip Text="@OutcomeTooltip" Arrow="true" Placement="Placement.Top">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@OutcomeColor"
+                             Icon="@OutcomeIcon" Class="dt-station-outcome">@OutcomeLabel</MudChip>
+                </MudTooltip>
+            }
+        </MudStack>
         @if (Station.LastRecordId is > 0 && !string.IsNullOrEmpty(Station.LastMonthKey))
         {
             <MudTooltip Text="查看本站明细" Arrow="true" Placement="Placement.Top">
                 <MudIconButton Icon="@Icons.Material.Filled.Visibility" Size="Size.Small"
                                Color="Color.Default" Class="dt-station-detail-link"
-                               Href="@($"/query/{Station.LastMonthKey}/{Station.LastRecordId}")"
+                               Href="@DetailUrl"
                                aria-label="查看本站明细" />
             </MudTooltip>
         }
@@ -53,19 +69,16 @@
     }
     else
     {
-        @if (HasManyTags)
-        {
-            <div class="dt-point-summary">
-                <span class="dt-point-summary-label">
-                    @(_showAllTags ? "全部点位" : "优先点位") · 未标记项均正常
-                </span>
-                <span>@TagsToDisplay.Count / @Station.LastTags.Count</span>
-            </div>
-        }
+        @* 参数汇总：总数 + 各判定类计数。无数据与未配置判定单独列出，绝不归入「正常」；
+           全部正常时才说「均正常」。 *@
+        <div class="dt-point-summary">
+            <span class="dt-point-summary-label">@TagSummaryText</span>
+            <span>@TagsToDisplay.Count / @Station.LastTags.Count</span>
+        </div>
         <div class="dash-tags @(HasManyTags ? "dense" : null)">
             @foreach (var tag in TagsToDisplay)
             {
-                @* 卡片里只放短芯片「超限/预警」，完整说明放进 Tooltip，
+                @* 卡片里只放短芯片「超限/预警/无数据/未判定」，完整说明放进 Tooltip，
                    避免长句把工站卡撑满；触屏长按也能看到 tooltip。 *@
                 <div class="@TagClass(tag)">
                     <span class="dash-tag-label">
@@ -92,6 +105,18 @@
                                 <TooltipContent>
                                     <HelpContent Topic="HelpTexts.LimitThreeTiers" />
                                 </TooltipContent>
+                            </MudTooltip>
+                        }
+                        else if (IsNoData(tag))
+                        {
+                            <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined" Class="ml-1"
+                                     Icon="@Icons.Material.Filled.HelpOutline">无数据</MudChip>
+                        }
+                        else if (IsUnjudged(tag))
+                        {
+                            <MudTooltip Text="该点位没有配置判定限值，不参与合格判定" Arrow="true">
+                                <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined" Class="ml-1"
+                                         Icon="@Icons.Material.Filled.Rule">未判定</MudChip>
                             </MudTooltip>
                         }
                     </span>
@@ -126,25 +151,63 @@
         </div>
         @if (HasManyTags && (HiddenTagCount > 0 || _showAllTags))
         {
+            @* 隐藏区里还有异常时优先说异常：操作者点开就是为了看它们。
+               行序在刷新之间稳定（异常优先 + 原顺序兜底），点击不会踩空。 *@
             <MudButton Size="Size.Small" Variant="Variant.Text" Class="dt-point-expand"
                        StartIcon="@(_showAllTags ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)"
                        UserAttributes="@ExpandButtonAttributes" OnClick="ToggleTagDetails">
-                @(_showAllTags ? "收起点位" : $"查看其余 {HiddenTagCount} 个点位")
+                @(_showAllTags
+                    ? "收起点位"
+                    : HiddenAttentionCount > 0
+                        ? $"还有 {HiddenAttentionCount} 项异常"
+                        : $"查看其余 {HiddenTagCount} 个点位")
             </MudButton>
         }
-        @foreach (var curve in Station.LastCurves.Take(MaxVisibleCurves))
+        @if (SelectedCurve is { } selected)
         {
-            <div class="dt-station-curve" role="group" aria-label="@($"曲线 {curve.Name}")">
-                <span class="dt-station-curve-label" title="@curve.Name">@curve.Name</span>
-                <StationSparkChart CurveName="@curve.Name" Values="curve.Values"
-                                   IsNg="@(Station.LastJudgement == Judgement.Ng)" />
+            @* 曲线标签 = 选择器 + 每条曲线自己的判定（颜色 + 图标 + 文字三通道）。
+               默认选中第一条 NG 曲线（有异常时入口直接落在异常上），否则第一条；
+               选中态按曲线 Key 在刷新之间保持。 *@
+            <div class="dt-curve-tabs" role="tablist" aria-label="曲线选择">
+                @foreach (var curve in Station.LastCurves)
+                {
+                    var isSelected = curve.Key == SelectedCurveKey;
+                    <MudTooltip Text="@CurveTabTooltip(curve)" Arrow="true">
+                        <MudChip T="string" Size="Size.Small"
+                                 Variant="@(isSelected ? Variant.Filled : Variant.Outlined)"
+                                 Color="@CurveChipColor(curve)"
+                                 Icon="@CurveChipIcon(curve)"
+                                 OnClick="@(() => SelectCurve(curve.Key))"
+                                 Class="dt-curve-tab"
+                                 role="tab"
+                                 aria-selected="@isSelected.ToString().ToLowerInvariant()">
+                            @curve.Name @CurveJudgementText(curve)
+                        </MudChip>
+                    </MudTooltip>
+                }
+                @if (DetailUrl is { } detailUrl)
+                {
+                    <MudLink Href="@detailUrl" Underline="Underline.None" Class="dt-curve-all-link">
+                        全部 @Station.LastCurves.Count 条
+                    </MudLink>
+                }
             </div>
+            <div class="dt-station-curve" role="group" aria-label="@($"曲线 {selected.Name}")">
+                <StationSparkChart CurveName="@selected.Name" Values="selected.Values"
+                                   Tone="@CurveTone(selected)"
+                                   VersionKey="@($"{Station.LastMonthKey}:{Station.LastRecordId}:{selected.Key}")" />
+            </div>
+            @if (selected.Judgement == Judgement.Ng && !string.IsNullOrEmpty(selected.JudgementReason))
+            {
+                <MudText Typo="Typo.caption" Color="Color.Error" Class="dt-curve-reason">@selected.JudgementReason</MudText>
+            }
         }
-        @if (HiddenCurveCount > 0)
+        @if (OnOpenDetails.HasDelegate)
         {
-            @* 曲线条数不设上限时，配了 5 条曲线的工站会把卡片顶成两倍高，
-               同一行的其它卡片就被拉出一块空白。 *@
-            <MudText Typo="Typo.caption" Class="dt-muted mt-1">还有 @HiddenCurveCount 条曲线，见本站明细</MudText>
+            <MudButton Size="Size.Small" Variant="Variant.Text" Class="dt-station-open-details mt-1"
+                       StartIcon="@Icons.Material.Filled.ViewSidebar" OnClick="@(() => OnOpenDetails.InvokeAsync())">
+                打开工站详情
+            </MudButton>
         }
     }
 
@@ -155,18 +218,24 @@
 </MudPaper>
 
 @code {
-    /// <summary>卡片默认画一条代表曲线，再多折叠成提示，避免拉高整行卡片。</summary>
-    private const int MaxVisibleCurves = 1;
-    private const int FullDisplayTagLimit = 5;
-    private const int MaxPreviewTags = 4;
-
     [Parameter] public StationRuntimeStatus Station { get; set; } = default!;
+
+    /// <summary>点击「打开工站详情」：由宿主页面打开侧边详情面板，保留看板上下文。</summary>
+    [Parameter] public EventCallback OnOpenDetails { get; set; }
+
+    /// <summary>概览参数行数（用户在工具栏配置 3–6 行）；null 用系统默认。</summary>
+    [Parameter] public int? PreviewTagLimitOverride { get; set; }
+
+    /// <summary>点位数不超过此值时全部平铺（与旧行为一致）；超过才折叠为「汇总 + 重点行」。</summary>
+    private const int FullDisplayTagLimit = 5;
 
     private string? _fingerprint;
     private bool _render;
     private bool _showAllTags;
     private bool _interactionChanged;
     private int? _stationId;
+    private string? _selectedCurveKey;
+    private int? _previewLimit;
 
     protected override void OnParametersSet()
     {
@@ -174,13 +243,15 @@
         {
             _stationId = Station.StationId;
             _showAllTags = false;
+            _selectedCurveKey = null;
         }
         if (Station.LastTags.Count <= FullDisplayTagLimit)
             _showAllTags = false;
 
         var fingerprint = BuildFingerprint();
-        _render = fingerprint != _fingerprint;
+        _render = fingerprint != _fingerprint || PreviewTagLimit != _previewLimit;
         _fingerprint = fingerprint;
+        _previewLimit = PreviewTagLimit;
     }
 
     protected override bool ShouldRender() => _render || _interactionChanged;
@@ -192,6 +263,11 @@
     private string StationTitle => $"{Station.StationCode} {Station.StationName}";
 
     private string CadenceText => DurationFormat.Text(Station.LastDurationMs);
+
+    private string? DetailUrl
+        => Station.LastRecordId is > 0 && !string.IsNullOrEmpty(Station.LastMonthKey)
+            ? $"/query/{Station.LastMonthKey}/{Station.LastRecordId}"
+            : null;
 
     /// <summary>
     /// 响应码回写的重试情况。常态（一次就成功、或还没采过）返回 null，不渲染。
@@ -210,18 +286,93 @@
             : $"重试 {Station.LastWriteBackAttempts} 次仍失败"
     };
 
+    // ---------- 工站状态与产品判定的双芯片 ----------
+
+    private bool HasLastOutcome => Station.LastRecordId is > 0 || Station.LastJudgement != Judgement.None;
+
+    private string OutcomeLabel => Station.LastJudgement switch
+    {
+        Judgement.Ng => "上次 NG",
+        Judgement.Ok => "上次 OK",
+        _ => "上次未判定"
+    };
+
+    private Color OutcomeColor => Station.LastJudgement switch
+    {
+        Judgement.Ng => Color.Error,
+        Judgement.Ok => Color.Success,
+        _ => Color.Default
+    };
+
+    private string OutcomeIcon => Station.LastJudgement switch
+    {
+        Judgement.Ng => Icons.Material.Filled.Cancel,
+        Judgement.Ok => Icons.Material.Filled.CheckCircle,
+        _ => Icons.Material.Filled.Remove
+    };
+
+    private string OutcomeTooltip
+        => Station.State == StationRuntimeState.Busy
+            ? "采集中：卡片显示的是上一件完成时的数据，当前件完成后刷新"
+            : "最近一次完成产品的判定";
+
+    // ---------- 参数分类汇总 ----------
+
     private bool HasManyTags => Station.LastTags.Count > FullDisplayTagLimit;
+
+    private int PreviewTagLimit => PreviewTagLimitOverride ?? SystemDefaults.StationCardPreviewTags;
+
+    private int OutOfLimitCount => Station.LastTags.Count(t => t.OutOfLimit);
+    private int WarningCount => Station.LastTags.Count(t => t.Warning && !t.OutOfLimit);
+    private int NoDataCount => Station.LastTags.Count(IsNoData);
+    private int UnjudgedCount => Station.LastTags.Count(t => IsUnjudged(t) && !IsNoData(t));
+
+    /// <summary>
+    /// 参数汇总：总数 + 非零异常类计数。无数据与未配置判定单独列出 ——
+    /// 它们不是"正常"，混进正常会把没读到的传感器说成健康的。
+    /// </summary>
+    private string TagSummaryText
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (OutOfLimitCount > 0) parts.Add($"超限 {OutOfLimitCount}");
+            if (WarningCount > 0) parts.Add($"预警 {WarningCount}");
+            if (NoDataCount > 0) parts.Add($"无数据 {NoDataCount}");
+            if (UnjudgedCount > 0) parts.Add($"未判定 {UnjudgedCount}");
+            return parts.Count == 0
+                ? $"参数 {Station.LastTags.Count} 项：均正常"
+                : $"参数 {Station.LastTags.Count} 项：{string.Join(" · ", parts)}";
+        }
+    }
+
+    /// <summary>无数据：数值与文本都没有 —— 读取失败、点位没读到值。不能当正常。</summary>
+    private static bool IsNoData(StationLiveTag tag)
+        => tag.NumericValue is null && string.IsNullOrWhiteSpace(tag.TextValue);
+
+    /// <summary>未判定：有限值但没配任何判定限值（或文本类点位），不参与合格判定。</summary>
+    private static bool IsUnjudged(StationLiveTag tag)
+        => !tag.OutOfLimit && !tag.Warning && tag.LowerLimit is null && tag.UpperLimit is null;
+
+    /// <summary>需要操作者注意的行：超限、预警、无数据。未判定单独计数，不挤占异常位。</summary>
+    private static bool IsAttentionTag(StationLiveTag tag) => tag.OutOfLimit || tag.Warning || IsNoData(tag);
 
     private IReadOnlyList<StationLiveTag> OrderedTags
         => HasManyTags
             ? Station.LastTags.Select((tag, index) => (Tag: tag, Index: index))
                 .OrderByDescending(item => item.Tag.OutOfLimit)
                 .ThenByDescending(item => item.Tag.Warning)
+                .ThenByDescending(item => IsNoData(item.Tag))
+                .ThenByDescending(item => IsUnjudged(item.Tag) && !IsNoData(item.Tag))
                 .ThenBy(item => item.Index)
                 .Select(item => item.Tag)
                 .ToList()
             : Station.LastTags;
 
+    /// <summary>
+    /// 概览行：异常（超限/预警/无数据）优先占满配额，但不超配额 ——
+    /// 异常再多也只显示前 N 行，剩下的进「还有 N 项异常」，卡片高度恒定。
+    /// </summary>
     private IReadOnlyList<StationLiveTag> PreviewTags
     {
         get
@@ -229,10 +380,10 @@
             var tags = OrderedTags;
             if (!HasManyTags) return tags;
 
-            var attentionTags = tags.Where(IsAttentionTag).ToList();
-            var normalSlots = Math.Max(0, MaxPreviewTags - attentionTags.Count);
+            var attentionTags = tags.Where(IsAttentionTag).Take(PreviewTagLimit).ToList();
+            var remainingSlots = Math.Max(0, PreviewTagLimit - attentionTags.Count);
             return attentionTags
-                .Concat(tags.Where(tag => !IsAttentionTag(tag)).Take(normalSlots))
+                .Concat(tags.Where(tag => !IsAttentionTag(tag)).Take(remainingSlots))
                 .ToList();
         }
     }
@@ -241,7 +392,12 @@
         => _showAllTags ? OrderedTags : PreviewTags;
 
     private int HiddenTagCount => Math.Max(0, OrderedTags.Count - PreviewTags.Count);
-    private int HiddenCurveCount => Math.Max(0, Station.LastCurves.Count - MaxVisibleCurves);
+
+    private int HiddenAttentionCount
+        => _showAllTags
+            ? 0
+            : OrderedTags.Count(IsAttentionTag) - PreviewTags.Count(IsAttentionTag);
+
     private Dictionary<string, object> ExpandButtonAttributes
         => new() { ["aria-expanded"] = _showAllTags.ToString().ToLowerInvariant() };
 
@@ -273,11 +429,83 @@
 
     private sealed record StationPresentation(string CssClass, string Label, Color Color, string? Icon);
 
+    // ---------- 曲线选择与每曲线判定 ----------
+
+    /// <summary>
+    /// 选中曲线：先记住操作者的选择（按曲线 Key，跨刷新稳定）；
+    /// 没选过或选中的曲线消失时，第一条 NG 曲线优先，否则第一条。
+    /// </summary>
+    private string SelectedCurveKey
+    {
+        get
+        {
+            var curves = Station.LastCurves;
+            if (curves.Count == 0)
+            {
+                return "";
+            }
+
+            if (_selectedCurveKey is { } key && curves.Any(c => c.Key == key))
+            {
+                return key;
+            }
+
+            return curves.FirstOrDefault(c => c.Judgement == Judgement.Ng)?.Key ?? curves[0].Key;
+        }
+    }
+
+    private StationLiveCurve? SelectedCurve
+        => Station.LastCurves.FirstOrDefault(c => c.Key == SelectedCurveKey);
+
+    private void SelectCurve(string key)
+    {
+        _selectedCurveKey = key;
+        _interactionChanged = true;
+    }
+
+    private static string CurveJudgementText(StationLiveCurve curve)
+        => curve.Judgement switch
+        {
+            Judgement.Ng => "NG",
+            Judgement.Ok => "OK",
+            _ => "未判定"
+        };
+
+    private static Color CurveChipColor(StationLiveCurve curve)
+        => curve.Judgement switch
+        {
+            Judgement.Ng => Color.Error,
+            Judgement.Ok => Color.Success,
+            _ => Color.Default
+        };
+
+    private static string CurveChipIcon(StationLiveCurve curve)
+        => curve.Judgement switch
+        {
+            Judgement.Ng => Icons.Material.Filled.Cancel,
+            Judgement.Ok => Icons.Material.Filled.CheckCircle,
+            _ => Icons.Material.Filled.Remove
+        };
+
+    private static string CurveTone(StationLiveCurve curve)
+        => curve.Judgement switch
+        {
+            Judgement.Ng => "ng",
+            Judgement.Ok => "ok",
+            _ => "none"
+        };
+
+    private static string CurveTabTooltip(StationLiveCurve curve)
+        => curve.Judgement switch
+        {
+            Judgement.Ng => $"{curve.Name}：波形判据违例。{(string.IsNullOrEmpty(curve.JudgementReason) ? "" : curve.JudgementReason)}",
+            Judgement.Ok => $"{curve.Name}：波形判据全部通过",
+            _ => $"{curve.Name}：未配置波形判据，不参与曲线判定"
+        };
+
     /// <summary>点位行样式：红区（超规格）优先于黄区（预警带）。</summary>
     private static string TagClass(StationLiveTag tag)
         => tag.OutOfLimit ? "dash-tag out" : tag.Warning ? "dash-tag warn" : "dash-tag";
-
-    private static bool IsAttentionTag(StationLiveTag tag) => tag.OutOfLimit || tag.Warning;
 
     private bool ShouldShowLimitScale(StationLiveTag tag)
         => !HasManyTags || _showAllTags || IsAttentionTag(tag);
@@ -350,21 +578,14 @@
               .Append(tag.OutOfLimit ? "!" : "").Append(tag.Warning ? "?" : "").Append('|');
         }
 
-        // 曲线只比首尾/中位采样：与 StationSparkChart 内部指纹一致，
-        // 长度或采样变了就放行，交给子组件自己再判一次。
+        // 曲线按稳定 Key + 长度 + 自身判定比较：同一件产品内值不变，
+        // 中段采样变化也不再是"可能变了"的信号 —— 记录标识就是版本。
         foreach (var curve in Station.LastCurves)
         {
-            var len = curve.Values.Length;
-            if (len == 0)
-            {
-                sb.Append(curve.Name).Append(":0|");
-                continue;
-            }
-
-            sb.Append(curve.Name).Append(':').Append(len)
-              .Append(':').Append(curve.Values[0].ToString("R", Culture))
-              .Append(':').Append(curve.Values[len / 2].ToString("R", Culture))
-              .Append(':').Append(curve.Values[len - 1].ToString("R", Culture)).Append('|');
+            sb.Append(curve.Key).Append(':').Append(curve.Name)
+              .Append(':').Append(curve.Values.Length)
+              .Append(':').Append(curve.Judgement is null ? "n" : curve.Judgement == Judgement.Ng ? "!" : "ok")
+              .Append('|');
         }
 
         return sb.ToString();

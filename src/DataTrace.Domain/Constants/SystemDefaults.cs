@@ -90,4 +90,10 @@ public static class SystemDefaults
 
     /// <summary>每一班的时长（小时）。只能是 8、12 或 24，各班首尾相接。</summary>
     public const int ShiftLengthHours = 12;
+
+    /// <summary>
+    /// 实时看板工站卡片默认展开的参数行数（异常优先，其余折叠为「还有 N 项」）。
+    /// 4 行在 3 列卡片布局下高度稳定；逐站配置属于看板展示配置（第二批）。
+    /// </summary>
+    public const int StationCardPreviewTags = 4;
 }

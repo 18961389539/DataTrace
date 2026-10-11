@@ -80,13 +80,20 @@ public sealed class SessionIndexRelay : ISessionIndexRelay
                 }
 
                 // 应用与作废都是终态；只有暂缓保持未决，等下一轮重试。
+                // 终态用条件 UPDATE 而不是跟踪实体保存：采集侧可能在读取与落终态之间
+                // 已经把这条意图删除（它自己 post-commit 处理完了）—— 跟踪实体保存会撞
+                // DbUpdateConcurrencyException 炸掉整批；条件 UPDATE 受影响 0 行就当作
+                // "已被所有者处理"，正是这条意图想要的结局。
                 if (outcome != IntentOutcome.Deferred)
                 {
-                    intent.AppliedAt = DateTime.Now;
+                    await db.SessionIndexIntents
+                        .Where(x => x.Id == intent.Id && x.AppliedAt == null)
+                        .ExecuteUpdateAsync(
+                            setters => setters.SetProperty(i => i.AppliedAt, DateTime.Now),
+                            cancellationToken)
+                        .ConfigureAwait(false);
                 }
             }
-
-            await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         }
 
         return applied;

@@ -11,40 +11,107 @@ partial class RuntimeStore
 {
     public async Task<CollectQueryResult> QueryAsync(CollectQueryRequest request, CancellationToken cancellationToken = default)
     {
+        var take = Math.Max(0, request.Take);
+        var skip = Math.Max(0, request.Skip);
         var months = ExistingMonthKeys();
-        var total = 0;
-        var candidates = new List<CollectRecordListItem>();
-        var perMonthTake = (int)Math.Min(
-            int.MaxValue,
-            (long)Math.Max(0, request.Skip) + Math.Max(0, request.Take));
+        var desc = request.SortDescending;
 
+        // 先对每个月库做两次索引扫描（TriggerTime 有单列索引）：
+        // - COUNT 合成 Total（配合短 TTL 缓存，连续翻页不再每次重算全部月库的计数）；
+        // - 边界触发时间（按排序方向取 MIN/MAX）给时间排序路径"这个库不可能影响全局窗口"的证明。
+        // 月库按会话开始月归档：记录的触发时间可能落在别的月份的库里，
+        // 所以边界必须查每个库自己的实际最小/最大触发时间，不能拿月份名字当时间范围。
+        var stats = new List<(string Month, int Count, DateTime Boundary)>();
         foreach (var month in months)
         {
             await using var db = _factory.Open(month);
             var filtered = Filter(db.CollectRecords.AsNoTracking(), request);
-            total += await filtered.CountAsync(cancellationToken).ConfigureAwait(false);
-            if (perMonthTake == 0)
+            var count = await filtered.CountAsync(cancellationToken).ConfigureAwait(false);
+            if (count == 0)
             {
                 continue;
             }
 
-            // Records can be stored in their session's start-month database even when their
-            // trigger time is later. Fetch each database's local top N, then merge globally.
-            // 局部前 N 必须按"和全局同一个次序"取：按耗时升序时某个月库若仍按时间取前 N，
-            // 会先把全局真正靠前的记录裁掉，合并结果就错了。
-            var page = await ApplySort(filtered, request)
-                .Take(perMonthTake)
-                .ToListAsync(cancellationToken)
-                .ConfigureAwait(false);
-            candidates.AddRange(page.Select(r => new CollectRecordListItem { MonthKey = month, Record = r }));
+            var boundary = desc
+                ? await filtered.MaxAsync(x => (DateTime?)x.TriggerTime, cancellationToken).ConfigureAwait(false)
+                : await filtered.MinAsync(x => (DateTime?)x.TriggerTime, cancellationToken).ConfigureAwait(false);
+            stats.Add((month, count, boundary!.Value));
+        }
+
+        var total = stats.Sum(s => s.Count);
+
+        if (take == 0)
+        {
+            return new CollectQueryResult { Total = total, Items = [] };
+        }
+
+        var perMonthTake = (int)Math.Min(int.MaxValue, (long)skip + take);
+        var candidates = new List<CollectRecordListItem>();
+        if (request.SortBy == CollectSortField.TriggerTime)
+        {
+            // 时间排序（默认列）：全局次序与触发时间一致。按各库的实际边界触发时间排序逐库
+            // 取局部前 N；候选够了之后，若下一个库的边界不可能进入当前窗口就停止 ——
+            // 归并的库数从"全部"收敛到"窗口所在的少数几个"。36 库 × 跳过 10000 条时，
+            // 旧的写法要物化 ~36 万条候选；这条路径通常只读 1-3 个库。
+            // 剪枝只在"下一个库的边界严格晚于窗口末端"时生效，边界相等继续取：宁可多读，
+            // 绝不裁掉可能进窗口的数据 —— 深分页错行比慢更不可接受。
+            var ordered = desc
+                ? stats.OrderByDescending(s => s.Boundary).ToList()
+                : stats.OrderBy(s => s.Boundary).ToList();
+            for (var i = 0; i < ordered.Count; i++)
+            {
+                candidates.AddRange(await FetchLocalTopAsync(ordered[i].Month, request, perMonthTake, cancellationToken).ConfigureAwait(false));
+                if (candidates.Count < perMonthTake || i + 1 >= ordered.Count)
+                {
+                    continue;
+                }
+
+                var windowEnd = ApplySort(candidates, request)
+                    .ElementAt(perMonthTake - 1)
+                    .Record.TriggerTime;
+                var nextBoundary = ordered[i + 1].Boundary;
+                if (desc ? nextBoundary < windowEnd : nextBoundary > windowEnd)
+                {
+                    break;
+                }
+            }
+        }
+        else
+        {
+            // 非时间排序（流水号/耗时等）：全局次序与月份无对齐关系，只能每库取局部前 N 归并。
+            // 深分页时这仍是 Skip+Take 条/库 —— 真正的游标分页需要查询页把翻页模型改成
+            // 排序键游标，留到第二批；本批上线的阶段耗时指标会先证实它是不是热点。
+            foreach (var (month, _, _) in stats)
+            {
+                candidates.AddRange(await FetchLocalTopAsync(month, request, perMonthTake, cancellationToken).ConfigureAwait(false));
+            }
         }
 
         var items = ApplySort(candidates, request)
-            .Skip(Math.Max(0, request.Skip))
-            .Take(Math.Max(0, request.Take))
+            .Skip(skip)
+            .Take(take)
             .ToList();
 
         return new CollectQueryResult { Total = total, Items = items };
+    }
+
+    /// <summary>
+    /// 单个月库的局部前 N。必须按"和全局同一个次序"取：按耗时排序时某个月库若仍按时间取前 N，
+    /// 会先把全局真正靠前的记录裁掉，合并结果就错了。
+    /// </summary>
+    private async Task<List<CollectRecordListItem>> FetchLocalTopAsync(
+        string month,
+        CollectQueryRequest request,
+        int perMonthTake,
+        CancellationToken cancellationToken)
+    {
+        await using var db = _factory.Open(month);
+        var filtered = Filter(db.CollectRecords.AsNoTracking(), request);
+        var page = await ApplySort(filtered, request)
+            .Take(perMonthTake)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return page.Select(r => new CollectRecordListItem { MonthKey = month, Record = r }).ToList();
     }
 
     /// <summary>

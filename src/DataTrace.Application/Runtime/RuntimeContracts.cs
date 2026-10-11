@@ -44,6 +44,16 @@ public sealed class CurvePayloadWrite
 
     /// <summary>采集时就地算好的波形特征，随曲线记录一起落库。</summary>
     public IReadOnlyList<CurveFeature> Features { get; init; } = [];
+
+    /// <summary>
+    /// 这条曲线自己的判定（实时看板按曲线着色用，不落库）：
+    /// 配置了波形判据且全部通过 = OK；任一判据违例 = NG；
+    /// 未配置判据或无法判定 = null（界面上显示「未判定」，绝不继承整站 NG）。
+    /// </summary>
+    public Judgement? Judgement { get; init; }
+
+    /// <summary>NG 时的首条违例原因；OK/未判定为 null。</summary>
+    public string? JudgementReason { get; init; }
 }
 
 public sealed class CurvePayload

@@ -94,7 +94,11 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddSingleton(new RuntimeDbFactory(runtimePath));
         services.AddSingleton<ICurveFileStore>(_ => new CurveFileStore(curvePath));
         services.AddSingleton<ICollectArchiveStore>(_ => new CollectArchiveFileStore(archivePath));
-        services.AddSingleton<ISpoolStore>(_ => new FileSpoolStore(spoolPath));
+        var spoolStore = new FileSpoolStore(spoolPath);
+        services.AddSingleton<ISpoolStore>(spoolStore);
+        // 积压 Gauge：补传队列的件数与最老一条的滞留秒数。回调只在监控端拉取时执行，
+        // 只做目录枚举（无内容解析），秒级轮询也不构成负担。
+        PersistenceMetrics.RegisterSpoolBacklogGauges(spoolStore.DescribeSnapshot);
         services.AddSingleton<IMesOutboxQueue, MesOutboxQueue>();
         services.AddSingleton<IMesOutboxRelay, MesOutboxRelay>();
         // 在制索引意图对账：启动对账 + 周期兜底（见 SessionIndexReconciler）。

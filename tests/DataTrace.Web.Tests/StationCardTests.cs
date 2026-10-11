@@ -96,25 +96,103 @@ public class StationCardTests
         Assert.True(cut.RenderCount > before);
     }
 
-    /// <summary>卡片默认只画一条代表曲线，其他曲线转为提示避免拉高同行卡片。</summary>
+    /// <summary>曲线以标签选择器呈现：每条曲线带自己的判定（文字+图标），异常曲线默认选中。</summary>
     [Fact]
-    public async Task Shows_one_curve_and_hints_at_the_rest()
+    public async Task Shows_curve_tabs_with_per_curve_judgement_and_selects_ng_by_default()
     {
         await using var ctx = NewContext();
         var station = Station();
         station.LastCurves =
         [
-            new StationLiveCurve { Name = "压力曲线", Values = [1f, 2f, 3f] },
-            new StationLiveCurve { Name = "位移曲线", Values = [1f, 2f, 3f] },
-            new StationLiveCurve { Name = "温度曲线", Values = [1f, 2f, 3f] }
+            new StationLiveCurve { Name = "压力曲线", Key = "1:1", Values = [1f, 2f, 3f], Judgement = Judgement.Ok },
+            new StationLiveCurve { Name = "位移曲线", Key = "2:1", Values = [1f, 2f, 3f] },
+            new StationLiveCurve
+            {
+                Name = "压装曲线", Key = "3:1", Values = [7f, 8f, 9f],
+                Judgement = Judgement.Ng, JudgementReason = "压装曲线波形异常：峰值超基线 3σ"
+            }
         ];
 
         var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station));
 
+        // 三条曲线全部以标签呈现（不再只画第一条、其余藏进明细）。
         Assert.Contains("压力曲线", cut.Markup);
-        Assert.DoesNotContain("位移曲线", cut.Markup);
-        Assert.DoesNotContain("温度曲线", cut.Markup);
-        Assert.Contains("还有 2 条曲线", cut.Markup);
+        Assert.Contains("位移曲线", cut.Markup);
+        Assert.Contains("压装曲线", cut.Markup);
+        // 每条曲线自己的判定文字；异常标签默认选中并在图下给出原因。
+        Assert.Contains("OK", cut.Markup);
+        Assert.Contains("未判定", cut.Markup);
+        var selected = cut.Find(".dt-station-curve");
+        Assert.Contains("压装曲线", selected.GetAttribute("aria-label"));
+        Assert.Contains("峰值超基线 3σ", cut.Find(".dt-curve-reason").TextContent);
+    }
+
+    /// <summary>选中态按曲线 Key 保持：切换到某条曲线后，数据刷新（同 Key）不弹回默认。</summary>
+    [Fact]
+    public async Task Curve_selection_survives_a_snapshot_refresh()
+    {
+        await using var ctx = NewContext();
+        var station = Station();
+        station.LastCurves =
+        [
+            new StationLiveCurve { Name = "压力曲线", Key = "1:1", Values = [1f, 2f, 3f], Judgement = Judgement.Ok },
+            new StationLiveCurve { Name = "位移曲线", Key = "2:1", Values = [4f, 5f, 6f], Judgement = Judgement.Ok }
+        ];
+        var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station));
+
+        cut.FindAll(".dt-curve-tab")[1].Click();
+        Assert.Contains("曲线 位移曲线", cut.Find(".dt-station-curve").GetAttribute("aria-label"));
+
+        var next = Station();
+        next.LastCurves =
+        [
+            new StationLiveCurve { Name = "压力曲线", Key = "1:1", Values = [2f, 3f, 4f], Judgement = Judgement.Ok },
+            new StationLiveCurve { Name = "位移曲线", Key = "2:1", Values = [5f, 6f, 7f], Judgement = Judgement.Ok }
+        ];
+        cut.Render(p => p.Add(x => x.Station, next));
+
+        Assert.Contains("曲线 位移曲线", cut.Find(".dt-station-curve").GetAttribute("aria-label"));
+    }
+
+    /// <summary>无数据与未配置判定不能归为「正常」：汇总单独计数，行上带文字芯片。</summary>
+    [Fact]
+    public async Task Classifies_no_data_and_unjudged_points_separately()
+    {
+        await using var ctx = NewContext();
+        var station = Station();
+        station.LastTags =
+        [
+            Point("超限", outOfLimit: true),
+            new StationLiveTag { Name = "没读到", Display = "-", NumericValue = null, TextValue = null },
+            new StationLiveTag { Name = "没配限值", Display = "42", NumericValue = 42 }
+        ];
+
+        var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station));
+
+        var summary = cut.Find(".dt-point-summary-label").TextContent;
+        Assert.Contains("超限 1", summary);
+        Assert.Contains("无数据 1", summary);
+        Assert.Contains("未判定 1", summary);
+        Assert.DoesNotContain("均正常", summary);
+        Assert.Contains("无数据", cut.Markup);
+        Assert.Contains("未判定", cut.Markup);
+    }
+
+    /// <summary>双状态：工站运行状态（采集中）与最近产品判定（上次 NG）分开显示；
+    /// 采集中明确标注卡片数据是「最近完成」的，避免被当成当前件的实时值。</summary>
+    [Fact]
+    public async Task Busy_state_keeps_last_outcome_chip_and_labels_stale_data()
+    {
+        await using var ctx = NewContext();
+        var station = Station();
+        station.State = StationRuntimeState.Busy;
+        station.LastJudgement = Judgement.Ng;
+
+        var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station));
+
+        Assert.Contains("采集中", cut.Markup);
+        Assert.Contains("上次 NG", cut.Markup);
+        Assert.Contains("最近完成", cut.Markup);
     }
 
     /// <summary>状态不能只靠颜色：色觉障碍用户分不出红绿边条时，图标与文字仍要能分辨。</summary>
@@ -257,14 +335,16 @@ public class StationCardTests
 
         var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station));
 
-        Assert.Contains("未标记项均正常", cut.Find(".dt-point-summary-label").TextContent);
-        Assert.Empty(cut.FindAll(".dt-point-state.ok"));
+        // 全部正常才说「均正常」；有任意异常/无数据/未判定时按类计数。
+        Assert.Contains("参数 7 项：均正常", cut.Find(".dt-point-summary-label").TextContent);
         Assert.Equal(4, cut.FindAll(".dash-tag").Count);
     }
 
     [Fact]
-    public async Task Keeps_all_warning_and_out_of_limit_points_visible()
+    public async Task Caps_attention_rows_and_offers_the_hidden_abnormal_list()
     {
+        // 异常数量超过可见行数时不再全部铺开（旧行为会把卡片顶高）：
+        // 概览保持 4 行，隐藏的异常数量进「还有 N 项异常」，点开即完整异常列表。
         await using var ctx = NewContext();
         var station = Station();
         station.LastTags =
@@ -280,8 +360,33 @@ public class StationCardTests
 
         var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station));
 
+        Assert.Equal(4, cut.FindAll(".dash-tag").Count);
+        Assert.Contains("还有 1 项异常", cut.Markup);
+
+        cut.Find("button.dt-point-expand").Click();
+
+        Assert.Equal(7, cut.FindAll(".dash-tag").Count);
+        Assert.Contains("收起点位", cut.Markup);
+    }
+
+    /// <summary>概览行数可配置（看板工具栏 3–6 行）：配置改了卡片立刻按新行数重排。</summary>
+    [Fact]
+    public async Task Honors_preview_row_override()
+    {
+        await using var ctx = NewContext();
+        var station = Station();
+        station.LastTags = Enumerable.Range(1, 7).Select(i => Point($"点位{i}")).ToArray();
+
+        var cut = ctx.Render<StationCard>(p => p
+            .Add(x => x.Station, station)
+            .Add(x => x.PreviewTagLimitOverride, 3));
+
+        Assert.Equal(3, cut.FindAll(".dash-tag").Count);
+        Assert.Contains("查看其余 4 个点位", cut.Markup);
+
+        cut.Render(p => p.Add(x => x.PreviewTagLimitOverride, 5));
+
         Assert.Equal(5, cut.FindAll(".dash-tag").Count);
-        Assert.Empty(cut.FindAll(".dt-point-state.ok"));
         Assert.Contains("查看其余 2 个点位", cut.Markup);
     }
 

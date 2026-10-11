@@ -1,0 +1,400 @@
+@using DataTrace.Application.Realtime
+@using DataTrace.Domain.Constants
+@using DataTrace.Domain.Enums
+@* 工站侧边详情（看板 UX 审查第二批）：从工站卡片打开，保留看板上下文。
+   四个页签：异常（本件要处理的事）、参数（搜索/仅看异常/按判定分组）、
+   曲线（大图 + 每曲线判定）、诊断（运行状态与链路口径）。
+   「跟随最新 / 固定本次」：分析某一件时固定整份快照 —— 参数与曲线永远属于同一件，
+   新数据只提示、不覆盖；切回跟随才继续滚动。
+   页签是自绘按钮而不是 MudTabs：抽屉内不需要 JS 度量，少一层交互依赖。 *@
+
+<MudDrawer @bind-Open="@Open" Anchor="Anchor.End" Elevation="12" Class="dt-station-drawer">
+    <MudDrawerHeader>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Class="dt-detail-header">
+            <MudText Typo="Typo.h6">@DetailTitle</MudText>
+            <MudSpacer />
+            @* 跟随/固定切换：固定的是「整份采集快照」（引用整份 StationRuntimeStatus），
+               参数与曲线同进同退，不会出现参数已是新件、曲线还是上一件的错位。 *@
+            <MudChip T="string" Size="Size.Small"
+                     Variant="@(Following ? Variant.Filled : Variant.Outlined)"
+                     Color="@(Following ? Color.Info : Color.Warning)"
+                     Icon="@(Following ? Icons.Material.Filled.Sync : Icons.Material.Filled.PushPin)"
+                     OnClick="TogglePin"
+                     Class="dt-detail-pin"
+                     aria-pressed="@PinStateText">
+                @(Following ? "跟随最新" : "已固定本次")
+            </MudChip>
+            <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="Close"
+                           aria-label="关闭工站详情" />
+        </MudStack>
+    </MudDrawerHeader>
+    @if (View is null)
+    {
+        <MudText Typo="Typo.body2" Class="dt-muted pa-4">工站已从看板移除。</MudText>
+    }
+    else
+    {
+        @* 固定期间来了新件：只提示，不覆盖 —— 操作者决定什么时候看新数据。 *@
+        @if (!Following && HasNewerData)
+        {
+            <div class="px-4">
+                <MudAlert Severity="Severity.Info" Dense="true">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                        <span>已有新采集完成（@(Station?.LastSerialNo ?? "-")）。</span>
+                        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="FollowLatest">查看最新</MudButton>
+                    </MudStack>
+                </MudAlert>
+            </div>
+        }
+
+        <div class="dt-detail-tabs px-4" role="tablist" aria-label="工站详情页签">
+            @foreach (var tab in TabItems)
+            {
+                <button type="button" role="tab"
+                        class="dt-detail-tab @(_tab == tab.Key ? "active" : "")"
+                        aria-selected="@(_tab == tab.Key).ToString().ToLowerInvariant()"
+                        @onclick="@(() => _tab = tab.Key)">
+                    @tab.Label
+                </button>
+            }
+        </div>
+
+        <div class="pa-4 pt-2">
+            @if (_tab == DetailTab.Issues)
+            {
+                @if (_abnormalCount == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="dt-muted py-2">本件没有超限、预警或无数据的点位；曲线判据也没有违例。</MudText>
+                }
+                else
+                {
+                    @foreach (var tag in AbnormalTags)
+                    {
+                        <div class="@TagClass(tag) dt-detail-tag-row">
+                            <span class="dash-tag-label">
+                                @tag.Name
+                                @if (tag.OutOfLimit)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.Error">超限</MudChip>
+                                }
+                                else if (tag.Warning)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.Warning">预警</MudChip>
+                                }
+                                else
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined" Icon="@Icons.Material.Filled.HelpOutline">无数据</MudChip>
+                                }
+                            </span>
+                            <span class="dash-tag-value">@tag.Display @tag.Unit</span>
+                            @if (tag.OutOfLimit)
+                            {
+                                <div class="dt-tag-exceedance">@ExceedanceText(tag)</div>
+                            }
+                        </div>
+                    }
+                    @foreach (var curve in View.LastCurves.Where(c => c.Judgement == Judgement.Ng))
+                    {
+                        <div class="dt-detail-curve-issue">
+                            <MudText Typo="Typo.subtitle2" Color="Color.Error">曲线 @curve.Name · NG</MudText>
+                            @if (!string.IsNullOrEmpty(curve.JudgementReason))
+                            {
+                                <MudText Typo="Typo.body2">@curve.JudgementReason</MudText>
+                            }
+                        </div>
+                    }
+                }
+            }
+            else if (_tab == DetailTab.Parameters)
+            {
+                <MudStack Row="true" Spacing="2" Class="mb-2 flex-wrap">
+                    <MudTextField @bind-Value="_search" Placeholder="搜索参数名称" Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Search" IconSize="Size.Small"
+                                  Immediate="true" Clearable="true" Class="dt-detail-search" />
+                    <MudSwitch @bind-Value="_onlyIssues" Color="Color.Error" Label="仅看异常" />
+                </MudStack>
+                @if (FilteredGroups.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="dt-muted py-2">没有符合条件的参数。</MudText>
+                }
+                @foreach (var group in FilteredGroups)
+                {
+                    <MudText Typo="Typo.subtitle2" Class="mt-3 mb-1">@group.Label</MudText>
+                    <MudTable Items="group.Rows" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-2">
+                        <HeaderContent>
+                            <MudTh>参数</MudTh>
+                            <MudTh>当前值</MudTh>
+                            <MudTh>判定</MudTh>
+                            <MudTh>说明</MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="参数">@context.Tag.Name</MudTd>
+                            <MudTd DataLabel="当前值">@context.Tag.Display @context.Tag.Unit</MudTd>
+                            <MudTd DataLabel="判定">
+                                @if (context.Tag.OutOfLimit)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Error" Icon="@Icons.Material.Filled.Error">超限</MudChip>
+                                }
+                                else if (context.Tag.Warning)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Warning" Icon="@Icons.Material.Filled.Warning">预警</MudChip>
+                                }
+                                else if (IsNoData(context.Tag))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Default" Icon="@Icons.Material.Filled.HelpOutline">无数据</MudChip>
+                                }
+                                else if (IsUnjudged(context.Tag))
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Default" Icon="@Icons.Material.Filled.Rule">未判定</MudChip>
+                                }
+                                else
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Icon="@Icons.Material.Filled.CheckCircle">正常</MudChip>
+                                }
+                            </MudTd>
+                            <MudTd DataLabel="说明">
+                                @(context.Tag.OutOfLimit ? ExceedanceText(context.Tag)
+                                    : context.Tag.Warning ? "落在预警带"
+                                    : IsNoData(context.Tag) ? "本次没有读到值"
+                                    : IsUnjudged(context.Tag) ? "未配置判定限值"
+                                    : "—")
+                            </MudTd>
+                        </RowTemplate>
+                    </MudTable>
+                }
+            }
+            else if (_tab == DetailTab.Curves)
+            {
+                @if (View.LastCurves.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="dt-muted py-2">本站没有配置曲线。</MudText>
+                }
+                else
+                {
+                    @* 每条曲线一张独立图（不同单位天然分图），同一条记录的图同组联动 ——
+                       悬停任一张，其余图的轴指针同步，方便对齐"同一采样时刻"的多路信号。 *@
+                    @foreach (var curve in View.LastCurves)
+                    {
+                        <div class="dt-curve-block" role="group" aria-label="@($"曲线 {curve.Name}")">
+                            <div class="dt-curve-block-head">
+                                <MudChip T="string" Size="Size.Small"
+                                         Color="@CurveChipColor(curve)"
+                                         Icon="@CurveChipIcon(curve)"
+                                         Variant="@(curve.Judgement == Judgement.Ng ? Variant.Filled : Variant.Outlined)">
+                                    @curve.Name @CurveJudgementText(curve)
+                                </MudChip>
+                                <span class="dt-muted dt-nums dt-curve-block-points">采样点 @curve.Values.Length</span>
+                            </div>
+                            <LineChart Series="@SeriesFor(curve)" Height="180" MaxPoints="2000"
+                                       ShowAxis="true" ShowLegend="false"
+                                       ShowPoints="@(curve.Values.Length <= 120)"
+                                       ConnectGroup="@ConnectGroupKey" />
+                            @if (curve.Judgement == Judgement.Ng && !string.IsNullOrEmpty(curve.JudgementReason))
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Error" Class="dt-curve-reason">@curve.JudgementReason</MudText>
+                            }
+                        </div>
+                    }
+                    @if (DetailUrl is { } detailUrl)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.History"
+                                   Href="@detailUrl" Class="mt-2">
+                            打开整份采集记录（历史曲线与原始数据）
+                        </MudButton>
+                    }
+                }
+            }
+            else
+            {
+                <MudSimpleTable Dense="true" Hover="false" Class="dt-detail-diag">
+                    <tbody>
+                    <tr><td>工站状态</td><td>@View.State</td></tr>
+                    <tr><td>最近判定</td><td>@(View.LastJudgement == Judgement.None ? "未判定" : DisplayLabels.JudgementText(View.LastJudgement))</td></tr>
+                    <tr><td>结果码</td><td>@(View.LastResultCode is { } code ? $"{code} {ResultCodes.Describe(code)}" : "-")</td></tr>
+                    <tr><td>托盘 / 流水</td><td>@(View.LastPalletCode ?? "-") / @(View.LastSerialNo ?? "-")</td></tr>
+                    <tr><td>完成时间</td><td>@(View.LastCompleteTime?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-")</td></tr>
+                    <tr><td>采集节拍</td><td>@(View.LastDurationMs is { } ms ? $"{ms} ms" : "-")</td></tr>
+                    <tr><td>响应码回写</td><td>@(View.LastWriteBackAttempts == 0 ? "未写回" : $"尝试 {View.LastWriteBackAttempts} 次，{(View.LastWriteBackOk ? "成功" : "失败")}")</td></tr>
+                    <tr><td>月库 / 记录</td><td>@(View.LastMonthKey ?? "-") / @(View.LastRecordId?.ToString() ?? "-")</td></tr>
+                    @if (!string.IsNullOrEmpty(View.LastError))
+                    {
+                        <tr><td>最近错误</td><td class="dt-text-error">@View.LastError</td></tr>
+                    }
+                    </tbody>
+                </MudSimpleTable>
+            }
+        </div>
+    }
+</MudDrawer>
+
+@code {
+    [Parameter] public StationRuntimeStatus? Station { get; set; }
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public EventCallback<bool> OpenChanged { get; set; }
+
+    private StationRuntimeStatus? _pinned;
+    private string _search = "";
+    private bool _onlyIssues;
+    private DetailTab _tab = DetailTab.Issues;
+
+    private enum DetailTab
+    {
+        Issues,
+        Parameters,
+        Curves,
+        Diagnostics
+    }
+
+    private sealed record DetailTabItem(DetailTab Key, string Label);
+
+    private IEnumerable<DetailTabItem> TabItems
+    {
+        get
+        {
+            yield return new(DetailTab.Issues, _abnormalCount > 0 ? $"异常（{_abnormalCount}）" : "异常");
+            yield return new(DetailTab.Parameters, $"参数{(View is null ? "" : $"（{View.LastTags.Count}）")}");
+            yield return new(DetailTab.Curves, $"曲线{(View is null ? "" : $"（{View.LastCurves.Count}）")}");
+            yield return new(DetailTab.Diagnostics, "诊断");
+        }
+    }
+
+    /// <summary>跟随最新：视图用实时状态；固定本次：用钉住的那份引用 —— 参数与曲线同进同退。</summary>
+    private StationRuntimeStatus? View => _pinned ?? Station;
+
+    private bool Following => _pinned is null;
+
+    private bool HasNewerData
+        => _pinned is { } pinned && Station is { } live && live.LastRecordId != pinned.LastRecordId;
+
+    private string DetailTitle
+        => View is { } view ? $"{view.StationCode} {view.StationName}" : "工站详情";
+
+    private string? DetailUrl
+        => View is { } view && view.LastRecordId is > 0 && !string.IsNullOrEmpty(view.LastMonthKey)
+            ? $"/query/{view.LastMonthKey}/{view.LastRecordId}"
+            : null;
+
+    private string PinStateText => (!Following).ToString().ToLowerInvariant();
+
+    private int _abnormalCount
+        => (View?.LastTags ?? []).Count(t => t.OutOfLimit || t.Warning || IsNoData(t))
+           + (View?.LastCurves ?? []).Count(c => c.Judgement == Judgement.Ng);
+
+    private IReadOnlyList<StationLiveTag> AbnormalTags
+        => View?.LastTags.Where(t => t.OutOfLimit || t.Warning || IsNoData(t)).ToList() ?? [];
+
+    private Task Close() => OpenChanged.InvokeAsync(false);
+
+    private void TogglePin()
+        => _pinned = Following ? View : null;
+
+    private void FollowLatest()
+        => _pinned = null;
+
+    /// <summary>联动分组按"工站 + 记录"划分：同一件的多张图同步游标，换件即换组。</summary>
+    private string? ConnectGroupKey
+        => View is { } view && view.LastRecordId is > 0
+            ? $"station-{view.StationId}-{view.LastMonthKey}-{view.LastRecordId}"
+            : null;
+
+    private IReadOnlyList<LineSeries> SeriesFor(StationLiveCurve curve)
+        => curve.Values.Length == 0
+            ? []
+            :
+            [
+                new LineSeries
+                {
+                    Name = curve.Name,
+                    Values = curve.Values,
+                    Color = curve.Judgement == Judgement.Ng ? ChartColors.Alert
+                        : curve.Judgement == Judgement.Ok ? ChartColors.Primary
+                        : ChartColors.Secondary
+                }
+            ];
+
+    // ---------- 参数分组与筛选 ----------
+
+    private sealed record DetailRow(StationLiveTag Tag);
+    private sealed record DetailGroup(string Label, List<DetailRow> Rows);
+
+    private List<DetailGroup> FilteredGroups
+    {
+        get
+        {
+            var tags = View?.LastTags ?? [];
+            if (!string.IsNullOrWhiteSpace(_search))
+            {
+                tags = tags.Where(t => t.Name.Contains(_search.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+            }
+
+            var groups = new List<DetailGroup>();
+            void Add(string label, Func<StationLiveTag, bool> predicate)
+            {
+                var rows = tags.Where(predicate).Select(t => new DetailRow(t)).ToList();
+                if (rows.Count > 0)
+                {
+                    groups.Add(new DetailGroup($"{label}（{rows.Count}）", rows));
+                }
+            }
+
+            Add("超限", t => t.OutOfLimit);
+            Add("预警", t => t.Warning && !t.OutOfLimit);
+            Add("无数据", IsNoData);
+            if (!_onlyIssues)
+            {
+                Add("未判定", t => IsUnjudged(t) && !IsNoData(t));
+                Add("正常", t => !t.OutOfLimit && !t.Warning && !IsNoData(t) && !IsUnjudged(t));
+            }
+
+            return groups;
+        }
+    }
+
+    /// <summary>无数据：数值与文本都没有 —— 读取失败、点位没读到值。</summary>
+    private static bool IsNoData(StationLiveTag tag)
+        => tag.NumericValue is null && string.IsNullOrWhiteSpace(tag.TextValue);
+
+    /// <summary>未判定：有限值但没配任何判定限值（或文本类点位）。</summary>
+    private static bool IsUnjudged(StationLiveTag tag)
+        => !tag.OutOfLimit && !tag.Warning && tag.LowerLimit is null && tag.UpperLimit is null;
+
+    private static string TagClass(StationLiveTag tag)
+        => tag.OutOfLimit ? "dash-tag out" : tag.Warning ? "dash-tag warn" : "dash-tag";
+
+    private static string ExceedanceText(StationLiveTag tag)
+    {
+        if (tag.NumericValue is not { } value) return "超出规格范围";
+        if (tag.LowerLimit is { } lower && value < lower)
+            return $"低于下限 {FormatLimit(lower - value)}{tag.Unit}";
+        if (tag.UpperLimit is { } upper && value > upper)
+            return $"高于上限 {FormatLimit(value - upper)}{tag.Unit}";
+        return "超出规格范围";
+    }
+
+    private static string FormatLimit(double? value)
+        => value?.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) ?? "—";
+
+    private static string CurveJudgementText(StationLiveCurve curve)
+        => curve.Judgement switch
+        {
+            Judgement.Ng => "NG",
+            Judgement.Ok => "OK",
+            _ => "未判定"
+        };
+
+    private static Color CurveChipColor(StationLiveCurve curve)
+        => curve.Judgement switch
+        {
+            Judgement.Ng => Color.Error,
+            Judgement.Ok => Color.Success,
+            _ => Color.Default
+        };
+
+    private static string CurveChipIcon(StationLiveCurve curve)
+        => curve.Judgement switch
+        {
+            Judgement.Ng => Icons.Material.Filled.Cancel,
+            Judgement.Ok => Icons.Material.Filled.CheckCircle,
+            _ => Icons.Material.Filled.Remove
+        };
+}

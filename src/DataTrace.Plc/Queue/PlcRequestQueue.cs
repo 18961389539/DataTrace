@@ -82,7 +82,7 @@ public sealed class PlcRequestQueue : IAsyncDisposable
                     sw.ElapsedMilliseconds, false, ex.Message, []));
                 throw;
             }
-        }, tcs, cancellationToken);
+        }, tcs, cancellationToken, PlcMetrics.OpRead, _monotonicMs());
 
         await _channel.Writer.WriteAsync(item, cancellationToken).ConfigureAwait(false);
         return await tcs.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -111,7 +111,7 @@ public sealed class PlcRequestQueue : IAsyncDisposable
                     sw.ElapsedMilliseconds, false, ex.Message, PlcTrafficLog.Trim(words)));
                 throw;
             }
-        }, tcs, cancellationToken);
+        }, tcs, cancellationToken, PlcMetrics.OpWrite, _monotonicMs());
 
         await _channel.Writer.WriteAsync(item, cancellationToken).ConfigureAwait(false);
         await tcs.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -178,6 +178,7 @@ public sealed class PlcRequestQueue : IAsyncDisposable
             // 否则通道里残留请求的 TCS 永远没有结局，等待方（无令牌的调用方）会永久悬挂。
             await foreach (var item in _channel.Reader.ReadAllAsync(CancellationToken.None).ConfigureAwait(false))
             {
+                PlcMetrics.RecordQueueWait(Math.Max(0, _monotonicMs() - item.EnqueuedAtMs), item.Op);
                 if (_cts.IsCancellationRequested || item.Cancellation.IsCancellationRequested)
                 {
                     item.Completion.TrySetCanceled(item.Cancellation);
@@ -187,7 +188,9 @@ public sealed class PlcRequestQueue : IAsyncDisposable
                 try
                 {
                     using var linked = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token, item.Cancellation);
+                    var ioSw = Stopwatch.StartNew();
                     var result = await item.Execute(linked.Token).ConfigureAwait(false);
+                    PlcMetrics.RecordIo(ioSw.Elapsed.TotalMilliseconds, item.Op);
                     if (_driver.IsConnected)
                     {
                         ResetCooldown();
@@ -241,5 +244,7 @@ public sealed class PlcRequestQueue : IAsyncDisposable
     private sealed record WorkItem(
         Func<CancellationToken, Task<ushort[]>> Execute,
         TaskCompletionSource<ushort[]> Completion,
-        CancellationToken Cancellation);
+        CancellationToken Cancellation,
+        string Op,
+        long EnqueuedAtMs);
 }

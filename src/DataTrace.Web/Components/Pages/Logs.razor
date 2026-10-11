@@ -877,57 +877,61 @@
 
             tempPath = Path.Combine(Path.GetTempPath(), $"datatrace_audit_{exportId:N}.csv");
 
-            await using var file = new FileStream(
+            // 写句柄必须在下载发起前关闭：下载端点以 FileShare.Read | FileShare.Delete
+            // + DeleteOnClose 打开同一文件，写句柄若仍持有（share 不含 Delete、access 含 Write），
+            // 两边共享模式互相不兼容，端点直接 500（日志里是 IOException: being used by another process）。
+            await using (var file = new FileStream(
                 tempPath,
                 FileMode.CreateNew,
                 FileAccess.ReadWrite,
-                FileShare.Read,
+                FileShare.Read | FileShare.Delete,
                 bufferSize: 64 * 1024,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
-
-            var headers = new[]
+                FileOptions.Asynchronous | FileOptions.SequentialScan))
             {
-                "时间", "用户", "动作", "对象", "键", "结果", "来源", "来源 IP", "关联 ID", "变更前", "变更后"
-            };
-            var batch = await QueryExportBatchAsync(0, request);
-            _exportTotal = batch.Total;
-
-            await using (var writer = new StreamWriter(file, new System.Text.UTF8Encoding(true), 64 * 1024, leaveOpen: true))
-            {
-                await writer.WriteLineAsync(CsvExporter.BuildRow(headers));
-                var skip = 0;
-                while (batch.Items.Count > 0)
+                var headers = new[]
                 {
-                    foreach (var item in batch.Items)
+                    "时间", "用户", "动作", "对象", "键", "结果", "来源", "来源 IP", "关联 ID", "变更前", "变更后"
+                };
+                var batch = await QueryExportBatchAsync(0, request);
+                _exportTotal = batch.Total;
+
+                await using (var writer = new StreamWriter(file, new System.Text.UTF8Encoding(true), 64 * 1024, leaveOpen: true))
+                {
+                    await writer.WriteLineAsync(CsvExporter.BuildRow(headers));
+                    var skip = 0;
+                    while (batch.Items.Count > 0)
                     {
-                        var row = new[]
+                        foreach (var item in batch.Items)
                         {
-                            item.Time.ToString("yyyy-MM-dd HH:mm:ss"),
-                            item.UserName,
-                            DisplayLabels.AuditAction(item.Action),
-                            DisplayLabels.EntityType(item.EntityType),
-                            item.EntityKey ?? "",
-                            OutcomeLabel(item.Outcome),
-                            item.Source,
-                            item.SourceIp ?? "",
-                            item.CorrelationId ?? "",
-                            item.OldValue ?? "",
-                            item.NewValue ?? ""
-                        };
-                        await writer.WriteLineAsync(CsvExporter.BuildRow(row));
+                            var row = new[]
+                            {
+                                item.Time.ToString("yyyy-MM-dd HH:mm:ss"),
+                                item.UserName,
+                                DisplayLabels.AuditAction(item.Action),
+                                DisplayLabels.EntityType(item.EntityType),
+                                item.EntityKey ?? "",
+                                OutcomeLabel(item.Outcome),
+                                item.Source,
+                                item.SourceIp ?? "",
+                                item.CorrelationId ?? "",
+                                item.OldValue ?? "",
+                                item.NewValue ?? ""
+                            };
+                            await writer.WriteLineAsync(CsvExporter.BuildRow(row));
+                        }
+
+                        _exportedRows += batch.Items.Count;
+                        skip += batch.Items.Count;
+                        await writer.FlushAsync();
+                        await InvokeAsync(StateHasChanged);
+
+                        if (batch.Items.Count < ExportBatchSize || skip >= batch.Total)
+                        {
+                            break;
+                        }
+
+                        batch = await QueryExportBatchAsync(skip, request);
                     }
-
-                    _exportedRows += batch.Items.Count;
-                    skip += batch.Items.Count;
-                    await writer.FlushAsync();
-                    await InvokeAsync(StateHasChanged);
-
-                    if (batch.Items.Count < ExportBatchSize || skip >= batch.Total)
-                    {
-                        break;
-                    }
-
-                    batch = await QueryExportBatchAsync(skip, request);
                 }
             }
 

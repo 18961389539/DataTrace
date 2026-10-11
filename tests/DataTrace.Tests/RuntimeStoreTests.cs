@@ -721,6 +721,80 @@ public class RuntimeStoreTests
     }
 
     [Fact]
+    public async Task Query_finds_records_archived_in_previous_month_db()
+    {
+        // 会话开始月归档：8 月库里存着触发时间在 9 月的记录。
+        // 边界剪枝必须按"每个库实际的最小/最大触发时间"排序，不能按月库名字排 ——
+        // 按名字排会把 8 月库排在 9 月库后面（降序），首页窗口会被裁错。
+        await using var env = await RuntimeEnv.CreateAsync();
+        await env.Store.SaveAsync(FirstStation("202609", "P09A", "S09A", new DateTime(2026, 9, 20, 8, 0, 0)));
+        await env.Store.SaveAsync(FirstStation("202609", "P09B", "S09B", new DateTime(2026, 9, 21, 8, 0, 0)));
+        await env.Store.SaveAsync(FirstStation("202608", "P08A", "S08A", new DateTime(2026, 9, 30, 8, 0, 0)));
+        await env.Store.SaveAsync(FirstStation("202608", "P08B", "S08B", new DateTime(2026, 9, 30, 9, 0, 0)));
+
+        var firstPage = await env.Store.QueryAsync(new CollectQueryRequest
+        {
+            From = new DateTime(2026, 9, 1),
+            To = new DateTime(2026, 9, 30, 23, 59, 59),
+            SortDescending = true,
+            Take = 2
+        });
+        Assert.Equal(4, firstPage.Total);
+        Assert.Equal(new[] { "P08B", "P08A" }, firstPage.Items.Select(i => i.Record.PalletCode).ToArray());
+
+        var secondPage = await env.Store.QueryAsync(new CollectQueryRequest
+        {
+            From = new DateTime(2026, 9, 1),
+            To = new DateTime(2026, 9, 30, 23, 59, 59),
+            SortDescending = true,
+            Skip = 2,
+            Take = 2
+        });
+        Assert.Equal(new[] { "P09B", "P09A" }, secondPage.Items.Select(i => i.Record.PalletCode).ToArray());
+    }
+
+    [Fact]
+    public async Task Query_paging_across_interleaved_months_matches_full_sort()
+    {
+        // 三个月库、触发时间交错（含 8 月库里的 10 月触发件）：
+        // 连续翻页拼出来的全序必须与一次性全量排序完全一致 —— 剪枝既不能裁掉窗口内的行，
+        // 也不能因为边界相等（同秒触发跨库）而错行。
+        await using var env = await RuntimeEnv.CreateAsync();
+        var expected = new List<(string Pallet, DateTime Time)>();
+        foreach (var (monthDb, day) in new[] { ("202608", 1), ("202609", 11), ("202610", 21) })
+        {
+            for (var i = 0; i < 5; i++)
+            {
+                var time = new DateTime(2026, 10, 1, 8, 0, 0).AddHours(day * 2 + i);
+                await env.Store.SaveAsync(FirstStation(monthDb, $"{monthDb}-{i}", $"S{monthDb}-{i}", time));
+                expected.Add(($"{monthDb}-{i}", time));
+            }
+        }
+
+        var expectedOrder = expected
+            .OrderByDescending(e => e.Time)
+            .Select(e => e.Pallet)
+            .ToList();
+
+        var collected = new List<string>();
+        for (var skip = 0; skip < 15; skip += 3)
+        {
+            var page = await env.Store.QueryAsync(new CollectQueryRequest
+            {
+                From = new DateTime(2026, 10, 1),
+                To = new DateTime(2026, 10, 30),
+                SortDescending = true,
+                Skip = skip,
+                Take = 3
+            });
+            Assert.Equal(15, page.Total);
+            collected.AddRange(page.Items.Select(i => i.Record.PalletCode));
+        }
+
+        Assert.Equal(expectedOrder, collected);
+    }
+
+    [Fact]
     public async Task Query_can_match_current_and_historical_recipe_codes()
     {
         await using var env = await RuntimeEnv.CreateAsync();

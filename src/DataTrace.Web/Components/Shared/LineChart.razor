@@ -54,6 +54,12 @@
 
     [Parameter] public string EmptyText { get; set; } = "暂无曲线数据";
 
+    /// <summary>
+    /// ECharts 分组名：同组的多张图共享坐标轴指针与提示（联动游标），
+    /// 用于详情面板的"多路独立曲线、横轴语义一致"场景。null 不参与联动。
+    /// </summary>
+    [Parameter] public string? ConnectGroup { get; set; }
+
     private const string ModulePath = "./js/echarts-line-chart.js";
 
     private readonly List<Plot> _plots = [];
@@ -138,6 +144,7 @@
             showLegend = ShowLegend,
             annotated = _annotated,
             showPoints = ShowPoints,
+            connectGroup = ConnectGroup,
             xMin = _xMin,
             xMax = _xMax,
             yMin = _yMin,

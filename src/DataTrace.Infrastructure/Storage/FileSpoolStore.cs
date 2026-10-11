@@ -16,6 +16,17 @@ public sealed class FileSpoolStore : ISpoolStore
     private readonly string _root;
     private readonly long _maxBacklogBytes;
     private readonly SemaphoreSlim _writeGate = new(1, 1);
+
+    // 工位→待处理位置的轻量索引（性能审查 P1）：HasPendingForStation / HasMonthEntries
+    // 过去要逐文件解析含曲线的完整 JSON 才能回答"这个工站/月库有没有积压"，
+    // 现在只查内存索引；目录与索引不一致时只解析新增/指纹变化的文件。
+    // 索引是"快路径"，不是事实源：损坏、指纹对不上、旁车缺失时一律回退全量解析，
+    // 且解析不了的条目对所有工站/月库都报"有积压"—— 绝不因缓存遗漏待处理任务。
+    private const string IndexFileName = "spool.index.json";
+    private readonly SemaphoreSlim _indexGate = new(1, 1);
+    private Dictionary<string, SpoolIndexEntry>? _index;
+    private bool _indexReady;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         ReferenceHandler = ReferenceHandler.IgnoreCycles,
@@ -60,6 +71,7 @@ public sealed class FileSpoolStore : ISpoolStore
             }
 
             File.Move(temporaryPath, path);
+            NoteIndexAdd(name, request);
             return name;
         }
         catch
@@ -120,16 +132,17 @@ public sealed class FileSpoolStore : ISpoolStore
     public async Task<bool> HasMonthEntriesAsync(string monthKey, CancellationToken cancellationToken = default)
     {
         if (!Directory.Exists(_root)) return false;
-        foreach (var file in PayloadFiles())
+        var index = await EnsureIndexAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var entry in index.Values)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var request = await ReadPayloadAsync(file, cancellationToken).ConfigureAwait(false);
-            // A corrupt/oversized entry has unknown references; keep all candidate data until it is repaired.
-            if (request is null || request.Record is null || request.Curves is null
-                || string.Equals(request.MonthKey, monthKey, StringComparison.Ordinal)
-                || string.Equals(RelativePathMonthKey(request.Record.ArchivePath), monthKey, StringComparison.Ordinal)
-                || request.Curves.Any(curve => string.Equals(RelativePathMonthKey(curve.Record.RelativePath), monthKey, StringComparison.Ordinal)))
+            // 损坏条目的引用关系未知：所有候选月库都按"有积压"处理，数据留到修复为止。
+            if (entry.StationId is null
+                || string.Equals(entry.MonthKey, monthKey, StringComparison.Ordinal)
+                || string.Equals(entry.ArchiveMonth, monthKey, StringComparison.Ordinal)
+                || Array.IndexOf(entry.CurveMonths, monthKey) >= 0)
+            {
                 return true;
+            }
         }
 
         return false;
@@ -138,21 +151,17 @@ public sealed class FileSpoolStore : ISpoolStore
     public async Task<bool> HasPendingForStationAsync(int stationId, CancellationToken cancellationToken = default)
     {
         if (!Directory.Exists(_root)) return false;
-        foreach (var file in PayloadFiles())
+        var index = await EnsureIndexAsync(cancellationToken).ConfigureAwait(false);
+        foreach (var entry in index.Values)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
+            // 与旧实现同一套 fail-safe：解析不了的文件引用关系未知，
+            // 对任何工站的"是否有待补传"都回答"有"，宁可阻塞也不放行重复采集。
+            if (entry.StationId is null || entry.StationId == stationId)
             {
-                await using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 65536, useAsync: true);
-                using var json = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
-                if (json.RootElement.TryGetProperty("Record", out var record)
-                    && record.TryGetProperty("StationId", out var id)
-                    && id.TryGetInt32(out var value) && value == stationId)
-                    return true;
+                return true;
             }
-            catch (JsonException) { return true; }
-            catch (IOException) { return true; }
         }
+
         return false;
     }
 
@@ -200,10 +209,14 @@ public sealed class FileSpoolStore : ISpoolStore
     }
 
     public Task<SpoolBacklog> DescribeAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult(DescribeSnapshot());
+
+    /// <summary>同步快照：Gauge 回调（监控端拉取）也用同一条路，不做任何内容解析。</summary>
+    public SpoolBacklog DescribeSnapshot()
     {
         if (!Directory.Exists(_root))
         {
-            return Task.FromResult(new SpoolBacklog(0, null));
+            return new SpoolBacklog(0, null);
         }
 
         // 只数件数与最早一条，不排序：看板、报警与诊断页都在按秒轮询这一条，
@@ -225,7 +238,7 @@ public sealed class FileSpoolStore : ISpoolStore
             }
         }
 
-        return Task.FromResult(new SpoolBacklog(count, oldest));
+        return new SpoolBacklog(count, oldest);
     }
 
     public async Task NoteFailureAsync(string fileName, string error, CancellationToken cancellationToken = default)
@@ -258,7 +271,202 @@ public sealed class FileSpoolStore : ISpoolStore
             File.Delete(sidecar);
         }
 
+        NoteIndexRemove(fileName);
         return Task.CompletedTask;
+    }
+
+    // ---------- 工位/月库积压索引 ----------
+
+    // 旁车索引放在 _meta 子目录：spool 根目录的 *.json 归"失败原因旁车"语义，
+    // 索引混进去会被诊断清单与既有断言当成业务文件。
+    private string IndexPath => Path.Combine(_root, "_meta", IndexFileName);
+
+    private async Task<Dictionary<string, SpoolIndexEntry>> EnsureIndexAsync(CancellationToken cancellationToken)
+    {
+        var snapshot = _index;
+        if (_indexReady && snapshot is not null && MatchesDirectory(snapshot))
+        {
+            return snapshot;
+        }
+
+        await _indexGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            snapshot = _index;
+            if (_indexReady && snapshot is not null && MatchesDirectory(snapshot))
+            {
+                return snapshot;
+            }
+
+            var rebuilt = await ReconcileAsync(snapshot, cancellationToken).ConfigureAwait(false);
+            _index = rebuilt;
+            _indexReady = true;
+            PersistIndex(rebuilt);
+            return rebuilt;
+        }
+        finally
+        {
+            _indexGate.Release();
+        }
+    }
+
+    /// <summary>索引覆盖的文件名与目录是否一致。只比名字与数量：本进程是唯一写入者，
+    /// Save/Delete 会同步维护内存索引，名字对得上就无需任何内容解析。</summary>
+    private bool MatchesDirectory(Dictionary<string, SpoolIndexEntry> index)
+    {
+        var files = PayloadFiles().ToArray();
+        if (files.Length != index.Count)
+        {
+            return false;
+        }
+
+        foreach (var file in files)
+        {
+            if (!index.ContainsKey(Path.GetFileName(file)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 与实际目录对账。旁车索引里指纹吻合（长度 + 修改时间）的条目直接复用；
+    /// 新文件、外部改动、指纹对不上的文件才逐条解析 —— 启动时的首次对账因此
+    /// 通常不用解析任何内容。
+    /// </summary>
+    private async Task<Dictionary<string, SpoolIndexEntry>> ReconcileAsync(
+        Dictionary<string, SpoolIndexEntry>? previous,
+        CancellationToken cancellationToken)
+    {
+        var known = previous ?? LoadIndexFile();
+        var result = new Dictionary<string, SpoolIndexEntry>(StringComparer.Ordinal);
+        foreach (var file in PayloadFiles())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var name = Path.GetFileName(file);
+            var info = new FileInfo(file);
+            if (known is not null
+                && known.TryGetValue(name, out var cached)
+                && cached.Length == info.Length
+                && cached.LastWriteUtc == info.LastWriteTimeUtc)
+            {
+                result[name] = cached;
+                continue;
+            }
+
+            var request = await ReadPayloadAsync(file, cancellationToken).ConfigureAwait(false);
+            result[name] = BuildEntry(request, info.Length, info.LastWriteTimeUtc);
+        }
+
+        return result;
+    }
+
+    private static SpoolIndexEntry BuildEntry(CollectSaveRequest? request, long length, DateTime lastWriteUtc)
+    {
+        if (request is null || !IsValidRequest(request))
+        {
+            // 引用关系未知：所有工站/月库的查询都按"有积压"回答。
+            return new SpoolIndexEntry(null, "", null, [], length, lastWriteUtc);
+        }
+
+        return new SpoolIndexEntry(
+            request.Record.StationId,
+            request.MonthKey,
+            RelativePathMonthKey(request.Record.ArchivePath),
+            request.Curves
+                .Select(curve => RelativePathMonthKey(curve.Record.RelativePath))
+                .Where(month => month is not null)
+                .Select(month => month!)
+                .Distinct()
+                .ToArray(),
+            length,
+            lastWriteUtc);
+    }
+
+    private Dictionary<string, SpoolIndexEntry>? LoadIndexFile()
+    {
+        try
+        {
+            if (!File.Exists(IndexPath))
+            {
+                return null;
+            }
+
+            using var stream = File.OpenRead(IndexPath);
+            var file = JsonSerializer.Deserialize<SpoolIndexFile>(stream, JsonOptions);
+            return file?.Entries is { } entries ? new Dictionary<string, SpoolIndexEntry>(entries, StringComparer.Ordinal) : null;
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            // 旁车只是加速启动的缓存：坏了就全量解析重建，不影响正确性。
+            return null;
+        }
+    }
+
+    /// <summary>旁车原子落盘（tmp + move）。失败静默：下次对账会重建，不在采集路径上为它冒进。</summary>
+    private void PersistIndex(Dictionary<string, SpoolIndexEntry> index)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(IndexPath)!);
+            var temporary = IndexPath + ".tmp";
+            using (var stream = File.Create(temporary))
+            {
+                JsonSerializer.Serialize(stream, new SpoolIndexFile(index), JsonOptions);
+            }
+
+            File.Move(temporary, IndexPath, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
+    /// <summary>保存成功后同步维护内存索引并原子落盘旁车（tmp + move，失败静默）。
+    /// 旁车常青，重启对账才能做到零内容解析；这条写入相对曲线文件+月库事务可忽略。</summary>
+    private void NoteIndexAdd(string fileName, CollectSaveRequest request)
+    {
+        long length = 0;
+        var lastWrite = DateTime.UtcNow;
+        try
+        {
+            var info = new FileInfo(Path.Combine(_root, fileName));
+            length = info.Length;
+            lastWrite = info.LastWriteTimeUtc;
+        }
+        catch (IOException)
+        {
+        }
+
+        var entry = BuildEntry(request, length, lastWrite);
+        lock (_indexGate)
+        {
+            var next = _indexReady && _index is not null
+                ? new Dictionary<string, SpoolIndexEntry>(_index, StringComparer.Ordinal)
+                : new Dictionary<string, SpoolIndexEntry>(StringComparer.Ordinal);
+            next[fileName] = entry;
+            _index = next;
+            _indexReady = true;
+            PersistIndex(next);
+        }
+    }
+
+    private void NoteIndexRemove(string fileName)
+    {
+        lock (_indexGate)
+        {
+            if (!_indexReady || _index is null || !_index.ContainsKey(fileName))
+            {
+                return;
+            }
+
+            var next = new Dictionary<string, SpoolIndexEntry>(_index, StringComparer.Ordinal);
+            next.Remove(fileName);
+            _index = next;
+            PersistIndex(next);
+        }
     }
 
     private IEnumerable<string> PayloadFiles()
@@ -480,4 +688,15 @@ public sealed class FileSpoolStore : ISpoolStore
 
     /// <summary>旁车文件：这条缓存补传失败了几次、上次是什么时候、为什么。</summary>
     private sealed record SpoolFailure(int Attempts, DateTime LastAttemptAt, string Error);
+
+    /// <summary>工位→待处理位置的索引条目。StationId=null 表示解析不了、引用关系未知。</summary>
+    private sealed record SpoolIndexEntry(
+        int? StationId,
+        string MonthKey,
+        string? ArchiveMonth,
+        string[] CurveMonths,
+        long Length,
+        DateTime LastWriteUtc);
+
+    private sealed record SpoolIndexFile(Dictionary<string, SpoolIndexEntry> Entries);
 }

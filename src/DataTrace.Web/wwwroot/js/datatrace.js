@@ -1,12 +1,13 @@
 // DataTrace 前端小工具。避免使用 eval，便于日后启用 CSP。
-window.dtDownload = function (fileName, contentBase64) {
+// mime 可选：报表 PDF 传 application/pdf；历史调用不传，默认还是 text/csv（带 BOM 的 UTF-8）。
+window.dtDownload = function (fileName, contentBase64, mime) {
     var binary = atob(contentBase64);
     var bytes = new Uint8Array(binary.length);
     for (var i = 0; i < binary.length; i++) {
         bytes[i] = binary.charCodeAt(i);
     }
 
-    var blob = new Blob([bytes], { type: 'text/csv;charset=utf-8' });
+    var blob = new Blob([bytes], { type: mime || 'text/csv;charset=utf-8' });
     var url = URL.createObjectURL(blob);
     var link = document.createElement('a');
     link.href = url;
@@ -317,3 +318,20 @@ window.dtVisibility = (function () {
         }
     };
 })();
+
+// 看板工站卡片概览参数行数（3–6）：用户级偏好，存 localStorage；null = 用系统默认。
+window.dtStationCardRows = {
+    key: 'dt-station-card-rows',
+    get: function () {
+        try {
+            var value = parseInt(localStorage.getItem(this.key), 10);
+            return value >= 3 && value <= 6 ? value : null;
+        } catch (e) { return null; }
+    },
+    set: function (rows) {
+        try {
+            localStorage.setItem(this.key, String(rows));
+            return true;
+        } catch (e) { return false; }
+    }
+};
