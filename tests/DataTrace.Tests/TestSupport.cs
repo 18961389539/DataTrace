@@ -5,6 +5,7 @@ using DataTrace.Application.Reporting;
 using DataTrace.Application.Runtime;
 using DataTrace.Collector;
 using DataTrace.Domain.Entities;
+using DataTrace.Domain.Enums;
 using DataTrace.Infrastructure;
 using DataTrace.Infrastructure.Persistence;
 using DataTrace.Infrastructure.Seeding;
@@ -164,6 +165,8 @@ internal sealed class CollectHarness : IAsyncDisposable
         using (var seedScope = provider.CreateScope())
         {
             await seedScope.ServiceProvider.GetRequiredService<DatabaseSeeder>().SeedAsync();
+            await ConfigureGenericTestStationAsync(
+                seedScope.ServiceProvider.GetRequiredService<ConfigDbContext>());
         }
 
         var harness = new CollectHarness(workspace, provider, logs);
@@ -188,6 +191,162 @@ internal sealed class CollectHarness : IAsyncDisposable
         }
 
         return harness;
+    }
+
+    private static async Task ConfigureGenericTestStationAsync(ConfigDbContext db)
+    {
+        var extraDemoStations = await db.Stations
+            .Include(item => item.Tags)
+            .Include(item => item.Curves)
+            .Where(item => item.Code == "OP40" || item.Code == "OP50" || item.Code == "OP70")
+            .ToListAsync();
+        if (extraDemoStations.Count > 0)
+        {
+            var tagIds = extraDemoStations.SelectMany(station => station.Tags).Select(tag => tag.Id).ToArray();
+            var limits = await db.RecipeLimits
+                .Where(limit => tagIds.Contains(limit.TagId))
+                .ToListAsync();
+            db.RecipeLimits.RemoveRange(limits);
+            db.Tags.RemoveRange(extraDemoStations.SelectMany(station => station.Tags));
+            db.Curves.RemoveRange(extraDemoStations.SelectMany(station => station.Curves));
+            db.Stations.RemoveRange(extraDemoStations);
+        }
+
+        var stations = await db.Stations
+            .Include(item => item.Tags)
+            .Include(item => item.Curves)
+            .Where(item => item.Code == "OP130" || item.Code == "OP140" || item.Code == "OP150" || item.Code == "OP20" || item.Code == "OP30")
+            .ToListAsync();
+        if (stations.Count == 0)
+        {
+            return;
+        }
+
+        var restoredStations = new List<Station>();
+        foreach (var station in stations)
+        {
+            var (code, name, trigger, pallet, temperature, pressure, curveY, curveX, sequence) = station.Code switch
+            {
+                "OP130" => ("ST010", "上料工站", "D1000", "D1010", "D1110", "D1100", "D2200", "D2400", 10),
+                "OP140" => ("ST020", "压装工站", "D1200", "D1210", "D1310", "D1300", "D3600", "D4000", 20),
+                "OP150" => ("ST030", "下线工站", "D1400", "D1410", "D1510", "D1500", "D5200", "D5600", 30),
+                "OP20" => ("ST050", "性能检测工站", "D1800", "D1810", "D1910", "D1900", "D8400", "D8800", 50),
+                "OP30" => ("ST060", "终检工站", "D2000", "D2010", "D2110", "D2100", "D10000", "D10400", 60),
+                _ => throw new InvalidOperationException($"未识别的演示站点：{station.Code}")
+            };
+            var oldTagIds = station.Tags.Select(tag => tag.Id).ToArray();
+            var oldLimits = await db.RecipeLimits
+                .Where(limit => oldTagIds.Contains(limit.TagId))
+                .ToListAsync();
+            db.RecipeLimits.RemoveRange(oldLimits);
+            db.Tags.RemoveRange(station.Tags);
+            db.Curves.RemoveRange(station.Curves);
+
+            station.Code = code;
+            station.Name = name;
+            station.Sequence = sequence;
+            station.IsFirstStation = sequence == 10;
+            station.IsLastStation = sequence == 60;
+            station.TriggerAddress = trigger;
+            station.TriggerValue = 1;
+            station.EventIdAddress = "";
+            station.ConfirmationRequestAddress = "";
+            station.ConfirmationAckAddress = "";
+            station.PalletCodeAddress = pallet;
+            station.PalletCodeLength = 16;
+            station.PalletCodeDataType = PlcDataType.String;
+            station.Tags =
+            [
+                new TagDefinition
+                {
+                    Name = "工站温度",
+                    Address = temperature,
+                    DataType = PlcDataType.Float,
+                    Unit = "℃",
+                    LowerLimit = 0,
+                    UpperLimit = 80,
+                    WarningUpperLimit = 60,
+                    TargetValue = 40,
+                    PositionIndex = 1
+                },
+                new TagDefinition
+                {
+                    Name = "压力",
+                    Address = pressure,
+                    DataType = PlcDataType.Float,
+                    Unit = "kN",
+                    LowerLimit = 5,
+                    UpperLimit = 20,
+                    WarningLowerLimit = 6,
+                    WarningUpperLimit = 16,
+                    TargetValue = 12.5,
+                    PositionIndex = 1
+                }
+            ];
+            station.Curves =
+            [
+                new CurveDefinition
+                {
+                    Code = station.Code + "_PD",
+                    Name = "位移压力曲线",
+                    PointCount = 50,
+                    PositionIndex = 1,
+                    Enabled = true,
+                    Series =
+                    [
+                        new CurveSeries
+                        {
+                            Name = "压力",
+                            Role = SeriesRole.Y,
+                            StartAddress = curveY,
+                            DataType = PlcDataType.Float,
+                            StrideWords = 2,
+                            Unit = "kN"
+                        },
+                        new CurveSeries
+                        {
+                            Name = "位移",
+                            Role = SeriesRole.X,
+                            StartAddress = curveX,
+                            DataType = PlcDataType.Float,
+                            StrideWords = 2,
+                            Unit = "mm"
+                        }
+                    ]
+                }
+            ];
+            restoredStations.Add(station);
+        }
+
+        var version = await db.ConfigVersions.FirstOrDefaultAsync();
+        if (version is not null)
+        {
+            version.Version++;
+        }
+
+        await db.SaveChangesAsync();
+
+        var recipe = await db.Recipes
+            .Include(item => item.Limits)
+            .SingleOrDefaultAsync(item => item.Code == "A100");
+        if (recipe is not null)
+        {
+            foreach (var station in restoredStations)
+            {
+                recipe.Limits.Add(new RecipeLimit
+                {
+                    TagId = station.Tags.Single(tag => tag.Name == "压力").Id,
+                    UpperLimit = 16
+                });
+                recipe.Limits.Add(new RecipeLimit
+                {
+                    TagId = station.Tags.Single(tag => tag.Name == "工站温度").Id,
+                    WarningUpperLimit = 45
+                });
+            }
+
+            await db.SaveChangesAsync();
+        }
     }
 
     public IRuntimeStore RuntimeStore => Scope.ServiceProvider.GetRequiredService<IRuntimeStore>();

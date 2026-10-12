@@ -1,4 +1,5 @@
 using DataTrace.Domain.Enums;
+using DataTrace.Plc.Simulator;
 
 namespace DataTrace.Plc.Addresses;
 
@@ -16,7 +17,7 @@ public static class AddressParsers
         PlcBrand.SiemensS7 => new SiemensAddressParser(),
         PlcBrand.ModbusTcp => new ModbusAddressParser(),
         PlcBrand.OmronFins => new OmronAddressParser(),
-        // 内置模拟器与三菱共用一套地址语法（模拟驱动的读写也按这套解析）。
+        PlcBrand.Simulator => new SimulatorAddressParser(),
         _ => new MitsubishiAddressParser()
     };
 }

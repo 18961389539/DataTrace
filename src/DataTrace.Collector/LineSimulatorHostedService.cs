@@ -149,9 +149,17 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
             }
 
             var pool = Math.Max(1, snapshot.Settings.SimulatorPalletPool);
+            var firstStation = stations.FirstOrDefault(station => station.IsFirstStation) ?? stations[0];
             var code = string.IsNullOrWhiteSpace(palletCode)
-                ? $"P{(_palletSeq++ % pool) + 1:0000}"
+                ? firstStation.PalletCodeDataType == PlcDataType.String
+                    ? $"P{(_palletSeq++ % pool) + 1:0000}"
+                    : ((_palletSeq++ % pool) + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)
                 : palletCode.Trim();
+            if (firstStation.PalletCodeDataType != PlcDataType.String)
+            {
+                code = SimulatorScenario.NormalizePalletCode(firstStation, code);
+            }
+
             var injectNg = _random.Next(100) < Math.Clamp(snapshot.Settings.SimulatorNgPercent, 0, 100);
             var ngStationId = injectNg ? stations[_random.Next(stations.Count)].Id : -1;
 

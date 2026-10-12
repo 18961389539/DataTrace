@@ -130,6 +130,242 @@ public class SimulatorScenarioTests
     }
 
     [Fact]
+    public async Task Mw_station_writes_int16_tags_and_numeric_pallet_without_overwriting_it()
+    {
+        await using var driver = await DriverAsync();
+        var station = new Station
+        {
+            Code = "OP130",
+            Name = "点胶外观检测",
+            TriggerAddress = "MW3002",
+            TriggerValue = 1,
+            PalletCodeAddress = "MW3001",
+            PalletCodeLength = 1,
+            PalletCodeDataType = PlcDataType.Int16,
+            PositionCount = 1,
+            Positions = [new ProductPositionDefinition { Index = 1, Name = "产品" }],
+            Tags =
+            [
+                new TagDefinition { Id = 1, Name = "数据1_配方号", Address = "MW3000", DataType = PlcDataType.Int16, PositionIndex = 1 },
+                new TagDefinition { Id = 2, Name = "托盘号", Address = "MW3001", DataType = PlcDataType.Int16, PositionIndex = 1 },
+                new TagDefinition { Id = 3, Name = "3D结果17", Address = "MW3020", DataType = PlcDataType.Int16, PositionIndex = 1 }
+            ]
+        };
+
+        Load(driver, station, "P0012");
+
+        Assert.InRange((short)driver.GetWord("MW3000"), 8, 16);
+        Assert.Equal((ushort)12, driver.GetWord("MW3001"));
+        Assert.Equal((ushort)1, driver.GetWord("MW3002"));
+        Assert.InRange((short)driver.GetWord("MW3020"), 8, 16);
+    }
+
+    [Fact]
+    public async Task Op140_cycle_writes_recipe_pallet_results_and_trigger_to_mw_registers()
+    {
+        await using var driver = await DriverAsync();
+        var tags = new List<TagDefinition>
+        {
+            new() { Id = 1, Name = "配方号", Address = "MW3100", DataType = PlcDataType.Int16, PositionIndex = 1 },
+            new() { Id = 2, Name = "托盘号", Address = "MW3101", DataType = PlcDataType.Int16, PositionIndex = 1 }
+        };
+        for (var product = 0; product <= 8; product++)
+        {
+            tags.Add(new TagDefinition
+            {
+                Id = product + 3,
+                Name = $"产品{product}结果",
+                Address = $"MW{3103 + product}",
+                DataType = PlcDataType.Int16,
+                PositionIndex = 1
+            });
+        }
+
+        var station = new Station
+        {
+            Code = "OP140",
+            Name = "开关功能检测",
+            TriggerAddress = "MW3102",
+            TriggerValue = 1,
+            PalletCodeAddress = "MW3101",
+            PalletCodeLength = 1,
+            PalletCodeDataType = PlcDataType.Int16,
+            PositionCount = 1,
+            Positions = [new ProductPositionDefinition { Index = 1, Name = "产品" }],
+            Tags = tags
+        };
+
+        Load(driver, station, "P0012");
+
+        Assert.Equal((ushort)12, driver.GetWord("MW3101"));
+        Assert.Equal((ushort)1, driver.GetWord("MW3102"));
+        Assert.All(
+            station.Tags.Where(tag => tag.Address != station.PalletCodeAddress),
+            tag => Assert.NotEqual((ushort)0, driver.GetWord(tag.Address)));
+    }
+
+    [Fact]
+    public async Task Op150_cycle_writes_recipe_pallet_measurements_and_trigger_to_mw_registers()
+    {
+        await using var driver = await DriverAsync();
+        var tags = new List<TagDefinition>
+        {
+            new() { Id = 1, Name = "配方号", Address = "MW3200", DataType = PlcDataType.Int16, PositionIndex = 1 },
+            new() { Id = 2, Name = "托盘号", Address = "MW3201", DataType = PlcDataType.Int16, PositionIndex = 1 }
+        };
+        for (var product = 1; product <= 4; product++)
+        {
+            tags.Add(new TagDefinition
+            {
+                Id = product + 2,
+                Name = $"产品{product}拍基准结果",
+                Address = $"MW{3203 + product}",
+                DataType = PlcDataType.Int16,
+                PositionIndex = 1
+            });
+            tags.Add(new TagDefinition
+            {
+                Id = product + 6,
+                Name = $"产品{product}拍PIN结果",
+                Address = $"MW{3207 + product}",
+                DataType = PlcDataType.Int16,
+                PositionIndex = 1
+            });
+        }
+
+        var station = new Station
+        {
+            Code = "OP150",
+            Name = "位置度检测(左侧)",
+            TriggerAddress = "MW3202",
+            TriggerValue = 1,
+            PalletCodeAddress = "MW3201",
+            PalletCodeLength = 1,
+            PalletCodeDataType = PlcDataType.Int16,
+            PositionCount = 1,
+            Positions = [new ProductPositionDefinition { Index = 1, Name = "产品" }],
+            Tags = tags
+        };
+
+        Load(driver, station, "P0012");
+
+        Assert.Equal((ushort)12, driver.GetWord("MW3201"));
+        Assert.Equal((ushort)1, driver.GetWord("MW3202"));
+        Assert.All(
+            station.Tags.Where(tag => tag.Address != station.PalletCodeAddress),
+            tag => Assert.NotEqual((ushort)0, driver.GetWord(tag.Address)));
+    }
+
+    [Fact]
+    public async Task Op20_cycle_writes_int16_tags_and_thirty_real_curve_points()
+    {
+        await using var driver = await DriverAsync();
+        var tags = new List<TagDefinition>
+        {
+            new() { Id = 1, Name = "配方号", Address = "MW2300", DataType = PlcDataType.Int16, PositionIndex = 1 },
+            new() { Id = 2, Name = "托盘号", Address = "MW2301", DataType = PlcDataType.Int16, PositionIndex = 1 }
+        };
+        var tagId = 3;
+        for (var press = 1; press <= 4; press++)
+        {
+            tags.Add(new TagDefinition
+            {
+                Id = tagId++,
+                Name = $"压装{press}结果",
+                Address = $"MW{2303 + press}",
+                DataType = PlcDataType.Int16,
+                PositionIndex = 1
+            });
+        }
+
+        for (var press = 1; press <= 4; press++)
+        {
+            tags.Add(new TagDefinition
+            {
+                Id = tagId++,
+                Name = $"压装{press}压力值",
+                Address = $"MW{2307 + press}",
+                DataType = PlcDataType.Int16,
+                PositionIndex = 1
+            });
+        }
+
+        for (var press = 1; press <= 4; press++)
+        {
+            tags.Add(new TagDefinition
+            {
+                Id = tagId++,
+                Name = $"压装{press}位移值",
+                Address = $"MW{2311 + press}",
+                DataType = PlcDataType.Int16,
+                PositionIndex = 1
+            });
+        }
+
+        var station = new Station
+        {
+            Code = "OP20",
+            Name = "开关上料压装",
+            TriggerAddress = "MW2302",
+            TriggerValue = 1,
+            PalletCodeAddress = "MW2301",
+            PalletCodeLength = 1,
+            PalletCodeDataType = PlcDataType.Int16,
+            PositionCount = 1,
+            Positions = [new ProductPositionDefinition { Index = 1, Name = "产品" }],
+            Tags = tags,
+            Curves =
+            [
+                new CurveDefinition
+                {
+                    Code = "OP20_PD",
+                    Name = "压装位移压力曲线",
+                    PointCount = 30,
+                    PositionIndex = 1,
+                    Enabled = true,
+                    Series =
+                    [
+                        new CurveSeries
+                        {
+                            Name = "曲线位移值",
+                            Role = SeriesRole.X,
+                            StartAddress = "MD1700",
+                            DataType = PlcDataType.Float,
+                            StrideWords = 2
+                        },
+                        new CurveSeries
+                        {
+                            Name = "曲线压力值",
+                            Role = SeriesRole.Y,
+                            StartAddress = "%MD1730",
+                            DataType = PlcDataType.Float,
+                            StrideWords = 2
+                        }
+                    ]
+                }
+            ]
+        };
+
+        Load(driver, station, "P0012");
+
+        Assert.Equal((ushort)12, driver.GetWord("MW2301"));
+        Assert.Equal((ushort)1, driver.GetWord("MW2302"));
+        Assert.All(tags.Where(tag => tag.Address != "MW2301"), tag => Assert.NotEqual((ushort)0, driver.GetWord(tag.Address)));
+
+        async Task<float> ReadCurvePointAsync(string address)
+        {
+            Assert.True(driver.TryParseAddress(address, out var parsed));
+            var words = await driver.ReadWordsAsync(parsed, 2);
+            return (float)ValueCodec.DecodeNumeric(words, PlcDataType.Float, FloatWordOrder.CDAB, 1, 0);
+        }
+
+        Assert.Equal(0f, await ReadCurvePointAsync("MD1700"));
+        Assert.InRange(await ReadCurvePointAsync("MD1729"), 4.5f, 5.5f);
+        Assert.InRange(await ReadCurvePointAsync("%MD1730"), 1f, 14f);
+        Assert.InRange(await ReadCurvePointAsync("MD1759"), 1f, 14f);
+    }
+
+    [Fact]
     public async Task Trigger_value_follows_station_configuration()
     {
         await using var driver = await DriverAsync();

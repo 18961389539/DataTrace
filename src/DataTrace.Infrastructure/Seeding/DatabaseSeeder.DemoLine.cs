@@ -76,23 +76,21 @@ partial class DatabaseSeeder
             }
         };
 
-        plc.Stations.Add(CreateStation(
-            "ST010", "上料工站", 10, first: true, last: false,
-            trigger: "D1000", pallet: "D1010",
-            press: "D1100", temp: "D1110",
-            y: "D2200", x: "D2400"));
+        plc.Stations.Add(CreateOp130Station());
 
-        plc.Stations.Add(CreateStation(
-            "ST020", "压装工站", 20, first: false, last: false,
-            trigger: "D1200", pallet: "D1210",
-            press: "D1300", temp: "D1310",
-            y: "D3600", x: "D4000"));
+        plc.Stations.Add(CreateOp140Station());
 
-        plc.Stations.Add(CreateStation(
-            "ST030", "下线工站", 30, first: false, last: false,
-            trigger: "D1400", pallet: "D1410",
-            press: "D1500", temp: "D1510",
-            y: "D5200", x: "D5600"));
+        plc.Stations.Add(CreateOp150Station());
+
+        plc.Stations.Add(CreateOp20Station());
+
+        plc.Stations.Add(CreateOp30Station());
+
+        plc.Stations.Add(CreateOp40Station());
+
+        plc.Stations.Add(CreateOp50Station());
+
+        plc.Stations.Add(CreateOp70Station());
 
         foreach (var station in CreateAdditionalDemoStations())
         {
@@ -106,6 +104,10 @@ partial class DatabaseSeeder
     {
         var demoPlc = await _db.PlcConnections
             .Include(p => p.Stations)
+                .ThenInclude(s => s.Tags)
+            .Include(p => p.Stations)
+                .ThenInclude(s => s.Curves)
+                    .ThenInclude(curve => curve.Series)
             .FirstOrDefaultAsync(
                 p => p.Name == "模拟PLC" && p.Brand == PlcBrand.Simulator,
                 cancellationToken)
@@ -137,6 +139,166 @@ partial class DatabaseSeeder
             changed = true;
         }
 
+        var legacyFirstStation = demoPlc.Stations.FirstOrDefault(s => s.Code == "ST010");
+        if (legacyFirstStation is not null
+            && !existingCodes.Contains("OP130")
+            && IsLegacyDemoFirstStation(legacyFirstStation))
+        {
+            var oldTagIds = legacyFirstStation.Tags.Select(tag => tag.Id).ToArray();
+            var oldLimits = await _db.RecipeLimits
+                .Where(limit => oldTagIds.Contains(limit.TagId))
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            _db.RecipeLimits.RemoveRange(oldLimits);
+            _db.Tags.RemoveRange(legacyFirstStation.Tags);
+            _db.Curves.RemoveRange(legacyFirstStation.Curves);
+            ConfigureOp130Station(legacyFirstStation);
+            existingCodes.Remove("ST010");
+            existingCodes.Add("OP130");
+            changed = true;
+        }
+
+        var legacySecondStation = demoPlc.Stations.FirstOrDefault(s => s.Code == "ST020");
+        if (legacySecondStation is not null
+            && !existingCodes.Contains("OP140")
+            && IsLegacyDemoSecondStation(legacySecondStation))
+        {
+            var oldTagIds = legacySecondStation.Tags.Select(tag => tag.Id).ToArray();
+            var oldLimits = await _db.RecipeLimits
+                .Where(limit => oldTagIds.Contains(limit.TagId))
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            _db.RecipeLimits.RemoveRange(oldLimits);
+            _db.Tags.RemoveRange(legacySecondStation.Tags);
+            _db.Curves.RemoveRange(legacySecondStation.Curves);
+            ConfigureOp140Station(legacySecondStation);
+            existingCodes.Remove("ST020");
+            existingCodes.Add("OP140");
+            changed = true;
+        }
+
+        var legacyThirdStation = demoPlc.Stations.FirstOrDefault(s => s.Code == "ST030");
+        if (legacyThirdStation is not null
+            && !existingCodes.Contains("OP150")
+            && IsLegacyDemoThirdStation(legacyThirdStation))
+        {
+            var oldTagIds = legacyThirdStation.Tags.Select(tag => tag.Id).ToArray();
+            var oldLimits = await _db.RecipeLimits
+                .Where(limit => oldTagIds.Contains(limit.TagId))
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            _db.RecipeLimits.RemoveRange(oldLimits);
+            _db.Tags.RemoveRange(legacyThirdStation.Tags);
+            _db.Curves.RemoveRange(legacyThirdStation.Curves);
+            ConfigureOp150Station(legacyThirdStation);
+            existingCodes.Remove("ST030");
+            existingCodes.Add("OP150");
+            changed = true;
+        }
+
+        var legacyFifthStation = demoPlc.Stations.FirstOrDefault(s => s.Code == "ST050");
+        if (legacyFifthStation is not null
+            && !existingCodes.Contains("OP20")
+            && IsLegacyDemoFifthStation(legacyFifthStation))
+        {
+            var oldTagIds = legacyFifthStation.Tags.Select(tag => tag.Id).ToArray();
+            var oldLimits = await _db.RecipeLimits
+                .Where(limit => oldTagIds.Contains(limit.TagId))
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            _db.RecipeLimits.RemoveRange(oldLimits);
+            _db.Tags.RemoveRange(legacyFifthStation.Tags);
+            _db.Curves.RemoveRange(legacyFifthStation.Curves);
+            ConfigureOp20Station(legacyFifthStation);
+            existingCodes.Remove("ST050");
+            existingCodes.Add("OP20");
+            changed = true;
+        }
+
+        if (!existingCodes.Contains("OP20") && !existingCodes.Contains("ST050"))
+        {
+            demoPlc.Stations.Add(CreateOp20Station());
+            existingCodes.Add("OP20");
+            changed = true;
+        }
+
+        var legacySixthStation = demoPlc.Stations.FirstOrDefault(s => s.Code == "ST060");
+        if (legacySixthStation is not null
+            && !existingCodes.Contains("OP30")
+            && IsLegacyDemoSixthStation(legacySixthStation))
+        {
+            var oldTagIds = legacySixthStation.Tags.Select(tag => tag.Id).ToArray();
+            var oldLimits = await _db.RecipeLimits
+                .Where(limit => oldTagIds.Contains(limit.TagId))
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            _db.RecipeLimits.RemoveRange(oldLimits);
+            _db.Tags.RemoveRange(legacySixthStation.Tags);
+            _db.Curves.RemoveRange(legacySixthStation.Curves);
+            ConfigureOp30Station(legacySixthStation);
+            existingCodes.Remove("ST060");
+            existingCodes.Add("OP30");
+            changed = true;
+        }
+
+        if (!existingCodes.Contains("OP30") && !existingCodes.Contains("ST060"))
+        {
+            demoPlc.Stations.Add(CreateOp30Station());
+            existingCodes.Add("OP30");
+            changed = true;
+        }
+
+        if (!existingCodes.Contains("OP40") && !demoPlc.Stations.Any(s => s.Sequence == 80))
+        {
+            demoPlc.Stations.Add(CreateOp40Station());
+            existingCodes.Add("OP40");
+            changed = true;
+        }
+
+        if (demoPlc.Stations.FirstOrDefault(s => s.Code == "OP40")?.IsLastStation == true)
+        {
+            var formerEndStation = demoPlc.Stations.FirstOrDefault(s => s.Code == "OP30");
+            if (formerEndStation?.IsLastStation == true)
+            {
+                formerEndStation.IsLastStation = false;
+                changed = true;
+            }
+        }
+
+        if (!existingCodes.Contains("OP50") && !demoPlc.Stations.Any(s => s.Sequence == 90))
+        {
+            demoPlc.Stations.Add(CreateOp50Station());
+            existingCodes.Add("OP50");
+            changed = true;
+        }
+
+        if (demoPlc.Stations.FirstOrDefault(s => s.Code == "OP50")?.IsLastStation == true)
+        {
+            foreach (var formerEndStation in demoPlc.Stations
+                         .Where(s => (s.Code == "OP30" || s.Code == "OP40") && s.IsLastStation))
+            {
+                formerEndStation.IsLastStation = false;
+                changed = true;
+            }
+        }
+
+        if (!existingCodes.Contains("OP70") && !demoPlc.Stations.Any(s => s.Sequence == 100))
+        {
+            demoPlc.Stations.Add(CreateOp70Station());
+            existingCodes.Add("OP70");
+            changed = true;
+        }
+
+        if (demoPlc.Stations.FirstOrDefault(s => s.Code == "OP70")?.IsLastStation == true)
+        {
+            foreach (var formerEndStation in demoPlc.Stations
+                         .Where(s => (s.Code == "OP30" || s.Code == "OP40" || s.Code == "OP50") && s.IsLastStation))
+            {
+                formerEndStation.IsLastStation = false;
+                changed = true;
+            }
+        }
+
         if (changed)
         {
             var version = await _db.ConfigVersions.FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
@@ -154,17 +316,542 @@ partial class DatabaseSeeder
             trigger: "D1600", pallet: "D1610",
             press: "D1700", temp: "D1710",
             y: "D6800", x: "D7200"),
-        CreateStation(
-            "ST050", "性能检测工站", 50, first: false, last: false,
-            trigger: "D1800", pallet: "D1810",
-            press: "D1900", temp: "D1910",
-            y: "D8400", x: "D8800"),
-        CreateStation(
-            "ST060", "终检工站", 60, first: false, last: true,
-            trigger: "D2000", pallet: "D2010",
-            press: "D2100", temp: "D2110",
-            y: "D10000", x: "D10400")
     ];
+
+    private static Station CreateOp130Station()
+    {
+        var station = new Station
+        {
+            Sequence = 10,
+            Positions = [new ProductPositionDefinition { Index = 1, Name = "产品" }]
+        };
+        ConfigureOp130Station(station);
+        return station;
+    }
+
+    private static Station CreateOp140Station()
+    {
+        var station = new Station
+        {
+            Sequence = 20,
+            Positions = [new ProductPositionDefinition { Index = 1, Name = "产品" }]
+        };
+        ConfigureOp140Station(station);
+        return station;
+    }
+
+    private static Station CreateOp150Station()
+    {
+        var station = new Station
+        {
+            Sequence = 30,
+            Positions = [new ProductPositionDefinition { Index = 1, Name = "产品" }]
+        };
+        ConfigureOp150Station(station);
+        return station;
+    }
+
+    private static Station CreateOp20Station()
+    {
+        var station = new Station
+        {
+            Sequence = 50,
+            Positions = [new ProductPositionDefinition { Index = 1, Name = "产品" }]
+        };
+        ConfigureOp20Station(station);
+        return station;
+    }
+
+    private static Station CreateOp30Station()
+    {
+        var station = new Station
+        {
+            Sequence = 60,
+            Positions = [new ProductPositionDefinition { Index = 1, Name = "产品" }]
+        };
+        ConfigureOp30Station(station);
+        station.IsLastStation = false;
+        return station;
+    }
+
+    private static Station CreateOp40Station()
+    {
+        var station = new Station
+        {
+            Sequence = 80,
+            Positions = [new ProductPositionDefinition { Index = 1, Name = "产品" }]
+        };
+        ConfigureOp40Station(station);
+        station.IsLastStation = false;
+        return station;
+    }
+
+    private static Station CreateOp50Station()
+    {
+        var station = new Station
+        {
+            Sequence = 90,
+            Positions = [new ProductPositionDefinition { Index = 1, Name = "产品" }]
+        };
+        ConfigureOp50Station(station);
+        station.IsLastStation = false;
+        return station;
+    }
+
+    private static Station CreateOp70Station()
+    {
+        var station = new Station
+        {
+            Sequence = 100,
+            Positions = [new ProductPositionDefinition { Index = 1, Name = "产品" }]
+        };
+        ConfigureOp70Station(station);
+        return station;
+    }
+
+    private static void ConfigureOp130Station(Station station)
+    {
+        station.Code = "OP130";
+        station.Name = "点胶外观检测";
+        station.Sequence = 10;
+        station.IsFirstStation = true;
+        station.IsLastStation = false;
+        station.TriggerAddress = "MW3002";
+        station.TriggerValue = 1;
+        station.PalletCodeAddress = "MW3001";
+        station.PalletCodeLength = 1;
+        station.PalletCodeDataType = PlcDataType.Int16;
+        station.PositionCount = 1;
+        station.Enabled = true;
+        station.Tags.Clear();
+        station.Tags.Add(CreateInt16Tag("数据1_配方号", "MW3000"));
+        station.Tags.Add(CreateInt16Tag("托盘号", "MW3001"));
+
+        for (var result = 1; result <= 17; result++)
+        {
+            station.Tags.Add(CreateInt16Tag($"3D结果{result}", $"MW{3003 + result}"));
+        }
+
+        station.Curves.Clear();
+    }
+
+    private static void ConfigureOp140Station(Station station)
+    {
+        station.Code = "OP140";
+        station.Name = "开关功能检测";
+        station.Sequence = 20;
+        station.IsFirstStation = false;
+        station.IsLastStation = false;
+        station.TriggerAddress = "MW3102";
+        station.TriggerValue = 1;
+        station.PalletCodeAddress = "MW3101";
+        station.PalletCodeLength = 1;
+        station.PalletCodeDataType = PlcDataType.Int16;
+        station.PositionCount = 1;
+        station.Enabled = true;
+        station.Tags.Clear();
+        station.Tags.Add(CreateInt16Tag("配方号", "MW3100"));
+        station.Tags.Add(CreateInt16Tag("托盘号", "MW3101"));
+
+        for (var product = 0; product <= 8; product++)
+        {
+            station.Tags.Add(CreateInt16Tag($"产品{product}结果", $"MW{3103 + product}"));
+        }
+
+        station.Curves.Clear();
+    }
+
+    private static void ConfigureOp150Station(Station station)
+    {
+        station.Code = "OP150";
+        station.Name = "位置度检测(左侧)";
+        station.Sequence = 30;
+        station.IsFirstStation = false;
+        station.IsLastStation = false;
+        station.TriggerAddress = "MW3202";
+        station.TriggerValue = 1;
+        station.PalletCodeAddress = "MW3201";
+        station.PalletCodeLength = 1;
+        station.PalletCodeDataType = PlcDataType.Int16;
+        station.PositionCount = 1;
+        station.Enabled = true;
+        station.Tags.Clear();
+        station.Tags.Add(CreateInt16Tag("配方号", "MW3200"));
+        station.Tags.Add(CreateInt16Tag("托盘号", "MW3201"));
+        for (var product = 1; product <= 4; product++)
+        {
+            station.Tags.Add(CreateInt16Tag($"产品{product}拍基准结果", $"MW{3203 + product}"));
+        }
+
+        for (var product = 1; product <= 4; product++)
+        {
+            station.Tags.Add(CreateInt16Tag($"产品{product}拍PIN结果", $"MW{3207 + product}"));
+        }
+
+        station.Curves.Clear();
+    }
+
+    private static void ConfigureOp20Station(Station station)
+    {
+        station.Code = "OP20";
+        station.Name = "开关上料压装";
+        station.Sequence = 50;
+        station.IsFirstStation = false;
+        station.IsLastStation = false;
+        station.TriggerAddress = "MW2302";
+        station.TriggerValue = 1;
+        station.PalletCodeAddress = "MW2301";
+        station.PalletCodeLength = 1;
+        station.PalletCodeDataType = PlcDataType.Int16;
+        station.PositionCount = 1;
+        station.Enabled = true;
+        station.Tags.Clear();
+        station.Tags.Add(CreateInt16Tag("配方号", "MW2300"));
+        station.Tags.Add(CreateInt16Tag("托盘号", "MW2301"));
+        for (var press = 1; press <= 4; press++)
+        {
+            station.Tags.Add(CreateInt16Tag($"压装{press}结果", $"MW{2303 + press}"));
+        }
+
+        for (var press = 1; press <= 4; press++)
+        {
+            station.Tags.Add(CreateInt16Tag($"压装{press}压力值", $"MW{2307 + press}"));
+        }
+
+        for (var press = 1; press <= 4; press++)
+        {
+            station.Tags.Add(CreateInt16Tag($"压装{press}位移值", $"MW{2311 + press}"));
+        }
+
+        station.Curves =
+        [
+            new CurveDefinition
+            {
+                Code = "OP20_PD",
+                Name = "压装位移压力曲线",
+                PointCount = 30,
+                PositionIndex = 1,
+                Enabled = true,
+                Series =
+                [
+                    new CurveSeries
+                    {
+                        Name = "曲线位移值",
+                        Role = SeriesRole.X,
+                        StartAddress = "MD1700",
+                        DataType = PlcDataType.Float,
+                        StrideWords = 2,
+                        Unit = "mm"
+                    },
+                    new CurveSeries
+                    {
+                        Name = "曲线压力值",
+                        Role = SeriesRole.Y,
+                        StartAddress = "%MD1730",
+                        DataType = PlcDataType.Float,
+                        StrideWords = 2,
+                        Unit = "N"
+                    }
+                ]
+            }
+        ];
+    }
+
+    private static void ConfigureOp30Station(Station station)
+    {
+        station.Code = "OP30";
+        station.Name = "开关上料压装";
+        station.Sequence = 60;
+        station.IsFirstStation = false;
+        station.IsLastStation = true;
+        station.TriggerAddress = "MW2402";
+        station.TriggerValue = 1;
+        station.PalletCodeAddress = "MW2401";
+        station.PalletCodeLength = 1;
+        station.PalletCodeDataType = PlcDataType.Int16;
+        station.PositionCount = 1;
+        station.Enabled = true;
+        station.Tags.Clear();
+        station.Tags.Add(CreateInt16Tag("配方号", "MW2400"));
+        station.Tags.Add(CreateInt16Tag("托盘号", "MW2401"));
+        for (var press = 1; press <= 4; press++)
+        {
+            station.Tags.Add(CreateInt16Tag($"压装{press}结果", $"MW{2403 + press}"));
+        }
+
+        for (var press = 1; press <= 4; press++)
+        {
+            station.Tags.Add(CreateInt16Tag($"压装{press}压力值", $"MW{2407 + press}"));
+        }
+
+        for (var press = 1; press <= 4; press++)
+        {
+            station.Tags.Add(CreateInt16Tag($"压装{press}位移值", $"MW{2411 + press}"));
+        }
+
+        station.Curves =
+        [
+            new CurveDefinition
+            {
+                Code = "OP30_PD",
+                Name = "压装位移压力曲线",
+                PointCount = 30,
+                PositionIndex = 1,
+                Enabled = true,
+                Series =
+                [
+                    new CurveSeries
+                    {
+                        Name = "曲线位移值",
+                        Role = SeriesRole.X,
+                        StartAddress = "MD1800",
+                        DataType = PlcDataType.Float,
+                        StrideWords = 2,
+                        Unit = "mm"
+                    },
+                    new CurveSeries
+                    {
+                        Name = "曲线压力值",
+                        Role = SeriesRole.Y,
+                        StartAddress = "MD1830",
+                        DataType = PlcDataType.Float,
+                        StrideWords = 2,
+                        Unit = "N"
+                    }
+                ]
+            }
+        ];
+    }
+
+    private static void ConfigureOp40Station(Station station)
+    {
+        station.Code = "OP40";
+        station.Name = "开关上料压装";
+        station.Sequence = 80;
+        station.IsFirstStation = false;
+        station.IsLastStation = true;
+        station.TriggerAddress = "MW2502";
+        station.TriggerValue = 1;
+        station.PalletCodeAddress = "MW2501";
+        station.PalletCodeLength = 1;
+        station.PalletCodeDataType = PlcDataType.Int16;
+        station.PositionCount = 1;
+        station.Enabled = true;
+        station.Tags.Clear();
+        station.Tags.Add(CreateInt16Tag("配方号", "MW2500"));
+        station.Tags.Add(CreateInt16Tag("托盘号", "MW2501"));
+        for (var press = 1; press <= 4; press++)
+        {
+            station.Tags.Add(CreateInt16Tag($"压装{press}结果", $"MW{2503 + press}"));
+        }
+
+        for (var press = 1; press <= 4; press++)
+        {
+            station.Tags.Add(CreateInt16Tag($"压装{press}压力值", $"MW{2507 + press}"));
+        }
+
+        for (var press = 1; press <= 4; press++)
+        {
+            station.Tags.Add(CreateInt16Tag($"压装{press}位移值", $"MW{2511 + press}"));
+        }
+
+        station.Curves =
+        [
+            new CurveDefinition
+            {
+                Code = "OP40_PD",
+                Name = "压装位移压力曲线",
+                PointCount = 30,
+                PositionIndex = 1,
+                Enabled = true,
+                Series =
+                [
+                    new CurveSeries
+                    {
+                        Name = "曲线位移值",
+                        Role = SeriesRole.X,
+                        StartAddress = "MD1900",
+                        DataType = PlcDataType.Float,
+                        StrideWords = 2,
+                        Unit = "mm"
+                    },
+                    new CurveSeries
+                    {
+                        Name = "曲线压力值",
+                        Role = SeriesRole.Y,
+                        StartAddress = "MD1930",
+                        DataType = PlcDataType.Float,
+                        StrideWords = 2,
+                        Unit = "N"
+                    }
+                ]
+            }
+        ];
+    }
+
+    private static void ConfigureOp50Station(Station station)
+    {
+        station.Code = "OP50";
+        station.Name = "开关上料压装";
+        station.Sequence = 90;
+        station.IsFirstStation = false;
+        station.IsLastStation = true;
+        station.TriggerAddress = "MW2602";
+        station.TriggerValue = 1;
+        station.PalletCodeAddress = "MW2601";
+        station.PalletCodeLength = 1;
+        station.PalletCodeDataType = PlcDataType.Int16;
+        station.PositionCount = 1;
+        station.Enabled = true;
+        station.Tags.Clear();
+        station.Tags.Add(CreateInt16Tag("配方号", "MW2600"));
+        station.Tags.Add(CreateInt16Tag("托盘号", "MW2601"));
+        for (var press = 1; press <= 4; press++)
+        {
+            station.Tags.Add(CreateInt16Tag($"压装{press}结果", $"MW{2603 + press}"));
+        }
+
+        for (var press = 1; press <= 4; press++)
+        {
+            station.Tags.Add(CreateInt16Tag($"压装{press}压力值", $"MW{2607 + press}"));
+        }
+
+        for (var press = 1; press <= 4; press++)
+        {
+            station.Tags.Add(CreateInt16Tag($"压装{press}位移值", $"MW{2611 + press}"));
+        }
+
+        station.Curves =
+        [
+            new CurveDefinition
+            {
+                Code = "OP50_PD",
+                Name = "压装位移压力曲线",
+                PointCount = 30,
+                PositionIndex = 1,
+                Enabled = true,
+                Series =
+                [
+                    new CurveSeries
+                    {
+                        Name = "曲线位移值",
+                        Role = SeriesRole.X,
+                        StartAddress = "MD2000",
+                        DataType = PlcDataType.Float,
+                        StrideWords = 2,
+                        Unit = "mm"
+                    },
+                    new CurveSeries
+                    {
+                        Name = "曲线压力值",
+                        Role = SeriesRole.Y,
+                        StartAddress = "MD2030",
+                        DataType = PlcDataType.Float,
+                        StrideWords = 2,
+                        Unit = "N"
+                    }
+                ]
+            }
+        ];
+    }
+
+    private static void ConfigureOp70Station(Station station)
+    {
+        station.Code = "OP70";
+        station.Name = "开关压装检测";
+        station.Sequence = 100;
+        station.IsFirstStation = false;
+        station.IsLastStation = true;
+        station.TriggerAddress = "MW2702";
+        station.TriggerValue = 1;
+        station.PalletCodeAddress = "MW2701";
+        station.PalletCodeLength = 1;
+        station.PalletCodeDataType = PlcDataType.Int16;
+        station.PositionCount = 1;
+        station.Enabled = true;
+        station.Tags.Clear();
+        station.Tags.Add(CreateInt16Tag("配方号", "MW2700"));
+        station.Tags.Add(CreateInt16Tag("托盘号", "MW2701"));
+        for (var result = 1; result <= 16; result++)
+        {
+            station.Tags.Add(CreateInt16Tag($"3D结果{result}", $"MW{2703 + result}"));
+        }
+
+        station.Curves.Clear();
+    }
+
+    private static TagDefinition CreateInt16Tag(string name, string address) => new()
+    {
+        Name = name,
+        Address = address,
+        DataType = PlcDataType.Int16,
+        PositionIndex = 1,
+        Enabled = true,
+        IsRequired = true
+    };
+
+    private static bool IsLegacyDemoFirstStation(Station station)
+        => station.Name == "上料工站"
+           && station.TriggerAddress == "D1000"
+           && station.PalletCodeAddress == "D1010"
+           && station.PalletCodeDataType == PlcDataType.String
+           && station.Tags.Count == 2
+           && station.Tags.Any(tag => tag.Name == "工站温度" && tag.Address == "D1110")
+           && station.Tags.Any(tag => tag.Name == "压力" && tag.Address == "D1100")
+           && station.Curves.Count == 1
+           && station.Curves.Any(curve => curve.Code == "ST010_PD");
+
+    private static bool IsLegacyDemoSecondStation(Station station)
+        => station.Name == "压装工站"
+           && station.TriggerAddress == "D1200"
+           && station.PalletCodeAddress == "D1210"
+           && station.PalletCodeDataType == PlcDataType.String
+           && station.Tags.Count == 2
+           && station.Tags.Any(tag => tag.Name == "工站温度" && tag.Address == "D1310" && tag.DataType == PlcDataType.Float)
+           && station.Tags.Any(tag => tag.Name == "压力" && tag.Address == "D1300" && tag.DataType == PlcDataType.Float)
+           && station.Curves.Count == 1
+           && station.Curves.Any(curve => curve.Code == "ST020_PD"
+               && curve.Series.Any(series => series.Role == SeriesRole.Y && series.StartAddress == "D3600")
+               && curve.Series.Any(series => series.Role == SeriesRole.X && series.StartAddress == "D4000"));
+
+    private static bool IsLegacyDemoThirdStation(Station station)
+        => station.Name == "下线工站"
+           && station.TriggerAddress == "D1400"
+           && station.PalletCodeAddress == "D1410"
+           && station.PalletCodeDataType == PlcDataType.String
+           && station.Tags.Count == 2
+           && station.Tags.Any(tag => tag.Name == "工站温度" && tag.Address == "D1510" && tag.DataType == PlcDataType.Float)
+           && station.Tags.Any(tag => tag.Name == "压力" && tag.Address == "D1500" && tag.DataType == PlcDataType.Float)
+           && station.Curves.Count == 1
+           && station.Curves.Any(curve => curve.Code == "ST030_PD"
+               && curve.Series.Any(series => series.Role == SeriesRole.Y && series.StartAddress == "D5200")
+               && curve.Series.Any(series => series.Role == SeriesRole.X && series.StartAddress == "D5600"));
+
+    private static bool IsLegacyDemoFifthStation(Station station)
+        => station.Name == "性能检测工站"
+           && station.TriggerAddress == "D1800"
+           && station.PalletCodeAddress == "D1810"
+           && station.PalletCodeDataType == PlcDataType.String
+           && station.Tags.Count == 2
+           && station.Tags.Any(tag => tag.Name == "工站温度" && tag.Address == "D1910" && tag.DataType == PlcDataType.Float)
+           && station.Tags.Any(tag => tag.Name == "压力" && tag.Address == "D1900" && tag.DataType == PlcDataType.Float)
+           && station.Curves.Count == 1
+           && station.Curves.Any(curve => curve.Code == "ST050_PD"
+               && curve.Series.Any(series => series.Role == SeriesRole.Y && series.StartAddress == "D8400")
+               && curve.Series.Any(series => series.Role == SeriesRole.X && series.StartAddress == "D8800"));
+
+    private static bool IsLegacyDemoSixthStation(Station station)
+        => station.Name == "终检工站"
+           && station.TriggerAddress == "D2000"
+           && station.PalletCodeAddress == "D2010"
+           && station.PalletCodeDataType == PlcDataType.String
+           && station.Tags.Count == 2
+           && station.Tags.Any(tag => tag.Name == "工站温度" && tag.Address == "D2110" && tag.DataType == PlcDataType.Float)
+           && station.Tags.Any(tag => tag.Name == "压力" && tag.Address == "D2100" && tag.DataType == PlcDataType.Float)
+           && station.Curves.Count == 1
+           && station.Curves.Any(curve => curve.Code == "ST060_PD"
+               && curve.Series.Any(series => series.Role == SeriesRole.Y && series.StartAddress == "D10000")
+               && curve.Series.Any(series => series.Role == SeriesRole.X && series.StartAddress == "D10400"));
 
     private async Task CollapseToSingleProductAsync(CancellationToken cancellationToken)
     {

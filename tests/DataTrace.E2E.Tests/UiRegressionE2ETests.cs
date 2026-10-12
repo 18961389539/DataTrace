@@ -245,7 +245,7 @@ public class UiRegressionE2ETests : E2ETestBase
         await WaitForCircuitReadyAsync();
         await Page.GetByLabel("触发值", new() { Exact = true }).FillAsync("0");
         await Page.Locator(".mud-tab").Filter(new() { HasText = "曲线" }).ClickAsync();
-        await Page.GetByRole(AriaRole.Button, new() { NameRegex = new System.Text.RegularExpressions.Regex("^保存 ST") }).ClickAsync();
+        await Page.GetByRole(AriaRole.Button, new() { NameRegex = new System.Text.RegularExpressions.Regex("^保存 ") }).ClickAsync();
         await Page.WaitForFunctionAsync("() => document.querySelector('[data-dt-validation=triggerValue]')?.contains(document.activeElement)");
         Assert.Contains("工站未保存：", await Page.Locator("body").InnerTextAsync());
         var input = await Page.GetByLabel("触发值", new() { Exact = true }).BoundingBoxAsync();
@@ -370,17 +370,24 @@ public class UiRegressionE2ETests : E2ETestBase
         await OpenAsync("/query");
         await WaitForResultRowsAsync();
 
-        // 点的这一下同样可能落在 circuit 接手的窗口里被丢掉（什么都没发生），
-        // 所以点完复核地址栏：没跳转就再点一次。
-        for (var attempt = 0; ; attempt++)
+        // OP130、OP140、OP150 都没有用户提供的判定限值；选择仍配置了压力规格的 ST040，
+        // 确认详情展示的是该条记录实际使用的判定快照。
+        var stationRow = Page.Locator("table tbody tr")
+            .Filter(new() { HasText = "ST040" })
+            .Filter(new() { HasText = "明细" })
+            .First;
+        var deadline = DateTime.UtcNow.AddSeconds(60);
+        while (await stationRow.CountAsync() == 0 && DateTime.UtcNow < deadline)
         {
-            if (new Uri(Page.Url).PathAndQuery != "/query")
-            {
-                break;
-            }
+            await ClickAsync("查询", exact: true);
+            await Task.Delay(1000);
+        }
 
+        Assert.True(await stationRow.CountAsync() > 0, "查询结果中没有 ST040 记录");
+        for (var attempt = 0; new Uri(Page.Url).PathAndQuery == "/query"; attempt++)
+        {
             Assert.True(attempt < 10, "点了 10 次仍未打开记录明细");
-            await Page.Locator("table tbody tr").First.ClickAsync();
+            await stationRow.ClickAsync();
             await Page.WaitForTimeoutAsync(400);
         }
 
@@ -593,7 +600,11 @@ public class UiRegressionE2ETests : E2ETestBase
 
         await OpenDialogAsync(Page.Locator("table tbody button", new() { HasText = "限值" }).First);
 
-        var target = Page.Locator(".mud-dialog .dt-limit-field input").Nth(4);
+        var pressureRow = Page.Locator(".mud-dialog tbody tr")
+            .Filter(new() { HasText = "ST040" })
+            .Filter(new() { HasText = "压力" })
+            .First;
+        var target = pressureRow.Locator(".dt-limit-field input").Nth(4);
         await target.ClickAsync();
         await target.FillAsync("9999");
         await target.PressAsync("Tab");

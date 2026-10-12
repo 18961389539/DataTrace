@@ -1,4 +1,5 @@
 using DataTrace.Plc.Addresses;
+using DataTrace.Domain.Enums;
 
 namespace DataTrace.Tests;
 
@@ -9,6 +10,47 @@ public class AddressParserEdgeCaseTests
     private static readonly SiemensAddressParser Siemens = new();
     private static readonly ModbusAddressParser Modbus = new();
     private static readonly OmronAddressParser Omron = new();
+
+    [Theory]
+    [InlineData("MW3000", 3000)]
+    [InlineData("mw3020", 3020)]
+    public void Simulator_parses_MW_as_word_index_addresses(string text, int offset)
+    {
+        var parser = AddressParsers.For(PlcBrand.Simulator);
+
+        Assert.True(parser.TryParse(text, out var address));
+        Assert.Equal("MW", address.Area);
+        Assert.Equal(offset, address.Offset);
+        Assert.Equal(AddressKind.Word, address.Kind);
+        Assert.Equal(OffsetUnit.Word, address.OffsetUnit);
+        Assert.False(Mitsubishi.TryParse(text, out _));
+    }
+
+    [Theory]
+    [InlineData("MD1700", 3400)]
+    [InlineData("%MD1730", 3460)]
+    public void Simulator_parses_MD_as_non_overlapping_double_word_indexes(string text, int wordOffset)
+    {
+        var parser = AddressParsers.For(PlcBrand.Simulator);
+
+        Assert.True(parser.TryParse(text, out var address));
+        Assert.Equal("MD", address.Area);
+        Assert.Equal(wordOffset, address.Offset);
+        Assert.Equal(AddressKind.Word, address.Kind);
+        Assert.Equal(OffsetUnit.Word, address.OffsetUnit);
+        Assert.False(Mitsubishi.TryParse(text, out _));
+    }
+
+    [Fact]
+    public void Simulator_keeps_legacy_Mitsubishi_word_addresses()
+    {
+        var parser = AddressParsers.For(PlcBrand.Simulator);
+
+        Assert.True(parser.TryParse("D2200", out var address));
+        Assert.Equal("D", address.Area);
+        Assert.Equal(2200, address.Offset);
+        Assert.Equal(AddressKind.Word, address.Kind);
+    }
 
     // ---------- 三菱 MC ----------
 

@@ -8,7 +8,7 @@ namespace DataTrace.Plc.Simulator;
 
 public sealed class InMemoryPlcDriver : IPlcDriver
 {
-    private readonly MitsubishiAddressParser _parser = new();
+    private readonly SimulatorAddressParser _parser = new();
     private readonly ConcurrentDictionary<(string Area, int Offset), ushort> _words = new();
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly TimeSpan _simulatedLatency;
@@ -67,9 +67,14 @@ public sealed class InMemoryPlcDriver : IPlcDriver
             throw new ArgumentException($"非法地址 {address}");
         }
 
+        SetWords(parsed, words);
+    }
+
+    public void SetWords(PlcAddress start, ushort[] words)
+    {
         for (var i = 0; i < words.Length; i++)
         {
-            _words[(parsed.Area, parsed.Offset + i)] = words[i];
+            _words[(start.Area, start.Offset + i)] = words[i];
         }
     }
 

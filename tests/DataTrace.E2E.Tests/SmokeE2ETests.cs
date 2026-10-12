@@ -29,10 +29,10 @@ public class SmokeE2ETests : E2ETestBase
 
         // 工站计数只有 SignalR circuit 建好、拿到运行时状态后才会出现。
         await WaitForAsync("text=实时看板");
-        await WaitForAsync("text=6 台工站");
+        await WaitForAsync("text=9 台工站");
 
-        Assert.Contains("上料工站", await Page.InnerTextAsync("body"));
-        Assert.Contains("ST060", await Page.InnerTextAsync("body"));
+        Assert.Contains("点胶外观检测", await Page.InnerTextAsync("body"));
+        Assert.Contains("OP30", await Page.InnerTextAsync("body"));
     }
 
     [Fact]

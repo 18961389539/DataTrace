@@ -58,8 +58,10 @@ public class JourneyE2ETests : E2ETestBase
         var rows = Page.Locator("table tbody tr");
         Assert.True(await rows.Filter(new() { HasText = "明细" }).CountAsync() > 0);
 
-        var firstRow = await rows.First.InnerHTMLAsync();
-        Assert.Contains("ST0", firstRow);
+        var firstResult = rows.Filter(new() { HasText = "明细" }).First;
+        var firstRow = await firstResult.InnerHTMLAsync();
+        var firstPalletCode = (await firstResult.Locator("td").Nth(2).InnerTextAsync()).Trim();
+        Assert.Contains("OP130", firstRow);
 
         // circuit 接手前发出的回车会被丢掉（什么都没发生），用重试兜住这个窗口。
         await ActUntilAsync(
@@ -71,7 +73,7 @@ public class JourneyE2ETests : E2ETestBase
         Assert.Equal(0, await rows.Filter(new() { HasText = "明细" }).CountAsync());
 
         await ClickButtonAsync("重置");
-        await SearchAsync(Page.GetByLabel("托盘码", new() { Exact = true }), "P");
+        await SearchAsync(Page.GetByLabel("托盘码", new() { Exact = true }), firstPalletCode);
         await WaitBodyContainsAsync("明细");
         Assert.True(await rows.Filter(new() { HasText = "明细" }).CountAsync() > 0);
 
@@ -157,7 +159,7 @@ public class JourneyE2ETests : E2ETestBase
     }
 
     [Fact]
-    public async Task SimulatePageShowsSixStationTriggerButtons()
+    public async Task SimulatePageShowsConfiguredStationTriggerButtons()
     {
         await OpenAsync("/simulate");
         await WaitForAsync("text=PLC 仿真");
@@ -165,7 +167,7 @@ public class JourneyE2ETests : E2ETestBase
         var labels = await Page.Locator("button").Filter(new() { HasText = "触发" }).AllInnerTextsAsync();
 
         Assert.Equal(
-            new[] { "触发 ST010", "触发 ST020", "触发 ST030", "触发 ST040", "触发 ST050", "触发 ST060" },
+            new[] { "触发 OP130", "触发 OP140", "触发 OP150", "触发 OP20", "触发 OP30", "触发 OP40", "触发 OP50", "触发 OP70", "触发 ST040" },
             labels.Select(x => x.Trim()).OrderBy(x => x, StringComparer.Ordinal).ToArray());
     }
 

@@ -1,5 +1,6 @@
 using DataTrace.Domain.Enums;
 using DataTrace.Plc.Addresses;
+using DataTrace.Plc.Simulator;
 
 namespace DataTrace.Tests;
 
@@ -69,9 +70,12 @@ public class PlcAddressValidatorTests
     }
 
     [Fact]
-    public void Simulator_uses_mitsubishi_syntax()
+    public void Simulator_accepts_legacy_word_and_MW_MD_memory_syntax()
     {
         Assert.True(PlcAddressValidator.TryValidate(PlcBrand.Simulator, "D100", out _, out _));
+        Assert.True(PlcAddressValidator.TryValidate(PlcBrand.Simulator, "MW3000", out _, out _));
+        Assert.True(PlcAddressValidator.TryValidate(PlcBrand.Simulator, "MD1700", out _, out _));
+        Assert.True(PlcAddressValidator.TryValidate(PlcBrand.Simulator, "%MD1730", out _, out _));
         Assert.False(PlcAddressValidator.TryValidate(PlcBrand.Simulator, "M100", out _, out _));
     }
 
@@ -82,6 +86,6 @@ public class PlcAddressValidatorTests
         Assert.IsType<ModbusAddressParser>(AddressParsers.For(PlcBrand.ModbusTcp));
         Assert.IsType<OmronAddressParser>(AddressParsers.For(PlcBrand.OmronFins));
         Assert.IsType<MitsubishiAddressParser>(AddressParsers.For(PlcBrand.MitsubishiMc3E));
-        Assert.IsType<MitsubishiAddressParser>(AddressParsers.For(PlcBrand.Simulator));
+        Assert.IsType<SimulatorAddressParser>(AddressParsers.For(PlcBrand.Simulator));
     }
 }

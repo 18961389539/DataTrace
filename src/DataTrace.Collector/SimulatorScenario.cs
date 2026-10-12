@@ -2,6 +2,7 @@ using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Plc.Codec;
 using DataTrace.Plc.Simulator;
+using System.Globalization;
 
 namespace DataTrace.Collector;
 
@@ -23,7 +24,18 @@ public static class SimulatorScenario
         options ??= new SimulatedCycleOptions();
         var random = options.Random;
 
-        plc.SetAscii(station.PalletCodeAddress, palletCode, station.PalletCodeLength, connection.StringHighByteFirst);
+        var normalizedPalletCode = NormalizePalletCode(station, palletCode);
+        if (station.PalletCodeDataType == PlcDataType.String)
+        {
+            plc.SetAscii(station.PalletCodeAddress, normalizedPalletCode, station.PalletCodeLength, connection.StringHighByteFirst);
+        }
+        else
+        {
+            var palletNumber = int.Parse(normalizedPalletCode, CultureInfo.InvariantCulture);
+            plc.SetWords(station.PalletCodeAddress,
+                ValueCodec.EncodeNumeric(palletNumber, station.PalletCodeDataType, connection.FloatWordOrder));
+        }
+
         foreach (var pos in station.Positions)
         {
             if (!string.IsNullOrWhiteSpace(pos.OccupiedAddress))
@@ -47,6 +59,12 @@ public static class SimulatorScenario
 
         foreach (var tag in station.Tags.Where(t => t.Enabled && t.Source == TagDataSource.Plc))
         {
+            if (station.PalletCodeDataType != PlcDataType.String
+                && string.Equals(tag.Address.Trim(), station.PalletCodeAddress.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
             // 文件源点位的「地址」是 JSON 字段名，按地址写只会抛非法地址。
             if (tag.DataType == PlcDataType.String)
             {
@@ -80,12 +98,44 @@ public static class SimulatorScenario
                     }
 
                     var offset = start.Offset + i * stride;
-                    plc.SetWords($"{start.Area}{offset}", ValueCodec.EncodeNumeric(value, series.DataType, connection.FloatWordOrder));
+                    plc.SetWords(
+                        start with { Offset = offset },
+                        ValueCodec.EncodeNumeric(value, series.DataType, connection.FloatWordOrder));
                 }
             }
         }
 
         plc.Trigger(station.TriggerAddress, station.TriggerValue);
+    }
+
+    public static string NormalizePalletCode(Station station, string palletCode)
+    {
+        if (station.PalletCodeDataType == PlcDataType.String)
+        {
+            return palletCode;
+        }
+
+        if (!int.TryParse(palletCode, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number))
+        {
+            var start = palletCode.Length;
+            while (start > 0 && char.IsDigit(palletCode[start - 1]))
+            {
+                start--;
+            }
+
+            if (start == palletCode.Length
+                || !int.TryParse(palletCode.AsSpan(start), NumberStyles.None, CultureInfo.InvariantCulture, out number))
+            {
+                throw new ArgumentException("数值型托盘号必须是整数或以数字结尾", nameof(palletCode));
+            }
+        }
+
+        if (station.PalletCodeDataType == PlcDataType.Int16 && number is < short.MinValue or > short.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(palletCode), "Int16 托盘号超出有效范围");
+        }
+
+        return number.ToString(CultureInfo.InvariantCulture);
     }
 
     private static double InRange(TagDefinition tag, Random random)
