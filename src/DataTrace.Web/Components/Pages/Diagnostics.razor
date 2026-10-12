@@ -342,6 +342,32 @@ else
 }
 
 <MudText Typo="Typo.subtitle1" Class="mb-2">
+    站级采集耗时 <InfoHint Topic="HelpTexts.CollectorLoop" />
+</MudText>
+@if (_latencies.Count == 0)
+{
+    <MudText Typo="Typo.body2" Class="dt-muted mb-2">尚无近期端到端采集样本；分位数取最近 15 分钟、每站最多 512 个样本。</MudText>
+}
+else
+{
+    <MudTable Items="_latencies" Dense="true" Hover="true" Class="mb-3">
+        <HeaderContent><MudTh>工站</MudTh><MudTh>样本</MudTh><MudTh>P95</MudTh><MudTh>P99</MudTh><MudTh>最后样本</MudTh></HeaderContent>
+        <RowTemplate>
+            <MudTd>@context.StationCode</MudTd><MudTd>@context.SampleCount</MudTd>
+            <MudTd>@context.P95Ms.ToString("F0") ms</MudTd><MudTd>@context.P99Ms.ToString("F0") ms</MudTd>
+            <MudTd>@context.LastSampleAt.ToString("HH:mm:ss")</MudTd>
+        </RowTemplate>
+    </MudTable>
+}
+@if (_activeCollections.Count > 0)
+{
+    <MudAlert Severity="@(_overdueCollections.Count > 0 ? Severity.Error : Severity.Info)" Dense="true" Class="mb-3">
+        正在采集：@string.Join("、", _activeCollections.Select(x => $"{x.StationCode} {WaitText(TimeSpan.FromMilliseconds(x.ElapsedMs))}"))。
+        @(_collectionAgeLimitSeconds > 0 ? $"最长采集时间 {_collectionAgeLimitSeconds} 秒；超限 {string.Join("、", _overdueCollections.Select(x => x.StationCode))}。" : "最长采集时间未配置，超时告警已禁用。")
+    </MudAlert>
+}
+
+<MudText Typo="Typo.subtitle1" Class="mb-2">
     补传队列 <InfoHint Topic="HelpTexts.SpoolQueue" />
 </MudText>
 @if (_spoolCount == 0)
@@ -437,6 +463,13 @@ else
     }
 }
 
+@if (_mesOutbox?.PendingCount > 0)
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mb-3">
+        MES 待推送 @_mesOutbox.PendingCount 条@(_mesOutbox.OldestPendingAt is { } mesOldest ? $"，最老一条 {mesOldest:MM-dd HH:mm:ss}（已等待 {WaitText(DateTime.Now - mesOldest)}）" : "")。
+    </MudAlert>
+}
+
 @code {
     /// <summary>页面自己的刷新节拍。这一页是拉模式，不订阅任何推送。</summary>
     private const int DiagTickMs = 2000;
@@ -476,6 +509,12 @@ else
 
     private CollectorLoopView _loop = CollectorLoopView.Empty(CollectorDiagnostics.LoopCapacity);
     private IReadOnlyList<PlcTrafficView> _traffic = [];
+    private IReadOnlyList<StationLatencyView> _latencies = [];
+    private IReadOnlyList<ActiveCollectionView> _activeCollections = [];
+    private IReadOnlyList<ActiveCollectionView> _overdueCollections = [];
+    private int _collectionAgeLimitSeconds;
+    private MesOutboxSnapshot? _mesOutbox;
+    private DateTime? _mesOutboxAt;
     [SupplyParameterFromQuery(Name = "station")]
     public int? StationQuery { get; set; }
     private Station? _focusedStation;
@@ -731,6 +770,15 @@ else
         {
             _loop = Diag.Loop;
             _traffic = Diag.PlcTraffic;
+            _latencies = Diag.RecentStationLatencies;
+            _activeCollections = Diag.ActiveCollections;
+            _overdueCollections = Diag.OverdueCollections;
+            _collectionAgeLimitSeconds = Diag.CollectionMaxAgeSeconds;
+            if (_mesOutboxAt is null || DateTime.Now - _mesOutboxAt.Value >= TimeSpan.FromSeconds(10))
+            {
+                _mesOutbox = await Config.GetMesOutboxStatusAsync();
+                _mesOutboxAt = DateTime.Now;
+            }
 
             if (_manualReviewAt is null
                 || (DateTime.Now - _manualReviewAt.Value).TotalMilliseconds >= ManualReviewRefreshMs)

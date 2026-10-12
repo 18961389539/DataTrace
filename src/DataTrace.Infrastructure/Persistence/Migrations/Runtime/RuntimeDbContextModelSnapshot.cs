@@ -15,7 +15,7 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Runtime
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
+            modelBuilder.HasAnnotation("ProductVersion", "8.0.31");
 
             modelBuilder.Entity("DataTrace.Domain.Entities.CollectRecord", b =>
                 {
@@ -78,9 +78,9 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Runtime
 
                     b.HasKey("Id");
 
-                    b.HasIndex("PalletSessionId");
-
                     b.HasIndex("ConfigurationRevisionId");
+
+                    b.HasIndex("PalletSessionId");
 
                     b.HasIndex("SerialNo");
 
@@ -281,9 +281,6 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Runtime
                     b.Property<short?>("FirstNgResultCode")
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("RecipeSnapshot")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("FirstNgStationCode")
                         .HasColumnType("TEXT");
 
@@ -292,6 +289,9 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Runtime
 
                     b.Property<string>("PalletCode")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RecipeSnapshot")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("SerialNo")
@@ -320,11 +320,38 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Runtime
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("Attempts")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long?>("CollectRecordId")
                         .HasColumnType("INTEGER");
 
-                    b.Property<int>("Attempts")
+                    b.Property<string>("ConfirmationAckAddress")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ConfirmationRequestAddress")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ConfirmedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ConnectionFingerprint")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("DeviceEventId")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("EventIdAddress")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ManualReviewDeviceStateEvidence")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ManualReviewReason")
+                        .HasColumnType("TEXT");
 
                     b.Property<bool>("ManualReviewRequired")
                         .HasColumnType("INTEGER");
@@ -332,7 +359,7 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Runtime
                     b.Property<DateTime?>("ManualReviewRequiredAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("ManualReviewReason")
+                    b.Property<string>("ManualReviewResolution")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("ManualReviewResolvedAt")
@@ -341,32 +368,11 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Runtime
                     b.Property<string>("ManualReviewResolvedBy")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("ManualReviewResolution")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ManualReviewDeviceStateEvidence")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int?>("PlcConnectionId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("TriggerAddress")
-                        .HasColumnType("TEXT");
-
-                    b.Property<short?>("TriggerValue")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("ConnectionFingerprint")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime?>("ConfirmedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("MonthKey")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("NextAttemptAt")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("PalletCode")
@@ -376,29 +382,35 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Runtime
                     b.Property<long>("PalletSessionId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("PlcConnectionId")
+                        .HasColumnType("INTEGER");
+
                     b.Property<short>("ResultCode")
                         .HasColumnType("INTEGER");
 
-                    b.Property<DateTime>("NextAttemptAt")
+                    b.Property<string>("SerialNo")
+                        .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("SerialNo")
+                    b.Property<string>("StationCode")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<int>("StationId")
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("StationCode")
-                        .IsRequired()
+                    b.Property<string>("TriggerAddress")
                         .HasColumnType("TEXT");
+
+                    b.Property<short?>("TriggerValue")
+                        .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("StationId", "ConfirmedAt");
-
                     b.HasIndex("CollectRecordId")
                         .IsUnique();
+
+                    b.HasIndex("StationId", "ConfirmedAt");
 
                     b.ToTable("PendingWriteBacks");
                 });
@@ -443,12 +455,12 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Runtime
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<int>("Operation")
-                        .HasColumnType("INTEGER");
-
                     b.Property<string>("MonthKey")
                         .IsRequired()
                         .HasColumnType("TEXT");
+
+                    b.Property<int>("Operation")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("PalletCode")
                         .IsRequired()

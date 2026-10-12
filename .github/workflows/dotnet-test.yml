@@ -27,11 +27,21 @@ jobs:
       - name: 还原并构建
         run: dotnet build DataTrace.sln -c Release --nologo
 
-      - name: 安装 Playwright Chromium
+      - name: 安装 Playwright 锁定版本 Chromium
         run: pwsh tests\DataTrace.E2E.Tests\bin\Release\net8.0\playwright.ps1 install chromium
 
       - name: 单元与集成测试
-        run: dotnet test tests/DataTrace.Tests/DataTrace.Tests.csproj -c Release --no-build --nologo --logger "trx;LogFileName=unit.trx" --results-directory artifacts/test-results/unit
+        run: dotnet test tests/DataTrace.Tests/DataTrace.Tests.csproj -c Release --no-build --nologo --filter "Category!=Performance" --logger "trx;LogFileName=unit.trx" --results-directory artifacts/test-results/unit
+
+      - name: 隔离合成数据备份停顿基准
+        run: dotnet test tests/DataTrace.Tests/DataTrace.Tests.csproj -c Release --no-build --nologo --filter FullyQualifiedName~Synthetic_backup_records_real_maintenance_and_waiting_read_durations
+        env:
+          DATATRACE_BACKUP_BENCHMARK_BYTES: 8388608
+          DATATRACE_BACKUP_BENCHMARK_FILES: 4
+          DATATRACE_BACKUP_BENCHMARK_OUTPUT: ${{ github.workspace }}\artifacts\backup-benchmark\measurement.json
+
+      - name: 查询规模性能基准
+        run: pwsh -File tests\benchmarks\run-query-performance.ps1 -RowsPerMonth 10000 -PageSize 500 -DeepSkip 10000
 
       - name: 组件测试（bUnit）
         run: dotnet test tests/DataTrace.Web.Tests/DataTrace.Web.Tests.csproj -c Release --no-build --nologo --logger "trx;LogFileName=components.trx" --results-directory artifacts/test-results/components
@@ -43,8 +53,14 @@ jobs:
         env:
           DATATRACE_APP_DLL: ${{ github.workspace }}\src\DataTrace.Web\bin\Release\net8.0\DataTrace.Web.dll
           DATATRACE_E2E_BROWSER: chromium
-          DATATRACE_E2E_GOLDEN: auto
+          DATATRACE_E2E_GOLDEN: compare
           DATATRACE_E2E_ARTIFACTS_DIR: ${{ github.workspace }}\artifacts\e2e
+
+      - name: 发布部署验收包
+        run: pwsh deploy\publish.ps1 -Output ${{ github.workspace }}\artifacts\deploy-publish
+
+      - name: 隔离部署、升级、备份与回滚验收
+        run: pwsh deploy\acceptance-isolated.ps1 -PublishDir ${{ github.workspace }}\artifacts\deploy-publish
 
       - name: 汇总视觉基线状态
         if: always()
@@ -69,6 +85,8 @@ jobs:
           name: test-diagnostics
           path: |
             artifacts/test-results/**/*.trx
+            artifacts/backup-benchmark/**
+            artifacts/query-benchmark-result-*.txt
             artifacts/e2e/**
           if-no-files-found: ignore
           retention-days: 7

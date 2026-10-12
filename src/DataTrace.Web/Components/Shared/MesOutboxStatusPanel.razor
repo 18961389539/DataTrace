@@ -1,0 +1,83 @@
+@using DataTrace.Application.Configuration
+
+                    @* 只有开关和地址时，"配了但推不出去"现场是看不出来的：这里把积压与最近一次结果摆出来。 *@
+                    @if (!Enabled)
+                    {
+                        <MudText Typo="Typo.caption" Class="dt-muted mt-2">推送已关闭，记录不会进入推送队列。</MudText>
+                    }
+                    else if (Status is null)
+                    {
+                        <MudText Typo="Typo.caption" Class="dt-muted mt-2">推送状态读取失败，暂无法显示积压情况。</MudText>
+                    }
+                    else
+                    {
+                        <MudStack Row="true" Spacing="3" Class="flex-wrap dt-settings-readonly pa-3 rounded mt-1">
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">待推送 <span class="dt-src-badge rt">运行时</span><InfoHint Topic="HelpTexts.MesOutbox" /></div>
+                                <div class="dt-metric-value">@Status.PendingCount</div>
+                            </div>
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">最久未推送</div>
+                                <div class="dt-metric-value dt-metric-sm">
+                                    @(Status.OldestPendingAt?.ToString("MM-dd HH:mm") ?? "—")
+                                </div>
+                            </div>
+                            <div class="dt-metric">
+                                <div class="dt-metric-label">最近成功</div>
+                                <div class="dt-metric-value dt-metric-sm">
+                                    @(Status.LastSuccessAt?.ToString("MM-dd HH:mm") ?? "尚无")
+                                </div>
+                            </div>
+                            <div class="dt-metric dt-metric-inline" style="max-width:420px">
+                                <div class="dt-metric-label">最近一次尝试</div>
+                                <div class="dt-metric-value dt-metric-sm">@LastAttemptText</div>
+                            </div>
+                        </MudStack>
+                        @if (MesBacklogWarning is { } backlogWarning)
+                        {
+                            <MudText Typo="Typo.caption" Class="mt-1 dt-text-error">@backlogWarning</MudText>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.caption" Class="dt-muted mt-1">
+                                推送失败会按退避一直重试并留在队列里，不会丢记录；积压增长时请先确认 MES 地址与网络。
+                            </MudText>
+                        }
+                    }
+
+@code {
+    [Parameter] public bool Enabled { get; set; }
+    [Parameter] public MesOutboxSnapshot? Status { get; set; }
+
+    private string LastAttemptText =>
+        Status?.LastAttemptAt is not { } at ? "尚无"
+        : Status.LastAttemptSucceeded == true ? $"{at:MM-dd HH:mm} 成功"
+        : $"{at:MM-dd HH:mm} 失败：{Status.LastError ?? "未知错误"}";
+
+    /// <summary>积压或连续失败时给一句明确的判断，而不是让人自己看数字。</summary>
+    private string? MesBacklogWarning
+    {
+        get
+        {
+            if (Status is null)
+            {
+                return null;
+            }
+
+            if (Status.LastAttemptSucceeded == false)
+            {
+                return $"最近一次推送失败：{Status.LastError ?? "未知错误"}；记录仍在队列里按退避重试。";
+            }
+
+            if (Status.PendingCount > 0
+                && Status.OldestPendingAt is { } oldest
+                && DateTime.Now - oldest > TimeSpan.FromHours(SystemDefaults.MesBacklogWarnHours))
+            {
+                return $"有 {Status.PendingCount} 条记录已排队超过 {(int)(DateTime.Now - oldest).TotalHours} 小时未推送成功。";
+            }
+
+            return null;
+        }
+    }
+
+}

@@ -18,6 +18,13 @@ public class Station
     public string TriggerAddress { get; set; } = "";
     public short TriggerValue { get; set; } = 1;
 
+    /// <summary>可选条件确认协议：PLC 持久、不可复用的 UInt64 事件号（低字在前，4 字）。</summary>
+    public string EventIdAddress { get; set; } = "";
+    /// <summary>5 字原子请求块：[事件号的4字, 结果码]，PLC 仅接受匹配当前事件的请求。</summary>
+    public string ConfirmationRequestAddress { get; set; } = "";
+    /// <summary>PLC 持久确认块：[已接受事件号的4字, 结果码]，供重启后核对。</summary>
+    public string ConfirmationAckAddress { get; set; } = "";
+
     public string PalletCodeAddress { get; set; } = "";
     public int PalletCodeLength { get; set; } = 16;
     public PlcDataType PalletCodeDataType { get; set; } = PlcDataType.String;

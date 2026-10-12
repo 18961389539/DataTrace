@@ -1,3 +1,6 @@
+using System.Linq.Expressions;
+using System.Text;
+using System.Text.Json;
 using DataTrace.Application.Alarms;
 using DataTrace.Application.Reporting;
 using DataTrace.Application.Runtime;
@@ -9,6 +12,24 @@ namespace DataTrace.Infrastructure.Persistence;
 
 partial class RuntimeStore
 {
+    private static readonly TimeSpan QueryCountCacheTtl = TimeSpan.FromSeconds(2);
+    private const int QueryCountCacheCapacity = 512;
+    private sealed record QueryCursor(int Version, CollectSortField SortBy, bool Descending, string SortValue, bool IsNull,
+        long Id, string MonthKey, string FilterKey, string ScopeId);
+
+    /// <summary>Matches SQLite's default BINARY text collation, which compares UTF-8 bytes.</summary>
+    private sealed class SqliteBinaryStringComparer : IComparer<string?>
+    {
+        public static SqliteBinaryStringComparer Instance { get; } = new();
+        public int Compare(string? left, string? right)
+        {
+            if (ReferenceEquals(left, right)) return 0;
+            if (left is null) return -1;
+            if (right is null) return 1;
+            return Encoding.UTF8.GetBytes(left).AsSpan().SequenceCompareTo(Encoding.UTF8.GetBytes(right));
+        }
+    }
+
     public async Task<CollectQueryResult> QueryAsync(CollectQueryRequest request, CancellationToken cancellationToken = default)
     {
         var take = Math.Max(0, request.Take);
@@ -21,12 +42,16 @@ partial class RuntimeStore
         // - 边界触发时间（按排序方向取 MIN/MAX）给时间排序路径"这个库不可能影响全局窗口"的证明。
         // 月库按会话开始月归档：记录的触发时间可能落在别的月份的库里，
         // 所以边界必须查每个库自己的实际最小/最大触发时间，不能拿月份名字当时间范围。
+        var generation = _factory.QueryGeneration;
+        var cacheKey = QueryCountCacheKey(request, months);
+        var cachedTotal = _factory.TryGetQueryTotal(cacheKey, generation, QueryCountCacheTtl, out var totalCount);
         var stats = new List<(string Month, int Count, DateTime Boundary)>();
+        if (!cachedTotal) totalCount = 0;
         foreach (var month in months)
         {
             await using var db = _factory.Open(month);
             var filtered = Filter(db.CollectRecords.AsNoTracking(), request);
-            var count = await filtered.CountAsync(cancellationToken).ConfigureAwait(false);
+            var count = cachedTotal ? -1 : await filtered.CountAsync(cancellationToken).ConfigureAwait(false);
             if (count == 0)
             {
                 continue;
@@ -35,17 +60,25 @@ partial class RuntimeStore
             var boundary = desc
                 ? await filtered.MaxAsync(x => (DateTime?)x.TriggerTime, cancellationToken).ConfigureAwait(false)
                 : await filtered.MinAsync(x => (DateTime?)x.TriggerTime, cancellationToken).ConfigureAwait(false);
-            stats.Add((month, count, boundary!.Value));
+            if (boundary is null) continue;
+            stats.Add((month, count, boundary.Value));
+            if (!cachedTotal) totalCount += count;
         }
-
-        var total = stats.Sum(s => s.Count);
+        if (!cachedTotal)
+        {
+            _factory.CacheQueryTotal(cacheKey, totalCount, generation, QueryCountCacheTtl, QueryCountCacheCapacity);
+        }
+        var total = totalCount;
 
         if (take == 0)
         {
             return new CollectQueryResult { Total = total, Items = [] };
         }
 
-        var perMonthTake = (int)Math.Min(int.MaxValue, (long)skip + take);
+        var cursorFilterKey = QueryCursorFilterKey(request, months);
+        var cursor = DecodeCursor(request.AfterCursor, request, cursorFilterKey);
+        var cursorMode = cursor is not null || (string.IsNullOrEmpty(request.AfterCursor) && skip == 0);
+        var perMonthTake = cursorMode ? (int)Math.Min(int.MaxValue, (long)take + 1) : (int)Math.Min(int.MaxValue, (long)skip + take);
         var candidates = new List<CollectRecordListItem>();
         if (request.SortBy == CollectSortField.TriggerTime)
         {
@@ -60,7 +93,7 @@ partial class RuntimeStore
                 : stats.OrderBy(s => s.Boundary).ToList();
             for (var i = 0; i < ordered.Count; i++)
             {
-                candidates.AddRange(await FetchLocalTopAsync(ordered[i].Month, request, perMonthTake, cancellationToken).ConfigureAwait(false));
+                candidates.AddRange(await FetchLocalTopAsync(ordered[i].Month, request, perMonthTake, cancellationToken, cursorMode ? cursor : null).ConfigureAwait(false));
                 if (candidates.Count < perMonthTake || i + 1 >= ordered.Count)
                 {
                     continue;
@@ -78,21 +111,22 @@ partial class RuntimeStore
         }
         else
         {
-            // 非时间排序（流水号/耗时等）：全局次序与月份无对齐关系，只能每库取局部前 N 归并。
-            // 深分页时这仍是 Skip+Take 条/库 —— 真正的游标分页需要查询页把翻页模型改成
-            // 排序键游标，留到第二批；本批上线的阶段耗时指标会先证实它是不是热点。
+            // 非时间排序（流水号/耗时等）：每库按同一全序各取前 N 再归并；有游标时先在库侧
+            // 应用复合边界后取局部前 N，因此深翻页工作量不随页码线性增加。
             foreach (var (month, _, _) in stats)
             {
-                candidates.AddRange(await FetchLocalTopAsync(month, request, perMonthTake, cancellationToken).ConfigureAwait(false));
+                candidates.AddRange(await FetchLocalTopAsync(month, request, perMonthTake, cancellationToken, cursorMode ? cursor : null).ConfigureAwait(false));
             }
         }
 
-        var items = ApplySort(candidates, request)
-            .Skip(skip)
-            .Take(take)
+        var orderedItems = ApplySort(candidates, request);
+        var pageCandidates = orderedItems.Skip(cursorMode ? 0 : skip)
+            .Take(cursorMode ? (int)Math.Min(int.MaxValue, (long)take + 1) : take)
             .ToList();
-
-        return new CollectQueryResult { Total = total, Items = items };
+        var hasNext = cursorMode && pageCandidates.Count > take;
+        var items = pageCandidates.Take(take).ToList();
+        var next = hasNext && items.Count > 0 ? EncodeCursor(items[^1], request, cursorFilterKey) : null;
+        return new CollectQueryResult { Total = total, Items = items, NextCursor = next };
     }
 
     /// <summary>
@@ -103,16 +137,178 @@ partial class RuntimeStore
         string month,
         CollectQueryRequest request,
         int perMonthTake,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        QueryCursor? cursor = null)
     {
         await using var db = _factory.Open(month);
         var filtered = Filter(db.CollectRecords.AsNoTracking(), request);
+        if (cursor is not null) filtered = ApplyCursor(filtered, request, cursor, month);
         var page = await ApplySort(filtered, request)
             .Take(perMonthTake)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
         return page.Select(r => new CollectRecordListItem { MonthKey = month, Record = r }).ToList();
     }
+
+    private string? EncodeCursor(CollectRecordListItem item, CollectQueryRequest request, string filterKey)
+    {
+        var (value, isNull) = SortValue(item.Record, request.SortBy);
+        var cursor = new QueryCursor(1, request.SortBy, request.SortDescending, value, isNull,
+            item.Record.Id, item.MonthKey, filterKey, _factory.QueryScopeId);
+        var token = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(cursor)));
+        return token.Length <= 4096 ? token : null;
+    }
+
+    private QueryCursor? DecodeCursor(string? token, CollectQueryRequest request, string filterKey)
+    {
+        if (string.IsNullOrWhiteSpace(token) || token.Length > 4096) return null;
+        try
+        {
+            var cursor = JsonSerializer.Deserialize<QueryCursor>(Encoding.UTF8.GetString(Convert.FromBase64String(token)));
+            return cursor is not null && cursor.Version == 1 && cursor.SortBy == request.SortBy
+                   && Enum.IsDefined(cursor.SortBy) && cursor.Descending == request.SortDescending
+                   && cursor.FilterKey == filterKey && cursor.ScopeId == _factory.QueryScopeId
+                   && cursor.SortValue.Length <= 2048 && RuntimeDbFactory.IsValidMonthKey(cursor.MonthKey)
+                   && cursor.Id > 0 && IsValidCursorSortValue(cursor.SortValue, cursor.SortBy)
+                ? cursor
+                : null;
+        }
+        catch (Exception ex) when (ex is FormatException or JsonException or ArgumentException or OverflowException or NullReferenceException)
+        {
+            return null;
+        }
+    }
+
+    private static (string Value, bool IsNull) SortValue(CollectRecord record, CollectSortField field)
+        => field switch
+        {
+            CollectSortField.SerialNo => (record.SerialNo ?? "", record.SerialNo is null),
+            CollectSortField.PalletCode => (record.PalletCode ?? "", record.PalletCode is null),
+            CollectSortField.StationCode => (record.StationCode ?? "", record.StationCode is null),
+            CollectSortField.RecipeCode => (record.RecipeCode ?? "", record.RecipeCode is null),
+            CollectSortField.Judgement => (((int)record.Judgement).ToString(System.Globalization.CultureInfo.InvariantCulture), false),
+            CollectSortField.ResultCode => (record.ResultCode.ToString(System.Globalization.CultureInfo.InvariantCulture), false),
+            CollectSortField.DurationMs => (record.DurationMs.ToString(System.Globalization.CultureInfo.InvariantCulture), false),
+            _ => (record.TriggerTime.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture), false)
+        };
+
+    private string QueryCursorFilterKey(CollectQueryRequest request, IReadOnlyList<string> months)
+        => JsonSerializer.Serialize(new
+        {
+            Filters = QueryCountCacheKey(request, months),
+            request.SortBy,
+            request.SortDescending,
+            RootScope = _factory.QueryScopeId
+        });
+
+    private bool IsValidCursorSortValue(string value, CollectSortField field)
+    {
+        try
+        {
+            _ = field switch
+            {
+                CollectSortField.TriggerTime => long.Parse(value, System.Globalization.CultureInfo.InvariantCulture),
+                CollectSortField.DurationMs => int.Parse(value, System.Globalization.CultureInfo.InvariantCulture),
+                CollectSortField.ResultCode => short.Parse(value, System.Globalization.CultureInfo.InvariantCulture),
+                CollectSortField.Judgement => int.Parse(value, System.Globalization.CultureInfo.InvariantCulture),
+                _ => 0
+            };
+            return true;
+        }
+        catch (Exception ex) when (ex is FormatException or OverflowException) { return false; }
+    }
+
+    private static IQueryable<CollectRecord> ApplyCursor(
+        IQueryable<CollectRecord> query, CollectQueryRequest request, QueryCursor cursor, string month)
+    {
+        var property = request.SortBy switch
+        {
+            CollectSortField.SerialNo => nameof(CollectRecord.SerialNo),
+            CollectSortField.PalletCode => nameof(CollectRecord.PalletCode),
+            CollectSortField.StationCode => nameof(CollectRecord.StationCode),
+            CollectSortField.RecipeCode => nameof(CollectRecord.RecipeCode),
+            CollectSortField.Judgement => nameof(CollectRecord.Judgement),
+            CollectSortField.ResultCode => nameof(CollectRecord.ResultCode),
+            CollectSortField.DurationMs => nameof(CollectRecord.DurationMs),
+            _ => nameof(CollectRecord.TriggerTime)
+        };
+        var parameter = Expression.Parameter(typeof(CollectRecord), "record");
+        var member = Expression.Property(parameter, property);
+        Expression key = member.Type.IsEnum
+            ? Expression.Convert(member, Enum.GetUnderlyingType(member.Type))
+            : member;
+        var tie = BuildCursorTie(parameter, cursor, month, request.SortDescending);
+        Expression primaryAfter;
+        Expression primaryEqual;
+        if (key.Type == typeof(string))
+        {
+            var cursorValue = Expression.Constant(cursor.IsNull ? null : cursor.SortValue, typeof(string));
+            primaryEqual = Expression.Equal(key, cursorValue);
+            if (cursor.IsNull)
+            {
+                primaryAfter = request.SortDescending
+                    ? Expression.Constant(false)
+                    : Expression.NotEqual(key, Expression.Constant(null, typeof(string)));
+            }
+            else
+            {
+                var compare = Expression.Call(typeof(string).GetMethod(nameof(string.Compare), [typeof(string), typeof(string)])!, key, cursorValue);
+                var comparison = Expression.GreaterThan(compare, Expression.Constant(0));
+                if (request.SortDescending) comparison = Expression.LessThan(compare, Expression.Constant(0));
+                primaryAfter = request.SortDescending
+                    ? Expression.OrElse(Expression.Equal(key, Expression.Constant(null, typeof(string))), comparison)
+                    : comparison;
+            }
+        }
+        else
+        {
+            var value = ParseCursorSortValue(cursor.SortValue, key.Type, request.SortBy);
+            var cursorValue = Expression.Constant(value, key.Type);
+            primaryEqual = Expression.Equal(key, cursorValue);
+            primaryAfter = Expression.MakeBinary(request.SortDescending ? ExpressionType.LessThan : ExpressionType.GreaterThan, key, cursorValue);
+        }
+
+        var predicate = Expression.Lambda<Func<CollectRecord, bool>>(
+            Expression.OrElse(primaryAfter, Expression.AndAlso(primaryEqual, tie)), parameter);
+        return query.Where(predicate);
+    }
+
+    private static Expression BuildCursorTie(ParameterExpression parameter, QueryCursor cursor, string month, bool descending)
+    {
+        var id = Expression.Property(parameter, nameof(CollectRecord.Id));
+        var cursorId = Expression.Constant(cursor.Id);
+        var idAfter = Expression.MakeBinary(descending ? ExpressionType.LessThan : ExpressionType.GreaterThan, id, cursorId);
+        var sameId = Expression.Equal(id, cursorId);
+        var monthAfter = string.CompareOrdinal(month, cursor.MonthKey) > 0;
+        return Expression.OrElse(idAfter, Expression.AndAlso(sameId, Expression.Constant(monthAfter)));
+    }
+
+    private static object ParseCursorSortValue(string value, Type type, CollectSortField field)
+    {
+        if (field == CollectSortField.TriggerTime) return new DateTime(long.Parse(value, System.Globalization.CultureInfo.InvariantCulture));
+        if (type.IsEnum) return Enum.ToObject(type, int.Parse(value, System.Globalization.CultureInfo.InvariantCulture));
+        if (type == typeof(short)) return short.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+        return int.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static string QueryCountCacheKey(CollectQueryRequest r, IReadOnlyList<string> months)
+        => JsonSerializer.Serialize(new
+        {
+            From = r.From.Ticks,
+            To = r.To.Ticks,
+            Pallet = r.PalletCode?.Trim(),
+            Serial = r.SerialNo?.Trim(),
+            r.StationId,
+            r.Judgement,
+            r.ResultCode,
+            Recipes = r.RecipeCodes is { Count: > 0 } codes
+                ? codes.OrderBy(x => x, StringComparer.Ordinal).ToArray()
+                : null,
+            Recipe = r.RecipeCodes is { Count: > 0 } ? null : r.RecipeCode,
+            Months = months
+        });
+
+    private void InvalidateQueryCountCache() => _factory.InvalidateQueryTotals();
 
     /// <summary>
     /// 按请求的列排序（库侧）。末位永远用 Id 兜底：并列值之间没有稳定次序，
@@ -145,10 +341,10 @@ partial class RuntimeStore
         var desc = request.SortDescending;
         var ordered = request.SortBy switch
         {
-            CollectSortField.SerialNo => desc ? items.OrderByDescending(x => x.Record.SerialNo) : items.OrderBy(x => x.Record.SerialNo),
-            CollectSortField.PalletCode => desc ? items.OrderByDescending(x => x.Record.PalletCode) : items.OrderBy(x => x.Record.PalletCode),
-            CollectSortField.StationCode => desc ? items.OrderByDescending(x => x.Record.StationCode) : items.OrderBy(x => x.Record.StationCode),
-            CollectSortField.RecipeCode => desc ? items.OrderByDescending(x => x.Record.RecipeCode) : items.OrderBy(x => x.Record.RecipeCode),
+            CollectSortField.SerialNo => desc ? items.OrderByDescending(x => x.Record.SerialNo, SqliteBinaryStringComparer.Instance) : items.OrderBy(x => x.Record.SerialNo, SqliteBinaryStringComparer.Instance),
+            CollectSortField.PalletCode => desc ? items.OrderByDescending(x => x.Record.PalletCode, SqliteBinaryStringComparer.Instance) : items.OrderBy(x => x.Record.PalletCode, SqliteBinaryStringComparer.Instance),
+            CollectSortField.StationCode => desc ? items.OrderByDescending(x => x.Record.StationCode, SqliteBinaryStringComparer.Instance) : items.OrderBy(x => x.Record.StationCode, SqliteBinaryStringComparer.Instance),
+            CollectSortField.RecipeCode => desc ? items.OrderByDescending(x => x.Record.RecipeCode, SqliteBinaryStringComparer.Instance) : items.OrderBy(x => x.Record.RecipeCode, SqliteBinaryStringComparer.Instance),
             CollectSortField.Judgement => desc ? items.OrderByDescending(x => x.Record.Judgement) : items.OrderBy(x => x.Record.Judgement),
             CollectSortField.ResultCode => desc ? items.OrderByDescending(x => x.Record.ResultCode) : items.OrderBy(x => x.Record.ResultCode),
             CollectSortField.DurationMs => desc ? items.OrderByDescending(x => x.Record.DurationMs) : items.OrderBy(x => x.Record.DurationMs),

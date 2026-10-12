@@ -1,13 +1,72 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
+using System.Collections.Concurrent;
 
 namespace DataTrace.Infrastructure.Persistence;
 
 public sealed class RuntimeDbFactory
 {
+    private sealed record QueryTotal(int Total, DateTime CachedAt, long Generation);
+    private readonly ConcurrentDictionary<string, QueryTotal> _queryTotals = new(StringComparer.Ordinal);
+    private readonly object _queryCacheGate = new();
+    private long _queryGeneration;
+    private readonly string _queryScopeId = Guid.NewGuid().ToString("N");
     private readonly string _root;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly HashSet<string> _ensured = new(StringComparer.OrdinalIgnoreCase);
+
+    internal long QueryGeneration => Interlocked.Read(ref _queryGeneration);
+    internal string QueryScopeId => _queryScopeId;
+
+    internal bool TryGetQueryTotal(string key, long generation, TimeSpan ttl, out int total)
+    {
+        lock (_queryCacheGate)
+        {
+            if (generation == QueryGeneration
+                && _queryTotals.TryGetValue(key, out var cached)
+                && cached.Generation == generation
+                && DateTime.UtcNow - cached.CachedAt <= ttl)
+            {
+                total = cached.Total;
+                return true;
+            }
+
+            _queryTotals.TryRemove(key, out _);
+            total = 0;
+            return false;
+        }
+    }
+
+    internal void CacheQueryTotal(string key, int total, long generation, TimeSpan ttl, int maximumEntries)
+    {
+        lock (_queryCacheGate)
+        {
+            if (generation != QueryGeneration) return;
+            var now = DateTime.UtcNow;
+            _queryTotals[key] = new QueryTotal(total, now, generation);
+            if (_queryTotals.Count <= maximumEntries) return;
+
+            foreach (var stale in _queryTotals.Where(pair => pair.Value.Generation != generation
+                                                              || now - pair.Value.CachedAt > ttl)
+                         .Select(pair => pair.Key).ToArray())
+                _queryTotals.TryRemove(stale, out _);
+            while (_queryTotals.Count > maximumEntries)
+            {
+                var oldest = _queryTotals.OrderBy(pair => pair.Value.CachedAt).FirstOrDefault();
+                if (oldest.Key is null) break;
+                _queryTotals.TryRemove(oldest.Key, out _);
+            }
+        }
+    }
+
+    internal void InvalidateQueryTotals()
+    {
+        lock (_queryCacheGate)
+        {
+            Interlocked.Increment(ref _queryGeneration);
+            _queryTotals.Clear();
+        }
+    }
 
     public RuntimeDbFactory(string root)
     {
@@ -83,7 +142,7 @@ public sealed class RuntimeDbFactory
             {
                 ctx.Database.EnsureCreated();
                 RuntimeSchema.Upgrade(ctx);
-                MigrationBootstrap.MarkBaseline(ctx);
+                MigrationBootstrap.MarkReviewedRuntimeMigrationsApplied(ctx);
             }
 
             ctx.Database.Migrate();

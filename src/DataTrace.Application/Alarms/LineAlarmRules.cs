@@ -1,4 +1,5 @@
 using DataTrace.Domain.Constants;
+using DataTrace.Application.Realtime;
 
 namespace DataTrace.Application.Alarms;
 
@@ -21,7 +22,9 @@ public static class LineAlarmRules
         IReadOnlyList<TagWarningStreak>? warningStreaks = null,
         IReadOnlyList<TagDriftNotice>? drifts = null,
         IReadOnlyList<OpenSessionNotice>? openSessions = null,
-        long? diskFreeMegabytes = null)
+        long? diskFreeMegabytes = null,
+        IReadOnlyList<ActiveCollectionView>? activeCollections = null,
+        int collectionMaxAgeSeconds = 0)
     {
         var alarms = new List<LineAlarm>();
 
@@ -59,6 +62,20 @@ public static class LineAlarmRules
                     $"fault:{fault.StationId}",
                     LineAlarmKind.StationFault,
                     $"工站 {code} 采集故障：{detail}"));
+            }
+
+            if (collectionMaxAgeSeconds > 0)
+            {
+                foreach (var collection in (activeCollections ?? [])
+                             .Where(x => x.ElapsedMs >= collectionMaxAgeSeconds * 1000L)
+                             .OrderBy(x => x.StationCode, StringComparer.Ordinal))
+                {
+                    var code = string.IsNullOrWhiteSpace(collection.StationCode) ? "未知工站" : collection.StationCode;
+                    alarms.Add(new LineAlarm(
+                        $"collection-age:{code}",
+                        LineAlarmKind.CollectionOverdue,
+                        $"工站 {code} 采集任务已运行 {Math.Max(1, (int)(collection.ElapsedMs / 1000))} 秒，超过配置阈值 {collectionMaxAgeSeconds} 秒。"));
+                }
             }
         }
 

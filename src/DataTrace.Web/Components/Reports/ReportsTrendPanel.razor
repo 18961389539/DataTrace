@@ -1,0 +1,90 @@
+@using DataTrace.Domain.Constants
+@using DataTrace.Domain.Entities
+@using DataTrace.Application.Reporting
+
+<MudPaper Class="pa-4">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="flex-wrap mb-2">
+        <MudText Typo="Typo.h6">参数趋势</MudText>
+        <MudSpacer />
+        <MudSelect T="int" Value="TagId" ValueChanged="OnTagChanged" Dense="true" Label="点位"
+                   Disabled="Busy" Style="min-width:240px">
+            @foreach (var tag in Tags)
+            {
+                <MudSelectItem T="int" Value="@tag.Id">@TagLabel(tag)</MudSelectItem>
+            }
+        </MudSelect>
+        @if (CanExport)
+        {
+            <MudTooltip Arrow="true" Text="@ExportTooltip">
+                <ChildContent>
+                    <MudButton Variant="Variant.Outlined" OnClick="OnExport" Disabled="Exporting || Points.Count == 0"
+                               StartIcon="@(Exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)">
+                        @(Exporting ? "导出中…" : "导出趋势")
+                    </MudButton>
+                </ChildContent>
+            </MudTooltip>
+        }
+    </MudStack>
+
+    @if (Truncated)
+    {
+        <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+            该点位在所选区间内的采样点超过单次上限，参数趋势与过程能力只统计<b>最近 @SystemDefaults.TrendSampleLimit 点</b>。需要更早的数据请缩小区间。
+        </MudAlert>
+    }
+
+    @if (Tags.Count == 0)
+    {
+        <MudText Typo="Typo.body2" Class="dt-muted py-3">当前工站没有可画趋势的数值点位。</MudText>
+    }
+    else if (LoadFailed || TrendFailed)
+    {
+        <MudText Typo="Typo.body2" Class="dt-text-error py-3">统计失败，本页结果已清空。请重试；若持续失败请检查月库是否被占用。</MudText>
+    }
+    else if (Loading)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="my-3" />
+    }
+    else if (Points.Count == 0)
+    {
+        <MudText Typo="Typo.body2" Class="dt-muted py-3">所选区间内该点位没有采集数据。</MudText>
+    }
+    else
+    {
+        <MudStack Row="true" Spacing="3" Class="mb-2 flex-wrap">
+            <MudText Typo="Typo.caption" Class="dt-muted dt-nums">采样点 @Points.Count<InfoHint Topic="HelpTexts.TrendSampleLimit" /></MudText>
+            <MudText Typo="Typo.caption" Class="dt-muted dt-nums">均值 @Average</MudText>
+            <MudText Typo="Typo.caption" Class="dt-muted dt-nums">最小 @Minimum</MudText>
+            <MudText Typo="Typo.caption" Class="dt-muted dt-nums">最大 @Maximum</MudText>
+            <MudText Typo="Typo.caption" Class="dt-muted">@RangeText</MudText>
+        </MudStack>
+        <LineChart Series="Series" Height="280" SeriesAxisName="时间" XStartText="@FromText" XEndText="@ToText"
+                   ShowPoints="@(Points.Count <= 120)" />
+    }
+</MudPaper>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<TagDefinition> Tags { get; set; } = [];
+    [Parameter] public int TagId { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public bool CanExport { get; set; }
+    [Parameter] public bool Exporting { get; set; }
+    [Parameter] public string ExportTooltip { get; set; } = "";
+    [Parameter] public bool Truncated { get; set; }
+    [Parameter] public bool LoadFailed { get; set; }
+    [Parameter] public bool TrendFailed { get; set; }
+    [Parameter] public bool Loading { get; set; }
+    [Parameter] public IReadOnlyList<TrendPoint> Points { get; set; } = [];
+    [Parameter] public IReadOnlyList<LineSeries> Series { get; set; } = [];
+    [Parameter] public string Average { get; set; } = "-";
+    [Parameter] public string Minimum { get; set; } = "-";
+    [Parameter] public string Maximum { get; set; } = "-";
+    [Parameter] public string RangeText { get; set; } = "";
+    [Parameter] public string FromText { get; set; } = "";
+    [Parameter] public string ToText { get; set; } = "";
+    [Parameter] public EventCallback<int> OnTagChanged { get; set; }
+    [Parameter] public EventCallback OnExport { get; set; }
+
+    private static string TagLabel(TagDefinition tag)
+        => string.IsNullOrWhiteSpace(tag.Unit) ? tag.Name : $"{tag.Name} ({tag.Unit})";
+}

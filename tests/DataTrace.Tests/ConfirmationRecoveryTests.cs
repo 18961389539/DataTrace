@@ -1,11 +1,14 @@
 using DataTrace.Application.Identity;
+using DataTrace.Application.Configuration;
 using DataTrace.Application.Runtime;
 using DataTrace.Collector;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Plc;
 using DataTrace.Plc.Queue;
+using DataTrace.Infrastructure.Persistence;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.EntityFrameworkCore;
 
 namespace DataTrace.Tests;
 
@@ -53,6 +56,39 @@ public sealed class ConfirmationRecoveryTests
         var changed = await service.ResolveAsync(pending.MonthKey, pending.Id, "engineer", "核对", "现场记录", PendingConfirmationResolutionMode.SameEventConfirmed);
         Assert.False(changed.Resolved);
         Assert.Equal(ResultCodes.Trigger, unchecked((short)h.Simulator.GetWord(station.TriggerAddress)));
+    }
+
+    [Fact]
+    public async Task Device_already_acknowledged_requires_matching_persistent_event_ack()
+    {
+        await using var h = await CollectHarness.CreateAsync();
+        var (station, pending) = await PendingAsync(h);
+        station.EventIdAddress = "D300";
+        station.ConfirmationRequestAddress = "D310";
+        station.ConfirmationAckAddress = "D320";
+        await h.ConfigRepository.SaveStationAsync(station);
+
+        const long eventId = 42;
+        var factory = h.Provider.GetRequiredService<RuntimeDbFactory>();
+        await using (var db = factory.Open(pending.MonthKey))
+        {
+            var stored = await db.PendingWriteBacks.SingleAsync(x => x.Id == pending.Id);
+            stored.DeviceEventId = eventId;
+            stored.EventIdAddress = station.EventIdAddress;
+            stored.ConfirmationRequestAddress = station.ConfirmationRequestAddress;
+            stored.ConfirmationAckAddress = station.ConfirmationAckAddress;
+            await db.SaveChangesAsync();
+        }
+
+        // Trigger is inactive, but the PLC's durable ACK is blank/stale. It must not settle the old record.
+        h.Simulator.SetInt16(station.TriggerAddress, ResultCodes.Success);
+        h.Simulator.SetWords(station.ConfirmationAckAddress, [0, 0, 0, 0, 0]);
+        var result = await Service(h).ResolveAsync(pending.MonthKey, pending.Id, "engineer", "核对", "现场记录",
+            PendingConfirmationResolutionMode.DeviceAlreadyAcknowledged);
+
+        Assert.False(result.Resolved);
+        Assert.Contains("回执", result.Error);
+        Assert.Single(await h.Provider.GetRequiredService<IPendingWriteBackStore>().ListManualReviewAsync());
     }
 
     private static ConfirmationRecoveryService Service(CollectHarness h)

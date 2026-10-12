@@ -121,6 +121,7 @@ partial class RuntimeStore
     public Task DeleteMonthAsync(string monthKey, CancellationToken cancellationToken = default)
     {
         _factory.DeleteMonth(monthKey);
+        InvalidateQueryCountCache();
         return Task.CompletedTask;
     }
 

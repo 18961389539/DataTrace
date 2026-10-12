@@ -12,7 +12,7 @@ namespace DataTrace.Infrastructure.Persistence;
 /// </remarks>
 public static class RuntimeSchema
 {
-    public const int CurrentVersion = 8;
+    public const int CurrentVersion = 10;
 
     public static void Upgrade(RuntimeDbContext ctx)
     {
@@ -70,6 +70,32 @@ public static class RuntimeSchema
             ctx.Database.ExecuteSqlRaw("DROP INDEX IF EXISTS \"IX_PendingWriteBacks_SerialNo_StationId\"");
             ctx.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_PendingWriteBacks_CollectRecordId" ON "PendingWriteBacks" ("CollectRecordId")""");
             WriteVersion(ctx, 8);
+        }
+        if (version < 9)
+        {
+            SqliteSchema.AddColumnIfMissing(ctx, "PendingWriteBacks", "DeviceEventId", "ALTER TABLE PendingWriteBacks ADD COLUMN DeviceEventId INTEGER NULL");
+            foreach (var column in new[] { "EventIdAddress", "ConfirmationRequestAddress", "ConfirmationAckAddress" })
+                SqliteSchema.AddColumnIfMissing(ctx, "PendingWriteBacks", column, $"ALTER TABLE PendingWriteBacks ADD COLUMN {column} TEXT NULL");
+            WriteVersion(ctx, 9);
+        }
+        if (version < 10)
+        {
+            ctx.Database.ExecuteSqlRaw("""
+                CREATE TABLE IF NOT EXISTS "MesOutboxIntents" (
+                    "Id" INTEGER NOT NULL CONSTRAINT "PK_MesOutboxIntents" PRIMARY KEY AUTOINCREMENT,
+                    "EventId" TEXT NOT NULL,
+                    "MonthKey" TEXT NOT NULL,
+                    "PalletSessionId" INTEGER NOT NULL,
+                    "SerialNo" TEXT NOT NULL,
+                    "PalletCode" TEXT NOT NULL,
+                    "CreatedAt" TEXT NOT NULL,
+                    "PublishedAt" TEXT NULL,
+                    "PayloadJson" TEXT NOT NULL
+                );
+                """);
+            ctx.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_MesOutboxIntents_EventId" ON "MesOutboxIntents" ("EventId");""");
+            ctx.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_MesOutboxIntents_PublishedAt_CreatedAt" ON "MesOutboxIntents" ("PublishedAt", "CreatedAt");""");
+            WriteVersion(ctx, 10);
         }
     }
 

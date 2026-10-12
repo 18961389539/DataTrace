@@ -346,6 +346,45 @@ public class RuntimeStoreTests
     }
 
     [Fact]
+    public async Task Rolled_back_save_restores_generated_ids_before_spool_retry()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        var first = FirstStation("202609", "P-ROLLBACK", "S-ROLLBACK", Day1,
+            mesOutbox: new MesOutboxIntent { EventId = "evt-rollback-1", MonthKey = "202609", SerialNo = "S-ROLLBACK", PalletCode = "P-ROLLBACK", CreatedAt = Day1 });
+        await env.Store.SaveAsync(first);
+        var persistedSessionId = first.Record.PalletSessionId;
+        Assert.True(first.Record.Id > 0);
+        Assert.True(first.UpsertSession!.Id > 0);
+
+        var retried = FollowingStation("202609", "P-ROLLBACK", "S-ROLLBACK", Day1.AddMinutes(1), persistedSessionId);
+        retried = new CollectSaveRequest
+        {
+            MonthKey = retried.MonthKey,
+            Record = retried.Record,
+            MesOutbox = new MesOutboxIntent
+            {
+                EventId = "evt-rollback-1", MonthKey = "202609", SerialNo = "S-ROLLBACK", PalletCode = "P-ROLLBACK", CreatedAt = Day1
+            }
+        };
+
+        await Assert.ThrowsAnyAsync<Exception>(() => env.Store.SaveAsync(retried));
+        Assert.Equal(0, retried.Record.Id);
+        Assert.Equal(persistedSessionId, retried.Record.PalletSessionId);
+        Assert.Equal(0, retried.MesOutbox!.Id);
+        Assert.Equal(0, retried.MesOutbox.PalletSessionId);
+
+        retried.MesOutbox.EventId = "evt-rollback-2";
+        await env.Store.SaveAsync(retried);
+        Assert.True(retried.Record.Id > 0);
+        Assert.NotEqual(first.Record.Id, retried.Record.Id);
+        Assert.Equal(persistedSessionId, retried.Record.PalletSessionId);
+
+        await using var db = env.Factory.Open("202609");
+        Assert.Equal(2, await db.CollectRecords.CountAsync());
+        Assert.Equal(2, await db.PendingWriteBacks.CountAsync());
+    }
+
+    [Fact]
     public async Task Save_without_curve_writes_nothing_to_curve_store()
     {
         await using var env = await RuntimeEnv.CreateAsync();
@@ -792,6 +831,155 @@ public class RuntimeStoreTests
         }
 
         Assert.Equal(expectedOrder, collected);
+    }
+
+    [Fact]
+    public async Task Query_cursor_pages_keep_cross_month_ties_without_duplicates_or_gaps_and_refresh_counts()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        foreach (var month in new[] { "202608", "202609", "202610" })
+        {
+            for (var i = 0; i < 4; i++)
+                await env.Store.SaveAsync(FirstStation(month, $"P-{month}-{i}", $"S-{month}-{i}", Day1));
+        }
+
+        var request = new CollectQueryRequest { From = Day1.AddDays(-1), To = Day1.AddDays(1), Take = 3, SortDescending = true };
+        var collected = new List<(string Month, long Id)>();
+        string? cursor = null;
+        do
+        {
+            var page = await env.Store.QueryAsync(new CollectQueryRequest
+            {
+                From = request.From, To = request.To, Take = request.Take, SortDescending = true, AfterCursor = cursor
+            });
+            Assert.Equal(12, page.Total);
+            collected.AddRange(page.Items.Select(x => (x.MonthKey, x.Record.Id)));
+            cursor = page.NextCursor;
+        } while (cursor is not null);
+
+        Assert.Equal(12, collected.Count);
+        Assert.Equal(12, collected.Distinct().Count());
+        Assert.Equal(collected.OrderByDescending(x => x.Id).ThenBy(x => x.Month, StringComparer.Ordinal), collected);
+
+        await env.Store.SaveAsync(FirstStation("202610", "P-new", "S-new", Day1.AddMinutes(1)));
+        var refreshed = await env.Store.QueryAsync(request);
+        Assert.Equal(13, refreshed.Total);
+    }
+
+    [Fact]
+    public async Task Query_string_sort_uses_sqlite_binary_order_when_merging_months()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        var values = new[] { ("202608", "\uE000"), ("202609", "\U00010000"), ("202610", "a") };
+        foreach (var (month, recipe) in values)
+        {
+            var save = FirstStation(month, $"P-{month}", $"S-{month}", Day1);
+            save.Record.RecipeCode = recipe;
+            await env.Store.SaveAsync(save);
+        }
+
+        var result = await env.Store.QueryAsync(new CollectQueryRequest
+        {
+            From = Day1.AddDays(-1), To = Day1.AddDays(1), Take = 10,
+            SortBy = CollectSortField.RecipeCode, SortDescending = false
+        });
+
+        Assert.Equal(new[] { "a", "\uE000", "\U00010000" }, result.Items.Select(x => x.Record.RecipeCode).ToArray());
+    }
+
+    [Fact]
+    public async Task Query_cursor_walk_matches_full_sort_for_every_sort_key_and_direction()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        foreach (var month in new[] { "202608", "202609", "202610" })
+        for (var i = 0; i < 5; i++)
+        {
+            var save = FirstStation(month, $"P-{month}-{i}", $"S-{month}-{i}", Day1.AddMinutes(i % 2));
+            save.Record.SerialNo = $"SN-{i % 3}-{month}";
+            save.Record.StationCode = $"ST-{i % 2}";
+            save.Record.RecipeCode = new[] { "a", "\uE000", "\U00010000" }[i % 3];
+            save.Record.ResultCode = (short)(i % 2);
+            save.Record.DurationMs = i % 3;
+            save.Record.Judgement = i % 2 == 0 ? Judgement.Ok : Judgement.Ng;
+            await env.Store.SaveAsync(save);
+        }
+
+        foreach (var sortBy in Enum.GetValues<CollectSortField>())
+        foreach (var descending in new[] { false, true })
+        {
+            var baseRequest = new CollectQueryRequest
+            {
+                From = Day1.AddDays(-1), To = Day1.AddDays(1), Take = 100,
+                SortBy = sortBy, SortDescending = descending
+            };
+            var full = await env.Store.QueryAsync(baseRequest);
+            var walked = new List<(string Month, long Id)>();
+            string? cursor = null;
+            do
+            {
+                var page = await env.Store.QueryAsync(new CollectQueryRequest
+                {
+                    From = baseRequest.From, To = baseRequest.To, Take = 2,
+                    SortBy = sortBy, SortDescending = descending, AfterCursor = cursor
+                });
+                walked.AddRange(page.Items.Select(item => (item.MonthKey, item.Record.Id)));
+                cursor = page.NextCursor;
+            } while (cursor is not null);
+
+            Assert.Equal(full.Items.Select(item => (item.MonthKey, item.Record.Id)), walked);
+        }
+    }
+
+    [Fact]
+    public async Task Query_count_cache_invalidates_across_runtime_store_scopes()
+    {
+        await using var env = await RuntimeEnv.CreateAsync();
+        var request = Query(take: 10);
+        Assert.Equal(0, (await env.Store.QueryAsync(request)).Total);
+
+        var otherScopeStore = new RuntimeStore(env.Factory, env.Curves, env.Sessions);
+        await otherScopeStore.SaveAsync(FirstStation("202609", "P0001", "S1", Day1));
+
+        Assert.Equal(1, (await env.Store.QueryAsync(request)).Total);
+    }
+
+    [Fact]
+    public async Task Query_invalid_or_foreign_scope_cursor_falls_back_to_compatible_offset()
+    {
+        await using var source = await RuntimeEnv.CreateAsync();
+        for (var i = 0; i < 5; i++)
+        {
+            var save = FirstStation("202609", $"P-src-{i}", $"S-src-{i}", Day1.AddMinutes(i));
+            save.Record.RecipeCode = $"A{i}";
+            await source.Store.SaveAsync(save);
+        }
+        var first = await source.Store.QueryAsync(new CollectQueryRequest
+        {
+            From = Day1.AddDays(-1), To = Day1.AddDays(1), Take = 2,
+            SortBy = CollectSortField.RecipeCode, SortDescending = false
+        });
+
+        await using var target = await RuntimeEnv.CreateAsync();
+        for (var i = 0; i < 5; i++)
+        {
+            var save = FirstStation("202609", $"P-target-{i}", $"S-target-{i}", Day1.AddMinutes(i));
+            save.Record.RecipeCode = $"Z{i}";
+            await target.Store.SaveAsync(save);
+        }
+
+        var foreign = await target.Store.QueryAsync(new CollectQueryRequest
+        {
+            From = Day1.AddDays(-1), To = Day1.AddDays(1), Skip = 2, Take = 2,
+            SortBy = CollectSortField.RecipeCode, SortDescending = false, AfterCursor = first.NextCursor
+        });
+        var malformed = await target.Store.QueryAsync(new CollectQueryRequest
+        {
+            From = Day1.AddDays(-1), To = Day1.AddDays(1), Skip = 2, Take = 2,
+            SortBy = CollectSortField.RecipeCode, SortDescending = false, AfterCursor = "not-a-valid-cursor"
+        });
+
+        Assert.Equal(new[] { "Z2", "Z3" }, foreign.Items.Select(x => x.Record.RecipeCode));
+        Assert.Equal(new[] { "Z2", "Z3" }, malformed.Items.Select(x => x.Record.RecipeCode));
     }
 
     [Fact]

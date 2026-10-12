@@ -1,5 +1,6 @@
 using DataTrace.Application.Backup;
 using DataTrace.Application.Configuration;
+using DataTrace.Application.Runtime;
 using DataTrace.Infrastructure.Backup;
 using DataTrace.Infrastructure.Persistence;
 using DataTrace.Infrastructure.Storage;
@@ -110,13 +111,113 @@ public class DatabaseBackupTests
         Assert.True(result.Success, result.Error);
     }
 
-    private static DatabaseBackupService CreateService(DataRootPaths paths, DataMaintenanceBarrier? barrier = null) =>
+    [Fact]
+    [Trait("Category", "Performance")]
+    public async Task Synthetic_backup_records_real_maintenance_and_waiting_read_durations()
+    {
+        using var workspace = new TempWorkspace();
+        var paths = new DataRootPaths(workspace.Path("data"));
+        await CreateSqliteAsync(paths.ConfigDbPath);
+        var bytes = ReadBoundedInt("DATATRACE_BACKUP_BENCHMARK_BYTES", 8 * 1024 * 1024, 1, 512 * 1024 * 1024);
+        var fileCount = Math.Min(bytes, ReadBoundedInt("DATATRACE_BACKUP_BENCHMARK_FILES", 4, 1, 1000));
+        var perFile = Math.Max(1, (bytes + fileCount - 1) / fileCount);
+        var payload = new byte[perFile];
+        new Random(1729).NextBytes(payload);
+        for (var index = 0; index < fileCount; index++)
+        {
+            var length = bytes / fileCount + (index < bytes % fileCount ? 1 : 0);
+            await WriteBytesAsync(Path.Combine(paths.ArchiveDirectory, "benchmark", $"payload-{index:D4}.bin"), payload.AsMemory(0, length));
+        }
+
+        var barrier = new MeasuringMaintenanceBarrier();
+        var service = CreateService(paths, barrier);
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var backup = service.RunBackupAsync();
+        await barrier.WriterAcquired.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var readLeaseTask = barrier.EnterReadAsync().AsTask();
+        var result = await backup.WaitAsync(TimeSpan.FromMinutes(2));
+        watch.Stop();
+        Assert.True(result.Success, result.Error);
+        var readLease = await readLeaseTask.WaitAsync(TimeSpan.FromSeconds(10));
+        await readLease.DisposeAsync();
+
+        var measurement = new
+        {
+            payloadBytes = bytes,
+            payloadFiles = fileCount,
+            sqliteDatabases = result.DatabaseCount,
+            verifiedFiles = result.VerifiedFileCount,
+            backupElapsedMilliseconds = watch.Elapsed.TotalMilliseconds,
+            maintenanceExclusiveMilliseconds = barrier.WriteHoldMilliseconds,
+            waitingReadLeaseMilliseconds = barrier.ReadWaitMilliseconds,
+            measurement = "local synthetic-data run; not a customer-data estimate"
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(measurement, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        Console.WriteLine("BACKUP_BENCHMARK_JSON=" + json);
+        var output = Environment.GetEnvironmentVariable("DATATRACE_BACKUP_BENCHMARK_OUTPUT");
+        if (!string.IsNullOrWhiteSpace(output))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
+            await File.WriteAllTextAsync(output, json);
+        }
+
+        Assert.True(measurement.maintenanceExclusiveMilliseconds >= 0);
+        Assert.True(measurement.waitingReadLeaseMilliseconds >= 0);
+    }
+
+    private static int ReadBoundedInt(string name, int fallback, int minimum, int maximum)
+    {
+        var raw = Environment.GetEnvironmentVariable(name);
+        return int.TryParse(raw, out var value) && value >= minimum && value <= maximum ? value : fallback;
+    }
+
+    private static async Task WriteBytesAsync(string path, ReadOnlyMemory<byte> bytes)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await using var output = File.Create(path);
+        await output.WriteAsync(bytes);
+    }
+
+    private static DatabaseBackupService CreateService(DataRootPaths paths, IDataMaintenanceBarrier? barrier = null) =>
         new(
             paths,
             new StubBackupOptions(new BackupOptions()),
             new RuntimeDbFactory(paths.RuntimeDirectory),
             barrier ?? new DataMaintenanceBarrier(),
             NullLogger<DatabaseBackupService>.Instance);
+
+    private sealed class MeasuringMaintenanceBarrier : IDataMaintenanceBarrier
+    {
+        private readonly DataMaintenanceBarrier _inner = new();
+        public TaskCompletionSource<bool> WriterAcquired { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public double WriteHoldMilliseconds { get; private set; }
+        public double ReadWaitMilliseconds { get; private set; }
+
+        public async ValueTask<IAsyncDisposable> EnterWriteAsync(CancellationToken cancellationToken = default)
+        {
+            var lease = await _inner.EnterWriteAsync(cancellationToken);
+            WriterAcquired.TrySetResult(true);
+            return new TimedLease(lease, elapsed => WriteHoldMilliseconds = elapsed);
+        }
+
+        public async ValueTask<IAsyncDisposable> EnterReadAsync(CancellationToken cancellationToken = default)
+        {
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            var lease = await _inner.EnterReadAsync(cancellationToken);
+            ReadWaitMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            return lease;
+        }
+
+        private sealed class TimedLease(IAsyncDisposable inner, Action<double> onDispose) : IAsyncDisposable
+        {
+            private readonly long _acquiredAt = System.Diagnostics.Stopwatch.GetTimestamp();
+            public async ValueTask DisposeAsync()
+            {
+                await inner.DisposeAsync();
+                onDispose(System.Diagnostics.Stopwatch.GetElapsedTime(_acquiredAt).TotalMilliseconds);
+            }
+        }
+    }
 
     private static async Task CreateSqliteAsync(string path)
     {

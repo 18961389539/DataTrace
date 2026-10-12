@@ -36,54 +36,62 @@ public class SmokeE2ETests : E2ETestBase
     }
 
     [Fact]
-    public async Task StationCardsUseContentHeightAndEllipsizeLongTitles()
+    public async Task StationCardLongTitlesWrapWithoutOverflow()
     {
         await OpenAsync("");
         var card = await WaitForAsync(".dash-station");
 
-        var styles = await card.EvaluateAsync<string[]>("""
+        var layout = await card.EvaluateAsync<bool[]>("""
             element => {
                 const title = element.querySelector(".dt-station-title");
-                const cardStyle = getComputedStyle(element);
+                title.textContent = "超长工站标题".repeat(12);
                 const titleStyle = getComputedStyle(title);
+                const lineHeight = Number.parseFloat(titleStyle.lineHeight);
+                const titleRect = title.getBoundingClientRect();
+                const cardRect = element.getBoundingClientRect();
                 return [
-                    cardStyle.minHeight,
-                    titleStyle.whiteSpace,
-                    titleStyle.textOverflow,
-                    titleStyle.overflow
+                    titleStyle.whiteSpace === "normal",
+                    titleStyle.overflowWrap === "anywhere",
+                    titleRect.height > lineHeight,
+                    title.scrollWidth <= title.clientWidth,
+                    titleRect.right <= cardRect.right
                 ];
             }
             """);
 
-        Assert.Equal("0px", styles[0]);
-        Assert.Equal("nowrap", styles[1]);
-        Assert.Equal("ellipsis", styles[2]);
-        Assert.Equal("hidden", styles[3]);
+        Assert.All(layout, condition => Assert.True(condition));
     }
 
     [Fact]
-    public async Task StationCardDetailsAndCurveNameUseCompactRegions()
+    public async Task StationCardKeepsDetailsInHeaderAndShowsConfiguredCurvesWithoutEmptyRegions()
     {
         await OpenAsync("");
         await WaitForAsync(".dash-station");
         await WaitForAsync(".dt-station-detail-link");
-        await WaitForAsync(".dt-station-curve-label");
+        await WaitForAsync(".dt-station-curves .dt-station-curve");
 
         var detailsLink = Page.Locator(".dt-station-detail-link").First;
         Assert.Equal("查看本站明细", await detailsLink.GetAttributeAsync("aria-label"));
         Assert.True(await detailsLink.EvaluateAsync<bool>(
             "element => !!element.closest('.dt-station-header')"));
 
-        var curveLabel = Page.Locator(".dt-station-curve-label").First;
-        var curveLayout = await curveLabel.EvaluateAsync<bool[]>("""
-            element => [
-                getComputedStyle(element.parentElement).position === 'relative',
-                getComputedStyle(element).position === 'absolute',
-                element.title === element.textContent
-            ]
+        var curveLayoutIsValid = await Page.Locator(".dash-station").EvaluateAllAsync<bool>("""
+            cards => cards.every(card => {
+                const region = card.querySelector('.dt-station-curves');
+                const curves = card.querySelectorAll('.dt-station-curve');
+                // 未配置曲线的卡片不应留下空图表区域；有区域时，所有曲线定义都要有可见卡片。
+                return region === null
+                    ? curves.length === 0
+                    : curves.length > 0
+                        && region.getAttribute('aria-label') === '全部采集曲线'
+                        && [...curves].every(curve => {
+                            const name = curve.getAttribute('aria-label')?.replace(/^曲线 /, '');
+                            return !!name && curve.innerText.includes(name);
+                        });
+            })
             """);
 
-        Assert.All(curveLayout, condition => Assert.True(condition));
+        Assert.True(curveLayoutIsValid);
     }
 
     [Fact]

@@ -40,6 +40,7 @@ public static class DataTraceNativeSqlite
     private const int OpenReadOnly = 1;
     private const int OpenReadWrite = 2;
     private const int OpenCreate = 4;
+    private const int OpenUri = 64;
     private static IntPtr module;
     private static readonly byte[] MainDatabase = Encoding.UTF8.GetBytes("main\0");
 
@@ -80,7 +81,10 @@ public static class DataTraceNativeSqlite
 
     public static void QuickCheck(string path)
     {
-        IntPtr database = Open(path, OpenReadOnly);
+        // immutable=1 ensures this read-only verification does not create
+        // transient WAL/SHM files beside a backup payload.
+        string immutableUri = new Uri(System.IO.Path.GetFullPath(path)).AbsoluteUri + "?immutable=1";
+        IntPtr database = Open(immutableUri, OpenReadOnly | OpenUri);
         IntPtr statement = IntPtr.Zero;
         try
         {

@@ -95,6 +95,9 @@ internal static class ConfigMigrationTestSupport
             "CREATE INDEX \"IX_MesOutbox_Status_CreatedAt\" ON \"MesOutbox\" (\"Status\", \"CreatedAt\")");
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"ActiveSessions\" DROP COLUMN \"RecipeSnapshot\"");
         await db.Database.ExecuteSqlRawAsync("DROP TABLE IF EXISTS \"ConfigurationRevisions\"");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Stations DROP COLUMN EventIdAddress");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Stations DROP COLUMN ConfirmationRequestAddress");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE Stations DROP COLUMN ConfirmationAckAddress");
     }
 }
 

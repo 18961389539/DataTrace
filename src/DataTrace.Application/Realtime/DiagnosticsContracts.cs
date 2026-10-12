@@ -66,6 +66,12 @@ public sealed record CollectorLoopView(
     public static CollectorLoopView Empty(int capacity) => new(capacity, [], 0, 0, 0);
 }
 
+/// <summary>站级近期端到端采集耗时分位数。</summary>
+public sealed record StationLatencyView(string StationCode, int SampleCount, double P95Ms, double P99Ms, DateTime LastSampleAt);
+
+/// <summary>当前正在执行的站级采集任务。</summary>
+public sealed record ActiveCollectionView(string StationCode, DateTime StartedAt, long ElapsedMs);
+
 /// <summary>
 /// 诊断页要的运行时观测数据。
 /// </summary>
@@ -76,6 +82,17 @@ public sealed record CollectorLoopView(
 /// </remarks>
 public interface ICollectorDiagnostics
 {
+    IReadOnlyList<StationLatencyView> RecentStationLatencies { get; }
+
+    IReadOnlyList<ActiveCollectionView> ActiveCollections { get; }
+
+    IReadOnlyList<ActiveCollectionView> OverdueCollections { get; }
+
+    int CollectionMaxAgeSeconds { get; }
+
+    void BeginCollection(string stationCode, DateTime startedAt);
+
+    void EndCollection(string stationCode);
     IReadOnlyList<PlcTrafficView> PlcTraffic { get; }
 
     CollectorLoopView Loop { get; }

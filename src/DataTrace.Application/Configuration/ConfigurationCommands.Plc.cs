@@ -118,7 +118,10 @@ public sealed record SaveStationCommand(
     bool Enabled,
     string DataFilePath,
     DataFileFormat DataFileFormat,
-    IReadOnlyList<SavePositionCommand> Positions)
+    IReadOnlyList<SavePositionCommand> Positions,
+    string EventIdAddress = "",
+    string ConfirmationRequestAddress = "",
+    string ConfirmationAckAddress = "")
 {
     public static SaveStationCommand From(Station station) => new(
         station.Id,
@@ -137,7 +140,10 @@ public sealed record SaveStationCommand(
         station.Enabled,
         station.DataFilePath,
         station.DataFileFormat,
-        station.Positions.Select(SavePositionCommand.From).ToList());
+        station.Positions.Select(SavePositionCommand.From).ToList(),
+        station.EventIdAddress,
+        station.ConfirmationRequestAddress,
+        station.ConfirmationAckAddress);
 
     public Station ToEntity() => new()
     {
@@ -150,6 +156,9 @@ public sealed record SaveStationCommand(
         IsLastStation = IsLastStation,
         TriggerAddress = TriggerAddress,
         TriggerValue = TriggerValue,
+        EventIdAddress = EventIdAddress,
+        ConfirmationRequestAddress = ConfirmationRequestAddress,
+        ConfirmationAckAddress = ConfirmationAckAddress,
         PalletCodeAddress = PalletCodeAddress,
         PalletCodeLength = PalletCodeLength,
         PalletCodeDataType = PalletCodeDataType,

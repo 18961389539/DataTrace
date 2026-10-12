@@ -98,6 +98,14 @@ Production 首次初始化只创建 `admin` 管理员，不创建固定演示账
 
 ## 升得了（安全升级 / 回滚）
 
+### CI 隔离验收与备份停顿测量
+
+`acceptance-isolated.ps1 -PublishDir <发布目录>` 在系统临时目录创建唯一安装，并只使用本机随机空闲端口与合成数据。它复用 `install.ps1`、`start.ps1`、`verify.ps1`、`upgrade.ps1`、`backup-now.ps1`、`verify-backup.ps1` 和 `rollback.ps1`，验证安装、升级保留 DataRoot、全量备份校验和带数据回滚。脚本结束会停止实例并删除本轮唯一临时目录；不读取客户数据。
+
+验收会写入 8 MiB 随机归档文件，并以 `backup-now.ps1 -StopApp` 实测停机、备份、重启总时长，输出 `BACKUP_STOP_START_SECONDS`。这是该合成规模的离线维护窗口参考值，不代表在线备份锁住采集的精确时长。扩展容量设计时，应在隔离环境用与计划数据规模相同的合成文件集重复测量，记录总字节数、文件数、SQLite 数量、备份时长和采集停顿；不要仅按 8 MiB 线性外推。
+
+`DatabaseBackupTests` 中的 `Synthetic_backup_records_real_maintenance_and_waiting_read_durations` 则调用真实 `DatabaseBackupService` 和维护屏障：它在独占维护锁期间计时等待读 lease 的请求，并输出 JSON（`payloadBytes`、`payloadFiles`、`sqliteDatabases`、`backupElapsedMilliseconds`、`maintenanceExclusiveMilliseconds`、`waitingReadLeaseMilliseconds`）。本机 8 MiB / 4 文件 / 1 个配置库的一次合成实测为备份 158.8 ms、独占维护 154.5 ms、等待读 lease 140.1 ms；这只代表当前机器与该小样本。可用 `DATATRACE_BACKUP_BENCHMARK_BYTES`（1–536870912）和 `DATATRACE_BACKUP_BENCHMARK_FILES`（1–1000）设置工作负载，并用 `DATATRACE_BACKUP_BENCHMARK_OUTPUT` 保存结果。容量评估应在无客户数据的隔离环境按目标文件数、文件总量与数据库数量分档实际运行（例如 64 MiB/16 文件、256 MiB/64 文件，再按计划规模补测），报告每档原始 JSON、备份独占时长和采集等待；不得把小样本线性推算成大规模性能结论。
+
 一客户一套部署：**不要为每个客户 fork 仓库**。统一源码 + `deploy\publish`，每客户独立 `InstallDir` + `data\config.db`。
 
 ### 版本号

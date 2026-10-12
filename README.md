@@ -101,6 +101,7 @@ curl http://localhost:5080/healthz
 | `data-root` / `runtime-dir` | 数据盘可写（装到 Program Files 或数据盘掉线时会在这里先红） |
 | `disk-free` | 数据盘剩余空间（低于 `SystemDefaults.MinDiskFreeMegabytes` 判不健康：磁盘写满之后才会开始落库失败，那时已经晚了） |
 | `collector` | 采集器主循环心跳还新鲜（默认 60 秒无心跳判停：界面看着正常但数据早就停更了） |
+| `collection-task-age` | 启用采集超龄阈值后，检查在途任务是否超时；匿名端点只回超龄数量 |
 
 端点匿名可访问，因此只回结论与错误摘要，不回显安装路径。可直接接 Windows 服务守护或客户监控系统。
 
@@ -114,7 +115,7 @@ curl http://localhost:5080/healthz
 
 ## UI 回归测试
 
-`tests/DataTrace.E2E.Tests` 用本机 Edge 起一个隔离实例跑真浏览器用例，其中视觉回归分两种：
+`tests/DataTrace.E2E.Tests` 起一个隔离实例跑真浏览器用例，CI 使用 Playwright 锁定版本 Chromium：
 
 - **几何断言**（任何机器都稳定）：14 条路由不出现整页横向滚动、430px 宽下仍不溢出、
   筛选卡里的按钮与输入框不互相压盖、表格滚动容器有确定高度。
@@ -125,10 +126,9 @@ curl http://localhost:5080/healthz
 - **查询方案与错误定位**：`dotnet test tests/DataTrace.E2E.Tests --filter FullyQualifiedName~Usability` 验证手机、平板和桌面下的方案保存、重载、滚动日期、删除、CSV 上下文及工站错误字段真实焦点，截图位于 `artifacts/usability-*.png`。
 - **像素基线**（`golden/*.png`，随仓库提交）：`DATATRACE_E2E_GOLDEN` 控制——
   `update` 重录基线（改完样式跑一次，人眼确认再提交，同时会写下录制环境指纹
-  `golden/environment.json`）、`compare`（本地默认，严格比）、`auto`（CI 用，只在"基线存在且
-  指纹与本机一致"时才比，否则退化成只验"截得出图"）、`off` 完全不比。
-  一串基线只对**同一操作系统 + 同一浏览器版本**有意义，所以跨环境时 `auto` 会主动让路，
-  不抖假红；想在某台 runner 上真比，就在那台机器上 `update` 一次并提交 `golden/`。
+  `golden/environment.json`）、`compare`（本地及 CI 默认，严格比）、`auto`（兼容别名，同样严格）、`off`（显式诊断时只截图）。
+  基线或环境指纹缺失、平台架构或浏览器版本不匹配时，门禁失败。
+  重录由独立工作流生成候选基线，人眼审核后提交；主测试工作流只比较，流程见 [基线说明](tests/DataTrace.E2E.Tests/golden/README.md)。
   基线只挑没有实时数据的外壳区域；看板每几秒刷新一次，那种页面做像素比对必然天天红。
 
 ## Windows 服务
@@ -179,11 +179,13 @@ set Kestrel__Endpoints__Http__Url=http://0.0.0.0:5100
 
 ### 故障核对与配置修订
 
-PLC 响应码只做单次写入及读回核对。确认不明时保留待确认记录、阻止重采，Admin/Engineer 可在诊断页核对原设备并填写处理证据。设备协议没有稳定事件号，不能自动把旧结果重发给可能已经换件的设备。
+默认 PLC 响应码做单次写入及读回核对。确认不明时保留待确认记录、阻止重采，Admin/Engineer 可在诊断页核对原设备并填写处理证据。启用可选稳定事件号协议后，应用冻结事件身份，PLC 按事件号和结果码执行条件确认，并保留回执；仅在目标与协议一致时自动重试。PLC 程序要求和现场验收见 [设备事件协议](docs/DEVICE_EVENT_PROTOCOL.md)。
 
 启动或更换 PLC 目标后，若首次读取的触发值已经有效且没有持久留证，工站会阻塞；现场先核对原物料与设备，让设备回到非触发状态，程序实际观察到后再接受新触发。数据库与本地缓存同时不可写时停止确认，原请求每工站保留一份于内存，只重试保存；这份内存不能抵抗断电。
 
-系统设置页提供配置修订历史、脱敏差异与完整回滚。回滚前停用采集并处理设备在途状态；每次回滚生成新的审计修订。工程质量修复、验证证据及现场验收限制见 [修复验收记录](docs/QUALITY_FIX_VERIFICATION_2026-10-11.md)。
+系统设置页提供配置修订历史、脱敏差异与完整回滚。回滚前停用采集并处理设备在途状态；每次回滚生成新的审计修订。本轮改进、验证证据及现场验收限制见 [改进实施记录](docs/IMPROVEMENT_IMPLEMENTATION_2026-10-12.md)。
+
+诊断页显示近 15 分钟有界采样的站级 P95/P99、在途任务年龄及最老积压。`DataTrace:Diagnostics:CollectionMaxAgeSeconds` 默认 `0` 关闭超龄判定；启用后超龄状态同步到报警和探活，任务结束后自动恢复。
 
 ### 按一次采集查日志
 

@@ -14,15 +14,9 @@ namespace DataTrace.E2E.Tests;
 /// <list type="bullet">
 /// <item><c>update</c>：把截图写成新基线，同时记下录制环境的指纹（浏览器版本 + 操作系统）。
 /// 改完界面样式后跑一次，人眼确认过再提交。</item>
-/// <item><c>compare</c>（默认）：与基线比。基线文件不存在时**判失败**而不是静默通过 ——
-/// 一条什么都没比的"绿"用例比红更糟。指纹不参与判断：本机跑就是要严格比，
-/// 换机器跑对不上说明确实不一样，该看一眼再决定是重录还是查问题。</item>
-/// <item><c>auto</c>：比对的前提是"有基线"且"录制环境指纹与本次一致"，两个条件缺一就只验
-/// "截出了一张有内容的图"。CI 用这个档：基线是在某台机器的 Edge 上录的，
-/// runner 上的浏览器版本不同会在抗锯齿与字体度量上抖出假红，而那些红不带任何信息量。
-/// 一旦有人在 runner 上用 <c>update</c> 重录并提交，CI 就会自动升级成真比对 —— 不需要改代码。</item>
-/// <item><c>off</c>：不比像素（截图照截，只断言"截出了一张有内容的图"）。留给需要把像素比对
-/// 彻底关掉的场合；CI 现在用 <c>auto</c> 取代它。</item>
+/// <item><c>compare</c>（默认）：与基线比。基线或环境指纹文件不存在、环境不匹配时**判失败**而不是静默通过。</item>
+/// <item><c>auto</c>（历史兼容别名）：与 <c>compare</c> 一样严格逐像素比对；基线或环境指纹缺失均失败。</item>
+/// <item><c>off</c>：不比像素（截图照截，只断言"截出了一张有内容的图"），仅供显式诊断。</item>
 /// </list>
 /// 截图一律禁用 CSS 动画，且只挑没有实时数据的外壳区域（登录页、筛选卡、越权面板、页头），
 /// 否则看板上的刷新时间会让每张图每次都不同。
@@ -50,6 +44,12 @@ public static class VisualGolden
 
     private static string ResolveGoldenDirectory()
     {
+        var configured = Environment.GetEnvironmentVariable("DATATRACE_E2E_GOLDEN_DIRECTORY");
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return Path.GetFullPath(configured);
+        }
+
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "DataTrace.sln")))
         {
@@ -68,33 +68,51 @@ public static class VisualGolden
 
     /// <summary>
     /// 录制/比对环境的指纹。像素基线只对"同一操作系统 + 同一浏览器版本"有意义，
-    /// 把这两项拼起来就能一眼看出基线是不是本机录的。
+    /// 基线只接受相同平台、架构与浏览器精确版本，规避 Windows 补丁号差异。
     /// </summary>
     public static string Fingerprint(string browserVersion)
-        => $"{RuntimeInformation.OSDescription.Trim()}|chromium/{browserVersion}";
+        => $"windows/{RuntimeInformation.ProcessArchitecture}|chromium/{browserVersion}";
 
     /// <summary>
     /// 比对（或录制）一张截图。失败信息里直接给出怎么重录，省得回头翻代码。
     /// </summary>
-    /// <param name="fingerprint">见 <see cref="Fingerprint"/>，只在 <c>update</c> 与 <c>auto</c> 下参与判断。</param>
+    /// <param name="fingerprint">见 <see cref="Fingerprint"/>，仅在 <c>update</c> 时保存用于审核溯源。</param>
     public static string Verify(string name, byte[] png, string fingerprint)
     {
         // off 只关掉像素比对，截图本身仍然要成功：区域不存在、被折叠成 0 高度、
         // 或者渲染成一张空白，都得在这里红，而不是整条用例静默不做事。
-        // auto 在没有可用基线时也落到这条上，一行不改，只是多了一句说明。
+        // auto 是兼容旧配置的严格 compare 别名；缺基线时必须失败。
         if (Mode == "off")
         {
             Assert.True(png.Length > 1024, $"{name} 截出来的图只有 {png.Length} 字节，区域大概没渲染出来");
             return "capture-only: pixel comparison disabled";
         }
 
-        if (Mode == "auto" && !BaselineUsable(name, fingerprint))
+        var path = FullPath(name);
+
+        if (Mode is not ("compare" or "auto" or "update" or "off"))
         {
-            Assert.True(png.Length > 1024, $"{name} 截出来的图只有 {png.Length} 字节，区域大概没渲染出来");
-            return CaptureOnlyReason(name);
+            throw new InvalidOperationException($"未知视觉门禁模式 '{Mode}'。仅支持 compare / update / off。");
         }
 
-        var path = FullPath(name);
+        if ((Mode is "compare" or "auto") && !File.Exists(EnvironmentFile))
+        {
+            throw new FileNotFoundException(
+                $"视觉基线环境指纹缺失，拒绝仅截图通过。请按 tests/DataTrace.E2E.Tests/golden/README.md 独立审核重录。",
+                EnvironmentFile);
+        }
+
+        if (Mode is "compare" or "auto")
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(EnvironmentFile));
+            var recorded = document.RootElement.TryGetProperty("fingerprint", out var value) ? value.GetString() : null;
+            if (!string.Equals(recorded, fingerprint, StringComparison.Ordinal))
+            {
+                throw new Xunit.Sdk.XunitException(
+                    $"视觉基线环境不匹配。基线: {recorded ?? "(missing)"}; 当前: {fingerprint}. "
+                    + "请使用固定的 CI Chromium 版本，或按 golden/README.md 审核并重录。");
+            }
+        }
 
         if (Mode == "update")
         {
@@ -133,7 +151,7 @@ public static class VisualGolden
                     + $"样式真变了就用 {ModeVariable}=update 重录并检查 golden/{name}.png。");
             }
 
-                    return "compared";
+            return "compared";
         }
         finally
         {
@@ -141,44 +159,7 @@ public static class VisualGolden
         }
     }
 
-    /// <summary>
-    /// <c>auto</c> 下能不能真比对：基线文件在，且录它的环境与本次一致。
-    /// 指纹文件缺失（老基线）也按"不能比"处理 —— 宁可少比一次，也别抖出一屏假红把人训练成"红了就重录"。
-    /// </summary>
-    private static bool BaselineUsable(string name, string fingerprint)
-    {
-        if (!File.Exists(FullPath(name)) || !File.Exists(EnvironmentFile))
-        {
-            return false;
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(File.ReadAllText(EnvironmentFile));
-            return document.RootElement.TryGetProperty("fingerprint", out var recorded)
-                   && recorded.GetString() == fingerprint;
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-    }
-
-    private static string CaptureOnlyReason(string name)
-    {
-        if (!File.Exists(FullPath(name)))
-        {
-            return "capture-only: baseline missing";
-        }
-
-        if (!File.Exists(EnvironmentFile))
-        {
-            return "capture-only: environment fingerprint missing";
-        }
-
-        return "capture-only: environment fingerprint differs";
-    }
-
+    /// <summary>写入录制环境，供独立比较与人工审核。</summary>
     private static void WriteEnvironment(string fingerprint)
     {
         var payload = new Dictionary<string, string>

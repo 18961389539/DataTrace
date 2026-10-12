@@ -392,6 +392,7 @@ else
     private int _page = 1;
     private int _pages = 1;
     private int _pageSize = 20;
+    private readonly Dictionary<int, string?> _pageCursors = new() { [1] = null };
     private bool _loading;
     private bool _loadPending;
     private int _queryVersion;
@@ -619,7 +620,7 @@ else
         return Task.CompletedTask;
     }
 
-    private CollectQueryRequest BuildRequest(int skip, int take) => new()
+    private CollectQueryRequest BuildRequest(int skip, int take, string? afterCursor = null) => new()
     {
         From = DateRangeFilter.QueryStart(_from),
         To = DateRangeFilter.QueryEnd(_to),
@@ -634,6 +635,7 @@ else
         RecipeCode = _recipeAliases.Count > 0 ? null : ToRecipeQueryArg(),
         Skip = skip,
         Take = take,
+        AfterCursor = afterCursor,
         SortBy = _sortBy,
         SortDescending = _sortDesc
     };
@@ -723,6 +725,11 @@ else
 
     private async Task OnPage(int page)
     {
+        if (page <= 1 || page < _page)
+        {
+            _pageCursors.Remove(page + 1);
+            _pageCursors[page] = page == 1 ? null : _pageCursors.GetValueOrDefault(page);
+        }
         _page = page;
         _queryVersion++;
         await Load();
@@ -762,6 +769,11 @@ else
             {
                 _loadPending = false;
                 var version = _queryVersion;
+                if (_page == 1)
+                {
+                    foreach (var stalePage in _pageCursors.Keys.Where(page => page > 1).ToArray()) _pageCursors.Remove(stalePage);
+                    _pageCursors[1] = null;
+                }
                 if (DateRangeFilter.IsReversed(_from, _to))
                 {
                     break;
@@ -771,7 +783,11 @@ else
                 CollectQueryResult result;
                 try
                 {
-                    result = await Store.QueryAsync(BuildRequest((_page - 1) * _pageSize, _pageSize));
+                    var cursor = _pageCursors.GetValueOrDefault(_page);
+                    var request = cursor is not null
+                        ? BuildRequest((_page - 1) * _pageSize, _pageSize, cursor)
+                        : BuildRequest((_page - 1) * _pageSize, _pageSize);
+                    result = await Store.QueryAsync(request);
                     if (version != _queryVersion)
                     {
                         _loadPending = true;
@@ -795,6 +811,8 @@ else
                     continue;
                 }
                 _items = result.Items;
+                if (result.NextCursor is not null)
+                    _pageCursors[_page + 1] = result.NextCursor;
                 _displayedVersion = version;
                 _total = result.Total;
                 _loadFailed = false;

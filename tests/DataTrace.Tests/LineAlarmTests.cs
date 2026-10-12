@@ -342,6 +342,25 @@ public class LineAlarmTests
         Assert.True(opened.NeedsOwner);
     }
 
+    [Fact]
+    public void Overdue_collection_alarm_is_disabled_without_threshold_and_recovers_when_task_ends()
+    {
+        var active = new[] { new DataTrace.Application.Realtime.ActiveCollectionView("S1", Now, 12_000) };
+
+        var disabled = LineAlarmRules.Evaluate(true, Now, false, 0, null, [], Now,
+            activeCollections: active, collectionMaxAgeSeconds: 0);
+        var overdue = LineAlarmRules.Evaluate(true, Now, false, 0, null, [], Now,
+            activeCollections: active, collectionMaxAgeSeconds: 10);
+        var recovered = LineAlarmRules.Evaluate(true, Now, false, 0, null, [], Now,
+            activeCollections: [], collectionMaxAgeSeconds: 10);
+
+        Assert.Empty(disabled.Alarms);
+        var alarm = Assert.Single(overdue.Alarms);
+        Assert.Equal("collection-age:S1", alarm.Key);
+        Assert.Equal(LineAlarmKind.CollectionOverdue, alarm.Kind);
+        Assert.Empty(recovered.Alarms);
+    }
+
     private static void Publish(
         RuntimeStatusHub hub,
         int stationId,

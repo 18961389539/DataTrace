@@ -1,0 +1,25 @@
+@using DataTrace.Plc.Planning
+
+<MudExpansionPanels Class="mt-3">
+    <MudExpansionPanel Text="设备事件号与条件确认（可选）">
+        <MudText Typo="Typo.caption" Class="dt-muted mb-2">
+            仅在 PLC 已实现条件确认协议时填写：事件号跨重启不复用，设备只接受当前事件的结果并保留回执。全部留空使用现有握手。
+        </MudText>
+        <MudGrid>
+            <MudItem xs="12" md="4"><MudTextField @bind-Value="Station.EventIdAddress" @bind-Value:after="Notify" Label="事件号地址（4字）" Immediate="true" /></MudItem>
+            <MudItem xs="12" md="4"><MudTextField @bind-Value="Station.ConfirmationRequestAddress" @bind-Value:after="Notify" Label="确认请求地址（5字）" Immediate="true" /></MudItem>
+            <MudItem xs="12" md="4"><MudTextField @bind-Value="Station.ConfirmationAckAddress" @bind-Value:after="Notify" Label="持久回执地址（5字）" Immediate="true" /></MudItem>
+        </MudGrid>
+        @if (DeviceEventProtocol.ConfigurationError(Station, Brand) is { } error)
+        {
+            <MudText Color="Color.Error" Typo="Typo.caption">@error</MudText>
+        }
+    </MudExpansionPanel>
+</MudExpansionPanels>
+
+@code {
+    [Parameter, EditorRequired] public Station Station { get; set; } = null!;
+    [Parameter] public PlcBrand Brand { get; set; }
+    [Parameter] public EventCallback Changed { get; set; }
+    private Task Notify() => Changed.InvokeAsync();
+}

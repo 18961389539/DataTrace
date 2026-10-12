@@ -69,19 +69,22 @@ public sealed class HealthProbe : IHealthProbe
     private readonly IRuntimeStatusHub _status;
     private readonly IHostEnvironment _environment;
     private readonly ILogger<HealthProbe> _logger;
+    private readonly ICollectorDiagnostics? _collectorDiagnostics;
 
     public HealthProbe(
         IDbContextFactory<ConfigDbContext> configFactory,
         DataRootPaths paths,
         IRuntimeStatusHub status,
         IHostEnvironment environment,
-        ILogger<HealthProbe> logger)
+        ILogger<HealthProbe> logger,
+        ICollectorDiagnostics? collectorDiagnostics = null)
     {
         _configFactory = configFactory;
         _paths = paths;
         _status = status;
         _environment = environment;
         _logger = logger;
+        _collectorDiagnostics = collectorDiagnostics;
     }
 
     public async Task<HealthReport> CheckAsync(CancellationToken cancellationToken = default)
@@ -94,7 +97,8 @@ public sealed class HealthProbe : IHealthProbe
             CheckDiskFree(_paths.Root),
             CheckCollector(),
             CheckCollectionReadiness(),
-            CheckCollectionStations()
+            CheckCollectionStations(),
+            CheckCollectionTaskAge()
         };
 
         var healthy = checks.TrueForAll(check => check.Healthy);
@@ -208,5 +212,13 @@ public sealed class HealthProbe : IHealthProbe
         return faultCount == 0
             ? new HealthCheck("collection-stations", true, "ok")
             : new HealthCheck("collection-stations", false, $"{faultCount} 个工站处于故障状态");
+    }
+
+    private HealthCheck CheckCollectionTaskAge()
+    {
+        var overdue = _collectorDiagnostics?.OverdueCollections ?? [];
+        return overdue.Count == 0
+            ? new HealthCheck("collection-task-age", true, "ok")
+            : new HealthCheck("collection-task-age", false, $"{overdue.Count} 个采集任务超过配置时限");
     }
 }

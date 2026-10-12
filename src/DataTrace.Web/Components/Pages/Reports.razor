@@ -14,6 +14,7 @@
 @inject IRuntimeStore Store
 @using DataTrace.Application.Runtime
 @using DataTrace.Web.Services
+@using DataTrace.Web.Components.Reports
 @inject IAuditLogger Audit
 @inject AuthenticationStateProvider Auth
 @inject DtToast Toast
@@ -401,73 +402,12 @@
         </MudGrid>
     </MudTabPanel>
     <MudTabPanel Text="参数趋势">
-<MudPaper Class="pa-4">
-            <MudStack Row="true" AlignItems="AlignItems.Center" Class="flex-wrap mb-2">
-                <MudText Typo="Typo.h6">参数趋势</MudText>
-                <MudSpacer />
-                <MudSelect T="int" Value="_tagId" ValueChanged="OnTagChanged" Dense="true" Label="点位"
-                           Disabled="_loading" Style="min-width:240px">
-                    @foreach (var tag in _tags)
-                    {
-                        <MudSelectItem T="int" Value="@tag.Id">@TagOptionLabel(tag)</MudSelectItem>
-                    }
-                </MudSelect>
-                @* 导出跟着它导出的数据走：原来放在筛选区时，站在直通率页签上也能看见它，
-                   而趋势没取完之前它还一直灰着 —— 现在两件事都在同一个地方，禁用也说得清。 *@
-                @if (_canExport)
-                {
-                    <MudTooltip Arrow="true" Text="@ExportTooltipText">
-                        <ChildContent>
-                            <MudButton Variant="Variant.Outlined" OnClick="ExportTrend" Disabled="_exporting || _trend.Count == 0"
-                                       StartIcon="@(_exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)">
-                                @(_exporting ? "导出中…" : "导出趋势")
-                            </MudButton>
-                        </ChildContent>
-                    </MudTooltip>
-                }
-            </MudStack>
-
-            @* 少算了就得说出来：不说的话图上那个偏窄的时间轴会被当成"区间内就这些点"。
-               放在页签里而不是页签外 —— 挂在外面时它会出现在跟它无关的直通率页签上。 *@
-            @if (_trendTruncated)
-            {
-                <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mb-3">
-                    该点位在所选区间内的采样点超过单次上限，参数趋势与过程能力只统计<b>最近 @SystemDefaults.TrendSampleLimit 点</b>。
-                    需要更早的数据请缩小区间。
-                </MudAlert>
-            }
-
-            @if (_tags.Count == 0)
-            {
-                <MudText Typo="Typo.body2" Class="dt-muted py-3">当前工站没有可画趋势的数值点位。</MudText>
-            }
-            else if (_loadFailed || _trendFailed)
-            {
-                @* 失败时结果已被清空，这里若沿用"没有采集数据"，现场会照着"点位没数据"去查传感器。 *@
-                <MudText Typo="Typo.body2" Class="dt-text-error py-3">统计失败，本页结果已清空。请重试；若持续失败请检查月库是否被占用。</MudText>
-            }
-            else if (_trendLoading)
-            {
-                <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="my-3" />
-            }
-            else if (_trend.Count == 0)
-            {
-                <MudText Typo="Typo.body2" Class="dt-muted py-3">所选区间内该点位没有采集数据。</MudText>
-            }
-            else
-            {
-                <MudStack Row="true" Spacing="3" Class="mb-2 flex-wrap">
-                    <MudText Typo="Typo.caption" Class="dt-muted dt-nums">采样点 @_trend.Count<InfoHint Topic="HelpTexts.TrendSampleLimit" /></MudText>
-                    <MudText Typo="Typo.caption" Class="dt-muted dt-nums">均值 @_trendAverage</MudText>
-                    <MudText Typo="Typo.caption" Class="dt-muted dt-nums">最小 @_trendMin</MudText>
-                    <MudText Typo="Typo.caption" Class="dt-muted dt-nums">最大 @_trendMax</MudText>
-                    <MudText Typo="Typo.caption" Class="dt-muted">@_trendRangeText</MudText>
-                </MudStack>
-                <LineChart Series="_trendSeries" Height="280" SeriesAxisName="时间"
-                           XStartText="@_trendFromText" XEndText="@_trendToText"
-                           ShowPoints="_trend.Count <= 120" />
-            }
-        </MudPaper>
+        <ReportsTrendPanel Tags="_tags" TagId="_tagId" Busy="_loading" CanExport="_canExport"
+                           Exporting="_exporting" ExportTooltip="@ExportTooltipText" Truncated="_trendTruncated"
+                           LoadFailed="_loadFailed" TrendFailed="_trendFailed" Loading="_trendLoading"
+                           Points="_trend" Series="_trendSeries" Average="_trendAverage" Minimum="_trendMin"
+                           Maximum="_trendMax" RangeText="_trendRangeText" FromText="_trendFromText"
+                           ToText="_trendToText" OnTagChanged="OnTagChanged" OnExport="ExportTrend" />
     </MudTabPanel>
     <MudTabPanel Text="过程能力">
         @* 与「参数趋势」共用上方筛选里的工站，以及本页选中的点位（见趋势页签）。 *@

@@ -159,105 +159,8 @@
                 }
                 @if (_trial is { } trial && _trialStation is { } trialStation)
                 {
-                    <MudPaper Class="pa-3 mb-3 dt-trial-panel">
-                        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
-                            <MudText Typo="Typo.subtitle2">试读结果 · @trialStation.Code @trialStation.Name</MudText>
-                            <MudText Typo="Typo.caption" Class="dt-muted">
-                                @trial.At.ToString("HH:mm:ss") · @trial.ElapsedMs ms@(trial.Ok ? $" · {trial.BlockCount} 块 {trial.WordCount} 字" : "")
-                            </MudText>
-                            <MudSpacer />
-                            <MudButton Size="Size.Small" Variant="Variant.Text" aria-label="关闭试读结果"
-                                       OnClick="ClearTrial">关闭</MudButton>
-                        </MudStack>
-
-                        @if (TrialStale)
-                        {
-                            <MudAlert Severity="Severity.Warning" Dense="true" Class="my-2" role="status">
-                                配置已修改，试读结果已过期。
-                            </MudAlert>
-                        }
-                        @if (trial.Error is { } trialError)
-                        {
-                            <MudAlert Severity="Severity.Error" Dense="true">@trialError</MudAlert>
-                        }
-                        else
-                        {
-                            <MudSimpleTable Dense="true" Bordered="false" Hover="false" Class="dt-trial-table">
-                                <thead>
-                                    <tr>
-                                        <th>项目</th>
-                                        <th>地址</th>
-                                        <th>原始字</th>
-                                        <th>值</th>
-                                        <th>限值</th>
-                                        <th>判定</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr>
-                                        <td>触发</td>
-                                        <td>@trial.Trigger.Address</td>
-                                        <td class="dt-trial-raw">@(trial.Trigger.Value?.ToString() ?? "—")</td>
-                                        <td>期望 @trial.Trigger.Expected</td>
-                                        <td>—</td>
-                                        <td class="@TrialCellClass(trial.Trigger.Error is not null, !trial.Trigger.Matched)">
-                                            @(trial.Trigger.Error ?? (trial.Trigger.Matched ? "匹配" : "不匹配"))
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td>托盘码</td>
-                                        <td>@trialStation.PalletCodeAddress</td>
-                                        <td>—</td>
-                                        <td>@(trial.PalletCode ?? "—")</td>
-                                        <td>—</td>
-                                        <td class="@TrialCellClass(trial.PalletCode is null, false)">
-                                            @(trial.PalletCode is null ? "未读到" : "已读到")
-                                        </td>
-                                    </tr>
-                                    <tr>
-                                        <td>产品位</td>
-                                        <td>@(_trialOccupiedAddress.Length == 0 ? "未配" : _trialOccupiedAddress)</td>
-                                        <td>—</td>
-                                        <td>@TrialOccupiedText(trial.Occupied)</td>
-                                        <td>—</td>
-                                        <td class="dt-trial-ok">—</td>
-                                    </tr>
-                                    @foreach (var tag in trial.Tags)
-                                    {
-                                        <tr>
-                                            <td>@tag.Name@(tag.FromFile ? "（文件）" : "")</td>
-                                            <td>@tag.Address</td>
-                                            <td class="dt-trial-raw">@(string.IsNullOrEmpty(tag.RawText) ? "—" : tag.RawText)</td>
-                                            <td>@tag.Display</td>
-                                            <td>@tag.LimitText</td>
-                                            <td class="@TrialCellClass(tag.ReadFailed, tag.OutOfLimit)">
-                                                @(tag.ReadFailed ? "未读到" : tag.OutOfLimit ? "超限" : tag.Warning ? "预警" : "合格")
-                                            </td>
-                                        </tr>
-                                    }
-                                    @foreach (var curve in trial.Curves)
-                                    {
-                                        <tr>
-                                            <td>@curve.Name（曲线）</td>
-                                            <td>@curve.Address</td>
-                                            <td>@curve.PointCount 点</td>
-                                            <td>@curve.SeriesCount 序列</td>
-                                            <td>—</td>
-                                            <td class="@TrialCellClass(!curve.ReadOk, false)">@curve.Detail</td>
-                                        </tr>
-                                    }
-                                </tbody>
-                            </MudSimpleTable>
-
-                            @* 这两句是必须写明的边界：不然用户会以为"试读过了就等于验过了"，
-                               而回写、会话、MES 这三样试读按定义不碰。 *@
-                            <MudText Typo="Typo.caption" Class="dt-muted mt-2">
-                                只读：不落库、不写回、不建会话、不取流水号、不推 MES、不归档文件、不计入运行状态。
-                                读到的是试读时的表单快照（可能含未保存改动），不代表已保存的配置；
-                                回写与上报仍须在停线窗口用一件试件真采一次。
-                            </MudText>
-                        }
-                    </MudPaper>
+                    <StationTrialResultsPanel Trial="trial" Station="trialStation" OccupiedAddress="@_trialOccupiedAddress"
+                                              Stale="TrialStale" Close="ClearTrial" />
                 }
                 <MudTabs Elevation="0" Rounded="true" PanelClass="pt-4" AlwaysShowScrollButtons="true" @bind-ActivePanelIndex="_tab">
                     <MudTabPanel Text="握手">
@@ -284,6 +187,7 @@
 
                         <MudDivider Class="my-3" />
 
+                        <StationEventHandshakeEditor Station="_current" Brand="@(CurrentPlc?.Brand ?? PlcBrand.Simulator)" Changed="ValidateStation" />
                         <MudText Typo="Typo.subtitle2">托盘码与产品位</MudText>
                         @* 这条边界必须写明：点位值改从文件读之后，用户容易以为整站都不读 PLC 了。 *@
                         <MudText Typo="Typo.caption" Class="dt-muted mb-2">
@@ -814,6 +718,7 @@
         _nameError = string.IsNullOrWhiteSpace(_current.Name) ? "工站名称不能为空" : null;
         _plcError = _plcs.Any(p => p.Id == _current.PlcConnectionId) ? null : "请选择所属 PLC";
         _triggerError = AddressError(_current.TriggerAddress, "触发 / 回写地址不能为空");
+        _triggerError ??= DataTrace.Plc.Planning.DeviceEventProtocol.ConfigurationError(_current, CurrentPlc?.Brand ?? PlcBrand.Simulator);
         _palletError = AddressError(_current.PalletCodeAddress, "托盘码地址不能为空");
         _occupiedError = string.IsNullOrWhiteSpace(_occupiedAddress)
             ? null
@@ -1570,13 +1475,6 @@
             Toast.Add($"审计记录失败：{ex.Message}", Severity.Warning);
         }
     }
-
-    private static string TrialOccupiedText(bool? occupied)
-        => occupied is null ? "恒为有料（未配有料地址）" : occupied.Value ? "有料" : "空位";
-
-    /// <summary>试读结果单元格的着色：没读到与超限是两种不同的问题，分开标色。</summary>
-    private static string TrialCellClass(bool failed, bool violation)
-        => failed ? "dt-trial-bad" : violation ? "dt-trial-violation" : "dt-trial-ok";
 
     private async Task<ConfigAudit> AuditOf(string action, string entityType, string key, string? oldValue, string? newValue)
     {

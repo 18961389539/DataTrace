@@ -29,7 +29,8 @@ public sealed class HealthProbeTests
             new DataRootPaths(root),
             status,
             new TestHostEnvironment(),
-            NullLogger<HealthProbe>.Instance);
+            NullLogger<HealthProbe>.Instance,
+            new FakeCollectorDiagnostics([new ActiveCollectionView("S1", DateTime.Now, 5_000)]));
 
         try
         {
@@ -39,6 +40,9 @@ public sealed class HealthProbeTests
             var heartbeat = Assert.Single(report.Checks, check => check.Name == "collector");
             var readiness = Assert.Single(report.Checks, check => check.Name == "collection-readiness");
             Assert.True(heartbeat.Healthy);
+            var collectionAge = Assert.Single(report.Checks, check => check.Name == "collection-task-age");
+            Assert.False(collectionAge.Healthy);
+            Assert.Equal("1 个采集任务超过配置时限", collectionAge.Detail);
             Assert.False(readiness.Healthy);
             Assert.Equal("启动核对未完成，采集已阻止", readiness.Detail);
             Assert.DoesNotContain(root, readiness.Detail, StringComparison.OrdinalIgnoreCase);
@@ -128,5 +132,20 @@ public sealed class HealthProbeTests
         public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
         public Microsoft.Extensions.FileProviders.IFileProvider ContentRootFileProvider { get; set; }
             = new Microsoft.Extensions.FileProviders.NullFileProvider();
+    }
+
+    private sealed class FakeCollectorDiagnostics(IReadOnlyList<ActiveCollectionView> overdue) : ICollectorDiagnostics
+    {
+        public IReadOnlyList<StationLatencyView> RecentStationLatencies => [];
+        public IReadOnlyList<ActiveCollectionView> ActiveCollections => overdue;
+        public IReadOnlyList<ActiveCollectionView> OverdueCollections => overdue;
+        public int CollectionMaxAgeSeconds => 1;
+        public IReadOnlyList<PlcTrafficView> PlcTraffic => [];
+        public CollectorLoopView Loop => CollectorLoopView.Empty(1);
+        public void BeginCollection(string stationCode, DateTime startedAt) { }
+        public void EndCollection(string stationCode) { }
+        public void PublishPlcTraffic(PlcTrafficView traffic) { }
+        public void PublishLoopTick(CollectorLoopTick tick) { }
+        public void ForgetPlc(int plcConnectionId) { }
     }
 }

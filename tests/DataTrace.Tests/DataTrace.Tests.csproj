@@ -20,6 +20,7 @@
     <!-- Web 层纯函数（CSV 导出、SVG 图表计算、概念文案）已下沉到 DataTrace.Shared：
          直接引用工程即可，不必再按文件路径 <Compile Include> 链接源码 -->
     <ProjectReference Include="..\..\src\DataTrace.Shared\DataTrace.Shared.csproj" />
+    <ProjectReference Include="..\DataTrace.CrashProbe\DataTrace.CrashProbe.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />

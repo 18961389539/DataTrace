@@ -5,6 +5,7 @@ using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
 using DataTrace.Domain.Validation;
+using DataTrace.Plc.Planning;
 using Microsoft.EntityFrameworkCore;
 
 namespace DataTrace.Infrastructure.Persistence;
@@ -92,6 +93,11 @@ partial class ConfigRepository
         {
             throw new InvalidOperationException($"工站 {station.Code} 的{triggerError}");
         }
+
+        var plcBrand = await _db.PlcConnections.Where(x => x.Id == station.PlcConnectionId)
+            .Select(x => x.Brand).FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
+        if (DeviceEventProtocol.ConfigurationError(station, plcBrand) is { } protocolError)
+            throw new InvalidOperationException(protocolError);
 
         if (StationConfigLimits.PalletCodeLengthError(station.PalletCodeLength) is { } lengthError)
         {

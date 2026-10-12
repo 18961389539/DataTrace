@@ -30,6 +30,7 @@ public sealed class LineAlarmHostedService : BackgroundService
     private readonly IHttpClientFactory _http;
     private readonly DataRootPaths _paths;
     private readonly ILogger<LineAlarmHostedService> _logger;
+    private readonly ICollectorDiagnostics? _collectorDiagnostics;
     private readonly Dictionary<string, DateTime> _lastSent = new(StringComparer.Ordinal);
     private string? _rejectedUrl;
 
@@ -39,7 +40,8 @@ public sealed class LineAlarmHostedService : BackgroundService
         ILineAlarmBoard board,
         IHttpClientFactory http,
         DataRootPaths paths,
-        ILogger<LineAlarmHostedService> logger)
+        ILogger<LineAlarmHostedService> logger,
+        ICollectorDiagnostics? collectorDiagnostics = null)
     {
         _scopeFactory = scopeFactory;
         _status = status;
@@ -47,6 +49,7 @@ public sealed class LineAlarmHostedService : BackgroundService
         _http = http;
         _paths = paths;
         _logger = logger;
+        _collectorDiagnostics = collectorDiagnostics;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -116,7 +119,9 @@ public sealed class LineAlarmHostedService : BackgroundService
                 snapshot.Stations.SelectMany(station => station.Tags)
                     .ToDictionary(tag => (tag.StationId, tag.Id), tag => tag.SpcRuleMask)),
             openSessions,
-            DiskSpace.FreeMegabytesOf(_paths.Root));
+            DiskSpace.FreeMegabytesOf(_paths.Root),
+            _collectorDiagnostics?.ActiveCollections,
+            _collectorDiagnostics?.CollectionMaxAgeSeconds ?? 0);
         var incidents = scope.ServiceProvider.GetRequiredService<IAlarmIncidents>();
         var attention = await incidents.ApplyAsync(active.Alarms, now, cancellationToken).ConfigureAwait(false);
         var calling = attention

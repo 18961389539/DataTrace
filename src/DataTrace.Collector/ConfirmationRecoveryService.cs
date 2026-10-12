@@ -87,6 +87,11 @@ public sealed class ConfirmationRecoveryService : IConfirmationRecoveryService
             || station.TriggerAddress != pending.TriggerAddress || station.TriggerValue != pending.TriggerValue
             || ConfirmationTargetFingerprint.Of(connection) != pending.ConnectionFingerprint)
             return Fail("当前 PLC 连接或触发地址已变化；为避免向新设备写旧结果，保持人工阻塞。");
+        if (DataTrace.Plc.Planning.DeviceEventProtocol.Enabled(station)
+            && (pending.DeviceEventId is null || station.EventIdAddress != pending.EventIdAddress
+                || station.ConfirmationRequestAddress != pending.ConfirmationRequestAddress
+                || station.ConfirmationAckAddress != pending.ConfirmationAckAddress))
+            return Fail("条件确认协议与原留证不一致，保持人工阻塞。");
         if (!_queues.TryGetTrialQueue(connection.Id, out var queue, out var unavailable))
             return Fail(unavailable ?? "PLC 队列不可用。");
         if (!queue.Driver.TryParseAddress(pending.TriggerAddress, out var address) || address.IsBit)
@@ -100,15 +105,32 @@ public sealed class ConfirmationRecoveryService : IConfirmationRecoveryService
             if (mode == PendingConfirmationResolutionMode.DeviceAlreadyAcknowledged)
             {
                 if (current == pending.TriggerValue) return Fail("触发位仍为触发值；不能按设备已确认解除。");
+                if (pending.DeviceEventId is { } eventId
+                    && (!DataTrace.Plc.Planning.DeviceEventProtocol.Enabled(station)
+                        || DataTrace.Plc.Planning.DeviceEventProtocol.ConfigurationError(station, connection.Brand) is not null))
+                    return Fail("条件确认协议与原留证不一致，保持人工阻塞。");
+                if (pending.DeviceEventId is { } acknowledgedEventId
+                    && !await DataTrace.Plc.Planning.DeviceEventProtocol.ReadAcknowledgedAsync(
+                        queue, station, acknowledgedEventId, pending.ResultCode, cancellationToken).ConfigureAwait(false))
+                    return Fail("PLC持久确认回执与原事件号或结果码不匹配；保持人工阻塞。");
             }
             else if (mode == PendingConfirmationResolutionMode.SameEventConfirmed)
             {
                 // This mode relies on the operator's explicit physical identity attestation.
                 if (current != pending.TriggerValue) return Fail("触发位已变化；原事件身份无法从 PLC 值确认，保持人工阻塞。");
-                await queue.WriteWordsAsync(address, ValueCodec.EncodeInt16(pending.ResultCode), cancellationToken).ConfigureAwait(false);
-                var readback = await queue.ReadWordsAsync(address, 1, cancellationToken).ConfigureAwait(false);
-                if (readback.Length != 1 || unchecked((short)readback[0]) != pending.ResultCode)
-                    return Fail("回写读回不匹配，保持人工阻塞。");
+                if (pending.DeviceEventId is { } eventId)
+                {
+                    if (!DataTrace.Plc.Planning.DeviceEventProtocol.Enabled(station)
+                        || !await DataTrace.Plc.Planning.DeviceEventProtocol.ConfirmAsync(queue, station, eventId, pending.ResultCode, cancellationToken).ConfigureAwait(false))
+                        return Fail("PLC条件确认回执与原事件不匹配，保持人工阻塞。");
+                }
+                else
+                {
+                    await queue.WriteWordsAsync(address, ValueCodec.EncodeInt16(pending.ResultCode), cancellationToken).ConfigureAwait(false);
+                    var readback = await queue.ReadWordsAsync(address, 1, cancellationToken).ConfigureAwait(false);
+                    if (readback.Length != 1 || unchecked((short)readback[0]) != pending.ResultCode)
+                        return Fail("回写读回不匹配，保持人工阻塞。");
+                }
             }
             else return Fail("未知核对模式，保持人工阻塞。");
         }

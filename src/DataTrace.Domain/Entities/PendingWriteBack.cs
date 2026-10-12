@@ -61,4 +61,9 @@ public sealed class PendingWriteBack
     public short? TriggerValue { get; set; }
 
     public string? ConnectionFingerprint { get; set; }
+
+    public long? DeviceEventId { get; set; }
+    public string? EventIdAddress { get; set; }
+    public string? ConfirmationRequestAddress { get; set; }
+    public string? ConfirmationAckAddress { get; set; }
 }

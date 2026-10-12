@@ -8,6 +8,7 @@ using DataTrace.Web.Components.Pages;
 using DataTrace.Web.Services;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Moq;
 using Microsoft.JSInterop;
 
@@ -779,6 +780,7 @@ public class DiagnosticsPageTests : WebTestBase
         var diag = new CollectorDiagnostics();
         seed?.Invoke(diag);
         Context.Services.AddLogging();
+        Context.Services.AddSingleton<IConfiguration>(new ConfigurationBuilder().Build());
         Context.Services.AddSingleton<ICollectorDiagnostics>(diag);
         Context.Services.AddSingleton<IHealthProbe>(_health);
         Context.Services.AddSingleton<IConfirmationRecoveryService>(_confirmationRecovery);

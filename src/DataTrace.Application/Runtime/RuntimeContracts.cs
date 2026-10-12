@@ -35,6 +35,11 @@ public sealed class CollectSaveRequest
     public string? ConfirmationTriggerAddress { get; set; }
     public short? ConfirmationTriggerValue { get; set; }
     public string? ConfirmationConnectionFingerprint { get; set; }
+    /// <summary>Optional device event identity stored as its exact signed 64-bit bit pattern.</summary>
+    public long? ConfirmationDeviceEventId { get; set; }
+    public string? ConfirmationEventIdAddress { get; set; }
+    public string? ConfirmationRequestAddress { get; set; }
+    public string? ConfirmationAckAddress { get; set; }
 }
 
 public sealed class CurvePayloadWrite
@@ -94,6 +99,9 @@ public sealed class CollectQueryRequest
     public int Skip { get; init; }
     public int Take { get; init; } = 50;
 
+    /// <summary>Opaque continuation token returned by a previous page. Used for stable forward paging.</summary>
+    public string? AfterCursor { get; init; }
+
     /// <summary>排序列，默认触发时间（页面的默认视图）。</summary>
     public CollectSortField SortBy { get; init; } = CollectSortField.TriggerTime;
 
@@ -138,6 +146,8 @@ public sealed class CollectQueryResult
 {
     public required int Total { get; init; }
     public required IReadOnlyList<CollectRecordListItem> Items { get; init; }
+    /// <summary>Continuation token for the next page, when the current page is full.</summary>
+    public string? NextCursor { get; init; }
 }
 
 /// <summary>

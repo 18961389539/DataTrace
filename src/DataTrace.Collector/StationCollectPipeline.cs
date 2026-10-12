@@ -61,6 +61,23 @@ public sealed class StationCollectPipeline
         PlcRequestQueue queue,
         CancellationToken cancellationToken)
     {
+        await using var diagnosticsScope = _scopeFactory.CreateAsyncScope();
+        var diagnostics = diagnosticsScope.ServiceProvider.GetService<ICollectorDiagnostics>();
+        diagnostics?.BeginCollection(station.Code, DateTime.Now);
+        try
+        {
+            await ExecuteCoreAsync(station, connection, config, queue, cancellationToken).ConfigureAwait(false);
+        }
+        finally { diagnostics?.EndCollection(station.Code); }
+    }
+
+    private async Task ExecuteCoreAsync(
+        Station station,
+        PlcConnection connection,
+        AppConfigurationSnapshot config,
+        PlcRequestQueue queue,
+        CancellationToken cancellationToken)
+    {
         await using var operationScope = _scopeFactory.CreateAsyncScope();
         var barrier = operationScope.ServiceProvider.GetRequiredService<IDataMaintenanceBarrier>();
         await using var maintenanceLease = await barrier.EnterReadAsync(cancellationToken).ConfigureAwait(false);
@@ -83,6 +100,7 @@ public sealed class StationCollectPipeline
         var storageHeld = false;
         var suppressWriteBack = false;
         CollectSaveRequest? unpersistedRequest = null;
+        long? deviceEventId = null;
 
         SetStatus(station, StationRuntimeState.Busy, null, null, null, Judgement.None, null, null);
 
@@ -101,7 +119,13 @@ public sealed class StationCollectPipeline
 
         try
         {
-            outcome = await CollectAndSaveAsync(station, connection, config, queue, triggerTime, sw, cancellationToken)
+            if (DeviceEventProtocol.Enabled(station))
+            {
+                if (DeviceEventProtocol.ConfigurationError(station, connection.Brand) is { } protocolError)
+                    throw new InvalidDataException(protocolError);
+                deviceEventId = await DeviceEventProtocol.ReadIdentityAsync(queue, station.EventIdAddress, cancellationToken).ConfigureAwait(false);
+            }
+            outcome = await CollectAndSaveAsync(station, connection, config, queue, triggerTime, sw, cancellationToken, deviceEventId)
                 .ConfigureAwait(false);
             saved = outcome.Record;
             resultCode = saved.ResultCode;
@@ -152,7 +176,11 @@ public sealed class StationCollectPipeline
         {
             var writeBack = suppressWriteBack
                 ? new WriteBackOutcome(0, false, storageHeld ? "双持久化失败，按安全策略不写 PLC" : "采集取消，按安全策略不写 PLC")
-                : await WriteResultAsync(station, queue, resultCode)
+                : await WriteResultAsync(
+                        station,
+                        queue,
+                        DeviceEventProtocol.Enabled(station) ? outcome?.ConfirmationResultCode ?? resultCode : resultCode,
+                        deviceEventId)
                     .ConfigureAwait(false);
             // DurationMs 不在这里赋值：之前在 finally 里改内存对象、库早已写完，等于从没落库。
             // 现在它在 CollectAndSaveAsync 的记录构造时就取好了，这里直接把同一个值报给看板 ——
@@ -206,7 +234,7 @@ public sealed class StationCollectPipeline
                 }
                 else
                 {
-                    if (saved.Id > 0 && !string.IsNullOrWhiteSpace(outcome?.MonthKey))
+                    if (saved.Id > 0 && !string.IsNullOrWhiteSpace(outcome?.MonthKey) && deviceEventId is null)
                     {
                         try
                         {
@@ -323,6 +351,34 @@ public sealed class StationCollectPipeline
             [CollectionLogScope.Trigger] = pending.SerialNo
         });
 
+        if (!pending.ManualReviewRequired && pending.DeviceEventId is { } eventId
+            && pending.PlcConnectionId == connection.Id
+            && pending.ConnectionFingerprint == ConfirmationTargetFingerprint.Of(connection)
+            && pending.TriggerAddress == station.TriggerAddress && pending.TriggerValue == station.TriggerValue
+            && pending.EventIdAddress == station.EventIdAddress
+            && pending.ConfirmationRequestAddress == station.ConfirmationRequestAddress
+            && pending.ConfirmationAckAddress == station.ConfirmationAckAddress
+            && DeviceEventProtocol.ConfigurationError(station, connection.Brand) is null
+            && DeviceEventProtocol.Enabled(station))
+        {
+            var result = await WriteResultAsync(station, queue, pending.ResultCode, eventId).ConfigureAwait(false);
+            if (result.Ok)
+            {
+                await _pending.DeleteAsync(pending.MonthKey, pending.Id, cancellationToken).ConfigureAwait(false);
+                SetStatus(station, StationRuntimeState.Idle, pending.PalletCode, pending.SerialNo,
+                    pending.ResultCode, Judgement.None, null, null, monthKey: pending.MonthKey,
+                    recordId: pending.CollectRecordId, writeBackOk: true);
+                return true;
+            }
+            var attempts = pending.Attempts + 1;
+            await _pending.RecordFailedAttemptAsync(pending.MonthKey, pending.Id, attempts,
+                DateTime.Now.AddSeconds(Math.Min(60, 2 << Math.Min(attempts, 5))), cancellationToken).ConfigureAwait(false);
+            SetStatus(station, StationRuntimeState.Fault, pending.PalletCode, pending.SerialNo,
+                pending.ResultCode, Judgement.None, "条件确认回执尚未核对，保留原事件留证；" + result.Error,
+                null, monthKey: pending.MonthKey, recordId: pending.CollectRecordId, writeBackOk: false);
+            return false;
+        }
+
         // 当前驱动契约没有稳定、递增的设备事件号。会话是否 Open、托盘码是否相同、回写寄存器读回，
         // 都不能证明触发位仍对应这次采集（同托盘复用也无法区分）。因此所有未确认留证都进入
         // 持久人工核对状态，绝不把旧结果码写给未知的新件。
@@ -359,7 +415,8 @@ public sealed class StationCollectPipeline
         PlcRequestQueue queue,
         DateTime triggerTime,
         Stopwatch sw,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long? deviceEventId)
     {
         var plan = AcquisitionPlan(config, station, connection, queue);
         var stageSw = Stopwatch.StartNew();
@@ -425,12 +482,15 @@ public sealed class StationCollectPipeline
             frozen.Recipe, frozen.FrozenLimits, frozen.FrozenBaseline,
             baselineIsFrozen: frozen.Kind != SessionRecipe.SelectionKind.LegacyFallback);
         CollectMetrics.RecordStage(CollectMetrics.StageEvaluate, stageSw, station.Code);
+        if (deviceEventId is { } initialEvent
+            && await DeviceEventProtocol.ReadIdentityAsync(queue, station.EventIdAddress, cancellationToken).ConfigureAwait(false) != initialEvent)
+            throw new InvalidDataException("采集期间设备事件号改变，拒绝保存混合事件数据；保留设备触发供现场核对");
         stageSw.Restart();
         var saved = await _sessions.PersistAsync(
             evaluatedStation, config, palletCode, triggerTime, sw, source, assessment, frozen.FrozenBaseline,
-            cancellationToken, station, connection, frozen.FrozenConfiguration).ConfigureAwait(false);
+            cancellationToken, station, connection, frozen.FrozenConfiguration, deviceEventId).ConfigureAwait(false);
         CollectMetrics.RecordStage(CollectMetrics.StagePersist, stageSw, station.Code);
-        return Live(station, saved.Record, saved.Curves, saved.MonthKey);
+        return Live(station, saved.Record, saved.Curves, saved.MonthKey, saved.ConfirmationResultCode);
     }
 
     private StationAcquisitionPlan AcquisitionPlan(
@@ -512,11 +572,23 @@ public sealed class StationCollectPipeline
     private async Task<WriteBackOutcome> WriteResultAsync(
         Station station,
         PlcRequestQueue queue,
-        short resultCode)
+        short resultCode,
+        long? deviceEventId = null)
     {
         var stageSw = Stopwatch.StartNew();
         try
         {
+            if (DeviceEventProtocol.Enabled(station))
+            {
+                if (deviceEventId is null) return new WriteBackOutcome(0, false, "未取得设备事件号，禁止写条件确认请求");
+                try
+                {
+                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    var confirmed = await DeviceEventProtocol.ConfirmAsync(queue, station, deviceEventId.Value, resultCode, timeout.Token).ConfigureAwait(false);
+                    return new WriteBackOutcome(1, confirmed, confirmed ? null : "PLC未返回对应原事件及结果的持久确认回执");
+                }
+                catch (Exception ex) { return new WriteBackOutcome(1, false, ex.Message); }
+            }
             if (!queue.Driver.TryParseAddress(station.TriggerAddress, out var address))
             {
                 _logger.LogError("工站 {Station} 触发地址无法解析: {Address}", station.Code, station.TriggerAddress);
@@ -641,13 +713,15 @@ public sealed class StationCollectPipeline
         Station station,
         CollectRecord record,
         IReadOnlyList<CurvePayloadWrite>? curves = null,
-        string? monthKey = null)
+        string? monthKey = null,
+        short? confirmationResultCode = null)
         => new()
         {
             Record = record,
             Tags = MapTags(station, record.TagValues),
             Curves = MapCurves(curves),
-            MonthKey = monthKey ?? PersistenceMonth(record.TriggerTime)
+            MonthKey = monthKey ?? PersistenceMonth(record.TriggerTime),
+            ConfirmationResultCode = confirmationResultCode
         };
 
     private static IReadOnlyList<StationLiveTag> MapTags(Station station, IEnumerable<TagValue>? values)
@@ -705,6 +779,7 @@ public sealed class StationCollectPipeline
         public IReadOnlyList<StationLiveTag> Tags { get; init; } = [];
         public IReadOnlyList<StationLiveCurve> Curves { get; init; } = [];
         public string MonthKey { get; init; } = "";
+        public short? ConfirmationResultCode { get; init; }
     }
 
     private static string PersistenceMonth(DateTime time) => time.ToString("yyyyMM");

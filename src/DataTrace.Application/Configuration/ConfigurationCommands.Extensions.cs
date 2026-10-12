@@ -64,6 +64,9 @@ public static class StationWriteNormalizer
         station.Code = station.Code.Trim();
         station.Name = station.Name.Trim();
         station.DataFilePath = (station.DataFilePath ?? "").Trim();
+        station.EventIdAddress = (station.EventIdAddress ?? "").Trim();
+        station.ConfirmationRequestAddress = (station.ConfirmationRequestAddress ?? "").Trim();
+        station.ConfirmationAckAddress = (station.ConfirmationAckAddress ?? "").Trim();
         station.PositionCount = 1;
         var keep = station.Positions.OrderBy(x => x.Index).FirstOrDefault(x => x.Index == 1)
                    ?? station.Positions.OrderBy(x => x.Index).FirstOrDefault();

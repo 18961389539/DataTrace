@@ -30,6 +30,7 @@ public sealed partial class RuntimeStore : IRuntimeStore
     public async Task SaveAsync(CollectSaveRequest request, CancellationToken cancellationToken = default)
     {
         request.Record.ConfigurationRevisionId ??= request.ConfigurationRevisionId;
+        var generatedIdentitySnapshot = CaptureRequestIdentity(request);
         var writtenFiles = new List<string>();
         var databaseCommitted = false;
         try
@@ -142,6 +143,10 @@ public sealed partial class RuntimeStore : IRuntimeStore
                     TriggerAddress = request.ConfirmationTriggerAddress,
                     TriggerValue = request.ConfirmationTriggerValue,
                     ConnectionFingerprint = request.ConfirmationConnectionFingerprint,
+                    DeviceEventId = request.ConfirmationDeviceEventId,
+                    EventIdAddress = request.ConfirmationEventIdAddress,
+                    ConfirmationRequestAddress = request.ConfirmationRequestAddress,
+                    ConfirmationAckAddress = request.ConfirmationAckAddress,
                     CreatedAt = DateTime.Now,
                     Attempts = 0,
                     NextAttemptAt = DateTime.Now,
@@ -218,6 +223,7 @@ public sealed partial class RuntimeStore : IRuntimeStore
             // 最坏情况（末站 + 意图 + 留证 + MES）从 4 次往返降到 2 次。
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+            InvalidateQueryCountCache();
             PersistenceMetrics.RecordDbCommit(txSw.Elapsed.TotalMilliseconds);
             databaseCommitted = true;
 
@@ -242,6 +248,11 @@ public sealed partial class RuntimeStore : IRuntimeStore
                 throw;
             }
 
+            // EF populates SQLite/DB-generated identities after the first SaveChanges even though
+            // the surrounding transaction may still roll back. The request is serialized to spool
+            // by the caller, so restore only pre-commit failures to the exact caller-visible IDs.
+            RestoreRequestIdentity(request, generatedIdentitySnapshot);
+
             // 曲线文件必须由写它的那个存储来删：只有它知道自己的根目录。
             // 以前这里自己拼 cwd + "data/curves"，Windows 服务的工作目录是 System32，
             // 而且 DataRoot 也可能指到别处，两种情况下回滚都静默失效、留下孤儿文件。
@@ -262,6 +273,90 @@ public sealed partial class RuntimeStore : IRuntimeStore
             throw;
         }
     }
+
+    private static RequestIdentitySnapshot CaptureRequestIdentity(CollectSaveRequest request)
+    {
+        var record = request.Record;
+        var products = record.Products.Select(x => new EntityIdentity(x.Id, x.CollectRecordId)).ToArray();
+        var tags = record.TagValues.Select(x => new EntityIdentity(x.Id, x.CollectRecordId)).ToArray();
+        var curves = request.Curves.Select(x => new CurveIdentity(
+            x.Record.Id,
+            x.Record.CollectRecordId,
+            x.Record.Features.ToArray(),
+            x.Features.ToArray(),
+            x.Features.Select(f => new FeatureIdentity(f.Id, f.CurveRecordId)).ToArray())).ToArray();
+        return new RequestIdentitySnapshot(
+            record.Id, record.PalletSessionId, record.PalletSession,
+            request.UpsertSession?.Id,
+            products, record.Products.ToArray(),
+            tags, record.TagValues.ToArray(),
+            curves,
+            request.MesOutbox?.Id,
+            request.MesOutbox?.PalletSessionId,
+            request.ActiveSession?.SessionId,
+            record.Curves.ToArray());
+    }
+
+    private static void RestoreRequestIdentity(CollectSaveRequest request, RequestIdentitySnapshot snapshot)
+    {
+        var record = request.Record;
+        record.Id = snapshot.RecordId;
+        record.PalletSessionId = snapshot.RecordPalletSessionId;
+        record.PalletSession = snapshot.RecordPalletSession;
+        if (request.UpsertSession is not null && snapshot.UpsertSessionId is { } sessionId)
+            request.UpsertSession.Id = sessionId;
+        for (var i = 0; i < snapshot.Products.Length; i++)
+        {
+            record.Products.ElementAt(i).Id = snapshot.Products[i].Id;
+            record.Products.ElementAt(i).CollectRecordId = snapshot.Products[i].ForeignKey;
+        }
+        for (var i = 0; i < snapshot.Tags.Length; i++)
+        {
+            record.TagValues.ElementAt(i).Id = snapshot.Tags[i].Id;
+            record.TagValues.ElementAt(i).CollectRecordId = snapshot.Tags[i].ForeignKey;
+        }
+        for (var i = 0; i < snapshot.Curves.Length; i++)
+        {
+            var curve = request.Curves[i].Record;
+            curve.Id = snapshot.Curves[i].Id;
+            curve.CollectRecordId = snapshot.Curves[i].ForeignKey;
+            curve.Features = snapshot.Curves[i].OriginalFeatures.ToList();
+            for (var j = 0; j < snapshot.Curves[i].FeatureEntities.Length; j++)
+            {
+                snapshot.Curves[i].FeatureEntities[j].Id = snapshot.Curves[i].FeatureIdentities[j].Id;
+                snapshot.Curves[i].FeatureEntities[j].CurveRecordId = snapshot.Curves[i].FeatureIdentities[j].ForeignKey;
+            }
+        }
+        record.Products = snapshot.OriginalProducts.ToList();
+        record.TagValues = snapshot.OriginalTags.ToList();
+        record.Curves = snapshot.OriginalRecordCurves.ToList();
+        if (request.MesOutbox is not null)
+        {
+            request.MesOutbox.Id = snapshot.MesOutboxId ?? request.MesOutbox.Id;
+            request.MesOutbox.PalletSessionId = snapshot.MesOutboxSessionId ?? request.MesOutbox.PalletSessionId;
+        }
+        if (request.ActiveSession is not null && snapshot.ActiveSessionId is { } activeId)
+            request.ActiveSession.SessionId = activeId;
+    }
+
+    private sealed record EntityIdentity(long Id, long ForeignKey);
+    private sealed record FeatureIdentity(long Id, long ForeignKey);
+    private sealed record CurveIdentity(long Id, long ForeignKey, CurveFeature[] OriginalFeatures,
+        CurveFeature[] FeatureEntities, FeatureIdentity[] FeatureIdentities);
+    private sealed record RequestIdentitySnapshot(
+        long RecordId,
+        long RecordPalletSessionId,
+        PalletSession? RecordPalletSession,
+        long? UpsertSessionId,
+        EntityIdentity[] Products,
+        ProductRecord[] OriginalProducts,
+        EntityIdentity[] Tags,
+        TagValue[] OriginalTags,
+        CurveIdentity[] Curves,
+        long? MesOutboxId,
+        long? MesOutboxSessionId,
+        long? ActiveSessionId,
+        CurveRecord[] OriginalRecordCurves);
 
     public Task RepairPostCommitStateAsync(CollectSaveRequest request, CancellationToken cancellationToken = default)
         => UpdateActiveSessionAsync(request, replay: true, cancellationToken);

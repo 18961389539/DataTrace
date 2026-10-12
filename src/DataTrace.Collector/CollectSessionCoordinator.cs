@@ -16,7 +16,8 @@ namespace DataTrace.Collector;
 public sealed record PersistedCollect(
     CollectRecord Record,
     IReadOnlyList<CurvePayloadWrite> Curves,
-    string MonthKey);
+    string MonthKey,
+    short? ConfirmationResultCode = null);
 
 public sealed class CollectPersistenceUnavailableException : IOException
 {
@@ -61,7 +62,8 @@ public sealed class CollectSessionCoordinator
         CancellationToken cancellationToken,
         Station? confirmationStation = null,
         PlcConnection? confirmationConnection = null,
-        AppConfigurationSnapshot? sessionDefinition = null)
+        AppConfigurationSnapshot? sessionDefinition = null,
+        long? deviceEventId = null)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var sessions = scope.ServiceProvider.GetRequiredService<IActiveSessionStore>();
@@ -266,12 +268,17 @@ public sealed class CollectSessionCoordinator
             ConfirmationPlcConnectionId = (confirmationStation ?? station).PlcConnectionId,
             ConfirmationTriggerAddress = (confirmationStation ?? station).TriggerAddress,
             ConfirmationTriggerValue = (confirmationStation ?? station).TriggerValue,
+            ConfirmationDeviceEventId = deviceEventId,
+            ConfirmationEventIdAddress = (confirmationStation ?? station).EventIdAddress,
+            ConfirmationRequestAddress = (confirmationStation ?? station).ConfirmationRequestAddress,
+            ConfirmationAckAddress = (confirmationStation ?? station).ConfirmationAckAddress,
             ConfirmationConnectionFingerprint = confirmationConnection is { } exactPlc
                 ? ConfirmationTargetFingerprint.Of(exactPlc)
                 : config.PlcConnections.FirstOrDefault(x => x.Id == (confirmationStation ?? station).PlcConnectionId) is { } sourcePlc
                 ? ConfirmationTargetFingerprint.Of(sourcePlc)
                 : null
         };
+        var confirmationResultCode = save.Record.ResultCode;
 
         // 流水号到这一刻才定下来（首站是刚生成的，其余站取自 在制会话），所以内层作用域从这里开始：
         // 落库与补传的每一行日志都带上它，"这件到底采上没采上、后来补上没有"就不用再靠时间戳猜了。
@@ -318,10 +325,10 @@ public sealed class CollectSessionCoordinator
             _logger.LogWarning("已转存本地缓存 {SpoolFile}（{Serial}），补传循环会重试", spoolFile, serialNo);
             record.ResultCode = ResultCodes.DatabaseWriteFailed;
             record.ErrorMessage = ex.Message;
-            return new PersistedCollect(record, assessment.Curves, monthKey);
+            return new PersistedCollect(record, assessment.Curves, monthKey, confirmationResultCode);
         }
 
-        return new PersistedCollect(record, assessment.Curves, monthKey);
+        return new PersistedCollect(record, assessment.Curves, monthKey, confirmationResultCode);
     }
 
     /// <summary>

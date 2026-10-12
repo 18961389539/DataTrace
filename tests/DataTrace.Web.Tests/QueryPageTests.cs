@@ -609,6 +609,21 @@ public class QueryPageTests : WebTestBase
     }
 
     [Fact]
+    public async Task Sequential_time_page_uses_the_previous_page_cursor()
+    {
+        _store.SetupSequence(store => store.QueryAsync(It.IsAny<CollectQueryRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CollectQueryResult { Total = 60, Items = [], NextCursor = "cursor-page-2" })
+            .ReturnsAsync(new CollectQueryResult { Total = 60, Items = [] });
+
+        var cut = Render();
+        await cut.InvokeAsync(() => cut.FindComponent<MudPagination>().Instance.SelectedChanged.InvokeAsync(2));
+
+        _store.Verify(store => store.QueryAsync(
+            It.Is<CollectQueryRequest>(request => request.AfterCursor == "cursor-page-2" && request.Skip == 20 && request.Take == 20),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
     public async Task Selecting_all_recipes_sends_no_recipe_filter()
     {
         var cut = Render();

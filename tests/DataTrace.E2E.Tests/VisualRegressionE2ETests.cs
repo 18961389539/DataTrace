@@ -167,7 +167,7 @@ public class VisualRegressionE2ETests : E2ETestBase
                 // 第二天跑必然对不上，而那不是样式退化 —— 是基线自己会变。
                 { "filter-card", "/query?from=2026-01-01&to=2026-01-31", ".dt-filter-card" },
                 { "denied-panel", "/denied?ReturnUrl=%2Fusers", ".dt-main .mud-paper" },
-                { "app-shell", "/", ".mud-drawer" },
+                { "app-shell", "/", ".mud-drawer-pos-left" },
                 { "settings-form", "/config/settings", ".dt-main" }
             };
             return data;
@@ -182,7 +182,8 @@ public class VisualRegressionE2ETests : E2ETestBase
     {
         // 系统设置页：顶部四张健康卡的状态（备份成功时间、授权上限用量）与两处目录路径
         // 都依赖运行环境，E2E 用的还是每次新建的临时 DataRoot。
-        ["settings-form"] = [".dt-settings-health", ".dt-path-trunc"]
+        ["settings-form"] = [".dt-settings-health-value", ".dt-settings-health-detail", ".dt-path-trunc",
+            ".dt-settings-page .dt-metric-label:has-text(\"监听地址\") + .dt-metric-value"]
     };
 
     [Theory]
@@ -220,7 +221,8 @@ public class VisualRegressionE2ETests : E2ETestBase
                 {
                     FullPage = true,
                     Animations = ScreenshotAnimations.Disabled,
-                    Mask = masks
+                    Mask = masks,
+                    MaskColor = "#f0f0f0"
                 })
                 : await ScreenshotRegionAsync(selector, masks);
 
@@ -320,7 +322,8 @@ public class VisualRegressionE2ETests : E2ETestBase
                         Height = current.Height
                     },
                     Animations = ScreenshotAnimations.Disabled,
-                    Mask = masks
+                    Mask = masks,
+                    MaskColor = "#f0f0f0"
                 });
             }
 

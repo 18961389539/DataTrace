@@ -436,7 +436,7 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
         out bool firstActiveObservation)
     {
         firstActiveObservation = false;
-        var targetKey = $"{ConfirmationTargetFingerprint.Of(plc)}|{station.TriggerAddress}|{station.TriggerValue}";
+        var targetKey = $"{ConfirmationTargetFingerprint.Of(plc)}|{station.TriggerAddress}|{station.TriggerValue}|{station.EventIdAddress}|{station.ConfirmationRequestAddress}|{station.ConfirmationAckAddress}";
         lock (_startupTriggerGateLock)
         {
             _startupTriggerGates.TryGetValue(station.Id, out var gate);
@@ -780,7 +780,7 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
                         continue;
                     }
 
-                    if (observedTrigger != station.TriggerValue)
+                    if (observedTrigger != station.TriggerValue && !DeviceEventProtocol.Enabled(station))
                     {
                         ObserveStartupTrigger(station, plc, observedTrigger, out _);
                         continue;
@@ -842,6 +842,12 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
                         })) continue;
 
                         triggered++;
+                        continue;
+                    }
+
+                    if (observedTrigger != station.TriggerValue)
+                    {
+                        ObserveStartupTrigger(station, plc, observedTrigger, out _);
                         continue;
                     }
 

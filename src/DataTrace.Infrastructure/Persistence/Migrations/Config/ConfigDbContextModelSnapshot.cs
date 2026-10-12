@@ -15,7 +15,7 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Config
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "8.0.11");
+            modelBuilder.HasAnnotation("ProductVersion", "8.0.31");
 
             modelBuilder.Entity("DataTrace.Domain.Entities.ActiveSessionIndex", b =>
                 {
@@ -801,6 +801,14 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Config
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ConfirmationAckAddress")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ConfirmationRequestAddress")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("DataFileFormat")
                         .HasColumnType("INTEGER");
 
@@ -810,6 +818,10 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Config
 
                     b.Property<bool>("Enabled")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("EventIdAddress")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<bool>("IsFirstStation")
                         .HasColumnType("INTEGER");
