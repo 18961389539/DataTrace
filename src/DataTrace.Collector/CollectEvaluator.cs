@@ -92,10 +92,6 @@ public static class CollectEvaluator
                 else
                 {
                     numeric = ValueCodec.DecodeNumeric(words, tag.DataType, connection.FloatWordOrder, tag.Scale, tag.Offset);
-                    if (tag.IsRequired && words.Length == 0)
-                    {
-                        validationError = true;
-                    }
                 }
 
                 if (tag.DataType == PlcDataType.String && tag.IsRequired && string.IsNullOrWhiteSpace(text))
@@ -103,12 +99,22 @@ public static class CollectEvaluator
                     validationError = true;
                 }
 
+                if (tag.IsRequired
+                    && tag.DataType != PlcDataType.String
+                    && (fromFile ? numeric is null : words.Length == 0))
+                {
+                    validationError = true;
+                }
+
                 // 冻结的生效限值优先：后续工站用首站固化的那套判旧件，配置怎么改都不影响；
                 // 表里没有的点位（会话开始后新加）才回落当前定义，并按现状解析默认+覆盖。
-                var limits = frozenLimits is not null && frozenLimits.TryGetValue(tag.Id, out var frozenTagLimits)
-                    ? frozenTagLimits
-                    : RecipeLimitResolver.Resolve(tag, recipe);
-                var status = tag.DataType == PlcDataType.String
+                var canJudgeLimits = tag.Purpose.CanJudgeAgainstLimits();
+                var limits = !canJudgeLimits
+                    ? default
+                    : frozenLimits is not null && frozenLimits.TryGetValue(tag.Id, out var frozenTagLimits)
+                        ? frozenTagLimits
+                        : RecipeLimitResolver.Resolve(tag, recipe);
+                var status = tag.DataType == PlcDataType.String || !canJudgeLimits
                     ? LimitStatus.None
                     : LimitEvaluator.Evaluate(limits, numeric, tag.IsRequired);
                 var outOfLimit = status == LimitStatus.OutOfSpec;
@@ -136,6 +142,8 @@ public static class CollectEvaluator
                 {
                     TagId = tag.Id,
                     TagName = tag.Name,
+                    UnitSnapshot = tag.Unit,
+                    PurposeSnapshot = tag.Purpose,
                     PositionIndex = pos,
                     DataType = tag.DataType,
                     NumericValue = numeric,
@@ -219,7 +227,11 @@ public static class CollectEvaluator
                     {
                         Name = series.Name,
                         Role = series.Role,
-                        Values = values
+                        Values = values,
+                        IsDiscrete = series.DataType == PlcDataType.Bool
+                                     || ((series.DataType is PlcDataType.Int16 or PlcDataType.Int32)
+                                         && series.Scale == 1
+                                         && series.Offset == 0)
                     });
                 }
 

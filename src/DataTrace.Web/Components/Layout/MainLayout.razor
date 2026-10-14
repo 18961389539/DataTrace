@@ -18,6 +18,7 @@
 
 <PageTitle>@_siteName</PageTitle>
 
+<a class="dt-skip-link" href="#main-content">跳至主要内容</a>
 <MudLayout>
     @* 不写 Color="Dark"：那会把主题里的 AppbarBackground/AppbarText 变成死配置，
        暗色下顶栏 #0d151c 与抽屉 #18232d 是两种深色，浅色下也绕开了主题。 *@
@@ -86,15 +87,17 @@
         <NavMenu />
     </MudDrawer>
     <MudMainContent Class="dt-main">
-        <AuthorizeView>
-            <Authorized>
-                <LineAlarmBar />
-            </Authorized>
-        </AuthorizeView>
-        @* 大屏开关由布局持有并往下发：看板要据此决定最近采集面板的展开行为。 *@
-        <CascadingValue Name="ShopFloor" Value="_shopFloor">
-            @Body
-        </CascadingValue>
+        <main id="main-content" tabindex="-1">
+            <AuthorizeView>
+                <Authorized>
+                    <LineAlarmBar />
+                </Authorized>
+            </AuthorizeView>
+            @* 大屏开关由布局持有并往下发：看板要据此决定最近采集面板的展开行为。 *@
+            <CascadingValue Name="ShopFloor" Value="_shopFloor">
+                @Body
+            </CascadingValue>
+        </main>
     </MudMainContent>
     @if (_shopFloor)
     {

@@ -85,6 +85,10 @@
                         @(check.Healthy ? "正常" : "异常")
                     </span>
                     <span>@HealthName(check.Name)</span>
+                    @if (AdvancedHealthIdentifier(check) is { } identifier)
+                    {
+                        <span class="dt-muted">@identifier</span>
+                    }
                     @if (HealthDetail(check) is { } detail)
                     {
                         <span class="dt-muted">@detail</span>
@@ -506,6 +510,7 @@ else
     private HealthReport? _health;
     private DateTime? _healthAt;
     private string? _healthError;
+    private bool _showAdvancedHealthDetails;
 
     private CollectorLoopView _loop = CollectorLoopView.Empty(CollectorDiagnostics.LoopCapacity);
     private IReadOnlyList<PlcTrafficView> _traffic = [];
@@ -639,6 +644,8 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        var user = (await Auth.GetAuthenticationStateAsync()).User;
+        _showAdvancedHealthDetails = user.IsInRole(AppRoles.Administrator);
         await RefreshAsync(showBusy: true);
         _timer = new Timer(_ => _ = InvokeAsync(TickAsync), null, DiagTickMs, DiagTickMs);
     }
@@ -906,7 +913,11 @@ else
             foreach (var check in health.Checks)
             {
                 var detail = HealthDetail(check);
-                text.AppendLine($"  {HealthName(check.Name)}：{(check.Healthy ? "正常" : "异常")}{(detail is null ? "" : $" {detail}")}");
+                var identifier = AdvancedHealthIdentifier(check);
+                text.AppendLine(
+                    $"  {HealthName(check.Name)}：{(check.Healthy ? "正常" : "异常")}"
+                    + (identifier is null ? "" : $" {identifier}")
+                    + (detail is null ? "" : $" {detail}"));
             }
         }
         else
@@ -1249,15 +1260,24 @@ else
     /// "collector" 写成"采集服务心跳"而不是"采集心跳"：它判的是服务主循环还活着（60 秒口径），
     /// 采集被停用时照样新鲜 —— 与"采集循环"那一块判的"扫描有没有在推进"是两件事。
     /// </remarks>
-    private static string HealthName(string name) => name switch
+    private static string HealthName(string? name) => name switch
     {
         "config-db" => "配置库",
         "data-root" => "数据盘",
         "runtime-dir" => "运行目录",
         "disk-free" => "磁盘余量",
         "collector" => "采集服务心跳",
-        _ => name
+        "collection-readiness" => "启动核对",
+        "collection-stations" => "工站运行",
+        "collection-task-age" => "采集超时",
+        _ => "其他健康检查"
     };
+
+    /// <summary>未知探活码只向管理员显示，普通诊断界面使用通用中文名称。</summary>
+    private string? AdvancedHealthIdentifier(HealthCheck check)
+        => _showAdvancedHealthDetails && HealthName(check.Name) == "其他健康检查"
+            ? $"内部标识：{check.Name}"
+            : null;
 
     /// <summary>
     /// 健康项要显示的说明：换成 null 表示"没有可说的"。

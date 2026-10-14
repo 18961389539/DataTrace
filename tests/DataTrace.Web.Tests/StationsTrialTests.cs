@@ -88,6 +88,33 @@ public class StationsTrialTests : WebTestBase
     }
 
     [Fact]
+    public void Compact_station_picker_filters_options_and_focuses_the_selected_editor()
+    {
+        var other = Station();
+        other.Id = 20;
+        other.Code = "ST020";
+        other.Name = "检测工站";
+        other.Sequence = 20;
+        var cut = Render([Station(), other]);
+
+        Assert.Equal(2, cut.FindAll(".station-list-item-select").Count);
+        Assert.NotNull(cut.Find(".dt-station-picker"));
+
+        TypeInto(cut, "搜索工站", "not-a-station");
+        var picker = cut.Find("select[aria-label='选择工站']");
+        Assert.Single(picker.QuerySelectorAll("option"));
+        Assert.DoesNotContain("ST020", picker.TextContent);
+
+        TypeInto(cut, "搜索工站", "ST020");
+        Assert.Contains("ST020", picker.TextContent);
+
+        picker.Change("20");
+
+        Assert.Equal("20", picker.GetAttribute("value"));
+        Assert.Contains("ST020 检测工站", cut.Find(".dt-station-editor-heading").TextContent);
+    }
+
+    [Fact]
     public void Trial_renders_the_values_it_read()
     {
         Trial.Result = Result();

@@ -19,6 +19,7 @@
 @inject IReportService Reports
 @inject ISpoolStore Spool
 @inject IJSRuntime Js
+@inject IDialogService DialogService
 
 <PageHeader Title="实时看板" HelpRoute="/" Busy="@_shiftBusy">
     <ChildContent>
@@ -93,47 +94,102 @@
     <div class="dt-kpi-card">
         <div class="dt-kpi-main">
             <span class="dt-kpi-label">本班完成<InfoHint Topic="HelpTexts.TodayScope" /></span>
-            <span class="dt-kpi-value">@_shiftTotal <span class="dt-kpi-unit">件</span></span>
+            @if (_shiftHasSuccess)
+            {
+                <span class="dt-kpi-value">@_shiftTotal <span class="dt-kpi-unit">件</span></span>
+            }
+            else
+            {
+                <span class="dt-kpi-value">不可用</span>
+            }
         </div>
-        <span class="dt-kpi-hint">@_shiftWindowText · OK @_shiftOk · 未判定 @_shiftNone</span>
-        <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftStopText <InfoHint Topic="HelpTexts.ShiftShortfall" /></span>
+        <span class="dt-kpi-hint dt-kpi-hint-wide">@(_shiftHasSuccess ? $"{_shiftWindowText} · OK {_shiftOk} · 未判定 {_shiftNone}" : "统计暂不可用")</span>
+        @if (_shiftHasSuccess)
+        {
+            <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftStopText <InfoHint Topic="HelpTexts.ShiftShortfall" /></span>
+        }
+        <span class="dt-kpi-updated">统计更新于 @(_shiftHasSuccess ? _shiftFetchedAt.ToString("HH:mm") : "暂无成功记录")</span>
     </div>
     <div class="dt-kpi-card">
         <div class="dt-kpi-main">
             <span class="dt-kpi-label">直通率<InfoHint Topic="HelpTexts.YieldRate" /></span>
-            <span class="dt-kpi-value">@_shiftYieldText</span>
-            @* 百分比旁边给实际件数：只有一个百分比，看不出它是拿 3 件还是 3000 件算出来的。 *@
-            <span class="dt-kpi-sub">OK @_shiftOk · NG @_shiftNg</span>
+            @if (_shiftHasSuccess)
+            {
+                <span class="dt-kpi-value">@_shiftYieldText</span>
+                @* 百分比旁边给实际件数，说明统计样本基数。 *@
+                <span class="dt-kpi-sub">OK @_shiftOk · NG @_shiftNg</span>
+            }
+            else
+            {
+                <span class="dt-kpi-value">不可用</span>
+            }
         </div>
-        <span class="dt-kpi-hint">@_shiftDragText</span>
-        @if (!string.IsNullOrEmpty(_shiftSideText))
+        @if (_shiftHasSuccess)
         {
-            <span class="dt-kpi-hint">@_shiftSideText</span>
+            <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftDragText</span>
+            @if (!string.IsNullOrEmpty(_shiftSideText))
+            {
+                <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftSideText</span>
+            }
+            @if (!string.IsNullOrEmpty(_shiftFirstNgText))
+            {
+                <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftFirstNgText <InfoHint Topic="HelpTexts.FirstNgStation" /></span>
+            }
+            @if (!string.IsNullOrEmpty(_shiftClearanceText))
+            {
+                <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftClearanceText <InfoHint Topic="HelpTexts.SpecClearance" /></span>
+            }
         }
-        @if (!string.IsNullOrEmpty(_shiftFirstNgText))
+        else
         {
-            <span class="dt-kpi-hint">@_shiftFirstNgText <InfoHint Topic="HelpTexts.FirstNgStation" /></span>
+            <span class="dt-kpi-hint dt-kpi-hint-wide">统计暂不可用</span>
         }
-        @if (!string.IsNullOrEmpty(_shiftClearanceText))
-        {
-            <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftClearanceText <InfoHint Topic="HelpTexts.SpecClearance" /></span>
-        }
+        <span class="dt-kpi-updated">统计更新于 @(_shiftHasSuccess ? _shiftFetchedAt.ToString("HH:mm") : "暂无成功记录")</span>
     </div>
     <div class="dt-kpi-card">
         <div class="dt-kpi-main">
             <span class="dt-kpi-label">本班 NG<InfoHint Topic="HelpTexts.JudgementThreeState" /></span>
-            <span class="dt-kpi-value dt-kpi-value-alert">@_shiftNg</span>
+            @if (_shiftHasSuccess)
+            {
+                <span class="dt-kpi-value dt-kpi-value-alert">@_shiftNg</span>
+            }
+            else
+            {
+                <span class="dt-kpi-value">不可用</span>
+            }
         </div>
-        <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftNgSourceText <InfoHint Topic="HelpTexts.NgSource" /></span>
+        <span class="dt-kpi-hint dt-kpi-hint-wide">@(_shiftHasSuccess ? _shiftNgSourceText : "统计暂不可用") @if (_shiftHasSuccess) { <InfoHint Topic="HelpTexts.NgSource" /> }</span>
+        <span class="dt-kpi-updated">统计更新于 @(_shiftHasSuccess ? _shiftFetchedAt.ToString("HH:mm") : "暂无成功记录")</span>
     </div>
     <div class="dt-kpi-card">
         <div class="dt-kpi-main">
             <span class="dt-kpi-label">当前间隔<InfoHint Topic="HelpTexts.PieceGap" /></span>
             <span class="dt-kpi-value">@PaceText</span>
         </div>
-        <span class="dt-kpi-hint">@PaceHint</span>
+        <span class="dt-kpi-hint dt-kpi-hint-wide">@PaceHint</span>
     </div>
 </div>
+@if (_shiftError)
+{
+    <MudAlert Severity="Severity.Error" Dense="true" Variant="Variant.Outlined" Class="dt-kpi-error mb-3"
+              role="status" aria-live="polite">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
+            <span>@(_shiftHasSuccess ? $"统计更新失败，以下为 {_shiftFetchedAt:HH:mm} 的结果。" : "统计更新失败，统计暂不可用。")</span>
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                       Disabled="@_shiftBusy" OnClick="RetryShiftAsync">
+                @(_shiftBusy ? "正在重试" : "重试统计")
+            </MudButton>
+        </MudStack>
+    </MudAlert>
+}
+else
+{
+    <div class="dt-kpi-refresh">
+        <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@_shiftBusy" OnClick="RetryShiftAsync">
+            @(_shiftBusy ? "正在更新统计" : "刷新统计")
+        </MudButton>
+    </div>
+}
 
 @if (_dataStale)
 {
@@ -220,9 +276,9 @@ else
                 <h2>工站</h2>
                 <span class="dt-station-toolbar-count">显示 @visibleStations.Count / @_stations.Count 台</span>
             </div>
-            @if (!ShopFloor)
-            {
-                <div class="dt-station-toolbar-controls">
+            <div class="dt-station-toolbar-controls">
+                @if (!ShopFloor)
+                {
                     <MudTextField T="string" Value="_stationSearch" ValueChanged="OnStationSearchChanged"
                                   Label="查找工站" Placeholder="编号或名称" Immediate="true" Clearable="true"
                                   Variant="Variant.Outlined" Margin="Margin.Dense" Adornment="Adornment.Start"
@@ -240,8 +296,15 @@ else
                             }
                         </div>
                     </div>
+                }
+                <div class="dt-station-view-mode" role="group" aria-label="工站显示方式">
+                    <button type="button" class="dt-station-filter @(!_fullDetailMode ? "active" : null)"
+                            aria-pressed="@(!_fullDetailMode ? "true" : "false")" @onclick="() => _fullDetailMode = false">概览</button>
+                    <button type="button" class="dt-station-filter @(_fullDetailMode ? "active" : null)"
+                            aria-pressed="@(_fullDetailMode ? "true" : "false")" @onclick="() => _fullDetailMode = true">详细监控</button>
                 </div>
-            }
+            </div>
+            <p class="dt-station-filter-note">需关注按工站故障、最近 NG 与点位异常统计工站；过程报警数量在页面顶部报警栏单独显示。</p>
         </div>
         @if (visibleStations.Count == 0)
         {
@@ -252,23 +315,19 @@ else
         }
         else
         {
-            <MudGrid Class="dt-station-grid">
+            <MudGrid Class="@($"dt-station-grid {(_fullDetailMode ? "" : "dt-station-grid-overview")}")">
                 @foreach (var station in visibleStations)
                 {
-                    <MudItem xs="12">
+                <MudItem xs="12">
                         <StationCard Station="station" ConfiguredCurves="@_configuredCurves.GetValueOrDefault(station.StationId)"
-                                     OnOpenDetails="@(() => OpenStationDetails(station.StationId))" />
+                                 Compact="@(!_fullDetailMode)"
+                                     OnOpenDetails="@(() => OpenStationDetailsAsync(station))" />
                     </MudItem>
                 }
             </MudGrid>
         }
     </section>
 }
-
-@* 工站侧边详情：看板上下文保留（页面不跳转），跟随最新/固定本次在面板内切换。 *@
-<StationDetailPanel Station="@DetailStation" Open="@(_detailStationId is not null)"
-                    OpenChanged="@(open => { if (!open) _detailStationId = null; })" />
-
 
 <MudExpansionPanels Class="mt-5 dt-recent-panels" Elevation="1" Dense="true">
     <MudExpansionPanel Class="dt-recent-panel"
@@ -370,17 +429,28 @@ else
 
     private IReadOnlyList<PlcRuntimeStatus> _plcs = [];
     private IReadOnlyList<StationRuntimeStatus> _stations = [];
-    /// <summary>渲染用的工站顺序：异常在前，同级按工艺顺序（见 <see cref="SeverityRank"/>）。</summary>
+    /// <summary>工站顺序固定按产线工艺顺序，运行状态变化不会移动卡片。</summary>
     private IReadOnlyList<StationRuntimeStatus> _orderedStations = [];
-    /// <summary>侧边详情面板当前打开的工站。存 Id 而非引用：面板在「跟随最新」时要拿到实时状态。</summary>
-    private int? _detailStationId;
 
     private Dictionary<int, IReadOnlyList<StationLiveCurve>> _configuredCurves = [];
 
-    private StationRuntimeStatus? DetailStation
-        => _detailStationId is { } id ? _stations.FirstOrDefault(s => s.StationId == id) : null;
-
-    private void OpenStationDetails(int stationId) => _detailStationId = stationId;
+    private async Task OpenStationDetailsAsync(StationRuntimeStatus station)
+    {
+        var parameters = new DialogParameters<StationDetailDialog>
+        {
+            { dialog => dialog.Station, station }
+        };
+        await DialogService.ShowAsync<StationDetailDialog>(
+            $"{station.StationCode} {station.StationName}",
+            parameters,
+            new DialogOptions
+            {
+                MaxWidth = MaxWidth.Large,
+                FullWidth = true,
+                CloseButton = true,
+                CloseOnEscapeKey = true
+            });
+    }
 
     private void RefreshCurveConfiguration(AppConfigurationSnapshot snapshot)
         => _configuredCurves = snapshot.Stations.ToDictionary(station => station.Id,
@@ -418,6 +488,10 @@ else
     private string _shiftYieldText = "—";
     private DateTime _shiftFetchedAt = DateTime.MinValue;
     private bool _shiftBusy;
+    private bool _shiftError;
+    private bool _fullDetailMode;
+
+    private bool _shiftHasSuccess => _shiftFetchedAt != DateTime.MinValue;
 
     /// <summary>系统配置读取失败时的一句话提示；null 表示读取正常，不显示提示条。</summary>
     private string? _configNote;
@@ -638,10 +712,12 @@ else
             _shiftWindowText = window.Label;
             _shiftWindowStart = window.Start;
             _shiftFetchedAt = DateTime.Now;
+            _shiftError = false;
         }
         catch
         {
-            // 报表失败时保留上次数字
+            // 保留最近一次成功的整组统计；初次失败时由 UI 明确标记不可用。
+            _shiftError = true;
         }
         finally
         {
@@ -653,9 +729,7 @@ else
     {
         _plcs = Status.Plcs;
         _stations = Status.Stations;
-        // 排序在这里做一次，而不是写在 foreach 里：定时跳每 5 秒重画一次，
-        // 内联排序就会跟着每 5 秒重排一遍。
-        _orderedStations = _stations.OrderBy(SeverityRank).ThenBy(s => s.Sequence).ToList();
+        _orderedStations = _stations.OrderBy(s => s.Sequence).ThenBy(s => s.StationId).ToList();
         _recent = Status.Recent;
         _openSessions = Status.OpenSessions;
         _inProcessNote = InProcessRecipes.Note(Status.ActiveRecipeCode, Status.InProcessRecipes ?? []);
@@ -693,20 +767,6 @@ else
 
     private string PaceHint => CurrentPace?.Hint ?? "还没有相邻的两件";
 
-    /// <summary>
-    /// 工站严重度：故障 → NG → 采集中 → 空闲 → 停用。看板上最该被看见的工位排在最前，
-    /// 否则一台 NG 可能落在最后一屏，大屏上等于没有报警。
-    /// </summary>
-    private static int SeverityRank(StationRuntimeStatus station)
-    {
-        // 停用先判：停用工位的 LastJudgement 还留着最后一次判定，
-        // 晚了它就会顶着上一次的 NG 挤到最前面，反而误导。
-        if (station.State == StationRuntimeState.Disabled) return 4;
-        if (station.State == StationRuntimeState.Fault) return 0;
-        if (station.State == StationRuntimeState.Busy) return 2;
-        return station.LastJudgement == Judgement.Ng ? 1 : 3;
-    }
-
     private enum StationFilter { All, Attention, Busy, Idle, Disabled }
 
     private IReadOnlyList<StationRuntimeStatus> VisibleStations
@@ -737,22 +797,32 @@ else
         _selectedFilter = StationFilter.All;
     }
 
-    private int FilterCount(StationFilter filter) => filter == StationFilter.All
-        ? _stations.Count
-        : _orderedStations.Count(station => MatchesFilter(station, filter));
+    private int FilterCount(StationFilter filter) => filter switch
+    {
+        StationFilter.All => _stations.Count,
+        StationFilter.Attention => _orderedStations.Count(IsAttention),
+        _ => _orderedStations.Count(station => MatchesFilter(station, filter))
+    };
 
     private static bool MatchesFilter(StationRuntimeStatus station, StationFilter filter)
-    {
-        var rank = SeverityRank(station);
-        return filter switch
+        => filter switch
         {
-            StationFilter.Attention => rank <= 1,
-            StationFilter.Busy => rank == 2,
-            StationFilter.Idle => rank == 3,
-            StationFilter.Disabled => rank == 4,
+            StationFilter.Attention => IsAttention(station),
+            StationFilter.Busy => station.State == StationRuntimeState.Busy,
+            StationFilter.Idle => station.State == StationRuntimeState.Idle,
+            StationFilter.Disabled => station.State == StationRuntimeState.Disabled,
             _ => true
         };
-    }
+
+    private static bool IsAttention(StationRuntimeStatus station)
+        => station.State == StationRuntimeState.Fault
+           || station.LastJudgement == Judgement.Ng
+           || station.LastTags.Any(tag => tag.OutOfLimit || tag.Warning || IsNoData(tag));
+
+    private static bool IsNoData(StationLiveTag tag)
+        => tag.NumericValue is null && string.IsNullOrWhiteSpace(tag.TextValue);
+
+    private Task RetryShiftAsync() => RefreshShiftAsync(force: true);
 
     private static string FilterLabel(StationFilter filter) => filter switch
     {

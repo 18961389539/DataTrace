@@ -1,0 +1,51 @@
+@using DataTrace.Application.Realtime
+@using DataTrace.Web.Components.Shared
+@implements IDisposable
+@inject IRuntimeStatusHub Status
+
+<MudDialog Class="dt-station-dialog">
+    <TitleContent>
+        <MudText Typo="Typo.h6">@StationTitle</MudText>
+    </TitleContent>
+    <DialogContent>
+        @if (_stationRemoved)
+        {
+            <MudText Typo="Typo.body2" Class="dt-muted pa-4">工站已从看板移除。</MudText>
+        }
+        else
+        {
+            <StationDetailPanel Station="@CurrentStation" />
+        }
+    </DialogContent>
+</MudDialog>
+
+@code {
+    [Parameter, EditorRequired] public StationRuntimeStatus Station { get; set; } = default!;
+
+    private StationRuntimeStatus? _latestStation;
+    private bool _stationRemoved;
+
+    private StationRuntimeStatus CurrentStation => _latestStation ?? Station;
+    private string StationTitle => $"{CurrentStation.StationCode} {CurrentStation.StationName}";
+
+    protected override void OnInitialized()
+        => Status.Changed += OnStatusChanged;
+
+    private void OnStatusChanged()
+    {
+        _ = InvokeAsync(() =>
+        {
+            var latest = Status.Stations.FirstOrDefault(station => station.StationId == Station.StationId);
+            _stationRemoved = latest is null;
+            if (latest is not null)
+            {
+                _latestStation = latest;
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+        => Status.Changed -= OnStatusChanged;
+}

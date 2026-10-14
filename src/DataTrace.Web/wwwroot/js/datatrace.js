@@ -54,6 +54,23 @@ window.dtFocusPageTitle = function (selector) {
     el.focus({ preventScroll: true });
 };
 
+document.addEventListener('click', function (event) {
+    var link = event.target.closest('a.dt-skip-link');
+    if (!link) {
+        return;
+    }
+
+    var target = document.querySelector(link.hash);
+    if (!target) {
+        return;
+    }
+
+    event.preventDefault();
+    history.pushState(null, '', link.hash);
+    target.focus({ preventScroll: true });
+    target.scrollIntoView({ block: 'start' });
+});
+
 // 复制文本到剪贴板，用于托盘码/流水号一键复制。
 // 返回值必须可信：界面按它决定提示"已复制"还是"复制失败"，
 // 而工控机通常走 http://局域网IP，非安全上下文下 navigator.clipboard 是不可用的。

@@ -2,6 +2,7 @@ using DataTrace.Application.Realtime;
 using DataTrace.Domain.Enums;
 using DataTrace.Web.Components.Shared;
 using DataTrace.Shared;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 using MudBlazor.Services;
 
@@ -35,6 +36,7 @@ public class StationCardTests
         LastPalletCode = "PAL-0001",
         LastSerialNo = "0007",
         LastDurationMs = durationMs,
+        LastPieceGap = TimeSpan.FromMilliseconds(1250),
         LastTags = [new StationLiveTag { Name = "压力", Display = "12.40", Unit = "kN" }]
     };
 
@@ -224,7 +226,7 @@ public class StationCardTests
 
         var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station));
 
-        Assert.Contains("dash-station fault", cut.Markup);
+        Assert.Contains("dash-station detail fault", cut.Markup);
         Assert.Contains("mud-chip-color-error", cut.Markup);
         Assert.Contains("故障", cut.Markup);
     }
@@ -401,9 +403,12 @@ public class StationCardTests
         await using var ctx = NewContext();
         var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, Station(34)));
 
-        Assert.Single(cut.FindAll(".dt-station-subline .dt-station-meta"));
+        Assert.Equal(2, cut.FindAll(".dt-station-subline .dt-station-meta").Count);
         Assert.Contains("PAL-0001", cut.Find(".dt-station-subline").TextContent);
-        Assert.Equal("34 ms", cut.Find(".dt-station-meta-value").TextContent.Trim());
+        Assert.Equal("采集耗时", cut.FindAll(".dt-station-meta-label")[0].TextContent.Trim());
+        Assert.Equal("34 ms", cut.FindAll(".dt-station-meta-value")[0].TextContent.Trim());
+        Assert.Equal("产品间隔", cut.FindAll(".dt-station-meta-label")[1].TextContent.Trim());
+        Assert.Equal("1.3 秒", cut.FindAll(".dt-station-meta-value")[1].TextContent.Trim());
     }
 
     [Fact]
@@ -412,6 +417,44 @@ public class StationCardTests
         await using var ctx = NewContext();
         var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, Station(3450)));
 
-        Assert.Equal("3.5 s", cut.Find(".dt-station-meta-value").TextContent.Trim());
+        Assert.Equal("3.5 s", cut.FindAll(".dt-station-meta-value")[0].TextContent.Trim());
+    }
+
+    [Fact]
+    public async Task Compact_overview_prioritizes_issues_and_keeps_the_full_detail_drawer_entry()
+    {
+        await using var ctx = NewContext();
+        var station = Station();
+        station.State = StationRuntimeState.Busy;
+        station.LastJudgement = Judgement.Ng;
+        station.LastTags =
+        [
+            Point("正常参数"),
+            Point("预警参数", warning: true),
+            new StationLiveTag { Name = "无数据参数", Display = "-", NumericValue = null },
+            Point("超限参数", outOfLimit: true),
+            Point("另一正常参数")
+        ];
+        station.LastCurves =
+        [
+            new StationLiveCurve { Name = "完整曲线", Key = "1:1", Values = [1f, 2f] }
+        ];
+
+        var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station)
+            .Add(x => x.Compact, true)
+            .Add(x => x.OnOpenDetails, EventCallback.Factory.Create(this, () => { })));
+
+        Assert.Contains("采集中", cut.Markup);
+        Assert.Contains("上次 NG", cut.Markup);
+        Assert.Contains("最近产品 NG", cut.Markup);
+        Assert.Contains("超限 1", cut.Find(".dt-overview-issue-summary").TextContent);
+        Assert.Contains("预警 1", cut.Find(".dt-overview-issue-summary").TextContent);
+        Assert.Contains("无数据 1", cut.Find(".dt-overview-issue-summary").TextContent);
+        Assert.Equal(3, cut.FindAll(".dt-overview-parameter").Count);
+        Assert.Equal("超限参数", cut.FindAll(".dt-overview-parameter-name")[0].TextContent);
+        Assert.Equal("预警参数", cut.FindAll(".dt-overview-parameter-name")[1].TextContent);
+        Assert.Equal("无数据参数", cut.FindAll(".dt-overview-parameter-name")[2].TextContent);
+        Assert.Empty(cut.FindAll(".dt-station-curves"));
+        Assert.Contains("打开工站详情", cut.Markup);
     }
 }

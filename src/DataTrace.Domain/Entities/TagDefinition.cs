@@ -19,6 +19,9 @@ public class TagDefinition
     public double Offset { get; set; }
     public string? Unit { get; set; }
 
+    /// <summary>点位业务用途；旧配置缺少该字段时按连续质量测量兼容。</summary>
+    public TagPurpose Purpose { get; set; } = TagPurpose.QualityMeasurement;
+
     /// <summary>规格下限（红线）。超出即判废。</summary>
     public double? LowerLimit { get; set; }
 

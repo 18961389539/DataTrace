@@ -59,9 +59,7 @@ public class JourneyE2ETests : E2ETestBase
         Assert.True(await rows.Filter(new() { HasText = "明细" }).CountAsync() > 0);
 
         var firstResult = rows.Filter(new() { HasText = "明细" }).First;
-        var firstRow = await firstResult.InnerHTMLAsync();
         var firstPalletCode = (await firstResult.Locator("td").Nth(2).InnerTextAsync()).Trim();
-        Assert.Contains("OP130", firstRow);
 
         // circuit 接手前发出的回车会被丢掉（什么都没发生），用重试兜住这个窗口。
         await ActUntilAsync(

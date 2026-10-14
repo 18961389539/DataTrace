@@ -43,6 +43,8 @@ public sealed class RuntimeDbContext : DbContext
 
         builder.Entity<TagValue>(e =>
         {
+            e.Property(x => x.UnitSnapshot).HasColumnType("TEXT");
+            e.Property(x => x.PurposeSnapshot).HasColumnType("INTEGER");
             e.HasIndex(x => x.CollectRecordId);
             e.HasIndex(x => new { x.TagId, x.NumericValue });
         });

@@ -47,7 +47,7 @@ public sealed class IdentityRevalidatingAuthenticationStateProvider : Revalidati
         await using var scope = _scopeFactory.CreateAsyncScope();
         var users = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
         var user = await users.FindByIdAsync(userId).ConfigureAwait(false);
-        if (user is null || user.MustChangePassword)
+        if (user is null)
         {
             return false;
         }

@@ -4,14 +4,20 @@
 @using DataTrace.Application.Alarms
 @using DataTrace.Application.Quality
 @using DataTrace.Application.Runtime
+@using DataTrace.Application.Configuration
 @using DataTrace.Domain.Entities
 @using DataTrace.Domain.Enums
+@using DataTrace.Web.Components.Dialogs
 @inject IQualityIncidentService Incidents
 @inject IQualityIncidentActorProvider Actors
 @inject ICollectQuery Collect
 @inject IAlarmIncidents AlarmIncidents
+@inject IConfigRepository Config
 @inject DtToast Toast
+@inject IDialogService Dialogs
 @inject NavigationManager Nav
+
+<NavigationLock ConfirmExternalNavigation="@Dirty" OnBeforeInternalNavigation="OnBeforeInternalNavigation" />
 
 <PageHeader Title="新建质量异常单">
     <Actions>
@@ -20,45 +26,101 @@
     </Actions>
 </PageHeader>
 
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-3">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
+            <span>@_error</span>
+            @if (_retryAction is not null)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                           Disabled="_searching || _loading || _submitting" OnClick="RetryFailedActionAsync">@_retryText</MudButton>
+            }
+        </MudStack>
+    </MudAlert>
+    @if (_canManage && _diagnosticDetails is not null)
+    {
+        <MudExpansionPanels Class="mb-3">
+            <MudExpansionPanel Text="管理员/工程师诊断信息">
+                <MudText Typo="Typo.body2" Class="dt-muted">@_diagnosticDetails</MudText>
+            </MudExpansionPanel>
+        </MudExpansionPanels>
+    }
+}
+
 @if (!_loaded)
 {
     <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="220px" />
 }
-else if (_source is null && _sourceAlarm is not null)
-{
-    <MudPaper Class="pa-4">
-        <MudText Typo="Typo.subtitle1" Class="mb-2">关联质量报警</MudText>
-        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-3">
-            @_sourceAlarm.Message · @_sourceAlarm.RaisedAt.ToString("yyyy-MM-dd HH:mm:ss")
-        </MudAlert>
-        @if (_loadError is not null)
-        {
-            <MudAlert Severity="Severity.Error" Dense="true" Class="mb-3">@_loadError</MudAlert>
-        }
-        <MudText Typo="Typo.body2" Class="dt-muted mb-2">请指定一条源采集记录作为产品证据；报警不会替代产品记录。</MudText>
-        <MudGrid Class="dt-filters">
-            <MudItem xs="12" sm="6">
-                <MudTextField T="string" @bind-Value="_sourceMonthInput" Label="记录月份" Placeholder="yyyyMM" />
-            </MudItem>
-            <MudItem xs="12" sm="6">
-                <MudNumericField T="long?" @bind-Value="_sourceRecordIdInput" Label="采集记录 ID" Min="1" />
-            </MudItem>
-        </MudGrid>
-        <MudStack Row="true" Spacing="2" Class="mt-3 flex-wrap">
-            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Search"
-                       Disabled="_loading || _sourceRecordIdInput is not > 0" OnClick="LoadAlarmSourceAsync">载入源记录</MudButton>
-            <MudButton Variant="Variant.Text" Href="/alarms">返回报警</MudButton>
-        </MudStack>
-    </MudPaper>
-}
 else if (_source is null)
 {
-    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined">
-        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
-            <span>@(_loadError ?? "请从采集记录明细进入，选择一条记录作为异常单的源证据。")</span>
-            <MudButton Size="Size.Small" Variant="Variant.Outlined" Href="/query">打开数据查询</MudButton>
+    @if (_sourceAlarm is not null)
+    {
+        <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-3">
+            关联质量报警：@_sourceAlarm.Message · @_sourceAlarm.RaisedAt.ToString("yyyy-MM-dd HH:mm:ss")
+            <MudText Typo="Typo.caption" Class="d-block">报警不会替代产品记录，请按业务标识选择源采集记录。</MudText>
+        </MudAlert>
+    }
+    <MudPaper Class="pa-4">
+        <MudText Typo="Typo.subtitle1" Class="mb-1">第一步：选择源采集记录</MudText>
+        <MudText Typo="Typo.caption" Class="dt-muted mb-3">无需输入月份或内部记录 ID；按流水号、托盘码、工站和采集时间查找。</MudText>
+        <MudGrid Class="dt-filters">
+            <MudItem xs="12" sm="6" md="3">
+                <MudTextField T="string" @bind-Value="_searchSerial" Label="流水号" Immediate="true" Clearable="true" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudTextField T="string" @bind-Value="_searchPallet" Label="托盘码" Immediate="true" Clearable="true" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudSelect T="int?" @bind-Value="_searchStationId" Label="工站" Clearable="true" Dense="true">
+                    @foreach (var station in _stations)
+                    {
+                        <MudSelectItem T="int?" Value="@((int?)station.Id)">@station.Code</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudDatePicker @bind-Date="_searchFrom" Label="开始日期" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="2">
+                <MudDatePicker @bind-Date="_searchTo" Label="结束日期" />
+            </MudItem>
+        </MudGrid>
+        <MudStack Row="true" Spacing="2" Class="mt-3 mb-2 flex-wrap">
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Search"
+                       Disabled="_searching" OnClick="SearchSourceRecordsAsync">搜索记录</MudButton>
+            <MudText Typo="Typo.caption" Class="dt-muted align-self-center">@(_sourceSearchDone ? $"找到 {_sourceRecordTotal} 条，显示最多 50 条" : "请选择时间范围后搜索")</MudText>
         </MudStack>
-    </MudAlert>
+        <MudTable Items="_sourceRecords" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_searching">
+            <HeaderContent>
+                <MudTh>采集时间</MudTh>
+                <MudTh>流水号 / 托盘</MudTh>
+                <MudTh>工站 / 型号</MudTh>
+                <MudTh>判定</MudTh>
+                <MudTh></MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="采集时间" Class="dt-nowrap">@context.Record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+                <MudTd DataLabel="流水号 / 托盘">@context.Record.SerialNo<MudText Typo="Typo.caption" Class="dt-muted">@context.Record.PalletCode</MudText></MudTd>
+                <MudTd DataLabel="工站 / 型号">@context.Record.StationCode<MudText Typo="Typo.caption" Class="dt-muted">@context.Record.RecipeCode</MudText></MudTd>
+                <MudTd DataLabel="判定">@DisplayLabels.JudgementTextLong(context.Record.Judgement)</MudTd>
+                <MudTd DataLabel="操作">
+                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                               Disabled="_loading" OnClick="@(() => SelectSourceAsync(context))">选择此记录</MudButton>
+                </MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <div class="dt-empty-hint">
+                    @if (_error is null)
+                    {
+                        <MudText Typo="Typo.body2" Class="dt-muted py-2">
+                            @(_sourceSearchDone ? "搜索成功，但当前时间范围和业务标识没有匹配记录；请调整条件。" : "输入业务标识并搜索；时间范围默认最近 7 天。")
+                        </MudText>
+                    }
+                </div>
+            </NoRecordsContent>
+        </MudTable>
+    </MudPaper>
 }
 else if (!_canWork)
 {
@@ -68,16 +130,17 @@ else if (!_canWork)
 }
 else
 {
-    @if (_error is not null)
-    {
-        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-3">@_error</MudAlert>
-    }
-
+    <MudPaper Class="pa-3 mb-3">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Class="flex-wrap">
+            <MudText Typo="Typo.body2">已选择源记录：@_source.SerialNo · @_source.StationCode · @_source.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss")</MudText>
+            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ChangeSource">更换源记录</MudButton>
+        </MudStack>
+    </MudPaper>
     <MudGrid>
         <MudItem xs="12" lg="7">
             <MudPaper Class="pa-4">
                 <MudText Typo="Typo.subtitle1" Class="mb-3">异常信息</MudText>
-                <form @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+                <form @onsubmit="() => SubmitAsync()" @onsubmit:preventDefault="true">
                     <MudGrid Class="dt-filters">
                         <MudItem xs="12" sm="8">
                             <MudTextField T="string" @bind-Value="_title" Label="异常标题" Required="true" MaxLength="120"
@@ -183,18 +246,38 @@ else
     private bool _loaded;
     private bool _loading;
     private bool _submitting;
+    private bool _searching;
+    private bool _sourceSearchDone;
+    private bool _incidentCreated;
     private bool _canWork;
-    private string? _loadError;
+    private bool _canManage;
     private string? _error;
+    private string? _diagnosticDetails;
+    private string? _retryAction;
+    private string _retryText = "重试";
     private string _title = "";
     private string _description = "";
     private string _scopeFromText = "";
     private string _scopeToText = "";
-    private string _sourceMonthInput = "";
-    private long? _sourceRecordIdInput;
+    private string? _initialTitle;
+    private string? _searchSerial;
+    private string? _searchPallet;
+    private int? _searchStationId;
+    private DateTime? _searchFrom = DateTime.Today.AddDays(-6);
+    private DateTime? _searchTo = DateTime.Today;
+    private IReadOnlyList<Station> _stations = [];
+    private IReadOnlyList<CollectRecordListItem> _sourceRecords = [];
+    private int _sourceRecordTotal;
     private QualityIncidentSeverity _severity = QualityIncidentSeverity.Medium;
     private Guid _requestId = Guid.NewGuid();
     private string? _sourceKey;
+    private bool Dirty => !_incidentCreated
+                          && _source is not null
+                          && (!string.Equals(_title, _initialTitle, StringComparison.Ordinal)
+                              || !string.IsNullOrWhiteSpace(_description)
+                              || _severity != QualityIncidentSeverity.Medium
+                              || !string.IsNullOrWhiteSpace(_scopeFromText)
+                              || !string.IsNullOrWhiteSpace(_scopeToText));
 
     protected override async Task OnParametersSetAsync()
     {
@@ -207,20 +290,29 @@ else
             _description = "";
             _scopeFromText = "";
             _scopeToText = "";
-            _sourceMonthInput = "";
-            _sourceRecordIdInput = null;
             _severity = QualityIncidentSeverity.Medium;
+            _incidentCreated = false;
         }
 
         _loaded = false;
         _source = null;
         _sourceAlarm = null;
-        _loadError = null;
         _error = null;
+        _diagnosticDetails = null;
+        _retryAction = null;
+        await RefreshCanWorkAsync();
+        try
+        {
+            _stations = await Config.GetStationsAsync();
+        }
+        catch (Exception ex)
+        {
+            _stations = [];
+            SetError("工站筛选暂时无法加载；仍可按流水号、托盘码和时间搜索。", ex);
+        }
         if (AlarmId is > 0)
         {
             await LoadQualityAlarmAsync(AlarmId.Value);
-            _sourceMonthInput = DateTime.Now.ToString("yyyyMM", CultureInfo.InvariantCulture);
         }
 
         if (RecordId is not > 0 || !IsValidMonthKey(MonthKey))
@@ -229,30 +321,11 @@ else
             return;
         }
 
-        try
-        {
-            _source = await Collect.GetRecordAsync(MonthKey!, RecordId.Value);
-            if (_source is null)
-            {
-                _loadError = "源采集记录不存在或已按保留策略清理，无法创建异常单。";
-            }
-            else
-            {
-                await RefreshCanWorkAsync();
-                _title = $"{_source.StationCode}质量异常";
-            }
-        }
-        catch (Exception ex)
-        {
-            _loadError = $"源采集记录加载失败：{ex.Message}";
-        }
-        finally
-        {
-            _loaded = true;
-        }
+        await LoadSourceAsync(MonthKey!, RecordId.Value);
+        _loaded = true;
     }
 
-    private async Task SubmitAsync()
+    private async Task SubmitAsync(bool navigateToDetails = true)
     {
         if (_source is null || _submitting)
         {
@@ -270,9 +343,7 @@ else
         try
         {
             var actor = await Actors.GetCurrentAsync();
-            var sourceMonthKey = IsValidMonthKey(MonthKey) ? MonthKey! : _sourceMonthInput;
-            var sourceRecordId = RecordId ?? _sourceRecordIdInput;
-            if (sourceRecordId is not > 0 || !IsValidMonthKey(sourceMonthKey))
+            if (!IsValidMonthKey(MonthKey) || RecordId is not > 0)
             {
                 throw new QualityIncidentOperationException("请先指定有效的源采集记录。");
             }
@@ -280,8 +351,8 @@ else
             var id = await Incidents.CreateAsync(new CreateQualityIncidentRequest
             {
                 RequestId = _requestId,
-                MonthKey = sourceMonthKey,
-                RecordId = sourceRecordId.Value,
+                MonthKey = MonthKey!,
+                RecordId = RecordId.Value,
                 Title = _title,
                 Description = _description,
                 Severity = _severity,
@@ -294,12 +365,19 @@ else
             }, actor);
 
             Toast.Add("质量异常单已创建", Severity.Success);
-            Nav.NavigateTo($"/quality/incidents/{id}");
+            _incidentCreated = true;
+            _error = null;
+            _diagnosticDetails = null;
+            _retryAction = null;
+            if (navigateToDetails)
+            {
+                Nav.NavigateTo($"/quality/incidents/{id}");
+            }
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
-            Toast.Add($"创建异常单失败：{ex.Message}", Severity.Error);
+            SetError("质量异常单暂时无法创建。请核对必填信息、源记录和当前账号权限后重试。",
+                ex, "create", "重试创建");
         }
         finally
         {
@@ -317,43 +395,98 @@ else
                 .FirstOrDefault(item => item.Id == alarmId);
             if (alarm is null || alarm.Kind != LineAlarmKind.ConsecutiveNg)
             {
-                _loadError = "该报警不存在，或不是可关联的连续 NG 质量报警。";
+                SetError("未找到可关联的连续 NG 质量报警；可继续按业务标识搜索源记录。");
                 return;
             }
 
             _sourceAlarm = alarm;
+            _error = null;
+            _retryAction = null;
+            _diagnosticDetails = null;
         }
         catch (Exception ex)
         {
-            _loadError = $"报警加载失败：{ex.Message}";
+            SetError("关联报警暂时无法读取；可继续搜索源记录，或重试加载报警。", ex, "alarm", "重试加载报警");
         }
     }
 
-    private async Task LoadAlarmSourceAsync()
+    private async Task SearchSourceRecordsAsync()
     {
-        if (_sourceAlarm is null || _sourceRecordIdInput is not > 0 || !IsValidMonthKey(_sourceMonthInput))
+        if (_searching)
         {
-            _loadError = "请输入有效的记录月份和采集记录 ID。";
             return;
         }
 
-        _loading = true;
-        _loadError = null;
+        if (_searchFrom is null || _searchTo is null || _searchFrom > _searchTo)
+        {
+            SetError("请选择有效的开始和结束日期后重试。");
+            return;
+        }
+
+        _searching = true;
+        _sourceSearchDone = true;
+        _error = null;
+        _diagnosticDetails = null;
+        _retryAction = null;
         try
         {
-            _source = await Collect.GetRecordAsync(_sourceMonthInput, _sourceRecordIdInput.Value);
+            var result = await Collect.QueryAsync(new CollectQueryRequest
+            {
+                From = _searchFrom.Value.Date,
+                To = _searchTo.Value.Date.AddDays(1).AddTicks(-1),
+                SerialNo = NullIfWhiteSpace(_searchSerial),
+                PalletCode = NullIfWhiteSpace(_searchPallet),
+                StationId = _searchStationId,
+                Skip = 0,
+                Take = 50
+            });
+            _sourceRecords = result.Items;
+            _sourceRecordTotal = result.Total;
+        }
+        catch (Exception ex)
+        {
+            _sourceRecords = [];
+            _sourceRecordTotal = 0;
+            SetError("源记录搜索暂时失败，请检查筛选条件后重试。", ex, "search", "重试搜索");
+        }
+        finally
+        {
+            _searching = false;
+        }
+    }
+
+    private async Task SelectSourceAsync(CollectRecordListItem item)
+    {
+        MonthKey = item.MonthKey;
+        RecordId = item.Record.Id;
+        await LoadSourceAsync(item.MonthKey, item.Record.Id);
+    }
+
+    private async Task LoadSourceAsync(string monthKey, long recordId)
+    {
+        _loading = true;
+        _error = null;
+        _diagnosticDetails = null;
+        _retryAction = null;
+        await RefreshCanWorkAsync();
+        try
+        {
+            _source = await Collect.GetRecordAsync(monthKey, recordId);
             if (_source is null)
             {
-                _loadError = "源采集记录不存在或已按保留策略清理。";
+                SetError("源采集记录不存在或已清理，请重新搜索并选择其他记录。");
                 return;
             }
 
             await RefreshCanWorkAsync();
             _title = $"{_source.StationCode}质量异常";
+            _initialTitle = _title;
+            _error = null;
         }
         catch (Exception ex)
         {
-            _loadError = $"源采集记录加载失败：{ex.Message}";
+            _source = null;
+            SetError("源采集记录暂时无法读取，请重试或重新搜索。", ex, "source", "重试读取");
         }
         finally
         {
@@ -361,12 +494,107 @@ else
         }
     }
 
+    private async Task ChangeSource()
+    {
+        if (Dirty)
+        {
+            var choice = await AskUnsavedActionAsync("更换源记录会清除当前未提交的异常描述。");
+            if (choice == "continue")
+            {
+                return;
+            }
+
+            if (choice == "save")
+            {
+                await SubmitAsync();
+                return;
+            }
+        }
+
+        _source = null;
+        _canWork = false;
+        _description = "";
+        _scopeFromText = "";
+        _scopeToText = "";
+        _severity = QualityIncidentSeverity.Medium;
+        _incidentCreated = false;
+        _sourceRecords = [];
+        _sourceSearchDone = false;
+        _requestId = Guid.NewGuid();
+        _initialTitle = null;
+    }
+
     private async Task RefreshCanWorkAsync()
     {
         var actor = await Actors.GetCurrentAsync();
+        _canManage = actor.IsInRole(DataTrace.Domain.Constants.AppRoles.Administrator)
+                     || actor.IsInRole(DataTrace.Domain.Constants.AppRoles.Engineer);
         _canWork = actor.IsInRole(DataTrace.Domain.Constants.AppRoles.Administrator)
                    || actor.IsInRole(DataTrace.Domain.Constants.AppRoles.Engineer)
                    || actor.IsInRole(DataTrace.Domain.Constants.AppRoles.Operator);
+    }
+
+    private async Task OnBeforeInternalNavigation(LocationChangingContext context)
+    {
+        if (!Dirty)
+        {
+            return;
+        }
+
+        var choice = await AskUnsavedActionAsync("离开页面后，未提交的异常信息将无法恢复。");
+        if (choice == "continue")
+        {
+            context.PreventNavigation();
+        }
+        else if (choice == "save")
+        {
+            await SubmitAsync(navigateToDetails: false);
+            if (!_incidentCreated)
+            {
+                context.PreventNavigation();
+            }
+        }
+    }
+
+    private async Task<string?> AskUnsavedActionAsync(string message)
+    {
+        var parameters = new DialogParameters<QualityIncidentUnsavedDialog>
+        {
+            { dialog => dialog.Message, message },
+            { dialog => dialog.SaveText, "创建正式异常单" },
+            { dialog => dialog.CanSave, _source is not null && _canWork
+                                       && !string.IsNullOrWhiteSpace(_title)
+                                       && !string.IsNullOrWhiteSpace(_description) }
+        };
+        var dialog = await Dialogs.ShowAsync<QualityIncidentUnsavedDialog>(
+            "未提交的异常内容", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true });
+        var result = await dialog.Result;
+        return result is { Canceled: false } ? result.Data as string : "continue";
+    }
+
+    private static string? NullIfWhiteSpace(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private void SetError(string message, Exception? exception = null, string? retryAction = null, string retryText = "重试")
+    {
+        _error = message;
+        _retryAction = retryAction;
+        _retryText = retryText;
+        _diagnosticDetails = exception is null ? null : $"{exception.GetType().Name}: {exception.Message}";
+    }
+
+    private Task RetryFailedActionAsync()
+    {
+        _diagnosticDetails = null;
+        return _retryAction switch
+        {
+            "search" => SearchSourceRecordsAsync(),
+            "source" when IsValidMonthKey(MonthKey) && RecordId is > 0 => LoadSourceAsync(MonthKey!, RecordId.Value),
+            "create" => SubmitAsync(),
+            "alarm" when AlarmId is > 0 => LoadQualityAlarmAsync(AlarmId.Value),
+            _ => Task.CompletedTask
+        };
     }
 
     private bool TryReadScope(out DateTime? from, out DateTime? to, out string? error)

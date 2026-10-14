@@ -46,6 +46,20 @@ public class DateRangeFilterTests : WebTestBase
     }
 
     [Fact]
+    public void Date_picker_buttons_have_chinese_accessible_names()
+    {
+        var cut = Render(DateTime.Today, DateTime.Today);
+
+        var names = cut.FindAll("button")
+            .Select(button => button.GetAttribute("aria-label"))
+            .Where(label => label is not null)
+            .ToArray();
+
+        Assert.Contains("打开开始日期选择器", names);
+        Assert.Contains("打开结束日期选择器", names);
+    }
+
+    [Fact]
     public void Current_shift_uses_configured_hours_and_exact_bounds()
     {
         var cut = Render(DateTime.Today, DateTime.Today, includeShifts: true);
@@ -174,9 +188,8 @@ public class DateRangeFilterTests : WebTestBase
 }
 
 /// <summary>
-/// 页头组件。标题必须是 h5 且带 dt-page-title：前者是 Routes.razor 里
-/// PageFocusOnNavigate 的查找选择器，后者是 app.css 抑制程序性焦点环的依据。
-/// 两边都靠约定而不是编译期检查，所以用测试钉住。
+/// 页头组件。语义 h1 和 dt-page-title 是路由焦点、样式和读屏层级共享的契约。
+/// 这些约定没有编译期检查，所以用测试钉住。
 /// </summary>
 public class PageHeaderTests : WebTestBase
 {
@@ -186,9 +199,10 @@ public class PageHeaderTests : WebTestBase
         var cut = Context.Render<PageHeader>(parameters => parameters
             .Add(p => p.Title, "数据查询"));
 
-        var title = cut.Find("h5");
+        var title = cut.Find("h1");
 
         Assert.Contains("dt-page-title", title.ClassList);
+        Assert.Equal("-1", title.GetAttribute("tabindex"));
         Assert.Equal("数据查询", title.TextContent);
     }
 

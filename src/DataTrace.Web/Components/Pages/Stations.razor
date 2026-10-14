@@ -33,8 +33,44 @@
     </MudAlert>
 }
 
+<section class="dt-station-picker" aria-label="工站选择">
+    <div class="dt-station-picker-heading">
+        <MudText Typo="Typo.subtitle1">选择工站（@_stations.Count）</MudText>
+        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                   StartIcon="@(_busy ? Icons.Material.Filled.Sync : Icons.Material.Filled.Add)"
+                   OnClick="AddDevice" Disabled="_busy">@(_busy ? "处理中…" : "新增工站")</MudButton>
+        @if (_current is not null)
+        {
+            <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                       OnClick="@(() => DeleteDevice(_current))" Disabled="_busy">
+                删除当前
+            </MudButton>
+        }
+    </div>
+    @if (_stations.Count > 0)
+    {
+        <MudTextField T="string" @bind-Value="_stationSearch" Label="搜索工站"
+                      Placeholder="输入编码或名称" Immediate="true"
+                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" />
+        <label class="dt-station-picker-select">
+            <span>当前工站</span>
+            <select aria-label="选择工站" value="@(_current?.Id.ToString() ?? "")"
+                    disabled="@_busy" @onchange="OnPickerStationChanged">
+                @foreach (var station in FilteredStations)
+                {
+                    <option value="@station.Id">@station.Code · @station.Name</option>
+                }
+            </select>
+        </label>
+    }
+    else
+    {
+        <MudText Typo="Typo.body2" Class="dt-muted">暂无工站，点「新增工站」创建第一台。</MudText>
+    }
+</section>
+
 <MudGrid>
-    <MudItem xs="12" md="3">
+    <MudItem xs="12" md="3" Class="dt-station-list">
         <MudPaper Class="pa-3 station-pane">
             <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3">
                 <MudText Typo="Typo.subtitle1">工站 @_stations.Count</MudText>
@@ -79,7 +115,9 @@
         {
             <MudPaper Class="pa-4 station-pane">
                 <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3 dt-station-actions">
-                    <MudText Typo="Typo.h6">@_current.Code @_current.Name</MudText>
+                    <h6 class="dt-station-editor-heading" role="heading" aria-level="2" tabindex="-1" @ref="_editorHeading">
+                        @_current.Code @_current.Name
+                    </h6>
                     @if (Dirty)
                     {
                         <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined"
@@ -466,6 +504,13 @@
     private IReadOnlyList<Station> _stations = [];
     private IReadOnlyList<PlcConnection> _plcs = [];
     private Station? _current;
+    private string _stationSearch = "";
+    private ElementReference _editorHeading;
+    private IEnumerable<Station> FilteredStations => _stations.Where(station =>
+        station.Id == _current?.Id
+        || string.IsNullOrWhiteSpace(_stationSearch)
+        || station.Code.Contains(_stationSearch.Trim(), StringComparison.OrdinalIgnoreCase)
+        || station.Name.Contains(_stationSearch.Trim(), StringComparison.OrdinalIgnoreCase));
     /// <summary>上次读库（或保存）时的整站指纹，用于判断有没有未保存改动。</summary>
     private string? _loadedSnapshot;
     private int _tab;
@@ -1159,6 +1204,26 @@
             _loadedSnapshot = _current is null ? null : Snapshot(_current);
             ValidateStation();
         });
+    }
+
+    private async Task OnPickerStationChanged(ChangeEventArgs args)
+    {
+        if (!int.TryParse(args.Value?.ToString(), out var id))
+        {
+            return;
+        }
+
+        var station = _stations.FirstOrDefault(item => item.Id == id);
+        if (station is null || _current?.Id == id)
+        {
+            return;
+        }
+
+        await Select(station);
+        if (_current?.Id == id)
+        {
+            await _editorHeading.FocusAsync();
+        }
     }
 
     private async Task RefreshAfterChildChange(Station? station, int tab)

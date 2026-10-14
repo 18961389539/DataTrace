@@ -333,13 +333,16 @@ partial class RuntimeStore
 
         await using var db = _factory.Open(monthKey);
         var rows = await db.TagValues.AsNoTracking()
-            .Where(tag => tag.CollectRecord!.CompleteTime >= since)
+            .Where(tag => tag.CollectRecord!.CompleteTime >= since
+                          && (tag.PurposeSnapshot == null
+                              || tag.PurposeSnapshot == TagPurpose.QualityMeasurement))
             .Select(tag => new TagObservation
             {
                 StationId = tag.CollectRecord!.StationId,
                 StationCode = tag.CollectRecord.StationCode,
                 TagId = tag.TagId,
                 TagName = tag.TagName,
+                PurposeSnapshot = tag.PurposeSnapshot,
                 CompleteTime = tag.CollectRecord.CompleteTime,
                 IsWarning = tag.IsWarning,
                 IsOutOfLimit = tag.IsOutOfLimit,
@@ -482,6 +485,8 @@ partial class RuntimeStore
                     && x.record.StationCode == stationCode
                     && x.tag.TagName == tagName
                     && x.tag.NumericValue != null
+                    && (x.tag.PurposeSnapshot == null
+                        || x.tag.PurposeSnapshot == TagPurpose.QualityMeasurement)
                     && !x.tag.IsOutOfLimit);
 
             rows = stationId is { } sid
@@ -536,6 +541,9 @@ partial class RuntimeStore
                     (tag, record) => new { tag, record })
                 .Where(x => x.tag.TagId == tagId
                             && x.tag.NumericValue != null
+                            && (x.tag.PurposeSnapshot == null
+                                || x.tag.PurposeSnapshot == TagPurpose.QualityMeasurement
+                                || x.tag.PurposeSnapshot == TagPurpose.DiscreteResult)
                             && x.record.TriggerTime >= from
                             && x.record.TriggerTime <= to);
 
@@ -555,6 +563,7 @@ partial class RuntimeStore
                     Time = x.record.TriggerTime,
                     Value = x.tag.NumericValue!.Value,
                     PalletCode = x.record.PalletCode,
+                    PurposeSnapshot = x.tag.PurposeSnapshot,
                     LowerLimit = x.tag.LowerLimit,
                     UpperLimit = x.tag.UpperLimit
                 })

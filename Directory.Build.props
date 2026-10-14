@@ -6,6 +6,8 @@
     <!-- 本项目要求 0 警告：门禁就在编译期，而不是"看一眼 CI 日志里有没有多出来"。
          确有需要临时放行的分析器告警时，用 WarningsNotAsErrors 逐条列出，不要整体放宽。 -->
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- NuGet 审计源不可达时保留告警，但不阻断构建；实际漏洞告警仍按错误处理。 -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1900</WarningsNotAsErrors>
     <!-- Unified product version for upgrade path; visible in Settings + customer.json / version.json. Bump here. -->
     <Version>1.1.0</Version>
     <AssemblyVersion>1.1.0.0</AssemblyVersion>

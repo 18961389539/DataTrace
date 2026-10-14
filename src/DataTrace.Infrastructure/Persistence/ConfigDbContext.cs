@@ -57,6 +57,9 @@ public sealed class ConfigDbContext : IdentityDbContext<ApplicationUser>
 
         builder.Entity<TagDefinition>(e =>
         {
+            e.Property(x => x.Purpose)
+                .HasColumnType("INTEGER")
+                .HasDefaultValue(DataTrace.Domain.Enums.TagPurpose.QualityMeasurement);
             e.HasIndex(x => new { x.StationId, x.Name }).IsUnique();
         });
 

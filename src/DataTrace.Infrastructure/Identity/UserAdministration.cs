@@ -329,8 +329,7 @@ public sealed class UserAdministration : IUserAdministration
         }
         else
         {
-            await _authorizer.AuthorizeRoleAsync(
-                actor, AppRoles.All, cancellationToken, allowMustChangePassword: true).ConfigureAwait(false);
+            await _authorizer.AuthorizeRoleAsync(actor, AppRoles.All, cancellationToken).ConfigureAwait(false);
         }
 
         var user = await _users.FindByNameAsync(userName).ConfigureAwait(false);
@@ -351,10 +350,7 @@ public sealed class UserAdministration : IUserAdministration
             };
         }
 
-        // 自助改密同时也意味着"初始口令已经换掉"：把强制改密标记一起清掉。
-        // 在调用前改，ChangePasswordAsync 内部的 UpdateAsync 会把它和密码同一个事务持久化，
-        // 不会出现"密码改了、标记还在，下次登录又被拦回改密页"的中间态。
-        var wasForced = user.MustChangePassword;
+        // 清理旧版本留下的标记，与新密码一并持久化。
         user.MustChangePassword = false;
 
         var changed = await _users.ChangePasswordAsync(user, currentPassword, newPassword).ConfigureAwait(false);
@@ -384,7 +380,7 @@ public sealed class UserAdministration : IUserAdministration
                 "ChangePassword",
                 userName,
                 null,
-                wasForced ? "bootstrap password replaced by self" : "password changed by self",
+                "password changed by self",
                 "Success",
                 UserAdminResult.Ok("密码已修改，下次登录请使用新密码"),
                 cancellationToken)

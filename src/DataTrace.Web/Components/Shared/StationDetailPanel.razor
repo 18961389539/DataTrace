@@ -1,20 +1,22 @@
 @using DataTrace.Application.Realtime
 @using DataTrace.Domain.Constants
 @using DataTrace.Domain.Enums
-@* 工站侧边详情（看板 UX 审查第二批）：从工站卡片打开，保留看板上下文。
+@* 工站详情内容：由居中对话框承载，保留看板上下文。
    四个页签：异常（本件要处理的事）、参数（搜索/仅看异常/按判定分组）、
    曲线（大图 + 每曲线判定）、诊断（运行状态与链路口径）。
    「跟随最新 / 固定本次」：分析某一件时固定整份快照 —— 参数与曲线永远属于同一件，
    新数据只提示、不覆盖；切回跟随才继续滚动。
-   页签是自绘按钮而不是 MudTabs：抽屉内不需要 JS 度量，少一层交互依赖。 *@
+   页签是自绘按钮而不是 MudTabs，少一层交互依赖。 *@
 
-<MudDrawer @bind-Open="@Open" Anchor="Anchor.End" Elevation="12" Class="dt-station-drawer">
-    <MudDrawerHeader>
-        <MudStack Row="true" AlignItems="AlignItems.Center" Class="dt-detail-header">
-            <MudText Typo="Typo.h6">@DetailTitle</MudText>
-            <MudSpacer />
-            @* 跟随/固定切换：固定的是「整份采集快照」（引用整份 StationRuntimeStatus），
-               参数与曲线同进同退，不会出现参数已是新件、曲线还是上一件的错位。 *@
+<div class="dt-station-detail">
+    @if (View is null)
+    {
+        <MudText Typo="Typo.body2" Class="dt-muted pa-4">工站已从看板移除。</MudText>
+    }
+    else
+    {
+        <div class="dt-detail-follow-row">
+            @* 固定的是整份采集快照，参数与曲线同进同退。 *@
             <MudChip T="string" Size="Size.Small"
                      Variant="@(Following ? Variant.Filled : Variant.Outlined)"
                      Color="@(Following ? Color.Info : Color.Warning)"
@@ -24,16 +26,8 @@
                      aria-pressed="@PinStateText">
                 @(Following ? "跟随最新" : "已固定本次")
             </MudChip>
-            <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small" OnClick="Close"
-                           aria-label="关闭工站详情" />
-        </MudStack>
-    </MudDrawerHeader>
-    @if (View is null)
-    {
-        <MudText Typo="Typo.body2" Class="dt-muted pa-4">工站已从看板移除。</MudText>
-    }
-    else
-    {
+        </div>
+
         @* 固定期间来了新件：只提示，不覆盖 —— 操作者决定什么时候看新数据。 *@
         @if (!Following && HasNewerData)
         {
@@ -225,12 +219,10 @@
             }
         </div>
     }
-</MudDrawer>
+</div>
 
 @code {
     [Parameter] public StationRuntimeStatus? Station { get; set; }
-    [Parameter] public bool Open { get; set; }
-    [Parameter] public EventCallback<bool> OpenChanged { get; set; }
 
     private StationRuntimeStatus? _pinned;
     private string _search = "";
@@ -266,9 +258,6 @@
     private bool HasNewerData
         => _pinned is { } pinned && Station is { } live && live.LastRecordId != pinned.LastRecordId;
 
-    private string DetailTitle
-        => View is { } view ? $"{view.StationCode} {view.StationName}" : "工站详情";
-
     private string? DetailUrl
         => View is { } view && view.LastRecordId is > 0 && !string.IsNullOrEmpty(view.LastMonthKey)
             ? $"/query/{view.LastMonthKey}/{view.LastRecordId}"
@@ -282,8 +271,6 @@
 
     private IReadOnlyList<StationLiveTag> AbnormalTags
         => View?.LastTags.Where(t => t.OutOfLimit || t.Warning || IsNoData(t)).ToList() ?? [];
-
-    private Task Close() => OpenChanged.InvokeAsync(false);
 
     private void TogglePin()
         => _pinned = Following ? View : null;

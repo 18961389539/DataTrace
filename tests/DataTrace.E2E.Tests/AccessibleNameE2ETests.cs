@@ -32,7 +32,7 @@ public class AccessibleNameE2ETests : E2ETestBase
         // 等 SignalR circuit 真的接管：本应用的"导航后把焦点移到页标题"只在接管之后才会发生，
         // 所以它是个现成的就绪信号。等元素存在会读到只有静态预渲染的一半页面。
         await Page.WaitForFunctionAsync(
-            "() => document.activeElement === document.querySelector('h5')",
+            "() => document.activeElement === document.querySelector('.dt-page-title')",
             arg: null,
             new() { Timeout = 20000 });
 

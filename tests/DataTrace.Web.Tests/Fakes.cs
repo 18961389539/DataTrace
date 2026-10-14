@@ -20,14 +20,12 @@ internal sealed class AllowConfigurationAuthorizer : IConfigurationAuthorizer
     public Task AuthorizeRoleAsync(
         string actor,
         IReadOnlyCollection<string> allowedRoles,
-        CancellationToken cancellationToken = default,
-        bool allowMustChangePassword = false)
+        CancellationToken cancellationToken = default)
         => Task.CompletedTask;
 
     public Task AuthorizeCurrentRoleAsync(
         IReadOnlyCollection<string> allowedRoles,
-        CancellationToken cancellationToken = default,
-        bool allowMustChangePassword = false)
+        CancellationToken cancellationToken = default)
         => Task.CompletedTask;
 }
 

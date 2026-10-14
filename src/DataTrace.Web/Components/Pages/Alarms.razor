@@ -32,7 +32,7 @@ else
 {
 <MudGrid Class="mb-3">
     <MudItem xs="12" sm="4">
-        <MudSelect T="int?" @bind-Value="_stationFilter" Label="报警工站" Clearable="true">
+        <MudSelect T="int?" @bind-Value="_stationFilter" @bind-Value:after="ResetPages" Label="报警工站" Clearable="true">
             <MudSelectItem T="int?" Value="@((int?)0)">全线／会话报警</MudSelectItem>
             @foreach (var station in StationOptions)
             {
@@ -41,7 +41,7 @@ else
         </MudSelect>
     </MudItem>
     <MudItem xs="12" sm="4">
-        <MudSelect T="LineAlarmKind?" @bind-Value="_kindFilter" Label="报警类型" Clearable="true">
+        <MudSelect T="LineAlarmKind?" @bind-Value="_kindFilter" @bind-Value:after="ResetPages" Label="报警类型" Clearable="true">
             @foreach (var kind in Enum.GetValues<LineAlarmKind>())
             {
                 <MudSelectItem T="LineAlarmKind?" Value="@((LineAlarmKind?)kind)">@KindText(kind)</MudSelectItem>
@@ -49,31 +49,56 @@ else
         </MudSelect>
     </MudItem>
     <MudItem xs="12" sm="4" Class="d-flex align-center flex-wrap gap-2">
-        <MudCheckBox T="bool" @bind-Value="_mineOnly" Label="我的已接手" />
+        <MudCheckBox T="bool" @bind-Value="_mineOnly" @bind-Value:after="ResetPages" Label="我的已接手" />
         <MudButton StartIcon="@Icons.Material.Filled.FilterAltOff" Size="Size.Small" OnClick="ResetFilters">清空筛选</MudButton>
     </MudItem>
 </MudGrid>
-@if (FilteredAttention.Count == 0 && _attention.Count > 0)
+<section class="mb-3" aria-label="报警状态查询模式">
+    <MudText Typo="Typo.subtitle2" Class="mb-1">按状态查看</MudText>
+    <div role="group" aria-label="报警状态快捷筛选" class="d-flex flex-wrap gap-2">
+        <MudButton Size="Size.Small" Variant="@ViewVariant(AlarmView.All)" Color="@ViewColor(AlarmView.All)"
+                   aria-pressed="@ViewPressed(AlarmView.All)" OnClick="@(() => SetView(AlarmView.All))">
+            全部
+        </MudButton>
+        <MudButton Size="Size.Small" Variant="@ViewVariant(AlarmView.Current)" Color="@ViewColor(AlarmView.Current)"
+                   aria-pressed="@ViewPressed(AlarmView.Current)" OnClick="@(() => SetView(AlarmView.Current))">
+            当前／仍在发生 (@CurrentCount)
+        </MudButton>
+        <MudButton Size="Size.Small" Variant="@ViewVariant(AlarmView.RecoveredUnowned)" Color="@ViewColor(AlarmView.RecoveredUnowned)"
+                   aria-pressed="@ViewPressed(AlarmView.RecoveredUnowned)" OnClick="@(() => SetView(AlarmView.RecoveredUnowned))">
+            已恢复待接手 (@RecoveredUnownedCount)
+        </MudButton>
+        <MudButton Size="Size.Small" Variant="@ViewVariant(AlarmView.AcknowledgedOrResolved)" Color="@ViewColor(AlarmView.AcknowledgedOrResolved)"
+                   aria-pressed="@ViewPressed(AlarmView.AcknowledgedOrResolved)" OnClick="@(() => SetView(AlarmView.AcknowledgedOrResolved))">
+            已接手／已解除 (@AcknowledgedOrResolvedCount)
+        </MudButton>
+    </div>
+    <MudText Typo="Typo.caption" Class="dt-muted mt-1">
+        @_viewDescription；工站、类型和“我的已接手”筛选会同步作用于计数与列表。最近已解除只查询最新 30 条。
+    </MudText>
+</section>
+@if (VisibleAttentionCount == 0 && FilteredRecent.Count == 0 && _attention.Count + _recent.Count > 0)
 {
-    <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">当前筛选没有待处理报警；全部待处理 @_attention.Count 条。</MudAlert>
+    <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">当前状态与筛选条件没有匹配的报警。</MudAlert>
 }
-@if (_attention.Count == 0)
+else if (VisibleAttentionCount == 0 && FilteredRecent.Count == 0)
 {
     <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true" Class="mb-3">
-        没有待接手的报警。
+        当前查询范围内没有报警。
     </MudAlert>
 }
 else
 {
     @if (NeedsOwner.Count > 0)
     {
-        <MudText Typo="Typo.subtitle1" Class="mb-2">待接手 @NeedsOwner.Count</MudText>
+        <MudText Typo="Typo.subtitle1" Class="mb-2">@NeedsOwnerTitle @NeedsOwner.Count</MudText>
         @if (!_canTake)
         {
             <MudText Typo="Typo.body2" Class="dt-muted mb-2">当前账号是访客，只能查看，不能接手。</MudText>
         }
-        <MudTable Items="NeedsOwner" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-4">
+        <MudTable Items="PagedNeedsOwner" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-2">
             <HeaderContent>
+                <MudTh>优先级</MudTh>
                 <MudTh>发生时间</MudTh>
                 <MudTh>持续时间</MudTh>
                 <MudTh>类型</MudTh>
@@ -84,6 +109,7 @@ else
                 <MudTh></MudTh>
             </HeaderContent>
             <RowTemplate>
+                <MudTd DataLabel="优先级">@PriorityText(context.Kind)</MudTd>
                 <MudTd DataLabel="发生时间">@When(context.RaisedAt)</MudTd>
                 <MudTd DataLabel="持续时间">@DurationText(context, _now)</MudTd>
                 <MudTd DataLabel="类型">@KindText(context.Kind)</MudTd>
@@ -123,12 +149,20 @@ else
                 </MudTd>
             </RowTemplate>
         </MudTable>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4 flex-wrap" Spacing="2">
+            <MudPagination Count="@PageCount(NeedsOwner.Count)" Selected="@PageNumber(NeedsOwner.Count, _needsOwnerPage)"
+                           SelectedChanged="SetNeedsOwnerPage" Disabled="false" aria-label="待接手报警分页" />
+            <MudText Typo="Typo.caption" Class="dt-muted">
+                待接手报警：第 @PageNumber(NeedsOwner.Count, _needsOwnerPage) / @PageCount(NeedsOwner.Count) 页，共 @NeedsOwner.Count 条，每页 @PageSize 条
+            </MudText>
+        </MudStack>
     }
     @if (AcknowledgedOpen.Count > 0)
     {
-        <MudText Typo="Typo.subtitle1" Class="mb-2">已接手，尚未解除 @AcknowledgedOpen.Count</MudText>
-        <MudTable Items="AcknowledgedOpen" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-4 dt-acknowledged-alarms">
+        <MudText Typo="Typo.subtitle1" Class="mb-2">@AcknowledgedOpenTitle @AcknowledgedOpen.Count</MudText>
+        <MudTable Items="PagedAcknowledgedOpen" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-2 dt-acknowledged-alarms">
             <HeaderContent>
+                <MudTh>优先级</MudTh>
                 <MudTh>发生时间</MudTh>
                 <MudTh>持续时间</MudTh>
                 <MudTh>类型</MudTh>
@@ -138,6 +172,7 @@ else
                 <MudTh>定位</MudTh>
             </HeaderContent>
             <RowTemplate>
+                <MudTd DataLabel="优先级">@PriorityText(context.Kind)</MudTd>
                 <MudTd DataLabel="发生时间">@When(context.RaisedAt)</MudTd>
                 <MudTd DataLabel="持续时间">@DurationText(context, _now)</MudTd>
                 <MudTd DataLabel="类型">@KindText(context.Kind)</MudTd>
@@ -165,63 +200,124 @@ else
                 </MudTd>
             </RowTemplate>
         </MudTable>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4 flex-wrap" Spacing="2">
+            <MudPagination Count="@PageCount(AcknowledgedOpen.Count)" Selected="@PageNumber(AcknowledgedOpen.Count, _acknowledgedPage)"
+                           SelectedChanged="SetAcknowledgedPage" Disabled="false" aria-label="已接手报警分页" />
+            <MudText Typo="Typo.caption" Class="dt-muted">
+                已接手未解除：第 @PageNumber(AcknowledgedOpen.Count, _acknowledgedPage) / @PageCount(AcknowledgedOpen.Count) 页，共 @AcknowledgedOpen.Count 条，每页 @PageSize 条
+            </MudText>
+        </MudStack>
     }
 }
 
-@* 两类表的权重刻意不同：待处理是待办，最近结束是归档。
-   同一套 Dense/Hover 表头和同样的字重会让扫一眼分不出哪张要动手。 *@
-<MudText Typo="Typo.subtitle1" Class="mb-2 dt-archived-title">最近结束</MudText>
-@if (FilteredRecent.Count == 0)
+@if (ShowRecent)
 {
-    <MudText Typo="Typo.body2" Class="dt-muted">@(_recent.Count == 0 ? "还没有已经接手并解除的报警。" : "当前筛选没有最近结束的报警。")</MudText>
-}
-else
-{
-    <MudTable Items="FilteredRecent" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="dt-archived-table">
-        <HeaderContent>
-            <MudTh>发生时间</MudTh>
-            <MudTh>解除时间</MudTh>
-            <MudTh>持续时间</MudTh>
-            <MudTh>类型</MudTh>
-            <MudTh>内容</MudTh>
-            <MudTh>接手</MudTh>
-            <MudTh>处置</MudTh>
-        </HeaderContent>
-        <RowTemplate>
-            <MudTd DataLabel="发生时间">@When(context.RaisedAt)</MudTd>
-            <MudTd DataLabel="解除时间">@When(context.ClearedAt)</MudTd>
-            <MudTd DataLabel="持续时间">@DurationText(context, _now)</MudTd>
-            <MudTd DataLabel="类型">@KindText(context.Kind)</MudTd>
-            <MudTd DataLabel="内容">@context.Message</MudTd>
-            <MudTd DataLabel="接手">@OwnerText(context)</MudTd>
-            <MudTd DataLabel="处置">
-                @if (_canTake && context.Kind == LineAlarmKind.ConsecutiveNg)
-                {
-                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning"
-                               StartIcon="@Icons.Material.Filled.ReportProblem" Href="@CreateQualityIncidentUrl(context.Id)">
-                        创建质量异常
-                    </MudButton>
-                }
-            </MudTd>
-        </RowTemplate>
-    </MudTable>
+    @* 历史归档与待办分开呈现，避免旧的已解除记录挤在当前报警之前。 *@
+    <MudText Typo="Typo.subtitle1" Class="mb-2 dt-archived-title">最近已解除 @FilteredRecent.Count</MudText>
+    @if (FilteredRecent.Count == 0)
+    {
+        <MudText Typo="Typo.body2" Class="dt-muted">@(_recent.Count == 0 ? "还没有已经接手并解除的报警。" : "当前筛选没有最近已解除的报警。")</MudText>
+    }
+    else
+    {
+        <MudTable Items="PagedRecent" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-2 dt-archived-table">
+            <HeaderContent>
+                <MudTh>优先级</MudTh>
+                <MudTh>发生时间</MudTh>
+                <MudTh>解除时间</MudTh>
+                <MudTh>持续时间</MudTh>
+                <MudTh>类型</MudTh>
+                <MudTh>内容</MudTh>
+                <MudTh>接手</MudTh>
+                <MudTh>处置</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="优先级">@PriorityText(context.Kind)</MudTd>
+                <MudTd DataLabel="发生时间">@When(context.RaisedAt)</MudTd>
+                <MudTd DataLabel="解除时间">@When(context.ClearedAt)</MudTd>
+                <MudTd DataLabel="持续时间">@DurationText(context, _now)</MudTd>
+                <MudTd DataLabel="类型">@KindText(context.Kind)</MudTd>
+                <MudTd DataLabel="内容">@context.Message</MudTd>
+                <MudTd DataLabel="接手">@OwnerText(context)</MudTd>
+                <MudTd DataLabel="处置">
+                    @if (_canTake && context.Kind == LineAlarmKind.ConsecutiveNg)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning"
+                                   StartIcon="@Icons.Material.Filled.ReportProblem" Href="@CreateQualityIncidentUrl(context.Id)">
+                            创建质量异常
+                        </MudButton>
+                    }
+                </MudTd>
+            </RowTemplate>
+        </MudTable>
+        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4 flex-wrap" Spacing="2">
+            <MudPagination Count="@PageCount(FilteredRecent.Count)" Selected="@PageNumber(FilteredRecent.Count, _recentPage)"
+                           SelectedChanged="SetRecentPage" Disabled="false" aria-label="最近已解除报警分页" />
+            <MudText Typo="Typo.caption" Class="dt-muted">
+                最近已解除：第 @PageNumber(FilteredRecent.Count, _recentPage) / @PageCount(FilteredRecent.Count) 页，共 @FilteredRecent.Count 条，每页 @PageSize 条
+            </MudText>
+        </MudStack>
+    }
 }
 }
 
 @code {
+    private const int PageSize = 25;
+    private enum AlarmView { All, Current, RecoveredUnowned, AcknowledgedOrResolved }
+
     private IReadOnlyList<AlarmIncidentDraft> _attention = [];
     private IReadOnlyList<AlarmIncidentDraft> _recent = [];
     private IReadOnlyList<Station> _stations = [];
     private int? _stationFilter;
     private LineAlarmKind? _kindFilter;
     private bool _mineOnly;
+    private AlarmView _alarmView = AlarmView.All;
+    private int _needsOwnerPage = 1;
+    private int _acknowledgedPage = 1;
+    private int _recentPage = 1;
     private string? _actor;
     private DateTime _now = DateTime.Now;
     private readonly CancellationTokenSource _durationCts = new();
     private IReadOnlyList<AlarmIncidentDraft> FilteredAttention => _attention.Where(Matches).ToList();
-    private IReadOnlyList<AlarmIncidentDraft> FilteredRecent => _recent.Where(Matches).ToList();
-    private IReadOnlyList<AlarmIncidentDraft> NeedsOwner => FilteredAttention.Where(item => item.NeedsOwner).ToList();
-    private IReadOnlyList<AlarmIncidentDraft> AcknowledgedOpen => FilteredAttention.Where(item => !item.NeedsOwner).ToList();
+    private IReadOnlyList<AlarmIncidentDraft> FilteredRecent => ShowRecent
+        ? SortByPriority(_recent.Where(Matches))
+        : [];
+    private IReadOnlyList<AlarmIncidentDraft> NeedsOwner => SortByPriority(FilteredAttention.Where(item =>
+        item.NeedsOwner && (_alarmView switch
+        {
+            AlarmView.Current => item.StillActive,
+            AlarmView.RecoveredUnowned => !item.StillActive,
+            AlarmView.AcknowledgedOrResolved => false,
+            _ => true
+        })));
+    private IReadOnlyList<AlarmIncidentDraft> AcknowledgedOpen => SortByPriority(FilteredAttention.Where(item =>
+        !item.NeedsOwner
+        && (_alarmView is AlarmView.All or AlarmView.Current or AlarmView.AcknowledgedOrResolved)
+        && (_alarmView != AlarmView.Current || item.StillActive)));
+    private IReadOnlyList<AlarmIncidentDraft> PagedNeedsOwner => PageItems(NeedsOwner, _needsOwnerPage);
+    private IReadOnlyList<AlarmIncidentDraft> PagedAcknowledgedOpen => PageItems(AcknowledgedOpen, _acknowledgedPage);
+    private IReadOnlyList<AlarmIncidentDraft> PagedRecent => PageItems(FilteredRecent, _recentPage);
+    private int VisibleAttentionCount => NeedsOwner.Count + AcknowledgedOpen.Count;
+    private bool ShowRecent => _alarmView is AlarmView.All or AlarmView.AcknowledgedOrResolved;
+    private int CurrentCount => FilteredAttention.Count(item => item.StillActive);
+    private int RecoveredUnownedCount => FilteredAttention.Count(item => !item.StillActive && item.NeedsOwner);
+    private int AcknowledgedOrResolvedCount => FilteredAttention.Count(item => !item.NeedsOwner) + FilteredRecent.Count;
+    private string NeedsOwnerTitle => _alarmView switch
+    {
+        AlarmView.Current => "当前报警，待接手",
+        AlarmView.RecoveredUnowned => "已恢复，待接手",
+        _ => "待接手"
+    };
+    private string AcknowledgedOpenTitle => _alarmView == AlarmView.Current
+        ? "当前报警，已接手"
+        : "已接手，尚未解除";
+    private string _viewDescription => _alarmView switch
+    {
+        AlarmView.Current => "当前模式：只显示仍在发生的报警（包含已接手记录）",
+        AlarmView.RecoveredUnowned => "当前模式：只显示条件已恢复、仍待接手的报警",
+        AlarmView.AcknowledgedOrResolved => "当前模式：显示已接手未解除，以及最近 30 条已解除记录",
+        _ => "当前模式：显示全部待处理记录，以及最近 30 条已解除记录"
+    };
     private IEnumerable<(int Id, string Label)> StationOptions => _stations.Select(station => (station.Id, $"{station.Code} {station.Name}"))
         .Concat(_attention.Concat(_recent).Select(StationOf).Where(id => id > 0).Distinct()
             .Where(id => _stations.All(station => station.Id != id)).Select(id => (id, $"历史工站 #{id}")));
@@ -240,7 +336,63 @@ else
            && (!_mineOnly || item.AcknowledgedAt is not null && !string.IsNullOrEmpty(_actor)
                && string.Equals(item.AcknowledgedBy, _actor, StringComparison.OrdinalIgnoreCase));
 
-    private void ResetFilters() { _stationFilter = null; _kindFilter = null; _mineOnly = false; }
+    private static IReadOnlyList<AlarmIncidentDraft> SortByPriority(IEnumerable<AlarmIncidentDraft> items)
+        => items.OrderByDescending(item => PriorityRank(item.Kind))
+            .ThenByDescending(item => item.RaisedAt)
+            .ThenByDescending(item => item.Id)
+            .ToList();
+
+    private static int PriorityRank(LineAlarmKind kind) => kind switch
+    {
+        LineAlarmKind.HeartbeatStale or LineAlarmKind.StationFault or LineAlarmKind.DiskLow
+            or LineAlarmKind.CollectionOverdue => 3,
+        LineAlarmKind.ConsecutiveNg or LineAlarmKind.ConsecutiveProcess
+            or LineAlarmKind.MesBacklog or LineAlarmKind.SpoolBacklog => 2,
+        _ => 1
+    };
+
+    private static string PriorityText(LineAlarmKind kind) => PriorityRank(kind) switch
+    {
+        3 => "紧急",
+        2 => "高",
+        _ => "提示"
+    };
+
+    private Variant ViewVariant(AlarmView view) => _alarmView == view ? Variant.Filled : Variant.Outlined;
+    private Color ViewColor(AlarmView view) => _alarmView == view ? Color.Primary : Color.Default;
+    private string ViewPressed(AlarmView view) => _alarmView == view ? "true" : "false";
+
+    private void SetView(AlarmView view)
+    {
+        _alarmView = view;
+        ResetPages();
+    }
+
+    private void ResetFilters()
+    {
+        _stationFilter = null;
+        _kindFilter = null;
+        _mineOnly = false;
+        ResetPages();
+    }
+
+    private void ResetPages()
+    {
+        _needsOwnerPage = 1;
+        _acknowledgedPage = 1;
+        _recentPage = 1;
+    }
+
+    private static int PageCount(int count) => Math.Max(1, (int)Math.Ceiling(count / (double)PageSize));
+
+    private static int PageNumber(int count, int page) => Math.Clamp(page, 1, PageCount(count));
+
+    private static IReadOnlyList<AlarmIncidentDraft> PageItems(IReadOnlyList<AlarmIncidentDraft> items, int page)
+        => items.Skip((PageNumber(items.Count, page) - 1) * PageSize).Take(PageSize).ToList();
+
+    private Task SetNeedsOwnerPage(int page) { _needsOwnerPage = PageNumber(NeedsOwner.Count, page); return Task.CompletedTask; }
+    private Task SetAcknowledgedPage(int page) { _acknowledgedPage = PageNumber(AcknowledgedOpen.Count, page); return Task.CompletedTask; }
+    private Task SetRecentPage(int page) { _recentPage = PageNumber(FilteredRecent.Count, page); return Task.CompletedTask; }
 
     private static string DurationText(AlarmIncidentDraft item, DateTime now)
     {

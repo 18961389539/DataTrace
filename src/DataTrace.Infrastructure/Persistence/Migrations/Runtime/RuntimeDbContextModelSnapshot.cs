@@ -508,6 +508,9 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Runtime
                     b.Property<int>("PositionIndex")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("PurposeSnapshot")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("TagId")
                         .HasColumnType("INTEGER");
 
@@ -516,6 +519,9 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Runtime
                         .HasColumnType("TEXT");
 
                     b.Property<string>("TextValue")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UnitSnapshot")
                         .HasColumnType("TEXT");
 
                     b.Property<double?>("UpperLimit")

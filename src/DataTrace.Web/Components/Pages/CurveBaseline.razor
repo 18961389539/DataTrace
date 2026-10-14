@@ -97,9 +97,13 @@
             {
                 <span>分析未完成：@_loadError</span>
             }
+            else if (_curveId == 0 && HasAnalyzableCurves)
+            {
+                <span>当前工站没有可分析的曲线，请切换到其他工站。</span>
+            }
             else if (_curveId == 0)
             {
-                <span>当前工站没有可分析的曲线。</span>
+                <span>全线暂无可分析曲线，请先在工站配置中启用曲线并添加序列。</span>
             }
             else
             {
@@ -115,6 +119,13 @@
                 {
                     <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
                                StartIcon="@Icons.Material.Filled.Refresh" OnClick="Load">重试</MudButton>
+                }
+                else if (_curveId == 0 && HasAnalyzableCurves)
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.SwapHoriz" OnClick="SelectStationWithCurvesAsync">
+                        切换到有曲线的工站
+                    </MudButton>
                 }
                 else if (_curveId == 0)
                 {
@@ -424,6 +435,8 @@ else
     private IReadOnlyList<CurveDefinition> _curves = [];
     private IReadOnlyList<string> _seriesNames = [];
 
+    private bool HasAnalyzableCurves => _stations.Any(station => AnalyzableCurves(station).Count > 0);
+
     private int? _stationId;
     private int _curveId;
     private string _seriesName = PrimarySeries;
@@ -464,7 +477,8 @@ else
 
         if (_stations.Count > 0)
         {
-            _stationId = _stations[0].Id;
+            _stationId = _stations.FirstOrDefault(station => AnalyzableCurves(station).Count > 0)?.Id
+                         ?? _stations[0].Id;
             RefreshCurves();
         }
 
@@ -529,7 +543,8 @@ else
 
     private void RefreshCurves()
     {
-        _curves = _stations.FirstOrDefault(s => s.Id == _stationId)?.Curves.ToList() ?? [];
+        var station = _stations.FirstOrDefault(s => s.Id == _stationId);
+        _curves = station is null ? [] : AnalyzableCurves(station);
         if (_curves.All(c => c.Id != _curveId))
         {
             _curveId = _curves.Count > 0 ? _curves[0].Id : 0;
@@ -570,6 +585,27 @@ else
         _seriesName = seriesName ?? PrimarySeries;
         await Load();
     }
+
+    private async Task SelectStationWithCurvesAsync()
+    {
+        var station = _stations.FirstOrDefault(candidate => AnalyzableCurves(candidate).Count > 0);
+        if (station is null)
+        {
+            return;
+        }
+
+        _stationId = station.Id;
+        RefreshCurves();
+        await Load();
+    }
+
+    private static List<CurveDefinition> AnalyzableCurves(Station station)
+        => station.Curves
+            .Where(curve => curve.Enabled
+                            && curve.Series.Any(series => !string.IsNullOrWhiteSpace(series.Name)))
+            .OrderBy(curve => curve.PositionIndex)
+            .ThenBy(curve => curve.Code, StringComparer.Ordinal)
+            .ToList();
 
     private async Task Load()
     {

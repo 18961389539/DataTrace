@@ -29,8 +29,10 @@
         </div>
     </div>
 
-    <MudDatePicker Class="dt-range-date" Label="开始日期" Date="From?.Date" DateChanged="SetFromAsync" Disabled="Disabled" />
+    <MudDatePicker Class="dt-range-date" Label="开始日期" AdornmentAriaLabel="打开开始日期选择器"
+                   Date="From?.Date" DateChanged="SetFromAsync" Disabled="Disabled" />
     <MudDatePicker Class="dt-range-date" Label="结束日期" Date="To?.Date" DateChanged="SetToAsync"
+                   AdornmentAriaLabel="打开结束日期选择器"
                    Error="@Invalid" ErrorText="@ReversedRangeMessage" Disabled="Disabled" />
 </div>
 

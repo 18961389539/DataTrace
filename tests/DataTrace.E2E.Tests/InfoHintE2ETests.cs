@@ -145,6 +145,8 @@ public sealed class InfoHintE2ETests : E2ETestBase
         await WaitForAsync(".mud-layout");
         await WaitForCircuitReadyAsync();
 
+        await Page.Locator(".dt-query-advanced-toggle").ClickAsync();
+
         // 挑正文最长的一枚：导出上限那条还带动态命中条数，Extra + 三段一起撑到最宽。
         var hint = Page.Locator("button[aria-label='说明：导出上限']");
         Assert.Equal(1, await hint.CountAsync());

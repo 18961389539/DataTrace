@@ -87,7 +87,8 @@ else
                     Name = y.Name,
                     Values = y.Values,
                     XValues = x.Values,
-                    Color = ChartColors.Primary
+                    Color = ChartColors.Primary,
+                    IsDiscrete = y.IsDiscrete
                 }
             ];
             _xStartText = $"{x.Name} {ChartUtil.Label(x.Values.Min())}";
@@ -99,7 +100,8 @@ else
         {
             Name = s.Name,
             Values = s.Values,
-            Color = ChartColors.ByIndex(i)
+            Color = ChartColors.ByIndex(i),
+            IsDiscrete = s.IsDiscrete
         }).ToList();
         _xStartText = "起始";
         _xEndText = "结束";

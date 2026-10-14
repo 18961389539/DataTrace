@@ -60,7 +60,63 @@ public class LineChartTests
         Assert.Equal("img", chart.GetAttribute("role"));
         Assert.Contains("X 折线图：压力", chart.GetAttribute("aria-label"));
         Assert.Empty(cut.FindAll("svg.dt-chart"));
-        Assert.Empty(cut.FindAll(".dt-chart-readout"));
+        Assert.Contains("展开数值表", cut.Markup);
+        Assert.Empty(cut.FindAll("table[aria-label='图表采样点数值表']"));
+    }
+
+    [Fact]
+    public void Expanded_data_table_provides_keyboard_accessible_sample_values()
+    {
+        var cut = Render(new[] { 3f, 1f, 4f }, 20);
+
+        cut.Find("button[aria-controls]").Click();
+
+        var table = cut.Find("table[aria-label='图表采样点数值表']");
+        Assert.Contains("原始点序号", table.TextContent);
+        Assert.Contains("1.0", table.TextContent);
+        Assert.Contains("4.0", table.TextContent);
+        Assert.Equal("true", cut.Find("button[aria-controls]").GetAttribute("aria-expanded"));
+    }
+
+    [Fact]
+    public void Uses_only_supplied_timestamps_in_the_data_table_and_announces_time_axis()
+    {
+        var ctx = new TestContext();
+        ctx.Services.AddMudServices();
+        SetupJs(ctx);
+        var cut = ctx.Render<LineChart>(parameters => parameters
+            .Add(p => p.Series, new[]
+            {
+                new LineSeries
+                {
+                    Name = "压力",
+                    Values = [10f, 20f],
+                    TimeValues = [new DateTime(2026, 10, 11, 8, 0, 0), new DateTime(2026, 10, 11, 8, 1, 0)]
+                }
+            })
+            .Add(p => p.SeriesAxisName, "时间"));
+
+        cut.Find("button[aria-controls]").Click();
+
+        Assert.Contains("横轴使用实际采集时间", cut.Markup);
+        Assert.Contains("2026-10-11 08:00:00.000", cut.Find("table").TextContent);
+        Assert.Contains("2026-10-11 08:01:00.000", cut.Find("table").TextContent);
+    }
+
+    [Fact]
+    public void Discrete_series_is_identified_as_an_event_step_chart()
+    {
+        var ctx = new TestContext();
+        ctx.Services.AddMudServices();
+        SetupJs(ctx);
+        var cut = ctx.Render<LineChart>(parameters => parameters
+            .Add(p => p.Series, new[]
+            {
+                new LineSeries { Name = "结果码", Values = [0f, 1f, 1f], IsDiscrete = true }
+            }));
+
+        Assert.Contains("X 离散状态阶梯图：结果码", cut.Find("div.dt-chart").GetAttribute("aria-label"));
+        Assert.Contains("离散状态以阶梯线表示", cut.Markup);
     }
 
     [Fact]
@@ -77,6 +133,6 @@ public class LineChartTests
 
         Assert.Single(cut.FindAll("div.dt-chart"));
         Assert.Empty(cut.FindAll(".dt-legend"));
-        Assert.Empty(cut.FindAll(".dt-chart-readout"));
+        Assert.Empty(cut.FindAll("button[aria-controls]"));
     }
 }

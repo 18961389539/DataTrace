@@ -6,6 +6,7 @@
 @using DataTrace.Application.Reporting
 @using DataTrace.Domain.Constants
 @using DataTrace.Domain.Evaluation
+@using DataTrace.Domain.Enums
 @using Microsoft.AspNetCore.Components.Authorization
 @inject IReportService ReportService
 @inject ISpcService SpcService
@@ -404,10 +405,10 @@
     <MudTabPanel Text="参数趋势">
         <ReportsTrendPanel Tags="_tags" TagId="_tagId" Busy="_loading" CanExport="_canExport"
                            Exporting="_exporting" ExportTooltip="@ExportTooltipText" Truncated="_trendTruncated"
-                           LoadFailed="_loadFailed" TrendFailed="_trendFailed" Loading="_trendLoading"
-                           Points="_trend" Series="_trendSeries" Average="_trendAverage" Minimum="_trendMin"
-                           Maximum="_trendMax" RangeText="_trendRangeText" FromText="_trendFromText"
-                           ToText="_trendToText" OnTagChanged="OnTagChanged" OnExport="ExportTrend" />
+                           IsDiscrete="SelectedTagIsDiscrete" LoadFailed="_loadFailed" TrendFailed="_trendFailed" Loading="_trendLoading"
+                           Points="_trend" Series="_trendSeries" Average="@_trendAverage" Minimum="@_trendMin"
+                           Maximum="@_trendMax" RangeText="@_trendRangeText" FromText="@_trendFromText"
+                           ToText="@_trendToText" OnTagChanged="OnTagChanged" OnExport="ExportTrend" />
     </MudTabPanel>
     <MudTabPanel Text="过程能力">
         @* 与「参数趋势」共用上方筛选里的工站，以及本页选中的点位（见趋势页签）。 *@
@@ -441,6 +442,12 @@
             else if (_trendLoading)
             {
                 <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="my-3" />
+            }
+            else if (SelectedTagIsDiscrete)
+            {
+                <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined">
+                    離散結果可在「参数趋势」查看事件变化，不适用连续过程能力指数（Cp/Cpk）。
+                </MudAlert>
             }
             else if (_spc is null)
             {
@@ -711,6 +718,10 @@ private IssueTopReport _defects = new();
     /// </summary>
     private bool _trendTruncated;
 
+    private bool SelectedTagIsDiscrete
+        => _tags.FirstOrDefault(t => t.Id == _tagId) is { } tag
+           && (tag.Purpose == TagPurpose.DiscreteResult || tag.DataType == PlcDataType.Bool);
+
     /// <summary>支持 /reports?from=…&amp;to=…&amp;station=…&amp;recipe=…&amp;tag=… 直达。</summary>
     [SupplyParameterFromQuery(Name = "from")]
     public string? FromQuery { get; set; }
@@ -817,13 +828,15 @@ private IssueTopReport _defects = new();
         _tags = _stations
             .Where(s => _stationId is null || s.Id == _stationId)
             .SelectMany(s => s.Tags)
-            .Where(t => t.DataType != PlcDataType.String)
+            .Where(t => t.DataType != PlcDataType.String
+                        && t.Purpose is TagPurpose.QualityMeasurement or TagPurpose.DiscreteResult)
             .OrderBy(t => _stations.First(s => s.Id == t.StationId).Sequence)
             .ThenBy(t => t.Name)
             .ToList();
         if (_tags.All(t => t.Id != _tagId))
         {
-            _tagId = _tags.Count > 0 ? _tags[0].Id : 0;
+            _tagId = (_tags.FirstOrDefault(t => t.Purpose == TagPurpose.QualityMeasurement)
+                      ?? _tags.FirstOrDefault())?.Id ?? 0;
         }
     }
 private async Task OnStationChanged(int? stationId)
@@ -1300,7 +1313,7 @@ private async Task OnStationChanged(int? stationId)
 
             // 过程能力与趋势是同一点位、同一区间、同一批 2 万点：拿趋势那批（它自带落库规格限）
             // 交给统计服务算，不再让它自己查一遍 —— 那是同一条窄投影跑两次。
-            _spc = tagId != 0
+            _spc = tagId != 0 && !SelectedTagIsDiscrete
                 ? await SpcService.AnalyzeAsync(tagId, _trend, from, to, recipeArg)
                 : null;
             _spcCharts = _spc?.Segments.Select(BuildSpcSeries).ToList() ?? [];
@@ -1328,14 +1341,19 @@ private async Task OnStationChanged(int? stationId)
             return [];
         }
 
-        var name = _tags.FirstOrDefault(t => t.Id == _tagId)?.Name ?? "数值";
+        var tag = _tags.FirstOrDefault(t => t.Id == _tagId);
+        var name = tag?.Name ?? "数值";
         return
         [
             new LineSeries
             {
                 Name = name,
                 Values = [.. _trend.Select(p => (float)p.Value)],
-                Color = ChartColors.Primary
+                TimeValues = [.. _trend.Select(p => p.Time)],
+                Color = ChartColors.Primary,
+                Unit = tag?.Unit,
+                IsDiscrete = tag is not null
+                             && (tag.Purpose == TagPurpose.DiscreteResult || tag.DataType == PlcDataType.Bool)
             }
         ];
     }

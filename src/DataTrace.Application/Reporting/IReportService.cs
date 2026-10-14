@@ -66,6 +66,7 @@ public sealed class TrendPoint
     public DateTime Time { get; init; }
     public double Value { get; init; }
     public string PalletCode { get; init; } = "";
+    public TagPurpose? PurposeSnapshot { get; init; }
 
     /// <summary>采集当时落库的规格下限；两列都为 null 表示那批数据早于"限值随记录落库"。</summary>
     public double? LowerLimit { get; init; }

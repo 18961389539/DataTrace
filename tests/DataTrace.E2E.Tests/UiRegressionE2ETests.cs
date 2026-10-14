@@ -69,6 +69,72 @@ public class UiRegressionE2ETests : E2ETestBase
     }
 
     [Fact]
+    public async Task SkipLinkShowsOnFocusAndMovesFocusToMainContent()
+    {
+        await OpenAsync("/");
+
+        var skipLink = Page.GetByRole(AriaRole.Link, new() { Name = "跳至主要内容" });
+        await skipLink.FocusAsync();
+        Assert.True(await skipLink.IsVisibleAsync());
+
+        await skipLink.PressAsync("Enter");
+        var navigation = await Page.EvaluateAsync<string>("""
+            () => JSON.stringify({
+                hash: location.hash,
+                activeTag: document.activeElement?.tagName,
+                activeId: document.activeElement?.id
+            })
+            """);
+        Assert.Contains("\"hash\":\"#main-content\"", navigation);
+        Assert.Contains("\"activeId\":\"main-content\"", navigation);
+    }
+
+    [Fact]
+    public async Task RecipeLimitDialogKeepsTouchTargetsAtLeast44Pixels()
+    {
+        await using var touch = await Browser.NewContextAsync(new()
+        {
+            HasTouch = true,
+            IsMobile = true,
+            ViewportSize = new() { Width = 430, Height = 932 }
+        });
+        var page = await touch.NewPageAsync();
+        await page.AddStyleTagAsync(new()
+        {
+            Content = "*, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; }"
+        });
+        await page.GotoAsync(App.BaseUrl + "/config/recipes");
+        await page.WaitForFunctionAsync("() => document.activeElement === document.querySelector('.dt-page-title')");
+
+        await page.Locator("table tbody button", new() { HasText = "限值" }).First.ClickAsync();
+        await page.Locator(".mud-dialog").WaitForAsync();
+        await page.WaitForTimeoutAsync(400);
+        var namedInput = page.Locator(".mud-dialog input[aria-label$='规格下限']").First;
+        var accessibleName = await namedInput.GetAttributeAsync("aria-label");
+        Assert.NotNull(accessibleName);
+        Assert.EndsWith("规格下限", accessibleName);
+        Assert.Equal(1, await page.GetByLabel(accessibleName, new() { Exact = true }).CountAsync());
+
+        var undersized = await page.EvaluateAsync<string[]>("""
+            () => [...document.querySelectorAll('.mud-dialog .mud-button-root, .mud-dialog .mud-icon-button')]
+                .filter(element => {
+                    const rect = element.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0
+                        && (rect.width < 43.9 || rect.height < 43.9);
+                })
+                .map(element => {
+                    const rect = element.getBoundingClientRect();
+                    const style = getComputedStyle(element);
+                    const parent = element.closest('.mud-dialog');
+                    const transform = parent ? getComputedStyle(parent).transform : 'none';
+                    return `${element.getAttribute('aria-label') || element.textContent.trim()} ${rect.width}x${rect.height} min=${style.minWidth}/${style.minHeight} transform=${transform}`;
+                })
+            """);
+
+        Assert.True(undersized.Length == 0, string.Join("; ", undersized));
+    }
+
+    [Fact]
     public async Task TouchscreenTargetsStayUsableAtPhoneAndTabletWidths()
     {
         foreach (var width in new[] { 430, 820 })
@@ -78,7 +144,7 @@ public class UiRegressionE2ETests : E2ETestBase
             foreach (var route in new[] { "/query", "/config/stations", "/alarms" })
             {
                 await page.GotoAsync(App.BaseUrl + route);
-                await page.WaitForFunctionAsync("() => document.activeElement === document.querySelector('h5')");
+                await page.WaitForFunctionAsync("() => document.activeElement === document.querySelector('.dt-page-title')");
                 var small = await page.EvaluateAsync<string[]>("""
                     () => [...document.querySelectorAll('.dt-main .mud-button-root, .dt-main .station-list-item-select')]
                         .filter(element => { const rect = element.getBoundingClientRect();
@@ -108,7 +174,7 @@ public class UiRegressionE2ETests : E2ETestBase
         await using var touch = await Browser.NewContextAsync(new() { HasTouch = true, IsMobile = true, ViewportSize = new() { Width = width, Height = 932 } });
         var page = await touch.NewPageAsync();
         await page.GotoAsync(App.BaseUrl + "/query?dir=asc&size=100");
-        await page.WaitForFunctionAsync("() => document.activeElement === document.querySelector('h5')");
+        await page.WaitForFunctionAsync("() => document.activeElement === document.querySelector('.dt-page-title')");
         var rows = page.Locator(".dt-query-results tbody tr").Filter(new() { HasText = "明细" });
         for (var attempt = 0; await rows.CountAsync() < 3 && attempt < 30; attempt++)
         {
@@ -157,7 +223,7 @@ public class UiRegressionE2ETests : E2ETestBase
             await using var touch = await Browser.NewContextAsync(new() { HasTouch = true, IsMobile = true, ViewportSize = new() { Width = width, Height = 932 } });
             var page = await touch.NewPageAsync();
             await page.GotoAsync(App.BaseUrl + "/alarms");
-            await page.WaitForFunctionAsync("() => document.activeElement === document.querySelector('h5')");
+            await page.WaitForFunctionAsync("() => document.activeElement === document.querySelector('.dt-page-title')");
             var row = page.Locator("tr").Filter(new() { HasText = marker });
             var take = row.GetByRole(AriaRole.Button, new() { Name = "接手", Exact = true });
             var rect = await take.BoundingBoxAsync();
@@ -193,6 +259,10 @@ public class UiRegressionE2ETests : E2ETestBase
         await Page.SetViewportSizeAsync(width, 932);
         await OpenAsync("/query");
         await WaitForResultRowsAsync();
+        if (width <= 600)
+        {
+            await Page.Locator(".dt-query-advanced-toggle").ClickAsync();
+        }
         await Page.GetByRole(AriaRole.Button, new() { Name = "时间区间 近 7 天", Exact = true }).ClickAsync();
         await Page.GetByRole(AriaRole.Button, new() { Name = "保存查询方案", Exact = true }).ClickAsync();
         var name = "重点工站每班次产品质量异常与采集记录查询方案-" + Guid.NewGuid().ToString("N")[..8];
@@ -215,6 +285,10 @@ public class UiRegressionE2ETests : E2ETestBase
         await OpenAsync("/query");
         await Page.GetByRole(AriaRole.Button, new() { Name = name, Exact = true }).ClickAsync();
         await Page.WaitForFunctionAsync("date => location.search.includes(date)", DateTime.Today.AddDays(-6).ToString("yyyy-MM-dd"));
+        if (width <= 600)
+        {
+            await Page.Locator(".dt-query-advanced-toggle").ClickAsync();
+        }
         await Page.Locator(".dt-query-results tbody tr").Filter(new() { HasText = "明细" }).First.WaitForAsync();
         var download = await Page.RunAndWaitForDownloadAsync(() => Page.GetByRole(AriaRole.Button, new() { Name = "导出 CSV", Exact = true }).ClickAsync());
         Assert.Contains("all-stations_", download.SuggestedFilename);
@@ -294,20 +368,19 @@ public class UiRegressionE2ETests : E2ETestBase
     {
         // 两半都要成立：焦点确实落到页标题上（键盘与读屏用户才知道页面换了），
         // 而那是程序性聚焦，不该在标题周围画出橙色焦点环。
-        // 逐路由都测是因为这条只靠约定、没有编译期检查 —— 新页面若用裸 Typo.h5
-        // 而不是 PageHeader，焦点环就会悄悄回来。
+        // 逐路由都测是因为这条只靠约定、没有编译期检查 —— 页面标题必须保留统一焦点类。
         await OpenAsync(path);
 
         // 标题在静态预渲染的 HTML 里就有了，而移动焦点要等 SignalR circuit 起来之后，
         // 所以等"焦点真的落上去了"而不是等元素存在 —— 后者会读到还没接管的页面。
         await Page.WaitForFunctionAsync("""
-            () => document.activeElement === document.querySelector('h5')
+            () => document.activeElement === document.querySelector('.dt-page-title')
             """, arg: null, new() { Timeout = 20000 });
 
         var outline = await Page.EvaluateAsync<string>("""
             () => getComputedStyle(document.activeElement).outlineStyle
             """);
-        var fontSize = await Page.Locator("h5.dt-page-title").EvaluateAsync<double>("""
+        var fontSize = await Page.Locator("h1.dt-page-title").EvaluateAsync<double>("""
             element => Number.parseFloat(getComputedStyle(element).fontSize)
             """);
 
@@ -418,7 +491,7 @@ public class UiRegressionE2ETests : E2ETestBase
     [Fact]
     public async Task CapabilitySectionRendersCardsAndChartForTheSelectedTag()
     {
-        await Page.GotoAsync($"{App.BaseUrl}/reports");
+        await OpenAsync("/reports");
         await WaitBodyContainsAsync("过程能力");
 
         // MudTabs 只渲染当前页签的面板，过程能力必须点过去才在 DOM 里。
@@ -667,7 +740,7 @@ public class UiRegressionE2ETests : E2ETestBase
     }
 
     [Fact]
-    public async Task DashboardKpiSummaryStaysOnOneLine()
+    public async Task DashboardKpiSummaryKeepsSupportingTextReadable()
     {
         await Page.AddInitScriptAsync("localStorage.removeItem('dt-shopfloor');");
         await OpenAsync("");
@@ -679,18 +752,26 @@ public class UiRegressionE2ETests : E2ETestBase
         var desktopLayout = await firstKpi.EvaluateAsync<bool[]>("""
             element => {
                 const main = element.querySelector('.dt-kpi-main').getBoundingClientRect();
-                const hint = element.querySelector('.dt-kpi-hint').getBoundingClientRect();
+                const hints = [...element.querySelectorAll('.dt-kpi-hint')];
                 return [
                     getComputedStyle(element).display === 'flex',
-                    main.top < hint.bottom && hint.top < main.bottom,
+                    hints.length > 0 && main.bottom <= hints[0].getBoundingClientRect().top + 1,
+                    hints.every(hint => {
+                        const style = getComputedStyle(hint);
+                        return style.whiteSpace === 'normal'
+                            && style.textOverflow === 'clip'
+                            && hint.innerText.trim().length > 0
+                            && hint.scrollWidth <= hint.clientWidth + 1;
+                    }),
                     element.scrollWidth <= element.clientWidth
                 ];
             }
             """);
 
-        Assert.True(desktopLayout[0], "KPI 内容应使用单行布局");
-        Assert.True(desktopLayout[1], "辅助统计应与主指标处于同一行");
-        Assert.True(desktopLayout[2], "KPI 内容不应横向溢出");
+        Assert.True(desktopLayout[0], "KPI 内容应使用稳定的弹性布局");
+        Assert.True(desktopLayout[1], "解释信息应位于主指标之后，不与主值重叠");
+        Assert.True(desktopLayout[2], "辅助说明应完整换行显示，不能截断或溢出");
+        Assert.True(desktopLayout[3], "KPI 内容不应横向溢出");
 
         await Page.SetViewportSizeAsync(390, 844);
         var mobileWidths = await Page.Locator(".dt-kpi-card").EvaluateAllAsync<double[]>(
@@ -698,8 +779,13 @@ public class UiRegressionE2ETests : E2ETestBase
 
         Assert.True(mobileWidths[0] > mobileWidths[1] * 1.6, "窄屏首张 KPI 应跨两列以容纳完整单行内容");
         Assert.True(
-            await firstKpi.EvaluateAsync<bool>("element => element.scrollWidth <= element.clientWidth"),
-            "窄屏 KPI 内容不应溢出");
+            await firstKpi.EvaluateAsync<bool>("""
+                element => element.scrollWidth <= element.clientWidth
+                    && [...element.querySelectorAll('.dt-kpi-hint')].every(hint =>
+                        getComputedStyle(hint).whiteSpace === 'normal'
+                        && hint.scrollWidth <= hint.clientWidth + 1)
+                """),
+            "窄屏 KPI 说明应完整换行且不横向溢出");
     }
 
     [Fact]
@@ -753,16 +839,31 @@ public class UiRegressionE2ETests : E2ETestBase
             "切换到浅色主题",
             await Page.GetByRole(AriaRole.Button, new() { Name = "切换到浅色主题" }).GetAttributeAsync("aria-label"));
 
-        await Page.ReloadAsync();
+        await ReloadAsync();
         await Page.WaitForFunctionAsync(
             "() => document.documentElement.classList.contains('dt-theme-dark') " +
             "&& localStorage.getItem('dt-theme-mode') === 'dark'");
-        await WaitForCircuitReadyAsync();
+        await Page.WaitForFunctionAsync(
+            "color => getComputedStyle(document.querySelector('.mud-appbar')).backgroundColor === color",
+            darkAppBarColor);
 
         Assert.Equal(darkAppBarColor, await appBar.EvaluateAsync<string>("element => getComputedStyle(element).backgroundColor"));
         Assert.Equal(
             "切换到浅色主题",
             await Page.GetByRole(AriaRole.Button, new() { Name = "切换到浅色主题" }).GetAttributeAsync("aria-label"));
+    }
+
+    [Fact]
+    public async Task RecipeRareActionsAreGroupedInAnAccessibleMoreMenu()
+    {
+        await OpenAsync("/config/recipes");
+        var moreActions = Page.Locator("button[aria-label^='更多型号操作：']");
+        await moreActions.First.WaitForAsync();
+        await moreActions.First.ClickAsync();
+
+        await Page.GetByText("复制型号", new() { Exact = true }).WaitForAsync();
+        await Page.GetByText("删除型号", new() { Exact = true }).WaitForAsync();
+        Assert.True(await moreActions.CountAsync() > 0);
     }
 
     [Fact]

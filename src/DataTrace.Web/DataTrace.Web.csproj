@@ -3,6 +3,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationIcon>wwwroot\icons\datatrace.ico</ApplicationIcon>
     <!-- SDK 的 SourceLink 会往 InformationalVersion 追加 "+<40 位 sha>"，会盖掉下面算出来的盖章值。 -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>

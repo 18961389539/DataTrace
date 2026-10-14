@@ -60,8 +60,11 @@ public sealed class LineSeries
     public required string Name { get; init; }
     public required float[] Values { get; init; }
     public float[]? XValues { get; init; }
+    public DateTime[]? TimeValues { get; init; }
     public string Color { get; init; } = ChartColors.Primary;
     public string? Unit { get; init; }
+    /// <summary>离散状态（例如布尔结果）使用阶梯线，避免暗示状态之间存在连续变化。</summary>
+    public bool IsDiscrete { get; init; }
 }
 
 /// <summary>折线图公共计算：量程、降采样、点数与网格刻度。</summary>

@@ -52,6 +52,32 @@ public enum TagDataSource
     JsonFile = 1
 }
 
+/// <summary>点位用途决定是否参与规格判定与连续测量 SPC。</summary>
+public enum TagPurpose
+{
+    /// <summary>连续质量测量；参与规格判断、SPC 漂移与预警连续件数。</summary>
+    QualityMeasurement = 0,
+
+    /// <summary>离散结果；参与显式规格判断，但不参与连续测量 SPC。</summary>
+    DiscreteResult = 1,
+
+    /// <summary>身份/追溯字段；不参与质量限值判断或 SPC。</summary>
+    Identity = 2,
+
+    /// <summary>诊断/状态字段；不参与质量限值判断或 SPC。</summary>
+    Diagnostic = 3
+}
+
+public static class TagPurposeRules
+{
+    /// <summary>未分类的历史快照保持原有监控行为。</summary>
+    public static bool IsStatisticalMeasurement(this TagPurpose? purpose)
+        => purpose is null or TagPurpose.QualityMeasurement;
+
+    public static bool CanJudgeAgainstLimits(this TagPurpose purpose)
+        => purpose is TagPurpose.QualityMeasurement or TagPurpose.DiscreteResult;
+}
+
 /// <summary>
 /// 工站数据文件的格式。0 是 JSON，老配置库补列后仍按 JSON 读。
 /// </summary>

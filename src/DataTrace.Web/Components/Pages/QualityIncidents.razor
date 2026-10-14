@@ -10,7 +10,7 @@
 @inject DtToast Toast
 @inject NavigationManager Nav
 
-<PageHeader Title="质量异常处置台" Description="从异常证据到复核关闭的处置记录。">
+<PageHeader Title="异常处置台" Description="从异常证据到复核关闭的处置记录。">
     <Actions>
         @if (_canWork)
         {
@@ -20,10 +20,32 @@
     </Actions>
 </PageHeader>
 
+@if (_canWork)
+{
+    <MudPaper Class="pa-3 mb-3">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap"
+                  role="group" aria-label="质量异常工作队列">
+            <MudText Typo="Typo.subtitle2">工作队列</MudText>
+            <MudButton Size="Size.Small" Variant="@QueueVariant("all")" aria-pressed="@(_queue == "all" ? "true" : "false")"
+                       OnClick="@(() => SelectQueueAsync("all"))">全部异常</MudButton>
+            <MudButton Size="Size.Small" Variant="@QueueVariant("mine")" aria-pressed="@(_queue == "mine" ? "true" : "false")"
+                       OnClick="@(() => SelectQueueAsync("mine"))">我的待办</MudButton>
+            <MudButton Size="Size.Small" Variant="@QueueVariant("unassigned")" aria-pressed="@(_queue == "unassigned" ? "true" : "false")"
+                       OnClick="@(() => SelectQueueAsync("unassigned"))">未接手</MudButton>
+            @if (_canManage)
+            {
+                <MudButton Size="Size.Small" Variant="@QueueVariant("review")" aria-pressed="@(_queue == "review" ? "true" : "false")"
+                           OnClick="@(() => SelectQueueAsync("review"))">待复核</MudButton>
+            }
+        </MudStack>
+        <MudText Typo="Typo.caption" Class="dt-muted mt-1">“我的待办”显示当前负责人待处理单据；“未接手”只显示没有负责人的待处理单据。</MudText>
+    </MudPaper>
+}
+
 <MudPaper Class="dt-filter-card mb-3">
     <MudGrid Class="dt-filters">
         <MudItem xs="12" sm="6" md="3">
-            <MudSelect T="QualityIncidentStatus?" @bind-Value="_status" Label="状态" HelperText="默认显示未关闭异常" Clearable="true" Dense="true">
+            <MudSelect T="QualityIncidentStatus?" @bind-Value="_status" Label="状态" HelperText="可用快捷队列聚焦待办" Clearable="true" Dense="true">
                 @foreach (var status in Enum.GetValues<QualityIncidentStatus>())
                 {
                     <MudSelectItem T="QualityIncidentStatus?" Value="@((QualityIncidentStatus?)status)">@StatusText(status)</MudSelectItem>
@@ -53,6 +75,9 @@
                    Disabled="_loading" OnClick="ResetAsync">重置</MudButton>
         <MudText Typo="Typo.caption" Class="dt-muted align-self-center">共 @_total 张</MudText>
     </MudStack>
+    <MudText Typo="Typo.caption" Class="dt-muted mt-1">
+        状态、工站、负责人和关键词在点击“查询”后生效；上方工作队列切换后立即刷新。
+    </MudText>
 </MudPaper>
 
 @if (_error is not null)
@@ -63,6 +88,14 @@
             <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" OnClick="LoadAsync">重试</MudButton>
         </MudStack>
     </MudAlert>
+    @if (_canManage && _diagnosticDetails is not null)
+    {
+        <MudExpansionPanels Class="mb-3">
+            <MudExpansionPanel Text="管理员/工程师诊断信息">
+                <MudText Typo="Typo.body2" Class="dt-muted">@_diagnosticDetails</MudText>
+            </MudExpansionPanel>
+        </MudExpansionPanels>
+    }
 }
 else
 {
@@ -74,7 +107,7 @@ else
             <MudTh>等级</MudTh>
             <MudTh>工站 / 型号</MudTh>
             <MudTh>负责人</MudTh>
-            <MudTh>状态</MudTh>
+            <MudTh>处置状态</MudTh>
             <MudTh>证据</MudTh>
             <MudTh>最近更新</MudTh>
         </HeaderContent>
@@ -92,13 +125,27 @@ else
                 }
             </MudTd>
             <MudTd DataLabel="负责人">@(string.IsNullOrWhiteSpace(context.Owner) ? "待接手" : context.Owner)</MudTd>
-            <MudTd DataLabel="状态"><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@StatusColor(context.Status)">@StatusText(context.Status)</MudChip></MudTd>
+            <MudTd DataLabel="处置状态"><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@StatusColor(context.Status)">@StatusText(context.Status)</MudChip></MudTd>
             <MudTd DataLabel="证据">@context.EvidenceCount 条</MudTd>
             <MudTd DataLabel="最近更新" Class="dt-nowrap">@context.UpdatedAt.ToString("yyyy-MM-dd HH:mm")</MudTd>
         </RowTemplate>
         <NoRecordsContent>
             <div class="dt-empty-hint">
-                <MudText Typo="Typo.body2" Class="dt-muted py-3">没有符合条件的质量异常单。</MudText>
+                @if (_hasAnyIncidents)
+                {
+                    <MudText Typo="Typo.body2" Class="dt-muted py-3">@FilteredEmptyMessage</MudText>
+                    <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ResetAsync">清除筛选并查看全部</MudButton>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Class="dt-muted py-2">目前还没有质量异常单。</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted d-block mb-2">可从这里按流水号、托盘、工站和时间选择源记录，再创建正式异常单；创建不会改变原始采集判定。</MudText>
+                    @if (_canWork)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                   Href="/quality/incidents/new">选择记录并建单</MudButton>
+                    }
+                }
             </div>
         </NoRecordsContent>
     </MudTable>
@@ -119,19 +166,46 @@ else
     private int? _stationId;
     private string? _owner;
     private string? _keyword;
+    private QualityIncidentActor? _actor;
+    private string _queue = "all";
+    private IReadOnlyList<QualityIncidentListItem>? _queueCache;
     private int _page = 1;
     private int _total;
     private bool _loading;
     private bool _canWork;
+    private bool _canManage;
+    private bool _hasAnyIncidents;
     private string? _error;
+    private string? _diagnosticDetails;
     private int PageCount => Math.Max(1, (int)Math.Ceiling(_total / (double)PageSize));
+    private string FilteredEmptyMessage
+    {
+        get
+        {
+            var queue = _queue switch
+            {
+                "mine" => "我的待办",
+                "unassigned" => "未接手",
+                "review" => "待复核",
+                _ => "全部异常"
+            };
+            var status = _status is null ? "" : $"、处置状态为“{StatusText(_status.Value)}”";
+            var filters = new List<string>();
+            if (_stationId is not null) filters.Add("工站");
+            if (!string.IsNullOrWhiteSpace(_owner)) filters.Add("负责人");
+            if (!string.IsNullOrWhiteSpace(_keyword)) filters.Add("单号/关键字");
+            var extraFilters = filters.Count == 0 ? "" : $"及{string.Join("、", filters)}筛选";
+            return $"系统中已有质量异常单，但“{queue}”队列{status}{extraFilters}没有匹配单据。可重置筛选或切换队列。";
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
-        var actor = await Actors.GetCurrentAsync();
-        _canWork = actor.IsInRole(AppRoles.Administrator)
-                   || actor.IsInRole(AppRoles.Engineer)
-                   || actor.IsInRole(AppRoles.Operator);
+        _actor = await Actors.GetCurrentAsync();
+        _canWork = _actor.IsInRole(AppRoles.Administrator)
+                   || _actor.IsInRole(AppRoles.Engineer)
+                   || _actor.IsInRole(AppRoles.Operator);
+        _canManage = _actor.IsInRole(AppRoles.Administrator) || _actor.IsInRole(AppRoles.Engineer);
         _stations = await Config.GetStationsAsync();
         await LoadAsync();
     }
@@ -139,16 +213,34 @@ else
     private Task SearchAsync()
     {
         _page = 1;
+        _queueCache = null;
         return LoadAsync();
     }
 
     private async Task ResetAsync()
     {
+        _queue = "all";
         _status = null;
         _stationId = null;
         _owner = null;
         _keyword = null;
         _page = 1;
+        _queueCache = null;
+        await LoadAsync();
+    }
+
+    private async Task SelectQueueAsync(string queue)
+    {
+        _queue = queue;
+        _status = queue switch
+        {
+            "review" => QualityIncidentStatus.PendingReview,
+            "unassigned" => QualityIncidentStatus.Open,
+            _ => null
+        };
+        _owner = null;
+        _page = 1;
+        _queueCache = null;
         await LoadAsync();
     }
 
@@ -182,33 +274,118 @@ else
         _loading = true;
         try
         {
-            var result = await Incidents.ListAsync(new QualityIncidentQuery
+            if (_queue is "mine" or "unassigned")
             {
-                Status = _status,
-                StationId = _stationId,
-                Owner = _owner,
-                Keyword = _keyword,
-                Skip = (_page - 1) * PageSize,
-                Take = PageSize
-            });
-            _items = result.Items;
-            _total = result.Total;
+                _queueCache ??= await LoadQueueItemsAsync();
+                var resultItems = _queueCache;
+                _total = resultItems.Count;
+                _items = resultItems.Skip((_page - 1) * PageSize).Take(PageSize).ToList();
+            }
+            else
+            {
+                var result = await Incidents.ListAsync(new QualityIncidentQuery
+                {
+                    Status = _status,
+                    StationId = _stationId,
+                    Owner = _owner,
+                    Keyword = _keyword,
+                    Skip = (_page - 1) * PageSize,
+                    Take = PageSize
+                });
+                _items = result.Items;
+                _total = result.Total;
+            }
+
             if (_page > PageCount)
             {
                 _page = PageCount;
             }
+            _hasAnyIncidents = _total > 0
+                               || (await Incidents.ListAsync(new QualityIncidentQuery { Skip = 0, Take = 1 })).Total > 0;
             _error = null;
+            _diagnosticDetails = null;
         }
         catch (Exception ex)
         {
-            _error = $"质量异常单加载失败：{ex.Message}";
-            Toast.Add(_error, Severity.Error);
+            _error = "质量异常单暂时无法加载。请重试；若问题持续，请联系工程师或管理员。";
+            _diagnosticDetails = $"{ex.GetType().Name}: {ex.Message}";
         }
         finally
         {
             _loading = false;
         }
     }
+
+    private async Task<IReadOnlyList<QualityIncidentListItem>> LoadQueueItemsAsync()
+    {
+        if (_queue == "unassigned")
+        {
+            if (_status != QualityIncidentStatus.Open)
+            {
+                return [];
+            }
+
+            var openItems = await FetchAllAsync(QualityIncidentStatus.Open, owner: null);
+            return openItems.Where(item => string.IsNullOrWhiteSpace(item.Owner)).ToList();
+        }
+
+        if (_actor is null)
+        {
+            return [];
+        }
+
+        var statuses = _status is null
+            ? new[] { QualityIncidentStatus.Open, QualityIncidentStatus.InProgress }
+            : new[] { _status.Value };
+        if (statuses.Contains(QualityIncidentStatus.Closed))
+        {
+            return [];
+        }
+
+        var tasks = new List<QualityIncidentListItem>();
+        foreach (var status in statuses)
+        {
+            tasks.AddRange(await FetchAllAsync(status, _actor.UserName));
+        }
+
+        return tasks.Where(item => item.Owner is { } ownerName
+                                   && string.Equals(ownerName, _actor.UserName, StringComparison.OrdinalIgnoreCase)
+                                   && (string.IsNullOrWhiteSpace(_owner)
+                                       || ownerName.Contains(_owner.Trim(), StringComparison.OrdinalIgnoreCase)))
+            .OrderByDescending(item => item.UpdatedAt)
+            .ThenByDescending(item => item.Id)
+            .ToList();
+    }
+
+    private async Task<IReadOnlyList<QualityIncidentListItem>> FetchAllAsync(QualityIncidentStatus status, string? owner)
+    {
+        const int fetchSize = 100;
+        var items = new List<QualityIncidentListItem>();
+        var skip = 0;
+        int total;
+        var fetched = 0;
+        do
+        {
+            var page = await Incidents.ListAsync(new QualityIncidentQuery
+            {
+                Status = status,
+                StationId = _stationId,
+                Owner = owner,
+                Keyword = _keyword,
+                Skip = skip,
+                Take = fetchSize
+            });
+            items.AddRange(page.Items);
+            total = page.Total;
+            fetched = page.Items.Count;
+            skip += fetched;
+        } while (items.Count < total && fetched > 0);
+
+        return items;
+    }
+
+    private Variant QueueVariant(string queue)
+        => string.Equals(_queue, queue, StringComparison.Ordinal) ? Variant.Filled : Variant.Outlined;
 
     private static string StatusText(QualityIncidentStatus status) => status switch
     {

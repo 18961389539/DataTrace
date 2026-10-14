@@ -1,4 +1,5 @@
 @using DataTrace.Application.Realtime
+@using DataTrace.Application.Runtime
 @using DataTrace.Domain.Constants
 @using DataTrace.Domain.Enums
 @inject NavigationManager Nav
@@ -7,7 +8,7 @@
    看板每 5 秒有一次定时重画，用来推进相对时间；整页重画会把每张卡的点位、
    tooltip、迷你曲线全部 diff 一遍。这里用指纹把重画限制在「数据真的变了」的时候，
    相对时间交给卡片内部的 LiveRelative 自己走。
-   一行一个工站，所有参数平铺，所有曲线同时展示；无曲线时不保留图表区。
+   详细模式展示所有参数与曲线；概览模式只呈现状态、异常摘要和少量参数。
    工站状态与产品判定分开显示；刷新按数据版本判断，不比采样点。 *@
 
 <MudPaper Class="@CardClass">
@@ -25,8 +26,12 @@
                     <LiveRelative Time="Station.LastCompleteTime" />
                 </MudText>
                 <div class="dt-station-meta">
-                    <span class="dt-station-meta-label">节拍</span>
+                    <span class="dt-station-meta-label">采集耗时</span>
                     <span class="dt-station-meta-value">@CadenceText</span>
+                </div>
+                <div class="dt-station-meta">
+                    <span class="dt-station-meta-label">产品间隔</span>
+                    <span class="dt-station-meta-value">@ProductGapText</span>
                 </div>
                 @* 只有"不止试了一次"才出现：一次就写回成功是常态，常驻一个「回写 1 次」只是噪音。
                    回写重试变多意味着握手通道在变差，比等到彻底写不回去早得多。 *@
@@ -63,161 +68,221 @@
         }
     </MudStack>
 
-    @if (Station.LastTags.Count == 0 && DisplayCurves.Count == 0)
+    @if (Compact)
     {
-        <MudText Typo="Typo.body2" Class="dt-muted mt-4">本站还没有采集数据</MudText>
+        <div class="dt-station-overview">
+            <div class="dt-station-overview-issues" aria-label="工站异常与质量风险">
+                @if (Station.State == StationRuntimeState.Fault)
+                {
+                    <span class="dt-overview-issue dt-overview-fault">运行故障</span>
+                }
+                @if (Station.LastJudgement == Judgement.Ng)
+                {
+                    <span class="dt-overview-issue dt-overview-ng">最近产品 NG</span>
+                }
+                @if (!HasLastOutcome)
+                {
+                    <span class="dt-overview-issue-summary">最近判定：未判定</span>
+                }
+                <span class="dt-overview-issue-summary">@TagIssueSummary</span>
+            </div>
+            <div class="dt-station-overview-parameters" aria-label="关键参数摘要">
+                <span class="dt-station-overview-parameters-label">关键参数（异常点位优先）</span>
+                @if (Station.LastTags.Count == 0)
+                {
+                    <span class="dt-muted">暂无参数数据</span>
+                }
+                else
+                {
+                    @foreach (var tag in OverviewTags)
+                    {
+                        <span class="dt-overview-parameter @OverviewTagClass(tag)">
+                            <span class="dt-overview-parameter-name">@tag.Name</span>
+                            <span class="dt-overview-parameter-value">@tag.Display @tag.Unit</span>
+                            <span class="dt-overview-parameter-state">@OverviewTagState(tag)</span>
+                        </span>
+                    }
+                    @if (Station.LastTags.Count > OverviewTags.Count)
+                    {
+                        <span class="dt-overview-more">另有 @(Station.LastTags.Count - OverviewTags.Count) 项参数</span>
+                    }
+                }
+            </div>
+            @if (!string.IsNullOrEmpty(Station.LastError))
+            {
+                <MudText Typo="Typo.caption" Color="Color.Error" Class="dt-station-overview-error">@Station.LastError</MudText>
+            }
+            @if (OnOpenDetails.HasDelegate)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Text" Class="dt-station-open-details"
+                           StartIcon="@Icons.Material.Filled.ViewSidebar" OnClick="@(() => OnOpenDetails.InvokeAsync())">
+                    打开工站详情
+                </MudButton>
+            }
+        </div>
     }
     else
     {
-        @* 参数汇总：总数 + 各判定类计数。无数据与未配置判定单独列出，绝不归入「正常」；
-           全部正常时才说「均正常」。 *@
-        <div class="dt-point-summary">
-            <span class="dt-point-summary-label">@TagSummaryText</span>
-            <span>@CurveSummaryText</span>
-        </div>
-        <div class="dash-tags dt-station-parameters">
-            @foreach (var tag in Station.LastTags)
-            {
-                @* 卡片里只放短芯片「超限/预警/无数据/未判定」，完整说明放进 Tooltip，
-                   避免长句把工站卡撑满；触屏长按也能看到 tooltip。 *@
-                <div class="@TagClass(tag)">
-                    <span class="dash-tag-label">
-                        @tag.Name
-                        @if (tag.OutOfLimit)
-                        {
-                            <MudTooltip Arrow="true" RootClass="dt-help-popover">
-                                <ChildContent>
-                                    <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined" Class="ml-1"
-                                             Icon="@Icons.Material.Filled.Error">超限</MudChip>
-                                </ChildContent>
-                                <TooltipContent>
-                                    <HelpContent Topic="HelpTexts.LimitThreeTiers" />
-                                </TooltipContent>
-                            </MudTooltip>
-                        }
-                        else if (tag.Warning)
-                        {
-                            <MudTooltip Arrow="true" RootClass="dt-help-popover">
-                                <ChildContent>
-                                    <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Class="ml-1"
-                                             Icon="@Icons.Material.Filled.Warning">预警</MudChip>
-                                </ChildContent>
-                                <TooltipContent>
-                                    <HelpContent Topic="HelpTexts.LimitThreeTiers" />
-                                </TooltipContent>
-                            </MudTooltip>
-                        }
-                        else if (IsNoData(tag))
-                        {
-                            <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined" Class="ml-1"
-                                     Icon="@Icons.Material.Filled.HelpOutline">无数据</MudChip>
-                        }
-                        else if (IsUnjudged(tag))
-                        {
-                            <MudTooltip Text="该点位没有配置判定限值，不参与合格判定" Arrow="true">
-                                <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined" Class="ml-1"
-                                         Icon="@Icons.Material.Filled.Rule">未判定</MudChip>
-                            </MudTooltip>
-                        }
-                        else
-                        {
-                            <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">正常</MudChip>
-                        }
-                    </span>
-                    <span class="dash-tag-value dt-flash" @key="@tag.Display">@tag.Display @tag.Unit</span>
-                    <div class="dt-tag-spec">规格 @SpecText(tag)</div>
-                    @if (HasLimitScale(tag))
-                    {
-                        <div class="dt-limit-scale" role="img" aria-label="@LimitScaleDescription(tag)">
-                            <div class="dt-limit-track">
-                                <span class="dt-limit-spec-band"></span>
-                                @if (tag.WarningLowerLimit is { } warningLower)
-                                {
-                                    <span class="dt-limit-band" style="@LowerWarningStyle(tag, warningLower)"></span>
-                                }
-                                @if (tag.WarningUpperLimit is { } warningUpper)
-                                {
-                                    <span class="dt-limit-band" style="@UpperWarningStyle(tag, warningUpper)"></span>
-                                }
-                                <span class="dt-limit-marker @LimitMarkerClass(tag)" style="@MarkerStyle(tag)"></span>
-                            </div>
-                        </div>
-                        <div class="dt-limit-labels">
-                            <span>@FormatLimit(tag.LowerLimit)</span>
-                            <span>@FormatLimit(tag.UpperLimit)</span>
-                        </div>
-                        @if (tag.OutOfLimit)
-                        {
-                            <div class="dt-tag-exceedance">@ExceedanceText(tag)</div>
-                        }
-                    }
-                </div>
-            }
-        </div>
-        @if (DisplayCurves.Count > 0)
+        @if (Station.LastTags.Count == 0 && DisplayCurves.Count == 0)
         {
-            <section class="dt-station-curves" aria-label="全部采集曲线">
-                <div class="dt-point-summary">
-                    <span>采集曲线 · @DisplayCurves.Count 条</span>
-                    <span>与参数属于同一件产品</span>
-                </div>
-                <div class="dt-station-curves-grid">
-                    @foreach (var curve in DisplayCurves)
-                    {
-                        <div @key="curve.Key" class="dt-station-curve" role="group" aria-label="@($"曲线 {curve.Name}")">
-                            <div class="dt-curve-block-head">
-                                <MudText Typo="Typo.subtitle2">@curve.Name</MudText>
-                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
-                                         Color="@CurveChipColor(curve)" Icon="@CurveChipIcon(curve)">
-                                    @CurveJudgementText(curve)
-                                </MudChip>
-                                <span class="dt-muted dt-curve-block-points">采样点 @curve.Values.Length</span>
-                            </div>
-                            @if (curve.Values.Length == 0)
+            <MudText Typo="Typo.body2" Class="dt-muted mt-4">本站还没有采集数据</MudText>
+        }
+        else
+        {
+            @* 参数汇总：总数 + 各判定类计数。无数据与未配置判定单独列出，绝不归入「正常」；
+               全部正常时才说「均正常」。 *@
+            <div class="dt-point-summary">
+                <span class="dt-point-summary-label">@TagSummaryText</span>
+                <span>@CurveSummaryText</span>
+            </div>
+            <div class="dash-tags dt-station-parameters">
+                @foreach (var tag in Station.LastTags)
+                {
+                    @* 卡片里只放短芯片「超限/预警/无数据/未判定」，完整说明放进 Tooltip，
+                       避免长句把工站卡撑满；触屏长按也能看到 tooltip。 *@
+                    <div class="@TagClass(tag)">
+                        <span class="dash-tag-label">
+                            @tag.Name
+                            @if (tag.OutOfLimit)
                             {
-                                <MudText Typo="Typo.body2" Class="dt-muted dt-curve-empty">已配置曲线，本次暂无可显示数据</MudText>
+                                <MudTooltip Arrow="true" RootClass="dt-help-popover">
+                                    <ChildContent>
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined" Class="ml-1"
+                                                 Icon="@Icons.Material.Filled.Error">超限</MudChip>
+                                    </ChildContent>
+                                    <TooltipContent>
+                                        <HelpContent Topic="HelpTexts.LimitThreeTiers" />
+                                    </TooltipContent>
+                                </MudTooltip>
+                            }
+                            else if (tag.Warning)
+                            {
+                                <MudTooltip Arrow="true" RootClass="dt-help-popover">
+                                    <ChildContent>
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined" Class="ml-1"
+                                                 Icon="@Icons.Material.Filled.Warning">预警</MudChip>
+                                    </ChildContent>
+                                    <TooltipContent>
+                                        <HelpContent Topic="HelpTexts.LimitThreeTiers" />
+                                    </TooltipContent>
+                                </MudTooltip>
+                            }
+                            else if (IsNoData(tag))
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined" Class="ml-1"
+                                         Icon="@Icons.Material.Filled.HelpOutline">无数据</MudChip>
+                            }
+                            else if (IsUnjudged(tag))
+                            {
+                                <MudTooltip Text="该点位没有配置判定限值，不参与合格判定" Arrow="true">
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined" Class="ml-1"
+                                             Icon="@Icons.Material.Filled.Rule">未判定</MudChip>
+                                </MudTooltip>
                             }
                             else
                             {
-                                <StationSparkChart CurveName="@curve.Name" Values="curve.Values" Height="160" ShowAxis="true"
-                                                   Tone="@CurveTone(curve)"
-                                                   VersionKey="@($"{Station.LastMonthKey}:{Station.LastRecordId}:{curve.Key}")" />
+                                <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">正常</MudChip>
                             }
-                            @if (curve.Judgement == Judgement.Ng && !string.IsNullOrEmpty(curve.JudgementReason))
+                        </span>
+                        <span class="dash-tag-value dt-flash" @key="@tag.Display">@tag.Display @tag.Unit</span>
+                        <div class="dt-tag-spec">规格 @SpecText(tag)</div>
+                        @if (HasLimitScale(tag))
+                        {
+                            <div class="dt-limit-scale" role="img" aria-label="@LimitScaleDescription(tag)">
+                                <div class="dt-limit-track">
+                                    <span class="dt-limit-spec-band"></span>
+                                    @if (tag.WarningLowerLimit is { } warningLower)
+                                    {
+                                        <span class="dt-limit-band" style="@LowerWarningStyle(tag, warningLower)"></span>
+                                    }
+                                    @if (tag.WarningUpperLimit is { } warningUpper)
+                                    {
+                                        <span class="dt-limit-band" style="@UpperWarningStyle(tag, warningUpper)"></span>
+                                    }
+                                    <span class="dt-limit-marker @LimitMarkerClass(tag)" style="@MarkerStyle(tag)"></span>
+                                </div>
+                            </div>
+                            <div class="dt-limit-labels">
+                                <span>@FormatLimit(tag.LowerLimit)</span>
+                                <span>@FormatLimit(tag.UpperLimit)</span>
+                            </div>
+                            @if (tag.OutOfLimit)
                             {
-                                <MudText Typo="Typo.caption" Color="Color.Error" Class="dt-curve-reason">@curve.JudgementReason</MudText>
+                                <div class="dt-tag-exceedance">@ExceedanceText(tag)</div>
                             }
-                        </div>
-                    }
-                </div>
-            </section>
+                        }
+                    </div>
+                }
+            </div>
+            @if (DisplayCurves.Count > 0)
+            {
+                <section class="dt-station-curves" aria-label="全部采集曲线">
+                    <div class="dt-point-summary">
+                        <span>采集曲线 · @DisplayCurves.Count 条</span>
+                        <span>与参数属于同一件产品</span>
+                    </div>
+                    <div class="dt-station-curves-grid">
+                        @foreach (var curve in DisplayCurves)
+                        {
+                            <div @key="curve.Key" class="dt-station-curve" role="group" aria-label="@($"曲线 {curve.Name}")">
+                                <div class="dt-curve-block-head">
+                                    <MudText Typo="Typo.subtitle2">@curve.Name</MudText>
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                             Color="@CurveChipColor(curve)" Icon="@CurveChipIcon(curve)">
+                                        @CurveJudgementText(curve)
+                                    </MudChip>
+                                    <span class="dt-muted dt-curve-block-points">采样点 @curve.Values.Length</span>
+                                </div>
+                                @if (curve.Values.Length == 0)
+                                {
+                                    <MudText Typo="Typo.body2" Class="dt-muted dt-curve-empty">已配置曲线，本次暂无可显示数据</MudText>
+                                }
+                                else
+                                {
+                                    <StationSparkChart CurveName="@curve.Name" Values="curve.Values" Height="160" ShowAxis="true"
+                                                       Tone="@CurveTone(curve)"
+                                                       VersionKey="@($"{Station.LastMonthKey}:{Station.LastRecordId}:{curve.Key}")" />
+                                }
+                                @if (curve.Judgement == Judgement.Ng && !string.IsNullOrEmpty(curve.JudgementReason))
+                                {
+                                    <MudText Typo="Typo.caption" Color="Color.Error" Class="dt-curve-reason">@curve.JudgementReason</MudText>
+                                }
+                            </div>
+                        }
+                    </div>
+                </section>
+            }
+            @if (OnOpenDetails.HasDelegate)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Text" Class="dt-station-open-details mt-1"
+                           StartIcon="@Icons.Material.Filled.ViewSidebar" OnClick="@(() => OnOpenDetails.InvokeAsync())">
+                    打开工站详情
+                </MudButton>
+            }
         }
-        @if (OnOpenDetails.HasDelegate)
+
+        <dl class="dt-station-diagnostics">
+            <div><dt>完成时间</dt><dd>@(Station.LastCompleteTime?.ToString("yyyy-MM-dd HH:mm:ss") ?? "—")</dd></div>
+            <div><dt>产品间隔</dt><dd>@ProductGapText</dd></div>
+            <div><dt>响应码回写</dt><dd>@(Station.LastWriteBackAttempts == 0 ? "尚未回写" : $"{Station.LastWriteBackAttempts} 次 · {(Station.LastWriteBackOk ? "成功" : "失败")}")</dd></div>
+            <div><dt>结果码</dt><dd>@(Station.LastResultCode is { } code ? $"{code} · {ResultCodes.Describe(code)}" : "—")</dd></div>
+            <div><dt>月库 / 记录</dt><dd>@(Station.LastMonthKey ?? "—") / @(Station.LastRecordId?.ToString() ?? "—")</dd></div>
+        </dl>
+
+        @if (!string.IsNullOrEmpty(Station.LastError))
         {
-            <MudButton Size="Size.Small" Variant="Variant.Text" Class="dt-station-open-details mt-1"
-                       StartIcon="@Icons.Material.Filled.ViewSidebar" OnClick="@(() => OnOpenDetails.InvokeAsync())">
-                打开工站详情
-            </MudButton>
+            <MudText Typo="Typo.caption" Color="Color.Error" Class="mt-2">@Station.LastError</MudText>
         }
-    }
-
-    <dl class="dt-station-diagnostics">
-        <div><dt>完成时间</dt><dd>@(Station.LastCompleteTime?.ToString("yyyy-MM-dd HH:mm:ss") ?? "—")</dd></div>
-        <div><dt>响应码回写</dt><dd>@(Station.LastWriteBackAttempts == 0 ? "尚未回写" : $"{Station.LastWriteBackAttempts} 次 · {(Station.LastWriteBackOk ? "成功" : "失败")}")</dd></div>
-        <div><dt>结果码</dt><dd>@(Station.LastResultCode is { } code ? $"{code} · {ResultCodes.Describe(code)}" : "—")</dd></div>
-        <div><dt>月库 / 记录</dt><dd>@(Station.LastMonthKey ?? "—") / @(Station.LastRecordId?.ToString() ?? "—")</dd></div>
-    </dl>
-
-    @if (!string.IsNullOrEmpty(Station.LastError))
-    {
-        <MudText Typo="Typo.caption" Color="Color.Error" Class="mt-2">@Station.LastError</MudText>
     }
 </MudPaper>
 
 @code {
     [Parameter] public StationRuntimeStatus Station { get; set; } = default!;
 
-    /// <summary>点击「打开工站详情」：由宿主页面打开侧边详情面板，保留看板上下文。</summary>
+    /// <summary>紧凑概览只显示风险摘要和少量参数；false 时保留全部参数与曲线。</summary>
+    [Parameter] public bool Compact { get; set; }
+
+    /// <summary>点击「打开工站详情」：由宿主页面打开居中详情弹窗，保留看板上下文。</summary>
     [Parameter] public EventCallback OnOpenDetails { get; set; }
 
     /// <summary>当前配置中的启用曲线，用于显示尚未采到数据的曲线。null 表示配置未知。</summary>
@@ -230,6 +295,23 @@
     private string CurveSummaryText => DisplayCurves.Count > 0
         ? $"曲线 {DisplayCurves.Count} 条 · 全部展示"
         : ConfiguredCurves is not null ? "未配置曲线" : "无曲线数据";
+
+    private IReadOnlyList<StationLiveTag> OverviewTags
+        => Station.LastTags.OrderByDescending(OverviewIssueRank).Take(3).ToList();
+
+    private string TagIssueSummary
+    {
+        get
+        {
+            var parts = new List<string>();
+            if (OutOfLimitCount > 0) parts.Add($"超限 {OutOfLimitCount}");
+            if (WarningCount > 0) parts.Add($"预警 {WarningCount}");
+            if (NoDataCount > 0) parts.Add($"无数据 {NoDataCount}");
+            return parts.Count == 0
+                ? Station.LastTags.Count == 0 ? "暂无点位数据" : "点位正常"
+                : $"点位异常：{string.Join(" · ", parts)}";
+        }
+    }
 
     protected override void OnParametersSet()
     {
@@ -248,6 +330,27 @@
     private string StationTitle => $"{Station.StationCode} {Station.StationName}";
 
     private string CadenceText => DurationFormat.Text(Station.LastDurationMs);
+
+    private string ProductGapText => StationPaceRules.Format(Station.LastPieceGap ?? TimeSpan.Zero);
+
+    private static int OverviewIssueRank(StationLiveTag tag)
+        => tag.OutOfLimit ? 3 : tag.Warning ? 2 : IsNoData(tag) ? 1 : 0;
+
+    private static string OverviewTagClass(StationLiveTag tag)
+        => OverviewIssueRank(tag) switch
+        {
+            3 => "out",
+            2 => "warn",
+            1 => "no-data",
+            _ => "normal"
+        };
+
+    private static string OverviewTagState(StationLiveTag tag)
+        => tag.OutOfLimit ? "超限"
+            : tag.Warning ? "预警"
+            : IsNoData(tag) ? "无数据"
+            : IsUnjudged(tag) ? "未判定"
+            : "正常";
 
     private string? DetailUrl
         => Station.LastRecordId is > 0 && !string.IsNullOrEmpty(Station.LastMonthKey)
@@ -336,7 +439,7 @@
     private static bool IsUnjudged(StationLiveTag tag)
         => !tag.OutOfLimit && !tag.Warning && tag.LowerLimit is null && tag.UpperLimit is null;
 
-    private string CardClass => $"dash-station {Presentation.CssClass}";
+    private string CardClass => $"dash-station {(Compact ? "overview" : "detail")} {Presentation.CssClass}";
     private Color StateColor => Presentation.Color;
     private string? StateIcon => Presentation.Icon;
     private string StateLabel => Presentation.Label;
@@ -450,6 +553,7 @@
         var sb = new System.Text.StringBuilder();
         sb.Append(Station.StationCode).Append('|')
           .Append(Station.StationName).Append('|')
+          .Append(Compact).Append('|')
           .Append(Station.LastMonthKey).Append('|')
           .Append(Station.LastCompleteTime).Append('|')
           .Append(Station.LastResultCode).Append('|')
@@ -462,6 +566,7 @@
           .Append(Station.LastSerialNo).Append('|')
           .Append(Station.LastError).Append('|')
           .Append(Station.LastDurationMs).Append('|')
+          .Append(Station.LastPieceGap).Append('|')
           .Append(Station.LastRecordId).Append('|');
 
         foreach (var tag in Station.LastTags)

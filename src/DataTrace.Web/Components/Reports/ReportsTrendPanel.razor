@@ -53,13 +53,24 @@
     {
         <MudStack Row="true" Spacing="3" Class="mb-2 flex-wrap">
             <MudText Typo="Typo.caption" Class="dt-muted dt-nums">采样点 @Points.Count<InfoHint Topic="HelpTexts.TrendSampleLimit" /></MudText>
-            <MudText Typo="Typo.caption" Class="dt-muted dt-nums">均值 @Average</MudText>
-            <MudText Typo="Typo.caption" Class="dt-muted dt-nums">最小 @Minimum</MudText>
-            <MudText Typo="Typo.caption" Class="dt-muted dt-nums">最大 @Maximum</MudText>
+            @if (IsDiscrete)
+            {
+                <MudText Typo="Typo.caption" Class="dt-muted dt-nums">结果类别 @DistinctResultCount</MudText>
+            }
+            else
+            {
+                <MudText Typo="Typo.caption" Class="dt-muted dt-nums">均值 @Average</MudText>
+                <MudText Typo="Typo.caption" Class="dt-muted dt-nums">最小 @Minimum</MudText>
+                <MudText Typo="Typo.caption" Class="dt-muted dt-nums">最大 @Maximum</MudText>
+            }
             <MudText Typo="Typo.caption" Class="dt-muted">@RangeText</MudText>
         </MudStack>
         <LineChart Series="Series" Height="280" SeriesAxisName="时间" XStartText="@FromText" XEndText="@ToText"
                    ShowPoints="@(Points.Count <= 120)" />
+        @if (IsDiscrete)
+        {
+            <MudText Typo="Typo.caption" Class="dt-muted">离散结果按事件阶梯显示；类别编号仅表示 PLC 结果码，不表示连续测量大小。</MudText>
+        }
     }
 </MudPaper>
 
@@ -71,6 +82,7 @@
     [Parameter] public bool Exporting { get; set; }
     [Parameter] public string ExportTooltip { get; set; } = "";
     [Parameter] public bool Truncated { get; set; }
+    [Parameter] public bool IsDiscrete { get; set; }
     [Parameter] public bool LoadFailed { get; set; }
     [Parameter] public bool TrendFailed { get; set; }
     [Parameter] public bool Loading { get; set; }
@@ -84,6 +96,8 @@
     [Parameter] public string ToText { get; set; } = "";
     [Parameter] public EventCallback<int> OnTagChanged { get; set; }
     [Parameter] public EventCallback OnExport { get; set; }
+
+    private int DistinctResultCount => Points.Select(point => point.Value).Distinct().Count();
 
     private static string TagLabel(TagDefinition tag)
         => string.IsNullOrWhiteSpace(tag.Unit) ? tag.Name : $"{tag.Name} ({tag.Unit})";

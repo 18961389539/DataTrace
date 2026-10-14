@@ -30,13 +30,17 @@
     </Actions>
 </PageHeader>
 
-<MudStack Row="true" Spacing="1" Class="mb-3">
+<MudStack Row="true" Spacing="1" Class="mb-3" role="group" aria-label="查询模式">
     <MudButton Size="Size.Small" Variant="@(_traceMode ? Variant.Outlined : Variant.Filled)"
-               Color="Color.Primary" StartIcon="@Icons.Material.Filled.TableRows" OnClick="ShowRecords">
+               Color="Color.Primary" StartIcon="@Icons.Material.Filled.TableRows"
+               aria-pressed="@(_traceMode ? "false" : "true")"
+               OnClick="ShowRecords">
         记录查询
     </MudButton>
     <MudButton Size="Size.Small" Variant="@(_traceMode ? Variant.Filled : Variant.Outlined)"
-               Color="Color.Primary" StartIcon="@Icons.Material.Filled.AccountTree" OnClick="ShowTraceability">
+               Color="Color.Primary" StartIcon="@Icons.Material.Filled.AccountTree"
+               aria-pressed="@(_traceMode ? "true" : "false")"
+               OnClick="ShowTraceability">
         产品追溯
     </MudButton>
 </MudStack>
@@ -50,99 +54,124 @@
 }
 else
 {
-<QueryPresetsPanel Url="@CurrentListUrl()" From="_from" To="_to"
-                   StartHour="_shiftSettings.ShiftStartHour" LengthHours="_shiftSettings.ShiftLengthHours"
-                   Disabled="_exporting" Apply="ApplyPresetAsync" />
-<MudPaper Class="dt-filter-card mb-3">
-    <form @onsubmit="OnSubmit" @onsubmit:preventDefault="true">
-        <DateRangeFilter @bind-From="_from" @bind-To="_to" OnRangeChanged="Search"
-                 IncludeShifts="true" ShiftStartHour="_shiftSettings.ShiftStartHour" ShiftLengthHours="_shiftSettings.ShiftLengthHours"
-                 Disabled="_exporting" />
+<div class="dt-query-workspace">
+    <div class="dt-query-presets">
+        <QueryPresetsPanel Url="@CurrentListUrl()" From="_from" To="_to"
+                           StartHour="_shiftSettings.ShiftStartHour" LengthHours="_shiftSettings.ShiftLengthHours"
+                           Disabled="_exporting" Apply="ApplyPresetAsync" />
+    </div>
+    <MudPaper Class="dt-filter-card mb-3">
+        <form class="dt-query-form" @onsubmit="OnSubmit" @onsubmit:preventDefault="true">
+            <section class="dt-query-primary" aria-labelledby="dt-query-primary-heading">
+                <h2 id="dt-query-primary-heading" class="dt-query-section-heading">快速查询</h2>
+                <MudGrid Class="dt-query-core-inputs">
+                    <MudItem xs="12" sm="6" md="4" lg="3">
+                        <MudTextField T="string" Value="_serialNo" ValueChanged="OnSerialChanged" Label="流水号"
+                                      Immediate="true" Disabled="_exporting"
+                                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Tag" />
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="4" lg="3">
+                        <MudTextField T="string" Value="_pallet" ValueChanged="OnPalletChanged" Label="托盘码"
+                                      Placeholder="扫码或输入托盘码" Immediate="true" Disabled="_exporting"
+                                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.QrCode" />
+                    </MudItem>
+                </MudGrid>
+                <MudStack Row="true" Spacing="2" Class="dt-query-primary-actions">
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Search" Disabled="_exporting">
+                        @(_loading ? "查询中…" : "查询")
+                    </MudButton>
+                </MudStack>
+            </section>
 
-        <MudGrid Class="dt-filters">
-            <MudItem xs="12" sm="6" md="4" lg="3">
-                <MudTextField T="string" Value="_pallet" ValueChanged="OnPalletChanged" Label="托盘码" Placeholder="支持模糊匹配"
-                                  Immediate="true" Disabled="_exporting"
-                                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.QrCode" />
-            </MudItem>
-            <MudItem xs="12" sm="6" md="4" lg="3">
-                <MudTextField T="string" Value="_serialNo" ValueChanged="OnSerialChanged" Label="流水号"
-                                  Immediate="true" Disabled="_exporting"
-                                  Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Tag" />
-            </MudItem>
-            <MudItem xs="12" sm="6" md="4" lg="3">
-                <MudSelect T="int?" Value="_stationId" ValueChanged="OnStationChanged" Label="工站" Clearable="true"
-                           Disabled="_exporting">
-                    @foreach (var s in _stations)
+            <button type="button" class="dt-query-advanced-toggle"
+                    aria-controls="dt-query-advanced-fields"
+                    aria-expanded="@(_advancedFiltersExpanded ? "true" : "false")"
+                    @onclick="ToggleAdvancedFilters">
+                <span>@(_advancedFiltersExpanded ? "收起更多筛选" : "更多筛选条件")</span>
+                <span class="dt-query-advanced-count">@SecondaryFilterSummary</span>
+            </button>
+
+            <div id="dt-query-advanced-fields"
+                 class="dt-query-advanced @(_advancedFiltersExpanded ? "is-expanded" : "is-collapsed")">
+                <div class="dt-query-date-range">
+                    <DateRangeFilter @bind-From="_from" @bind-To="_to" OnRangeChanged="Search"
+                                     IncludeShifts="true" ShiftStartHour="_shiftSettings.ShiftStartHour"
+                                     ShiftLengthHours="_shiftSettings.ShiftLengthHours" Disabled="_exporting" />
+                </div>
+
+                <MudGrid Class="dt-filters dt-query-secondary-filters">
+                    <MudItem xs="12" sm="6" md="4" lg="3">
+                        <MudSelect T="int?" Value="_stationId" ValueChanged="OnStationChanged" Label="工站" Clearable="true"
+                                   Disabled="_exporting">
+                            @foreach (var s in _stations)
+                            {
+                                <MudSelectItem T="int?" Value="@s.Id">@s.Code @s.Name</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="4" lg="3">
+                        <MudSelect T="Judgement?" Value="_judgement" ValueChanged="OnJudgementChanged" Label="判定" Clearable="true"
+                                   Disabled="_exporting">
+                            <MudSelectItem T="Judgement?" Value="Judgement.Ok">OK（合格）</MudSelectItem>
+                            <MudSelectItem T="Judgement?" Value="Judgement.Ng">NG（不合格）</MudSelectItem>
+                            <MudSelectItem T="Judgement?" Value="Judgement.None">未判定</MudSelectItem>
+                        </MudSelect>
+                    </MudItem>
+
+                    @* 结果码描述已落库采集记录的处理结果；PLC 通讯失败没有有效产品记录，单独留在审计日志。 *@
+                    <MudItem xs="12" sm="6" md="4" lg="3">
+                        <MudSelect T="short?" Value="_resultCode" ValueChanged="OnResultCodeChanged" Label="结果码" Clearable="true"
+                                   Disabled="_exporting">
+                            @foreach (var code in ResultCodeOptions)
+                            {
+                                <MudSelectItem T="short?" Value="@((short?)code)">@ResultCodeLabel(code)</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+
+                    <MudItem xs="12" sm="6" md="4" lg="3">
+                        <MudSelect T="RecipeFilterValue" Value="@ToOptionValue(_recipeFilter)" ValueChanged="OnRecipeFilterChanged"
+                                   Label="产品型号" Dense="true" Disabled="_exporting">
+                            <MudSelectItem T="RecipeFilterValue" Value="@RecipeFilterValue.All">全部型号</MudSelectItem>
+                            <MudSelectItem T="RecipeFilterValue" Value="@RecipeFilterValue.NoRecipe">未选型号</MudSelectItem>
+                            @foreach (var opt in _recipeOptions)
+                            {
+                                <MudSelectItem T="RecipeFilterValue" Value="@ToOptionValue(opt.Code)">@opt.Label</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                </MudGrid>
+
+                <MudStack Row="true" Spacing="2" Class="mt-1 mb-2 flex-wrap dt-query-secondary-actions">
+                    <MudButton Variant="Variant.Outlined" OnClick="Reset" Disabled="_exporting"
+                               StartIcon="@Icons.Material.Filled.RestartAlt">
+                        重置
+                    </MudButton>
+                    @if (_canExport)
                     {
-                        <MudSelectItem T="int?" Value="@s.Id">@s.Code @s.Name</MudSelectItem>
+                        @* 按钮禁用时浏览器不派发 hover，tooltip 挂在外层也收不到 —— 见 app.css 里
+                           .mud-tooltip .mud-button:disabled 那条：让按钮不接指针事件，hover 落到包裹层。 *@
+                        <MudTooltip Arrow="true" Text="@ExportTooltipText">
+                            <ChildContent>
+                                <MudButton Variant="Variant.Outlined" OnClick="ExportCsv" Disabled="@(_loading || _exporting || _total == 0)"
+                                           StartIcon="@Icons.Material.Filled.FileDownload">
+                                    @(_exporting ? "导出中…" : "导出 CSV")
+                                </MudButton>
+                            </ChildContent>
+                        </MudTooltip>
+                        <InfoHint Topic="HelpTexts.ExportLimit" Extra="@ExportHintExtra" />
+                        <MudText Typo="Typo.caption" Class="dt-muted align-self-center" role="status">
+                            导出范围 @DateRangeFilter.Format(_from, _to) · 命中 @_total.ToString("N0") 条 · 单次上限 @SystemDefaults.ExportRowLimit.ToString("N0") 条
+                        </MudText>
                     }
-                </MudSelect>
-            </MudItem>
-            <MudItem xs="12" sm="6" md="4" lg="3">
-                <MudSelect T="Judgement?" Value="_judgement" ValueChanged="OnJudgementChanged" Label="判定" Clearable="true"
-                           Disabled="_exporting">
-                    <MudSelectItem T="Judgement?" Value="Judgement.Ok">OK（合格）</MudSelectItem>
-                    <MudSelectItem T="Judgement?" Value="Judgement.Ng">NG（不合格）</MudSelectItem>
-                    <MudSelectItem T="Judgement?" Value="Judgement.None">未判定</MudSelectItem>
-                </MudSelect>
-            </MudItem>
-
-            @* 结果码描述已落库采集记录的处理结果；PLC 通讯失败没有有效产品记录，单独留在审计日志。 *@
-            <MudItem xs="12" sm="6" md="4" lg="3">
-                <MudSelect T="short?" Value="_resultCode" ValueChanged="OnResultCodeChanged" Label="结果码" Clearable="true"
-                           Disabled="_exporting">
-                    @foreach (var code in ResultCodeOptions)
-                    {
-                        <MudSelectItem T="short?" Value="@((short?)code)">@ResultCodeLabel(code)</MudSelectItem>
-                    }
-                </MudSelect>
-            </MudItem>
-
-                        <MudItem xs="12" sm="6" md="4" lg="3">
-                <MudSelect T="RecipeFilterValue" Value="@ToOptionValue(_recipeFilter)" ValueChanged="OnRecipeFilterChanged"
-                           Label="产品型号" Dense="true" Disabled="_exporting">
-                    <MudSelectItem T="RecipeFilterValue" Value="@RecipeFilterValue.All">全部型号</MudSelectItem>
-                    <MudSelectItem T="RecipeFilterValue" Value="@RecipeFilterValue.NoRecipe">未选型号</MudSelectItem>
-                    @foreach (var opt in _recipeOptions)
-                    {
-                        <MudSelectItem T="RecipeFilterValue" Value="@ToOptionValue(opt.Code)">@opt.Label</MudSelectItem>
-                    }
-                </MudSelect>
-            </MudItem>
-        </MudGrid>
-
-        <MudStack Row="true" Spacing="2" Class="mt-1 mb-2 flex-wrap">
-            <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
-                       StartIcon="@Icons.Material.Filled.Search" Disabled="_exporting">
-                @(_loading ? "查询中…" : "查询")
-            </MudButton>
-            <MudButton Variant="Variant.Outlined" OnClick="Reset" Disabled="_exporting"
-                       StartIcon="@Icons.Material.Filled.RestartAlt">
-                重置
-            </MudButton>
-            @if (_canExport)
-            {
-                @* 按钮禁用时浏览器不派发 hover，tooltip 挂在外层也收不到 —— 见 app.css 里
-                   .mud-tooltip .mud-button:disabled 那条：让按钮不接指针事件，hover 落到包裹层。 *@
-                <MudTooltip Arrow="true" Text="@ExportTooltipText">
-                    <ChildContent>
-                        <MudButton Variant="Variant.Outlined" OnClick="ExportCsv" Disabled="@(_loading || _exporting || _total == 0)"
-                                   StartIcon="@Icons.Material.Filled.FileDownload">
-                            @(_exporting ? "导出中…" : "导出 CSV")
-                        </MudButton>
-                    </ChildContent>
-                </MudTooltip>
-                <InfoHint Topic="HelpTexts.ExportLimit" Extra="@ExportHintExtra" />
-                <MudText Typo="Typo.caption" Class="dt-muted align-self-center" role="status">
-                    导出范围 @DateRangeFilter.Format(_from, _to) · 命中 @_total.ToString("N0") 条 · 单次上限 @SystemDefaults.ExportRowLimit.ToString("N0") 条
-                </MudText>
-            }
-            <MudText Typo="Typo.caption" Class="dt-muted align-self-center">改任一条件即自动重查，也可点「查询」立刻执行</MudText>
-            <InfoHint Topic="HelpTexts.MatchMode" />
-        </MudStack>
-    </form>
-</MudPaper>
+                    <MudText Typo="Typo.caption" Class="dt-muted align-self-center">改任一条件即自动重查，也可点「查询」立刻执行</MudText>
+                    <InfoHint Topic="HelpTexts.MatchMode" />
+                </MudStack>
+            </div>
+        </form>
+    </MudPaper>
+</div>
 
 @* 「变更即查询」之后，六个条件散在各个控件里，筛完只剩一个命中数，回头看不出自己是按什么在筛。
    这里把生效条件摊开，并且能只摘掉其中一个 —— 与日志页同一套 chips 写法。
@@ -168,6 +197,7 @@ else
 
 @* 表头吸附：一页最多 100 行，滚下去就没有列名可对。高度用 --dt-grid-height 统一约定，
    不写在这里是因为它和页头/筛选卡/分页条的实际高度有关，只该有一处真相。 *@
+<h2 id="dt-query-results-heading" class="dt-query-results-heading" tabindex="-1">查询结果</h2>
 <MudTable Items="_items" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm"
           Loading="@(_loading || _exporting)" LoadingProgressColor="Color.Info"
           FixedHeader="true" Height="var(--dt-grid-height)"
@@ -176,37 +206,37 @@ else
     <HeaderContent>
         @* 表头即排序入口：服务端分页下只排当前页等于没排，所以点表头是重新查询，
            箭头只画在当前排序列上（见 SortIcon）。 *@
-        <MudTh Class="dt-nowrap">
+        <MudTh Class="dt-nowrap" aria-sort="@SortAria(CollectSortField.TriggerTime)">
             <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0" EndIcon="@SortIcon(CollectSortField.TriggerTime)"
                        OnClick="@(() => OnSortClicked(CollectSortField.TriggerTime))">时间</MudButton>
         </MudTh>
-        <MudTh>
+        <MudTh aria-sort="@SortAria(CollectSortField.SerialNo)">
             <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0" EndIcon="@SortIcon(CollectSortField.SerialNo)"
                        OnClick="@(() => OnSortClicked(CollectSortField.SerialNo))">流水号</MudButton>
         </MudTh>
-        <MudTh>
+        <MudTh aria-sort="@SortAria(CollectSortField.PalletCode)">
             <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0" EndIcon="@SortIcon(CollectSortField.PalletCode)"
                        OnClick="@(() => OnSortClicked(CollectSortField.PalletCode))">托盘码</MudButton>
         </MudTh>
-        <MudTh>
+        <MudTh aria-sort="@SortAria(CollectSortField.StationCode)">
             <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0" EndIcon="@SortIcon(CollectSortField.StationCode)"
                        OnClick="@(() => OnSortClicked(CollectSortField.StationCode))">工站</MudButton>
         </MudTh>
-        <MudTh>
+        <MudTh aria-sort="@SortAria(CollectSortField.RecipeCode)">
             <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0" EndIcon="@SortIcon(CollectSortField.RecipeCode)"
                        OnClick="@(() => OnSortClicked(CollectSortField.RecipeCode))">型号</MudButton>
             <InfoHint Topic="HelpTexts.RecipeScope" />
         </MudTh>
-        <MudTh>
+        <MudTh aria-sort="@SortAria(CollectSortField.Judgement)">
             <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0" EndIcon="@SortIcon(CollectSortField.Judgement)"
                        OnClick="@(() => OnSortClicked(CollectSortField.Judgement))">判定</MudButton>
             <InfoHint Topic="HelpTexts.JudgementThreeState" />
         </MudTh>
-        <MudTh Class="dt-nowrap">
+        <MudTh Class="dt-nowrap" aria-sort="@SortAria(CollectSortField.ResultCode)">
             <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0" EndIcon="@SortIcon(CollectSortField.ResultCode)"
                        OnClick="@(() => OnSortClicked(CollectSortField.ResultCode))">结果码</MudButton>
         </MudTh>
-        <MudTh Class="dt-right">
+        <MudTh Class="dt-right" aria-sort="@SortAria(CollectSortField.DurationMs)">
             <MudButton Size="Size.Small" Variant="Variant.Text" Class="pa-0" EndIcon="@SortIcon(CollectSortField.DurationMs)"
                        OnClick="@(() => OnSortClicked(CollectSortField.DurationMs))">耗时</MudButton>
         </MudTh>
@@ -406,6 +436,7 @@ else
     private bool _exporting;
     private bool _canExport;
     private bool _traceMode;
+    private bool _advancedFiltersExpanded;
     private bool _recordsLoaded;
     private CancellationTokenSource? _debounceCts;
 
@@ -587,6 +618,8 @@ else
         TraceQuery = null;
         Nav.NavigateTo("query?view=trace", replace: true);
     }
+
+    private void ToggleAdvancedFilters() => _advancedFiltersExpanded = !_advancedFiltersExpanded;
 
     private async Task ShowRecords()
     {
@@ -1048,6 +1081,14 @@ else
         }
     }
 
+    private int ActiveSecondaryFilterCount => ActiveFilters.Count(filter =>
+        !filter.Label.StartsWith("托盘码 ", StringComparison.Ordinal)
+        && !filter.Label.StartsWith("流水号 ", StringComparison.Ordinal));
+
+    private string SecondaryFilterSummary => ActiveSecondaryFilterCount == 0
+        ? "日期、工站、判定、结果码、型号"
+        : $"{ActiveSecondaryFilterCount} 项已生效";
+
     private bool IsDefaultRange
         => _from == DateTime.Today && _to == DateTime.Today;
 
@@ -1191,6 +1232,9 @@ else
         => _sortBy != field
             ? null
             : _sortDesc ? Icons.Material.Filled.ArrowDownward : Icons.Material.Filled.ArrowUpward;
+
+    private string SortAria(CollectSortField field)
+        => _sortBy != field ? "none" : _sortDesc ? "descending" : "ascending";
 
     private async Task OnRecipeFilterChanged(RecipeFilterValue? value)
     {

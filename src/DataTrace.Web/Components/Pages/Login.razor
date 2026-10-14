@@ -28,7 +28,7 @@
         </div>
         <h1 class="login-title">登录 @_siteName</h1>
         <p class="login-hint">产线数据采集与追溯。请使用工程师分配的账号登录。</p>
-        <p class="login-hint login-security">生产环境首次部署会生成随机管理员口令，并强制首次登录改密；admin / Admin@123 之类的演示账号只在本机开发环境存在，勿留在现场。</p>
+        <p class="login-hint login-security">生产环境首次部署会生成随机管理员口令；登录后可自行修改。admin / Admin@123 之类的演示账号只在本机开发环境存在，勿留在现场。</p>
         <form method="post" action="/account/login" data-enhance="false" data-enhance-nav="false">
             @* 这里不放 <AntiforgeryToken />：本页在 Routes 的 InteractiveServer 下渲染，令牌组件靠
                AntiforgeryStateProvider 取令牌，交互渲染阶段取不到；端点也没在用令牌

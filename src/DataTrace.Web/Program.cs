@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Diagnostics;
 using DataTrace.Application.Configuration;
 using DataTrace.Application.Identity;
 using DataTrace.Collector;
@@ -8,6 +9,7 @@ using DataTrace.Infrastructure.Seeding;
 using DataTrace.Plc;
 using DataTrace.Plc.Drivers.IoTClient;
 using DataTrace.Web.Components;
+using DataTrace.Web.Components.Shared;
 using DataTrace.Web.Options;
 using DataTrace.Web.Services;
 using DataTrace.Shared;
@@ -130,6 +132,7 @@ builder.Services.AddMudServices(config =>
     config.SnackbarConfiguration.HideTransitionDuration = 150;
     config.SnackbarConfiguration.MaxDisplayedSnackbars = 3;
 });
+builder.Services.AddTransient<MudLocalizer, DataTraceMudLocalizer>();
 builder.Services.AddScoped<DataTrace.Web.Services.DtToast>();
 builder.Services.AddSingleton<IJsonFileDialog, WindowsJsonFileDialog>();
 // /healthz 的判据（配置库、数据盘可写、采集器心跳）。只依赖单例服务。
@@ -278,34 +281,9 @@ app.Use(async (context, next) =>
         return;
     }
 
-    // 首登必须改密：标记随登录主体走（ApplicationUserClaimsPrincipalFactory），这里只识别与引导，
-    // 不查库。初始口令没换掉之前只放行改密页与页面渲染必需的静态资源。
-    if (!isAuthEndpoint
-        && context.User.Identity?.IsAuthenticated == true
-        && context.User.HasClaim(ApplicationUserClaimsPrincipalFactory.MustChangePasswordClaim, "1")
-        && !IsPasswordChangeExempt(path))
-    {
-        context.Response.Redirect("/change-password");
-        return;
-    }
-
     await next();
 });
 
-// 强制改密期间仍须可达的路径：改密页自己、改密/登录/登出端点、探活、错误页，
-// 以及**所有带扩展名的静态资源** —— 页面渲染要用它们。
-// 静态资源不按目录白名单逐个列：app.css / favicon / manifest 这些就挂在根下，
-// 列漏一个的症状是"改密页没有样式"，而且只在被强制改密时才出现，很难第一时间想到。
-static bool IsPasswordChangeExempt(PathString path)
-    => path.StartsWithSegments("/account")
-       || path.StartsWithSegments("/change-password")
-       || path.StartsWithSegments("/healthz")
-       || path.StartsWithSegments("/error")
-       || path.StartsWithSegments("/_framework")
-       || path.StartsWithSegments("/_content")
-       || path.StartsWithSegments("/_blazor")
-       || path.StartsWithSegments("/branding")
-       || Path.HasExtension(path.Value);
 app.UseAuthorization();
 app.UseAntiforgery();
 
@@ -321,7 +299,6 @@ static bool SameSitePost(HttpContext http) => CrossSiteRequestGuard.IsSameSite(
 app.MapPost("/account/login", async (
     HttpContext http,
     SignInManager<ApplicationUser> signIn,
-    UserManager<ApplicationUser> users,
     IAuditLogger audit,
     ILogger<Program> logger) =>
 {
@@ -359,15 +336,6 @@ app.MapPost("/account/login", async (
         {
             // 登录是重定向流程，弹不出提示；但也不能静默，日志里必须留痕。
             logger.LogWarning(ex, "登录成功但审计写入失败：{UserName}", userName);
-        }
-
-        // 初始口令还没换掉就先把人送去改密页 —— 别让他拿着一次性口令去操作。
-        // 改完由改密页把人送回原目标。
-        var signedIn = await users.FindByNameAsync(userName);
-        if (signedIn?.MustChangePassword == true)
-        {
-            var target = Uri.EscapeDataString(ReturnUrl.AfterSignIn(returnUrl));
-            return Results.Redirect($"/change-password?{ReturnUrl.QueryKey}={target}");
         }
 
         return Results.Redirect(ReturnUrl.AfterSignIn(returnUrl));
@@ -430,9 +398,8 @@ app.MapPost("/account/logout", async (
     return Results.Redirect("/");
 }).AllowAnonymous();
 
-// 强制改密走表单 POST，而不是 Blazor 组件里改：改完必须重发认证 Cookie，
-// 而交互式渲染阶段拿不到 HttpContext，SignInManager 在里面写不了 Cookie —— 会变成
-// "密码改了、主体里的标记还在"，下一页又被拦回本页。和登录端点同一套取舍，来源同样用 Origin/Referer 判。
+// 改密走表单 POST，而不是 Blazor 组件里改：交互式渲染阶段拿不到 HttpContext，
+// SignInManager 在里面写不了 Cookie。来源检查与登录端点一致，使用 Origin/Referer 判定。
 app.MapPost("/account/change-password", async (
     HttpContext http,
     SignInManager<ApplicationUser> signIn,
@@ -486,7 +453,7 @@ app.MapPost("/account/change-password", async (
         return Results.Redirect(ChangePasswordError(result.Code ?? "unexpected", returnUrl));
     }
 
-    // 改完重发 Cookie：主体里的"必须改密"标记随新 Cookie 消失，否则下一页又被拦回来。
+    // 改完重发 Cookie，确保浏览器使用更新后的安全戳。
     var changed = await users.FindByNameAsync(userName);
     if (changed is not null)
     {
@@ -559,5 +526,62 @@ static void SweepStaleAuditExports(string tempDirectory)
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode()
     .DisableAntiforgery();
+
+static string? ResolveBrowserUrl(IConfiguration configuration)
+{
+    var configuredUrls = new[]
+    {
+        configuration["Kestrel:Endpoints:Http:Url"],
+        configuration["Kestrel:Endpoints:Https:Url"],
+        configuration["urls"],
+        configuration["ASPNETCORE_URLS"]
+    };
+
+    foreach (var candidate in configuredUrls)
+    {
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            continue;
+        }
+
+        foreach (var address in candidate.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!Uri.TryCreate(address, UriKind.Absolute, out var uri))
+            {
+                continue;
+            }
+
+            if (uri.Host is "0.0.0.0" or "*" or "+" or "::" or "[::]")
+            {
+                var localAddress = new UriBuilder(uri) { Host = "localhost" };
+                return localAddress.Uri.ToString();
+            }
+
+            return uri.ToString();
+        }
+    }
+
+    return null;
+}
+
+var browserUrl = ResolveBrowserUrl(app.Configuration);
+if (OperatingSystem.IsWindows()
+    && Environment.UserInteractive
+    && app.Environment.IsProduction()
+    && app.Configuration.GetValue("Browser:AutoOpen", true)
+    && browserUrl is not null)
+{
+    app.Lifetime.ApplicationStarted.Register(() =>
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(browserUrl) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogWarning(ex, "无法自动打开 DataTrace 前端页面 {Url}", browserUrl);
+        }
+    });
+}
 
 app.Run();

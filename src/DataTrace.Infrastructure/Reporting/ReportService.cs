@@ -207,6 +207,7 @@ public sealed class ReportService : IReportService
                 Time = x.Time,
                 Value = x.Value,
                 PalletCode = x.PalletCode,
+                PurposeSnapshot = x.PurposeSnapshot,
                 // 规格限跟着样本一起带出来：过程能力就是在这批点上按"限值有没有动过"分段的，
                 // 不带的话统计服务只能再查一遍同一条窄投影。
                 LowerLimit = x.LowerLimit,

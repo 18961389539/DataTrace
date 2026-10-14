@@ -20,7 +20,9 @@ internal static class MigrationBootstrap
         "20261011172000_AddPendingConfirmationTarget",
         "20261011173000_AddCollectRecordConfigurationRevision",
         "20261011174000_AddPendingWriteBackRecordIdentity",
-        "20261012023339_AddConditionalEventIdentity"
+        "20261012023339_AddConditionalEventIdentity",
+        "20261012113312_AddTagValueUnitSnapshot",
+        "20261012120919_AddTagPurposeSnapshot"
     ];
 
     public static bool NeedsLegacyBootstrap(DbContext db)
@@ -66,6 +68,31 @@ internal static class MigrationBootstrap
             .Split('+', 2)[0]
             ?? throw new InvalidOperationException("无法读取 EF Core 产品版本");
         db.Database.ExecuteSqlRaw(history.GetInsertScript(new HistoryRow(baseline, productVersion)));
+    }
+
+    public static void MarkMigrationApplied(DbContext db, string migrationId)
+    {
+        if (!db.Database.GetMigrations().Contains(migrationId, StringComparer.Ordinal))
+        {
+            throw new InvalidOperationException($"未知迁移：{migrationId}");
+        }
+
+        var history = db.GetService<IHistoryRepository>();
+        if (!history.Exists())
+        {
+            db.Database.ExecuteSqlRaw(history.GetCreateScript());
+        }
+
+        if (history.GetAppliedMigrations().Any(row => row.MigrationId == migrationId))
+        {
+            return;
+        }
+
+        var productVersion = typeof(DbContext).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion?
+            .Split('+', 2)[0]
+            ?? throw new InvalidOperationException("无法读取 EF Core 产品版本");
+        db.Database.ExecuteSqlRaw(history.GetInsertScript(new HistoryRow(migrationId, productVersion)));
     }
 
     public static void MarkReviewedRuntimeMigrationsApplied(DbContext db)

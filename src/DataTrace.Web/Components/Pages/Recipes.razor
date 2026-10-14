@@ -111,11 +111,17 @@
                            OnClick="@(() => EditRecipe(context))">编辑</MudButton>
                 <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_saving"
                            OnClick="@(() => EditLimits(context))">限值</MudButton>
-                <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_saving"
-                           OnClick="@(() => CopyRecipe(context))">复制</MudButton>
+                <MudMenu Dense="true" AnchorOrigin="Origin.BottomRight" TransformOrigin="Origin.TopRight">
+                    <ActivatorContent>
+                        <MudIconButton Icon="@Icons.Material.Filled.MoreVert" Size="Size.Small"
+                                       Disabled="_saving" aria-label="@($"更多型号操作：{context.Name}")" />
+                    </ActivatorContent>
+                    <ChildContent>
+                        <MudMenuItem Disabled="_saving" OnClick="@(() => CopyRecipe(context))">复制型号</MudMenuItem>
+                        <MudMenuItem Disabled="_saving" OnClick="@(() => DeleteRecipe(context))">删除型号</MudMenuItem>
+                    </ChildContent>
+                </MudMenu>
                 <InfoHint Topic="HelpTexts.RecipeCopy" />
-                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error" Disabled="_saving"
-                           OnClick="@(() => DeleteRecipe(context))">删除</MudButton>
                 </span>
             </MudTd>
         </RowTemplate>

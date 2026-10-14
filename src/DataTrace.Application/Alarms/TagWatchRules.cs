@@ -1,4 +1,5 @@
 using DataTrace.Domain.Evaluation;
+using DataTrace.Domain.Enums;
 
 namespace DataTrace.Application.Alarms;
 
@@ -12,6 +13,8 @@ public sealed class TagObservation
     public int TagId { get; set; }
 
     public string TagName { get; set; } = "";
+
+    public TagPurpose? PurposeSnapshot { get; set; }
 
     public DateTime CompleteTime { get; set; }
 

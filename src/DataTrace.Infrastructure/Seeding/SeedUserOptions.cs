@@ -18,10 +18,10 @@ public sealed class SeedUserOptions
 
     /// <summary>
     /// 引导管理员（<c>admin</c>）的口令。留空则随机生成一次并打印到日志，推荐留空。
-    /// 无论哪种来源，首次登录都会被要求改密。
+    /// 应通过安全渠道交付；管理员登录后可自行修改。
     /// </summary>
     public string? AdminPassword { get; init; }
 
-    /// <summary>生产策略：不写死任何口令，只引导出一个必须改密码的管理员。</summary>
+    /// <summary>生产策略：不写死任何口令，只引导出一个随机口令的管理员。</summary>
     public static SeedUserOptions Production { get; } = new() { DemoUsers = false };
 }

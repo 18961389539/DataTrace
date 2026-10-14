@@ -65,7 +65,7 @@ public class RuntimeStoreTests
     [Fact]
     public async Task Existing_month_db_gains_the_persisted_limit_columns()
     {
-        string[] columns = ["LowerLimit", "UpperLimit", "WarningLowerLimit", "WarningUpperLimit"];
+        string[] columns = ["LowerLimit", "UpperLimit", "WarningLowerLimit", "WarningUpperLimit", "UnitSnapshot"];
         const string monthKey = "202609";
 
         using var workspace = new TempWorkspace();
@@ -83,9 +83,21 @@ public class RuntimeStoreTests
 
         // 模拟更早的月份库：缺列，并且结构版本退回到补丁之前。
         // 版本已经是当前值时，打开不会再补列 —— 老库的特征是“版本号还没到这一档”。
-        await using (var raw = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path}"))
+        await using (var raw = new Microsoft.Data.Sqlite.SqliteConnection(
+                         new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = path, ForeignKeys = false }.ToString()))
         {
             await raw.OpenAsync();
+            await using (var insert = raw.CreateCommand())
+            {
+                insert.CommandText = """
+                    INSERT INTO "TagValues"
+                        ("Id", "CollectRecordId", "TagId", "TagName", "PositionIndex", "DataType",
+                         "IsOutOfLimit", "IsWarning", "UnitSnapshot")
+                    VALUES (1, 1, 10, 'legacy', 0, 0, 0, 0, NULL)
+                    """;
+                await insert.ExecuteNonQueryAsync();
+            }
+
             foreach (var column in columns)
             {
                 await using var drop = raw.CreateCommand();
@@ -104,6 +116,8 @@ public class RuntimeStoreTests
         await using (var reopened = new RuntimeDbFactory(root).Open(monthKey))
         {
             ReadLimitColumns(reopened);
+            var legacyValue = await reopened.TagValues.SingleAsync();
+            Assert.Null(legacyValue.UnitSnapshot);
         }
 
         await AssertColumnsAndVersionAsync(path, "TagValues", columns);
@@ -163,7 +177,7 @@ public class RuntimeStoreTests
     /// </summary>
     private static void ReadLimitColumns(RuntimeDbContext ctx)
         => ctx.TagValues
-            .Select(t => new { t.LowerLimit, t.UpperLimit, t.WarningLowerLimit, t.WarningUpperLimit })
+            .Select(t => new { t.LowerLimit, t.UpperLimit, t.WarningLowerLimit, t.WarningUpperLimit, t.UnitSnapshot })
             .ToList();
 
     /// <summary>会话首因列的探针，理由同上：必须让列名进 SQL。</summary>

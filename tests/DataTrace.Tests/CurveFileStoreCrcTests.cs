@@ -1,4 +1,5 @@
 using System.IO.Hashing;
+using System.Text;
 using DataTrace.Application.Runtime;
 using DataTrace.Domain.Enums;
 using DataTrace.Infrastructure.Storage;
@@ -28,7 +29,13 @@ public class CurveFileStoreCrcTests : IDisposable
         Series =
         [
             new CurveSeriesPayload { Name = "位移", Role = SeriesRole.X, Values = Enumerable.Range(0, points).Select(i => (float)i).ToArray() },
-            new CurveSeriesPayload { Name = "压力", Role = SeriesRole.Y, Values = Enumerable.Range(0, points).Select(i => i * 0.5f).ToArray() }
+            new CurveSeriesPayload
+            {
+                Name = "结果码",
+                Role = SeriesRole.Y,
+                Values = Enumerable.Range(0, points).Select(i => i * 0.5f).ToArray(),
+                IsDiscrete = true
+            }
         ]
     };
 
@@ -56,8 +63,32 @@ public class CurveFileStoreCrcTests : IDisposable
         Assert.Equal(payload.PointCount, loaded.PointCount);
         Assert.Equal(2, loaded.Series.Count);
         Assert.Equal(payload.Series[1].Values, loaded.Series[1].Values);
+        Assert.True(loaded.Series[1].IsDiscrete);
 
         // 入库值与磁盘内容不一致时必须报损坏（与"文件缺失"区分开）。
         await Assert.ThrowsAsync<InvalidDataException>(() => store.ReadAsync(relative, crc + 1));
+    }
+
+    [Fact]
+    public void Deserialize_reads_legacy_v1_curve_files_as_unknown_not_discrete()
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write(Encoding.ASCII.GetBytes("DTCR"));
+            writer.Write((byte)1);
+            writer.Write(1);
+            writer.Write(1);
+            writer.Write((ushort)2);
+            writer.Write(Encoding.UTF8.GetBytes("Y1"));
+            writer.Write((byte)SeriesRole.Y);
+            writer.Write(1);
+            writer.Write(12.5f);
+        }
+
+        var loaded = CurveFileStore.Deserialize(stream.ToArray());
+
+        Assert.False(loaded.Series[0].IsDiscrete);
+        Assert.Equal(12.5f, loaded.Series[0].Values[0]);
     }
 }

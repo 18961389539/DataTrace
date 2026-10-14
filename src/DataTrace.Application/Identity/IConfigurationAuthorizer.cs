@@ -10,14 +10,12 @@ public interface IConfigurationAuthorizer
     Task AuthorizeRoleAsync(
         string actor,
         IReadOnlyCollection<string> allowedRoles,
-        CancellationToken cancellationToken = default,
-        bool allowMustChangePassword = false);
+        CancellationToken cancellationToken = default);
 
     /// <summary>Checks the current circuit identity against an explicit current role set when the caller has no actor argument.</summary>
     Task AuthorizeCurrentRoleAsync(
         IReadOnlyCollection<string> allowedRoles,
-        CancellationToken cancellationToken = default,
-        bool allowMustChangePassword = false);
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>A sensitive action was rejected because the current account or circuit is no longer authorized.</summary>

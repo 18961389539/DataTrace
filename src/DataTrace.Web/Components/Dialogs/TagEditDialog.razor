@@ -1,4 +1,5 @@
 @using DataTrace.Domain.Evaluation
+@using DataTrace.Domain.Enums
 @using DataTrace.Domain.Validation
 @using DataTrace.Plc.Addresses
 @using DataTrace.Plc.Codec
@@ -19,6 +20,15 @@
             <MudItem xs="12">
                 <MudTextField @bind-Value="Tag.Name" @bind-Value:after="Validate" Label="名称"
                               Immediate="true" Error="@(_nameError is not null)" ErrorText="@_nameError" />
+            </MudItem>
+            <MudItem xs="12">
+                <MudSelect T="TagPurpose" @bind-Value="Tag.Purpose" Label="字段用途"
+                           HelperText="@PurposeHelperText">
+                    @foreach (var purpose in Enum.GetValues<TagPurpose>())
+                    {
+                        <MudSelectItem Value="purpose">@DisplayLabels.TagPurposeText(purpose)</MudSelectItem>
+                    }
+                </MudSelect>
             </MudItem>
         </MudGrid>
         <MudGrid>
@@ -199,6 +209,14 @@
     private bool TagIsString => Tag.DataType == PlcDataType.String;
     private bool TagShowsUnit => Tag.DataType is not PlcDataType.Bool;
     private bool TagUsesNumericLimits => Tag.DataType is not (PlcDataType.Bool or PlcDataType.String);
+    private string PurposeHelperText => Tag.Purpose switch
+    {
+        TagPurpose.QualityMeasurement => "连续质量测量：参与规格判定、SPC 趋势/漂移和预警连续件数。",
+        TagPurpose.DiscreteResult => "离散检测结果：可按规格限判定，但不参与连续测量 SPC。",
+        TagPurpose.Identity => "身份与追溯字段：仅记录，不参与质量限值判定或 SPC。",
+        TagPurpose.Diagnostic => "诊断与状态字段：仅记录，不参与质量限值判定或 SPC。",
+        _ => ""
+    };
 
     /// <summary>
     /// 文件源点位的「数值 / 文本」二选一。

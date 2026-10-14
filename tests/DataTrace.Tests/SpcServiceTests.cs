@@ -3,6 +3,7 @@ using DataTrace.Application.Reporting;
 using DataTrace.Collector;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
+using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
 using DataTrace.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -141,6 +142,38 @@ public class SpcServiceTests
             999_999, DateTime.Today.AddDays(-1), DateTime.Today.AddDays(1));
 
         Assert.Null(report);
+    }
+
+    [Fact]
+    public async Task Analyze_filters_classified_non_measurements_but_keeps_unknown_legacy_samples()
+    {
+        await using var harness = await CollectHarness.CreateAsync();
+        var tag = harness.Station(0).Tags.Single(t => t.Name == "压力");
+        var spc = harness.Scope.ServiceProvider.GetRequiredService<ISpcService>();
+        var samples = new[]
+        {
+            new TrendPoint
+            {
+                Time = DateTime.Today.AddMinutes(1),
+                Value = 999,
+                PurposeSnapshot = TagPurpose.DiscreteResult
+            },
+            new TrendPoint
+            {
+                Time = DateTime.Today,
+                Value = 12,
+                PurposeSnapshot = null
+            }
+        };
+
+        var report = await spc.AnalyzeAsync(
+            tag.Id, samples, DateTime.Today.AddDays(-1), DateTime.Today.AddDays(1));
+
+        Assert.NotNull(report);
+        var sample = Assert.Single(report!.Samples);
+        Assert.Null(sample.PurposeSnapshot);
+        Assert.Equal(12, sample.Value);
+        Assert.Equal(1, Assert.Single(report.Segments).Summary.Count);
     }
 
     [Fact]

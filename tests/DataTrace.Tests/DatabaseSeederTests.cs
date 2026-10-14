@@ -1,5 +1,6 @@
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
+using DataTrace.Infrastructure.Identity;
 using DataTrace.Infrastructure.Persistence;
 using DataTrace.Infrastructure.Seeding;
 using Microsoft.EntityFrameworkCore;
@@ -18,6 +19,32 @@ public class DatabaseSeederTests
         Assert.Contains(
             await db.Database.GetAppliedMigrationsAsync(),
             migration => migration.EndsWith("_InitialConfigSchema", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Production_seed_clears_legacy_first_login_password_change_flags()
+    {
+        await using var context = await InfrastructureContext.CreateAsync();
+        using (var scope = context.Provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
+            var admin = await db.Users.SingleAsync(user => user.UserName == "admin");
+            admin.MustChangePassword = true;
+            await db.SaveChangesAsync();
+        }
+
+        using (var scope = context.Provider.CreateScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<DatabaseSeeder>()
+                .SeedAsync(SeedUserOptions.Production);
+        }
+
+        using (var scope = context.Provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
+            var admin = await db.Users.SingleAsync(user => user.UserName == "admin");
+            Assert.False(admin.MustChangePassword);
+        }
     }
 
     [Fact]

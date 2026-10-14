@@ -376,6 +376,42 @@ public class DiagnosticsPageTests : WebTestBase
         Assert.DoesNotContain(">ok<", cut.Markup);
     }
 
+    [Fact]
+    public void New_collection_health_checks_use_chinese_names_and_hide_unknown_codes_from_engineers()
+    {
+        _health.Report = new HealthReport(
+            "unhealthy", "1.0.0", "test", "Test", 1,
+            [
+                new HealthCheck("collection-readiness", false, "启动核对未完成"),
+                new HealthCheck("collection-stations", false, "1 个工站故障"),
+                new HealthCheck("collection-task-age", false, "1 个任务超时"),
+                new HealthCheck("future-internal-check", false, "请联系管理员")
+            ]);
+        UseRole(AppRoles.Engineer);
+
+        var (cut, _, _) = Render(new FakeSpool());
+
+        Assert.Contains("启动核对", cut.Markup);
+        Assert.Contains("工站运行", cut.Markup);
+        Assert.Contains("采集超时", cut.Markup);
+        Assert.Contains("其他健康检查", cut.Markup);
+        Assert.Contains("请联系管理员", cut.Markup);
+        Assert.DoesNotContain("future-internal-check", cut.Markup);
+    }
+
+    [Fact]
+    public void Administrator_can_expand_unknown_health_code_as_advanced_detail()
+    {
+        _health.Report = new HealthReport(
+            "unhealthy", "1.0.0", "test", "Test", 1,
+            [new HealthCheck("future-internal-check", false, "请联系管理员")]);
+
+        var (cut, _, _) = Render(new FakeSpool());
+
+        Assert.Contains("其他健康检查", cut.Markup);
+        Assert.Contains("内部标识：future-internal-check", cut.Markup);
+    }
+
     /// <summary>
     /// 可见性回调挂不上（浏览器缓存着旧版脚本）时不该把整页拖垮：照常轮询即可。
     /// </summary>

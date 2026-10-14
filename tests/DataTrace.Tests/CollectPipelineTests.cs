@@ -463,16 +463,19 @@ public class CollectPipelineTests
         var tag = station.Tags.Single(t => t.Name == "压力");
         tag.Scale = 2;
         tag.Offset = -1;
+        tag.Unit = "bar";
         Load(harness, station, "P0013");
         // 寄存器原始值 10 → 工程量 10 * 2 + (-1) = 19，落在 5–20 限内。
         harness.Simulator.SetFloat("D1100", 10f, harness.Plc.FloatWordOrder);
 
         Assert.Equal(ResultCodes.Success, await harness.RunAsync(station));
+        tag.Unit = "psi";
 
         var item = Assert.Single((await harness.QueryAsync("P0013")).Items);
         var record = await harness.RuntimeStore.GetRecordAsync(item.MonthKey, item.Record.Id);
         var pressure = Assert.Single(record!.TagValues, t => t.TagName == "压力");
         Assert.Equal(19d, pressure.NumericValue!.Value, precision: 4);
+        Assert.Equal("bar", pressure.UnitSnapshot);
         Assert.False(pressure.IsOutOfLimit);
 
         // 未配置缩放的点位直接透传原始值。

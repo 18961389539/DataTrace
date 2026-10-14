@@ -424,12 +424,12 @@ partial class DatabaseSeeder
         station.PositionCount = 1;
         station.Enabled = true;
         station.Tags.Clear();
-        station.Tags.Add(CreateInt16Tag("数据1_配方号", "MW3000"));
-        station.Tags.Add(CreateInt16Tag("托盘号", "MW3001"));
+        station.Tags.Add(CreateIdentityTag("数据1_配方号", "MW3000"));
+        station.Tags.Add(CreateIdentityTag("托盘号", "MW3001"));
 
         for (var result = 1; result <= 17; result++)
         {
-            station.Tags.Add(CreateInt16Tag($"3D结果{result}", $"MW{3003 + result}"));
+            station.Tags.Add(CreateDiscreteResultTag($"3D结果{result}", $"MW{3003 + result}"));
         }
 
         station.Curves.Clear();
@@ -450,12 +450,12 @@ partial class DatabaseSeeder
         station.PositionCount = 1;
         station.Enabled = true;
         station.Tags.Clear();
-        station.Tags.Add(CreateInt16Tag("配方号", "MW3100"));
-        station.Tags.Add(CreateInt16Tag("托盘号", "MW3101"));
+        station.Tags.Add(CreateIdentityTag("配方号", "MW3100"));
+        station.Tags.Add(CreateIdentityTag("托盘号", "MW3101"));
 
         for (var product = 0; product <= 8; product++)
         {
-            station.Tags.Add(CreateInt16Tag($"产品{product}结果", $"MW{3103 + product}"));
+            station.Tags.Add(CreateDiscreteResultTag($"产品{product}结果", $"MW{3103 + product}"));
         }
 
         station.Curves.Clear();
@@ -476,16 +476,16 @@ partial class DatabaseSeeder
         station.PositionCount = 1;
         station.Enabled = true;
         station.Tags.Clear();
-        station.Tags.Add(CreateInt16Tag("配方号", "MW3200"));
-        station.Tags.Add(CreateInt16Tag("托盘号", "MW3201"));
+        station.Tags.Add(CreateIdentityTag("配方号", "MW3200"));
+        station.Tags.Add(CreateIdentityTag("托盘号", "MW3201"));
         for (var product = 1; product <= 4; product++)
         {
-            station.Tags.Add(CreateInt16Tag($"产品{product}拍基准结果", $"MW{3203 + product}"));
+            station.Tags.Add(CreateDiscreteResultTag($"产品{product}拍基准结果", $"MW{3203 + product}"));
         }
 
         for (var product = 1; product <= 4; product++)
         {
-            station.Tags.Add(CreateInt16Tag($"产品{product}拍PIN结果", $"MW{3207 + product}"));
+            station.Tags.Add(CreateDiscreteResultTag($"产品{product}拍PIN结果", $"MW{3207 + product}"));
         }
 
         station.Curves.Clear();
@@ -506,11 +506,11 @@ partial class DatabaseSeeder
         station.PositionCount = 1;
         station.Enabled = true;
         station.Tags.Clear();
-        station.Tags.Add(CreateInt16Tag("配方号", "MW2300"));
-        station.Tags.Add(CreateInt16Tag("托盘号", "MW2301"));
+        station.Tags.Add(CreateIdentityTag("配方号", "MW2300"));
+        station.Tags.Add(CreateIdentityTag("托盘号", "MW2301"));
         for (var press = 1; press <= 4; press++)
         {
-            station.Tags.Add(CreateInt16Tag($"压装{press}结果", $"MW{2303 + press}"));
+            station.Tags.Add(CreateDiscreteResultTag($"压装{press}结果", $"MW{2303 + press}"));
         }
 
         for (var press = 1; press <= 4; press++)
@@ -572,11 +572,11 @@ partial class DatabaseSeeder
         station.PositionCount = 1;
         station.Enabled = true;
         station.Tags.Clear();
-        station.Tags.Add(CreateInt16Tag("配方号", "MW2400"));
-        station.Tags.Add(CreateInt16Tag("托盘号", "MW2401"));
+        station.Tags.Add(CreateIdentityTag("配方号", "MW2400"));
+        station.Tags.Add(CreateIdentityTag("托盘号", "MW2401"));
         for (var press = 1; press <= 4; press++)
         {
-            station.Tags.Add(CreateInt16Tag($"压装{press}结果", $"MW{2403 + press}"));
+            station.Tags.Add(CreateDiscreteResultTag($"压装{press}结果", $"MW{2403 + press}"));
         }
 
         for (var press = 1; press <= 4; press++)
@@ -638,11 +638,11 @@ partial class DatabaseSeeder
         station.PositionCount = 1;
         station.Enabled = true;
         station.Tags.Clear();
-        station.Tags.Add(CreateInt16Tag("配方号", "MW2500"));
-        station.Tags.Add(CreateInt16Tag("托盘号", "MW2501"));
+        station.Tags.Add(CreateIdentityTag("配方号", "MW2500"));
+        station.Tags.Add(CreateIdentityTag("托盘号", "MW2501"));
         for (var press = 1; press <= 4; press++)
         {
-            station.Tags.Add(CreateInt16Tag($"压装{press}结果", $"MW{2503 + press}"));
+            station.Tags.Add(CreateDiscreteResultTag($"压装{press}结果", $"MW{2503 + press}"));
         }
 
         for (var press = 1; press <= 4; press++)
@@ -704,11 +704,11 @@ partial class DatabaseSeeder
         station.PositionCount = 1;
         station.Enabled = true;
         station.Tags.Clear();
-        station.Tags.Add(CreateInt16Tag("配方号", "MW2600"));
-        station.Tags.Add(CreateInt16Tag("托盘号", "MW2601"));
+        station.Tags.Add(CreateIdentityTag("配方号", "MW2600"));
+        station.Tags.Add(CreateIdentityTag("托盘号", "MW2601"));
         for (var press = 1; press <= 4; press++)
         {
-            station.Tags.Add(CreateInt16Tag($"压装{press}结果", $"MW{2603 + press}"));
+            station.Tags.Add(CreateDiscreteResultTag($"压装{press}结果", $"MW{2603 + press}"));
         }
 
         for (var press = 1; press <= 4; press++)
@@ -770,21 +770,31 @@ partial class DatabaseSeeder
         station.PositionCount = 1;
         station.Enabled = true;
         station.Tags.Clear();
-        station.Tags.Add(CreateInt16Tag("配方号", "MW2700"));
-        station.Tags.Add(CreateInt16Tag("托盘号", "MW2701"));
+        station.Tags.Add(CreateIdentityTag("配方号", "MW2700"));
+        station.Tags.Add(CreateIdentityTag("托盘号", "MW2701"));
         for (var result = 1; result <= 16; result++)
         {
-            station.Tags.Add(CreateInt16Tag($"3D结果{result}", $"MW{2703 + result}"));
+            station.Tags.Add(CreateDiscreteResultTag($"3D结果{result}", $"MW{2703 + result}"));
         }
 
         station.Curves.Clear();
     }
 
-    private static TagDefinition CreateInt16Tag(string name, string address) => new()
+    private static TagDefinition CreateIdentityTag(string name, string address)
+        => CreateInt16Tag(name, address, TagPurpose.Identity);
+
+    private static TagDefinition CreateDiscreteResultTag(string name, string address)
+        => CreateInt16Tag(name, address, TagPurpose.DiscreteResult);
+
+    private static TagDefinition CreateInt16Tag(
+        string name,
+        string address,
+        TagPurpose purpose = TagPurpose.QualityMeasurement) => new()
     {
         Name = name,
         Address = address,
         DataType = PlcDataType.Int16,
+        Purpose = purpose,
         PositionIndex = 1,
         Enabled = true,
         IsRequired = true

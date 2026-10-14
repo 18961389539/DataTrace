@@ -101,4 +101,26 @@ public class CurveChartTests : WebTestBase
             Times.Never);
         Assert.Contains("没有可导出的成对数据", Toast.LastMessage);
     }
+
+    [Fact]
+    public void Discrete_curve_payload_is_rendered_as_a_step_chart()
+    {
+        var cut = Context.Render<CurveChart>(parameters => parameters
+            .Add(p => p.Payload, new CurvePayload
+            {
+                PointCount = 3,
+                Series =
+                [
+                    new CurveSeriesPayload
+                    {
+                        Name = "结果码",
+                        Role = SeriesRole.Y,
+                        Values = [0f, 1f, 1f],
+                        IsDiscrete = true
+                    }
+                ]
+            }));
+
+        Assert.Contains("离散状态阶梯图：结果码", cut.Find("div.dt-chart").GetAttribute("aria-label"));
+    }
 }

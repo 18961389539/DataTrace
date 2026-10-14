@@ -10,6 +10,10 @@ public class TagValue
 
     public int TagId { get; set; }
     public string TagName { get; set; } = "";
+    /// <summary>采集当时点位单位的快照；null 表示历史记录中单位未知，不应从当前配置推断。</summary>
+    public string? UnitSnapshot { get; set; }
+    /// <summary>采集时点位用途快照；null 表示历史用途未知，沿用旧监控行为。</summary>
+    public TagPurpose? PurposeSnapshot { get; set; }
     public int PositionIndex { get; set; }
     public PlcDataType DataType { get; set; }
     public double? NumericValue { get; set; }

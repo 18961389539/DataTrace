@@ -121,7 +121,7 @@ public sealed class ConfirmationRecoveryTests
     private sealed class AuthorizedOperator : IConfigurationAuthorizer
     {
         public Task AuthorizeChangeAsync(string actor, CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task AuthorizeRoleAsync(string actor, IReadOnlyCollection<string> allowedRoles, CancellationToken cancellationToken = default, bool allowMustChangePassword = false) => Task.CompletedTask;
-        public Task AuthorizeCurrentRoleAsync(IReadOnlyCollection<string> allowedRoles, CancellationToken cancellationToken = default, bool allowMustChangePassword = false) => Task.CompletedTask;
+        public Task AuthorizeRoleAsync(string actor, IReadOnlyCollection<string> allowedRoles, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task AuthorizeCurrentRoleAsync(IReadOnlyCollection<string> allowedRoles, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

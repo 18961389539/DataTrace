@@ -308,6 +308,8 @@ public abstract class E2ETestBase : IAsyncLifetime
 
     protected IPage Page { get; private set; } = null!;
 
+    private bool _circuitReady;
+
     protected E2ETestBase(WebAppHost app, BrowserFixture browser)
     {
         App = app;
@@ -351,6 +353,7 @@ public abstract class E2ETestBase : IAsyncLifetime
     /// </remarks>
     protected async Task OpenAsync(string relativePath)
     {
+        _circuitReady = false;
         await Page.GotoAsync($"{App.BaseUrl}{relativePath}");
         try
         {
@@ -360,6 +363,14 @@ public abstract class E2ETestBase : IAsyncLifetime
         {
             throw new TimeoutException($"{ex.Message}{Environment.NewLine}DataTrace.Web output:{Environment.NewLine}{App.Output}", ex);
         }
+    }
+
+    /// <summary>整页重新加载会创建新的 Blazor circuit，必须重新等待其接管 DOM。</summary>
+    protected async Task ReloadAsync()
+    {
+        _circuitReady = false;
+        await Page.ReloadAsync();
+        await WaitForCircuitReadyAsync();
     }
 
     /// <summary>
@@ -372,11 +383,19 @@ public abstract class E2ETestBase : IAsyncLifetime
     /// 而 circuit 接管时会把这段 DOM 整段重建 —— 在那之前发出的点击/回车会被丢掉，
     /// 失败方式往往是"什么都没发生"。页面上浮层（tooltip/下拉）越多，这个窗口越明显。
     /// </remarks>
-    protected Task WaitForCircuitReadyAsync()
-        => Page.WaitForFunctionAsync(
-            "() => document.activeElement === document.querySelector('h5')",
+    protected async Task WaitForCircuitReadyAsync()
+    {
+        if (_circuitReady)
+        {
+            return;
+        }
+
+        await Page.WaitForFunctionAsync(
+            "() => document.activeElement === document.querySelector('.dt-page-title')",
             arg: null,
             new PageWaitForFunctionOptions { Timeout = 20000 });
+        _circuitReady = true;
+    }
 
     /// <summary>在查询表单里填条件并回车提交——页面自己就提示"在输入框内按回车即查询"。</summary>
     protected async Task SearchAsync(ILocator input, string value)

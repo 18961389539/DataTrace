@@ -48,7 +48,7 @@ function createOption(element, model) {
     const left = model.showAxis ? 58 : 4;
     const right = 14;
     const top = model.showAxis ? 12 : 4;
-    const bottom = model.showAxis ? (model.annotated ? 48 : 30) : 4;
+    const bottom = model.showAxis ? (model.annotated ? 78 : 58) : 4;
     const axis = {
         show: model.showAxis,
         axisTick: { show: false },
@@ -71,11 +71,43 @@ function createOption(element, model) {
         },
         color: model.series.map(series => resolveColor(element, series.color)),
         grid: { left, right, top, bottom, containLabel: false },
-        xAxis: { ...axis, type: 'value', min: model.xMin, max: model.xMax, splitNumber: 4 },
+        xAxis: {
+            ...axis,
+            type: model.xType || 'value',
+            min: model.xMin,
+            max: model.xMax,
+            splitNumber: 4,
+            axisLabel: {
+                ...axis.axisLabel,
+                formatter: model.xType === 'time'
+                    ? value => window.echarts.format.formatTime('MM-dd hh:mm', value)
+                    : formatAxisValue
+            }
+        },
         yAxis: { ...axis, type: 'value', min: model.yMin, max: model.yMax, splitNumber: 4 },
+        dataZoom: model.showAxis && model.enableZoom ? [
+            {
+                type: 'inside',
+                filterMode: 'none',
+                zoomOnMouseWheel: true,
+                moveOnMouseMove: true
+            },
+            {
+                type: 'slider',
+                filterMode: 'none',
+                height: 18,
+                bottom: 4,
+                borderColor,
+                backgroundColor: surfaceColor,
+                fillerColor: 'rgba(72, 128, 176, .16)',
+                handleSize: 12,
+                showDetail: false
+            }
+        ] : [],
         series: model.series.map(series => ({
             name: series.name,
             type: 'line',
+            step: series.isDiscrete ? 'end' : false,
             showSymbol: series.showSymbol,
             symbol: 'circle',
             symbolSize: 7,
@@ -86,7 +118,7 @@ function createOption(element, model) {
         })),
         tooltip: model.showAxis ? {
             trigger: 'axis',
-            triggerOn: 'mousemove',
+            triggerOn: 'mousemove|click',
             renderMode: 'html',
             className: 'echarts-tooltip',
             confine: true,
@@ -104,14 +136,14 @@ function createOption(element, model) {
             {
                 type: 'text',
                 left,
-                bottom: 4,
+                bottom: model.enableZoom ? 28 : 4,
                 silent: true,
                 style: { text: model.xStartText, fill: axisColor, fontSize: 12 }
             },
             {
                 type: 'text',
                 right,
-                bottom: 4,
+                bottom: model.enableZoom ? 28 : 4,
                 silent: true,
                 style: { text: model.xEndText, fill: axisColor, fontSize: 12, textAlign: 'right' }
             }

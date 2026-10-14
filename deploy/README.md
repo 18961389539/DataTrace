@@ -55,7 +55,7 @@ cd D:\SourceCode\DataTrace\deploy
 
 ### 首次管理员账号
 
-Production 首次初始化只创建 `admin` 管理员，不创建固定演示账号。未设置 `Seed__AdminPassword` 时，应用生成一次性随机口令并写入 `{DataRoot}\logs\datatrace-*.log`；也可在首次启动前通过受控环境变量 `Seed__AdminPassword` 提供引导口令。两种方式都会要求首次登录立即改密。请由授权运维人员从本机日志或安全交付渠道取得口令，并在交付后按现场策略处理临时凭据。
+Production 首次初始化只创建 `admin` 管理员，不创建固定演示账号。未设置 `Seed__AdminPassword` 时，应用生成随机口令并写入 `{DataRoot}\logs\datatrace-*.log`；也可在首次启动前通过受控环境变量 `Seed__AdminPassword` 提供引导口令。首次登录不会强制改密；请由授权运维人员通过安全渠道交付口令，并建议管理员登录后自行修改。
 
 `admin/Admin@123` 等固定账号只用于 Development / 明确启用演示账号的 Staging 与自动化测试，不适用于 Production。
 

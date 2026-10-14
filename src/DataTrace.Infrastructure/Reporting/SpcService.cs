@@ -2,6 +2,7 @@ using DataTrace.Application.Configuration;
 using DataTrace.Application.Reporting;
 using DataTrace.Application.Runtime;
 using DataTrace.Domain.Entities;
+using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
 
 namespace DataTrace.Infrastructure.Reporting;
@@ -37,6 +38,7 @@ public sealed class SpcService : ISpcService
                 Time = p.Time,
                 Value = p.Value,
                 PalletCode = p.PalletCode,
+                PurposeSnapshot = p.PurposeSnapshot,
                 LowerLimit = p.LowerLimit,
                 UpperLimit = p.UpperLimit
             })
@@ -61,7 +63,10 @@ public sealed class SpcService : ISpcService
         }
 
         // 跨月拼接后必须重新按时间排序，否则移动极差会算到"上个月最后一点与本月第一点"这种假相邻关系上。
-        var points = samples.OrderBy(p => p.Time).ToList();
+        var points = samples
+            .Where(p => p.PurposeSnapshot.IsStatisticalMeasurement())
+            .OrderBy(p => p.Time)
+            .ToList();
 
         // 配置里的生效限值（点位默认 + 型号覆盖）。它有两个用途：
         // 目标值（没有随记录落库），以及给"限值列还是 null"的老数据兜底。

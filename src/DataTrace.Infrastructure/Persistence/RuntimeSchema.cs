@@ -12,7 +12,7 @@ namespace DataTrace.Infrastructure.Persistence;
 /// </remarks>
 public static class RuntimeSchema
 {
-    public const int CurrentVersion = 10;
+    public const int CurrentVersion = 12;
 
     public static void Upgrade(RuntimeDbContext ctx)
     {
@@ -96,6 +96,26 @@ public static class RuntimeSchema
             ctx.Database.ExecuteSqlRaw("""CREATE UNIQUE INDEX IF NOT EXISTS "IX_MesOutboxIntents_EventId" ON "MesOutboxIntents" ("EventId");""");
             ctx.Database.ExecuteSqlRaw("""CREATE INDEX IF NOT EXISTS "IX_MesOutboxIntents_PublishedAt_CreatedAt" ON "MesOutboxIntents" ("PublishedAt", "CreatedAt");""");
             WriteVersion(ctx, 10);
+        }
+
+        if (version < 11)
+        {
+            SqliteSchema.AddColumnIfMissing(
+                ctx,
+                "TagValues",
+                "UnitSnapshot",
+                """ALTER TABLE "TagValues" ADD COLUMN "UnitSnapshot" TEXT NULL""");
+            WriteVersion(ctx, 11);
+        }
+
+        if (version < 12)
+        {
+            SqliteSchema.AddColumnIfMissing(
+                ctx,
+                "TagValues",
+                "PurposeSnapshot",
+                """ALTER TABLE "TagValues" ADD COLUMN "PurposeSnapshot" INTEGER NULL""");
+            WriteVersion(ctx, 12);
         }
     }
 

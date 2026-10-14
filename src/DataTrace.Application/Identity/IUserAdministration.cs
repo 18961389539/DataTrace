@@ -24,7 +24,7 @@ public sealed class UserAdminResult
     public string? AuditError { get; init; }
 
     /// <summary>
-    /// 机器可读的失败分类，供"把错误码带过重定向"这类场景使用（如强制改密页）。
+    /// 机器可读的失败分类，供"把错误码带过重定向"这类场景使用（如改密页）。
     /// 界面直接显示 <see cref="Message"/> 时用不到它。
     /// </summary>
     public string? Code { get; init; }

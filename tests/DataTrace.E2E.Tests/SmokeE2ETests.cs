@@ -68,12 +68,14 @@ public class SmokeE2ETests : E2ETestBase
         await OpenAsync("");
         await WaitForAsync(".dash-station");
         await WaitForAsync(".dt-station-detail-link");
-        await WaitForAsync(".dt-station-curves .dt-station-curve");
 
         var detailsLink = Page.Locator(".dt-station-detail-link").First;
         Assert.Equal("查看本站明细", await detailsLink.GetAttributeAsync("aria-label"));
         Assert.True(await detailsLink.EvaluateAsync<bool>(
             "element => !!element.closest('.dt-station-header')"));
+
+        await Page.GetByRole(AriaRole.Button, new() { Name = "详细监控", Exact = true }).ClickAsync();
+        await WaitForAsync(".dt-station-curves .dt-station-curve");
 
         var curveLayoutIsValid = await Page.Locator(".dash-station").EvaluateAllAsync<bool>("""
             cards => cards.every(card => {

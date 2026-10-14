@@ -132,6 +132,24 @@ public class TagEditDialogTests : WebTestBase
     }
 
     [Fact]
+    public async Task Purpose_selector_explains_the_field_role_and_saves_the_selection()
+    {
+        var (provider, reference) = await OpenAsync(Tag(), isNew: true);
+        Assert.Contains("字段用途", provider.Markup);
+        Assert.Contains("参与规格判定、SPC", provider.Markup);
+
+        var selector = provider.FindComponent<MudSelect<TagPurpose>>();
+        await selector.InvokeAsync(
+            () => selector.Instance.ValueChanged.InvokeAsync(TagPurpose.DiscreteResult));
+
+        Assert.Contains("可按规格限判定，但不参与连续测量 SPC", provider.Markup);
+        ClickDialogButton(provider, "保存并下发");
+
+        var edited = Assert.IsType<TagDefinition>((await reference.Result)!.Data);
+        Assert.Equal(TagPurpose.DiscreteResult, edited.Purpose);
+    }
+
+    [Fact]
     public async Task Plc_source_dialog_validates_the_address_against_the_brand()
     {
         var tag = Tag();

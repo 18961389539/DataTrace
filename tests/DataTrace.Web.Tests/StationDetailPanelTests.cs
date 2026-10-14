@@ -1,5 +1,7 @@
 using DataTrace.Application.Realtime;
 using DataTrace.Domain.Enums;
+using DataTrace.Infrastructure.Realtime;
+using DataTrace.Web.Components.Dialogs;
 using DataTrace.Web.Components.Shared;
 using Microsoft.Extensions.DependencyInjection;
 using MudBlazor.Services;
@@ -7,7 +9,7 @@ using MudBlazor.Services;
 namespace DataTrace.Web.Tests;
 
 /// <summary>
-/// 工站侧边详情面板（看板 UX 审查第二批）：四个页签 + 跟随最新/固定本次。
+/// 工站详情弹窗内容：四个页签 + 跟随最新/固定本次。
 /// 固定的是「整份采集快照」—— 参数与曲线同进同退，新数据只提示不覆盖。
 /// </summary>
 public class StationDetailPanelTests
@@ -70,8 +72,7 @@ public class StationDetailPanelTests
     {
         await using var ctx = NewContext();
         var cut = ctx.Render<StationDetailPanel>(p => p
-            .Add(x => x.Station, Station("SN123", 77))
-            .Add(x => x.Open, true));
+            .Add(x => x.Station, Station("SN123", 77)));
 
         var tabs = cut.FindAll(".dt-detail-tab");
         Assert.Equal(4, tabs.Count);
@@ -89,8 +90,7 @@ public class StationDetailPanelTests
     {
         await using var ctx = NewContext();
         var cut = ctx.Render<StationDetailPanel>(p => p
-            .Add(x => x.Station, Station("SN123", 77, withOutLimit: true))
-            .Add(x => x.Open, true));
+            .Add(x => x.Station, Station("SN123", 77, withOutLimit: true)));
 
         // 切到「已固定本次」。
         cut.Find(".dt-detail-pin").Click();
@@ -120,8 +120,7 @@ public class StationDetailPanelTests
             new StationLiveCurve { Name = "位移曲线", Key = "6:1", Values = [4f, 5f, 6f], Judgement = Judgement.Ok }
         ];
         var cut = ctx.Render<StationDetailPanel>(p => p
-            .Add(x => x.Station, station)
-            .Add(x => x.Open, true));
+            .Add(x => x.Station, station));
 
         // 切到曲线页签（自绘页签按钮的第 3 个）。
         cut.FindAll(".dt-detail-tab")[2].Click();
@@ -139,8 +138,7 @@ public class StationDetailPanelTests
     {
         await using var ctx = NewContext();
         var cut = ctx.Render<StationDetailPanel>(p => p
-            .Add(x => x.Station, Station("SN123", 77))
-            .Add(x => x.Open, true));
+            .Add(x => x.Station, Station("SN123", 77)));
 
         // 切到参数页签。
         cut.FindAll(".dt-detail-tab")[1].Click();
@@ -156,5 +154,31 @@ public class StationDetailPanelTests
         cut.Find(".mud-switch input").Change(true);
         Assert.DoesNotContain("正常（1）", cut.Markup);
         Assert.Contains("超限（1）", cut.Markup);
+    }
+
+    [Fact]
+    public async Task Opens_inside_centered_mud_dialog()
+    {
+        await using var ctx = NewContext();
+        ctx.Services.AddSingleton<IRuntimeStatusHub>(new RuntimeStatusHub());
+        ctx.Services.AddSingleton<IDialogService, DialogService>();
+        var provider = ctx.Render<MudDialogProvider>();
+        var dialogs = ctx.Services.GetRequiredService<IDialogService>();
+
+        await dialogs.ShowAsync<StationDetailDialog>("ST03 压装站", new DialogParameters
+        {
+            ["Station"] = Station("SN123", 77)
+        }, new DialogOptions
+        {
+            MaxWidth = MaxWidth.Large,
+            FullWidth = true,
+            CloseButton = true,
+            CloseOnEscapeKey = true
+        });
+        provider.Render();
+
+        Assert.Contains("dt-station-dialog", provider.Markup);
+        Assert.Contains("ST03 压装站", provider.Markup);
+        Assert.Contains("dt-detail-tabs", provider.Markup);
     }
 }

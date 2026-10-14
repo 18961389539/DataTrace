@@ -996,6 +996,11 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Config
                     b.Property<int>("PositionIndex")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("Purpose")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0);
+
                     b.Property<double>("Scale")
                         .HasColumnType("REAL");
 

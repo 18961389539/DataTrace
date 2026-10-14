@@ -55,11 +55,13 @@ public class QueryPageTests : WebTestBase
             });
     }
 
-    private IRenderedComponent<Query> Render()
+    private IRenderedComponent<Query> Render(string? initialUri = null)
     {
         Context.Services.AddSingleton(_store.Object);
         Context.Services.AddSingleton(_audit.Object);
         Context.Services.AddSingleton<AuthenticationStateProvider>(new StubAuthenticationStateProvider(_role));
+        if (initialUri is not null)
+            Context.Services.GetRequiredService<NavigationManager>().NavigateTo(initialUri);
         // MudSelect 的浮层要一个 provider：真实应用由 MainLayout 提供。
         Context.Render<MudPopoverProvider>();
 
@@ -79,6 +81,60 @@ public class QueryPageTests : WebTestBase
             .First(v => v is not null && v.Recipe == recipe);
         await cut.InvokeAsync(() => select.Instance.ValueChanged.InvokeAsync(value));
         return value!;
+    }
+
+    [Fact]
+    public async Task Query_primary_inputs_expandable_filters_and_accessible_sort_state_are_rendered()
+    {
+        var cut = Render();
+
+        var primary = cut.Find(".dt-query-primary");
+        Assert.Contains("快速查询", primary.TextContent);
+        Assert.Contains("流水号", primary.TextContent);
+        Assert.NotNull(primary.QuerySelector("input[placeholder='扫码或输入托盘码']"));
+        Assert.Equal("submit", primary.QuerySelector("button")?.GetAttribute("type"));
+        Assert.NotNull(cut.FindComponent<QueryPresetsPanel>());
+
+        var modeButtons = cut.FindAll("[aria-label='查询模式'] button");
+        Assert.Equal("true", modeButtons.Single(button => button.TextContent.Contains("记录查询")).GetAttribute("aria-pressed"));
+        Assert.Equal("false", modeButtons.Single(button => button.TextContent.Contains("产品追溯")).GetAttribute("aria-pressed"));
+
+        var toggle = cut.Find(".dt-query-advanced-toggle");
+        Assert.Equal("false", toggle.GetAttribute("aria-expanded"));
+        Assert.Equal("dt-query-advanced-fields", toggle.GetAttribute("aria-controls"));
+        Assert.Equal("descending", cut.Find("th[aria-sort='descending']").GetAttribute("aria-sort"));
+        Assert.Equal("none", cut.Find("th[aria-sort='none']").GetAttribute("aria-sort"));
+
+        await toggle.ClickAsync();
+
+        Assert.Equal("true", cut.Find(".dt-query-advanced-toggle").GetAttribute("aria-expanded"));
+        Assert.True(cut.Find("#dt-query-advanced-fields").ClassList.Contains("is-expanded"));
+
+        ClickButton(cut, "产品追溯");
+        modeButtons = cut.FindAll("[aria-label='查询模式'] button");
+        Assert.Equal("false", modeButtons.Single(button => button.TextContent.Contains("记录查询")).GetAttribute("aria-pressed"));
+        Assert.Equal("true", modeButtons.Single(button => button.TextContent.Contains("产品追溯")).GetAttribute("aria-pressed"));
+
+        ClickButton(cut, "记录查询");
+        modeButtons = cut.FindAll("[aria-label='查询模式'] button");
+        Assert.Equal("true", modeButtons.Single(button => button.TextContent.Contains("记录查询")).GetAttribute("aria-pressed"));
+        Assert.Equal("false", modeButtons.Single(button => button.TextContent.Contains("产品追溯")).GetAttribute("aria-pressed"));
+    }
+
+    [Fact]
+    public void Query_filter_summary_and_sort_semantics_round_trip_from_the_url()
+    {
+        var cut = Render("/query?serial=SERIAL-29&pallet=PALLET-29&station=23&judge=Ng&result=11&sort=pallet&dir=asc");
+        var nav = Context.Services.GetRequiredService<NavigationManager>();
+
+        Assert.Contains("当前条件", cut.Markup);
+        Assert.Contains("流水号 SERIAL-29", cut.Markup);
+        Assert.Contains("托盘码 PALLET-29", cut.Markup);
+        Assert.Contains("工站 23", cut.Markup);
+        Assert.Contains("sort=pallet", nav.Uri);
+        Assert.Contains("serial=SERIAL-29", nav.Uri);
+        Assert.Equal("ascending", cut.Find("th[aria-sort='ascending']").GetAttribute("aria-sort"));
+        Assert.Contains("SERIAL-29", cut.Markup);
     }
 
     [Fact]
@@ -490,6 +546,162 @@ public class QueryPageTests : WebTestBase
 
         Assert.Contains(serial, cut.Markup);
         Assert.Empty(cut.FindAll(".dt-trace-first-ng"));
+    }
+
+    [Theory]
+    [InlineData(Judgement.Ok)]
+    [InlineData(Judgement.Ng)]
+    public void Trace_separates_route_coverage_from_historical_judgement_coverage(Judgement finalJudgement)
+    {
+        const string serial = "20260919-000001";
+        var stations = Enumerable.Range(1, 9)
+            .Select(id => new Station { Id = id, Code = $"ST{id:000}", Name = $"工站{id}", Sequence = id, Enabled = true })
+            .ToList();
+        Config.Snapshot = new AppConfigurationSnapshot { Stations = stations };
+        var start = new DateTime(2026, 9, 19, 10, 0, 0);
+        var records = stations.Select((station, index) =>
+        {
+            var judged = index < 2;
+            var judgement = !judged
+                ? Judgement.None
+                : finalJudgement == Judgement.Ng && index == 0 ? Judgement.Ng : Judgement.Ok;
+            return new CollectRecord
+            {
+                Id = index + 1,
+                PalletSessionId = 7,
+                SerialNo = serial,
+                StationId = station.Id,
+                StationCode = station.Code,
+                TriggerTime = start.AddSeconds(index),
+                CompleteTime = start.AddSeconds(index + 1),
+                ResultCode = ResultCodes.Success,
+                Judgement = judgement,
+                TagValues =
+                [
+                    new TagValue
+                    {
+                        TagName = $"点位{station.Code}",
+                        NumericValue = 5,
+                        LowerLimit = judged ? 0 : null,
+                        UpperLimit = judged ? 10 : null
+                    }
+                ]
+            };
+        }).ToList();
+        var trace = new CollectSessionTrace
+        {
+            MonthKey = "202609",
+            SessionId = 7,
+            Session = new PalletSession
+            {
+                Id = 7,
+                SerialNo = serial,
+                StartTime = start,
+                EndTime = start.AddMinutes(1),
+                Status = SessionStatus.Closed,
+                Judgement = finalJudgement
+            },
+            Records = records
+        };
+
+        var cut = RenderTrace(trace, serial);
+
+        Assert.Contains("路线/采集覆盖 9/9 站", cut.Markup);
+        Assert.Contains("判定适用 2 站 · 仅采集/未判定 7 站 · 缺记录 0 站", cut.Markup);
+        Assert.Contains(DisplayLabels.JudgementText(finalJudgement), cut.Markup);
+        Assert.Equal(finalJudgement == Judgement.Ok, cut.Markup.Contains("最终 OK 仅表示已配置的判定项通过"));
+        Assert.Contains("未判定", cut.Markup);
+    }
+
+    [Fact]
+    public void Trace_reports_missing_judgement_data_separately_from_collection_only()
+    {
+        const string serial = "20260919-000001";
+        Config.Snapshot = new AppConfigurationSnapshot
+        {
+            Stations =
+            [
+                new Station { Id = 10, Code = "ST010", Name = "检测站", Sequence = 1, Enabled = true },
+                new Station { Id = 20, Code = "ST020", Name = "采集站", Sequence = 2, Enabled = true }
+            ]
+        };
+        var trace = new CollectSessionTrace
+        {
+            MonthKey = "202609",
+            SessionId = 7,
+            Session = new PalletSession { Id = 7, SerialNo = serial, Judgement = Judgement.Ng },
+            Records =
+            [
+                new CollectRecord
+                {
+                    Id = 11,
+                    SerialNo = serial,
+                    StationId = 10,
+                    StationCode = "ST010",
+                    ResultCode = ResultCodes.Success,
+                    Judgement = Judgement.Ng,
+                    TagValues = [new TagValue { TagName = "压力", LowerLimit = 0, UpperLimit = 10, NumericValue = null }]
+                },
+                new CollectRecord
+                {
+                    Id = 12,
+                    SerialNo = serial,
+                    StationId = 20,
+                    StationCode = "ST020",
+                    ResultCode = ResultCodes.Success,
+                    Judgement = Judgement.None,
+                    TagValues = [new TagValue { TagName = "配方号", NumericValue = 1 }]
+                }
+            ]
+        };
+
+        var cut = RenderTrace(trace, serial);
+
+        Assert.Contains("判定适用 1 站 · 仅采集/未判定 1 站 · 缺记录 0 站", cut.Markup);
+        Assert.Contains("判定数据缺失 1 项", cut.Markup);
+    }
+
+    [Fact]
+    public void Record_detail_names_normal_unconfigured_and_missing_tag_judgements()
+    {
+        var record = new CollectRecord
+        {
+            Id = 22,
+            SerialNo = "20260919-000001",
+            PalletCode = "P0001",
+            StationCode = "ST010",
+            ResultCode = ResultCodes.Success,
+            Judgement = Judgement.Ok,
+            TagValues =
+            [
+                new TagValue { TagName = "压力", NumericValue = 5, LowerLimit = 0, UpperLimit = 10 },
+                new TagValue { TagName = "配方号", NumericValue = 1 },
+                new TagValue { TagName = "力值", NumericValue = null, LowerLimit = 0, UpperLimit = 10 }
+            ]
+        };
+        _store.Setup(store => store.GetRecordAsync("202610", 22, It.IsAny<CancellationToken>())).ReturnsAsync(record);
+        Context.Services.AddSingleton(_store.Object);
+        Context.Services.AddSingleton(new Mock<ICurveFileStore>().Object);
+        Context.Services.AddSingleton(new Mock<ICollectArchiveStore>().Object);
+        RenderPopoverHost();
+
+        var cut = Context.Render<RecordDetail>(parameters => parameters.Add(page => page.MonthKey, "202610").Add(page => page.RecordId, 22));
+
+        Assert.Contains("压力", cut.Markup);
+        Assert.Contains("正常", cut.Markup);
+        Assert.Contains("配方号", cut.Markup);
+        Assert.Contains("未配置判定", cut.Markup);
+        Assert.Contains("力值", cut.Markup);
+        Assert.Contains("缺数据", cut.Markup);
+    }
+
+    private IRenderedComponent<ProductTraceabilityPanel> RenderTrace(CollectSessionTrace trace, string serial)
+    {
+        _store.Setup(store => store.FindSessionTracesBySerialNoAsync(serial, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([trace]);
+        Context.Services.AddSingleton(_store.Object);
+        RenderPopoverHost();
+        return Context.Render<ProductTraceabilityPanel>(parameters => parameters.Add(panel => panel.InitialSerialNo, serial));
     }
 
     /// <summary>一条判定为 <paramref name="judgement"/> 的会话履历；NG 时带上首因四件套。</summary>

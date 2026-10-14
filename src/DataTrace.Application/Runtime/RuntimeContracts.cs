@@ -72,6 +72,8 @@ public sealed class CurveSeriesPayload
     public required string Name { get; init; }
     public required SeriesRole Role { get; init; }
     public required float[] Values { get; init; }
+    /// <summary>仅来源数据类型能明确说明离散语义时置位；旧曲线文件默认按连续/未知处理。</summary>
+    public bool IsDiscrete { get; init; }
 }
 
 public sealed class CollectQueryRequest
@@ -188,6 +190,7 @@ public sealed class TagTrendPoint
     public DateTime Time { get; init; }
     public double Value { get; init; }
     public string PalletCode { get; init; } = "";
+    public TagPurpose? PurposeSnapshot { get; init; }
 
     /// <summary>采集当时生效的规格限，与 <see cref="Value"/> 同源；改动前的历史行为 null。</summary>
     public double? LowerLimit { get; init; }

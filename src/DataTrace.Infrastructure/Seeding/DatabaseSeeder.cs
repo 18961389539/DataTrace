@@ -106,6 +106,8 @@ public sealed partial class DatabaseSeeder
             // 老配置库没有这两列，采集侧读配置会直接报 no such column。
             await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "Source",
                 "ALTER TABLE Tags ADD COLUMN Source INTEGER NOT NULL DEFAULT 0", cancellationToken).ConfigureAwait(false);
+            await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "Purpose",
+                """ALTER TABLE "Tags" ADD COLUMN "Purpose" INTEGER NOT NULL DEFAULT 0""", cancellationToken).ConfigureAwait(false);
             await SqliteSchema.AddColumnIfMissingAsync(_db, "Stations", "DataFilePath",
                 "ALTER TABLE Stations ADD COLUMN DataFilePath TEXT NOT NULL DEFAULT ''", cancellationToken).ConfigureAwait(false);
             await SqliteSchema.AddColumnIfMissingAsync(_db, "Stations", "DataFileFormat",
@@ -129,7 +131,7 @@ public sealed partial class DatabaseSeeder
             await SqliteSchema.AddColumnIfMissingAsync(_db, "Tags", "ControlCapturedBy",
                 "ALTER TABLE Tags ADD COLUMN ControlCapturedBy TEXT NULL", cancellationToken).ConfigureAwait(false);
 
-            // 强制改密标记。老配置库没有这列，登录管道读主体标记前 EF 会直接报 no such column。
+            // 旧版兼容列。保留以支持迁移，同时在启动时清除历史值。
             await SqliteSchema.AddColumnIfMissingAsync(_db, "AspNetUsers", "MustChangePassword",
                 """ALTER TABLE "AspNetUsers" ADD COLUMN "MustChangePassword" INTEGER NOT NULL DEFAULT 0""", cancellationToken).ConfigureAwait(false);
 
@@ -137,10 +139,20 @@ public sealed partial class DatabaseSeeder
 
             await CleanupOrphanRecipeLimitsAsync(cancellationToken).ConfigureAwait(false);
             MigrationBootstrap.MarkBaseline(_db);
+            MigrationBootstrap.MarkMigrationApplied(_db, "20261012120908_AddTagPurpose");
         }
 
         await _db.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
         await _db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;", cancellationToken).ConfigureAwait(false);
+        var clearedForcedChangeFlags = await _db.Database.ExecuteSqlRawAsync(
+            """UPDATE "AspNetUsers" SET "MustChangePassword" = 0 WHERE "MustChangePassword" <> 0""",
+            cancellationToken).ConfigureAwait(false);
+        if (clearedForcedChangeFlags > 0)
+        {
+            _logger.LogInformation(
+                "已清除 {UserCount} 个账号的首次登录强制改密标记。",
+                clearedForcedChangeFlags);
+        }
 
         foreach (var role in AppRoles.All)
         {
@@ -205,54 +217,25 @@ public sealed partial class DatabaseSeeder
 
     /// <summary>
     /// 生产首启动的引导管理员：口令取自配置，没配就随机生成一次并打印到日志。
-    /// 两种来源都要求首次登录改密 —— 交付单或日志里的口令都只应当是一次性的。
     /// </summary>
     private async Task EnsureBootstrapAdminAsync(string? configuredPassword)
     {
         if (await _users.FindByNameAsync("admin").ConfigureAwait(false) is not null)
         {
-            await FlagLegacyDefaultPasswordAsync().ConfigureAwait(false);
             return;
         }
 
         var generated = string.IsNullOrWhiteSpace(configuredPassword);
         var password = generated ? GenerateBootstrapPassword() : configuredPassword!;
 
-        await EnsureUserAsync("admin", "管理员", password, AppRoles.Administrator, mustChangePassword: true)
+        await EnsureUserAsync("admin", "管理员", password, AppRoles.Administrator)
             .ConfigureAwait(false);
 
         if (generated)
         {
             _logger.LogWarning(
-                "已创建引导管理员 admin，本次随机口令为：{Password}；登录后必须立即修改。",
+                "已创建引导管理员 admin，初始随机口令为：{Password}；请通过安全渠道交付，并建议登录后修改。",
                 password);
-        }
-    }
-
-    /// <summary>
-    /// 已经装好的现场：admin 若还挂着源码里的演示口令，补上强制改密标记。
-    /// </summary>
-    /// <remarks>
-    /// 少了这一步，口令策略的修复就只对新装库有效 —— 升级上来的老现场照样拿着一把公开钥匙。
-    /// </remarks>
-    private async Task FlagLegacyDefaultPasswordAsync()
-    {
-        var admin = await _users.FindByNameAsync("admin").ConfigureAwait(false);
-        if (admin is null || admin.MustChangePassword)
-        {
-            return;
-        }
-
-        if (!await _users.CheckPasswordAsync(admin, "Admin@123").ConfigureAwait(false))
-        {
-            return;
-        }
-
-        admin.MustChangePassword = true;
-        var updated = await _users.UpdateAsync(admin).ConfigureAwait(false);
-        if (updated.Succeeded)
-        {
-            _logger.LogWarning("admin 仍在使用初始演示口令，已要求其在下次登录时修改。");
         }
     }
 
@@ -293,8 +276,7 @@ public sealed partial class DatabaseSeeder
         string userName,
         string display,
         string password,
-        string role,
-        bool mustChangePassword = false)
+        string role)
     {
         var user = await _users.FindByNameAsync(userName).ConfigureAwait(false);
         if (user is null)
@@ -304,8 +286,7 @@ public sealed partial class DatabaseSeeder
                 UserName = userName,
                 Email = $"{userName}@datatrace.local",
                 DisplayName = display,
-                EmailConfirmed = true,
-                MustChangePassword = mustChangePassword
+                EmailConfirmed = true
             };
             var created = await _users.CreateAsync(user, password).ConfigureAwait(false);
             if (!created.Succeeded)

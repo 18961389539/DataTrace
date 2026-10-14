@@ -30,6 +30,8 @@ public class RecipeLimitDialogTests : WebTestBase
     {
         var temperature = Tag(1, "ST010_TEMP", enabled: false);
         var pressure = Tag(2, "ST010_P1", enabled: true);
+        var flow = Tag(3, "ST020_FLOW", enabled: true);
+        temperature.UpperLimit = 60;
         var station = new Station
         {
             Id = 1,
@@ -37,6 +39,14 @@ public class RecipeLimitDialogTests : WebTestBase
             Name = "一号站",
             Sequence = 1,
             Tags = [temperature, pressure]
+        };
+        var secondStation = new Station
+        {
+            Id = 2,
+            Code = "ST020",
+            Name = "二号站",
+            Sequence = 2,
+            Tags = [flow]
         };
         var recipe = new Recipe
         {
@@ -49,7 +59,7 @@ public class RecipeLimitDialogTests : WebTestBase
             ]
         };
 
-        return (recipe, [station]);
+        return (recipe, [station, secondStation]);
     }
 
     [Fact]
@@ -101,7 +111,82 @@ public class RecipeLimitDialogTests : WebTestBase
 
         var row = provider.FindAll("tr").Single(r => r.TextContent.Contains("ST010_TEMP"));
         Assert.Contains("生效值预览", provider.Markup);
-        Assert.Contains("规格 5 ~ 20", row.TextContent);
+        Assert.Contains("规格 5 ~ 60", row.TextContent);
         Assert.Contains("预警 — ~ 45", row.TextContent);
+    }
+
+    [Fact]
+    public async Task Numeric_inputs_have_accessible_names_with_station_tag_and_field()
+    {
+        var (recipe, stations) = Fixtures();
+
+        Context.Services.AddSingleton<IDialogService, DialogService>();
+        RenderPopoverHost();
+        var provider = Context.Render<MudDialogProvider>();
+        await Context.Services.GetRequiredService<IDialogService>().ShowAsync<RecipeLimitDialog>("型号限值", new DialogParameters
+        {
+            ["Recipe"] = recipe,
+            ["Stations"] = stations
+        });
+        provider.Render();
+
+        var expectedNames = new[]
+        {
+            "ST010 ST010_TEMP 名称 规格下限",
+            "ST010 ST010_TEMP 名称 规格上限",
+            "ST010 ST010_TEMP 名称 预警下限",
+            "ST010 ST010_TEMP 名称 预警上限",
+            "ST010 ST010_TEMP 名称 目标值"
+        };
+        var inputs = provider.FindAll("input[aria-label]");
+
+        Assert.All(expectedNames, name => Assert.Contains(inputs, input => input.GetAttribute("aria-label") == name));
+        Assert.Equal(5, provider.FindAll("tr").Single(row => row.TextContent.Contains("ST010_TEMP"))
+            .QuerySelectorAll("input[aria-label]").Length);
+    }
+
+    [Fact]
+    public async Task Search_and_overridden_filter_only_change_visible_rows_not_saved_rows()
+    {
+        var (recipe, stations) = Fixtures();
+
+        Context.Services.AddSingleton<IDialogService, DialogService>();
+        RenderPopoverHost();
+        var provider = Context.Render<MudDialogProvider>();
+        var reference = await Context.Services.GetRequiredService<IDialogService>().ShowAsync<RecipeLimitDialog>(
+            "型号限值", new DialogParameters
+            {
+                ["Recipe"] = recipe,
+                ["Stations"] = stations
+            });
+        provider.Render();
+
+        var search = provider.Find("input[aria-label='按工站或点位搜索']");
+        search.Input("ST020");
+        Assert.Contains(provider.FindAll("tr"), row => row.TextContent.Contains("ST020_FLOW"));
+        Assert.DoesNotContain(provider.FindAll("tr"), row => row.TextContent.Contains("ST010_TEMP"));
+
+        search.Input("ST010_P1 名称");
+        Assert.Contains(provider.FindAll("tr"), row => row.TextContent.Contains("ST010_P1"));
+        Assert.DoesNotContain(provider.FindAll("tr"), row => row.TextContent.Contains("ST020_FLOW"));
+
+        search.Input("ST020");
+        var flowLower = provider.FindComponents<MudNumericField<double?>>()[0];
+        await provider.InvokeAsync(() => flowLower.Instance.ValueChanged.InvokeAsync(9d));
+        Assert.Contains("本次已编辑 1 个", provider.Markup);
+        provider.Find("input[type=checkbox]").Change(true);
+        Assert.Contains(provider.FindAll("tr"), row => row.TextContent.Contains("ST020_FLOW"));
+        Assert.DoesNotContain(provider.FindAll("tr"), row => row.TextContent.Contains("ST010_TEMP"));
+        search.Input("");
+        Assert.Contains(provider.FindAll("tr"), row => row.TextContent.Contains("ST010_TEMP"));
+        Assert.Contains(provider.FindAll("tr"), row => row.TextContent.Contains("ST020_FLOW"));
+        Assert.DoesNotContain(provider.FindAll("tr"), row => row.TextContent.Contains("ST010_P1"));
+
+        provider.FindAll("button").Single(button => button.TextContent.Contains("保存")).Click();
+        var result = await reference.Result;
+        var saved = Assert.IsType<List<RecipeLimit>>(result!.Data);
+        Assert.Equal(2, saved.Count);
+        Assert.Equal(45, saved.Single(limit => limit.TagId == 1).WarningUpperLimit);
+        Assert.Equal(9, saved.Single(limit => limit.TagId == 3).LowerLimit);
     }
 }

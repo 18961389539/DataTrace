@@ -8,6 +8,7 @@ using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
 using DataTrace.Domain.Evaluation;
 using DataTrace.Web.Components.Pages;
+using DataTrace.Web.Components.Reports;
 using DataTrace.Web.Components.Shared;
 using DataTrace.Shared;
 using Microsoft.AspNetCore.Components;
@@ -84,7 +85,7 @@ public class ReportsPageTests : WebTestBase
             .ReturnsAsync((ProcessCapabilityReport?)null);
     }
 
-    private IRenderedComponent<Reports> Render(string? from = null, string? to = null)
+    private IRenderedComponent<Reports> Render(string? from = null, string? to = null, int? tag = null)
     {
         Context.Services.AddSingleton(_store.Object);
         Context.Services.AddSingleton(_reports.Object);
@@ -106,6 +107,11 @@ public class ReportsPageTests : WebTestBase
             navigation.NavigateTo(navigation.GetUriWithQueryParameter("to", to));
         }
 
+        if (tag is not null)
+        {
+            navigation.NavigateTo(navigation.GetUriWithQueryParameter("tag", tag));
+        }
+
         return Context.Render<Reports>();
     }
 
@@ -122,6 +128,73 @@ public class ReportsPageTests : WebTestBase
             .First(v => v is not null && v.Recipe == recipe);
         await cut.InvokeAsync(() => select.Instance.ValueChanged.InvokeAsync(value));
         return value!;
+    }
+
+    [Fact]
+    public void Defaults_to_a_quality_measurement_when_identity_tags_are_sorted_first()
+    {
+        Config.Snapshot = new AppConfigurationSnapshot
+        {
+            Stations =
+            [
+                new Station
+                {
+                    Id = 20,
+                    Code = "ST010",
+                    Name = "首站",
+                    Sequence = 10,
+                    Tags =
+                    [
+                        new TagDefinition
+                        {
+                            Id = 2,
+                            StationId = 20,
+                            Name = "A 配方号",
+                            DataType = PlcDataType.Float,
+                            Purpose = TagPurpose.Identity
+                        }
+                    ]
+                },
+                new Station
+                {
+                    Id = 10,
+                    Code = "ST020",
+                    Name = "压装",
+                    Sequence = 20,
+                    Tags =
+                    [
+                        new TagDefinition
+                        {
+                            Id = 1,
+                            StationId = 10,
+                            Name = "压力",
+                            DataType = PlcDataType.Float,
+                            Purpose = TagPurpose.QualityMeasurement
+                        }
+                    ]
+                }
+            ]
+        };
+
+        var cut = Render();
+        cut.WaitForAssertion(() => _reports.Verify(
+            reports => reports.GetTrendAsync(
+                It.IsAny<DateTime>(),
+                It.IsAny<DateTime>(),
+                1,
+                It.IsAny<string?>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once));
+        _reports.Verify(
+            reports => reports.GetTrendAsync(
+                It.IsAny<DateTime>(),
+                It.IsAny<DateTime>(),
+                2,
+                It.IsAny<string?>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
@@ -282,6 +355,82 @@ public class ReportsPageTests : WebTestBase
         => cut.FindAll("button")
             .First(b => b.TextContent.Contains("导出趋势"))
             .HasAttribute("disabled");
+
+    [Fact]
+    public void Trend_panel_renders_sample_stats_and_date_range()
+    {
+        var cut = Render("2026-09-19", "2026-09-19");
+        OpenTrendTab(cut);
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("均值 12.5", cut.Markup);
+            Assert.Contains("最小 12.5", cut.Markup);
+            Assert.Contains("最大 12.5", cut.Markup);
+            Assert.Contains("09-19 08:00 ~ 09-19 08:00", cut.Markup);
+        });
+
+        var chart = cut.FindComponent<LineChart>().Instance;
+        Assert.Equal("09-19 08:00", chart.XStartText);
+        Assert.Equal("09-19 08:00", chart.XEndText);
+        Assert.DoesNotContain("_trendAverage", cut.Markup);
+        Assert.DoesNotContain("_trendMin", cut.Markup);
+        Assert.DoesNotContain("_trendMax", cut.Markup);
+        Assert.DoesNotContain("_trendRangeText", cut.Markup);
+        Assert.DoesNotContain("_trendFromText", cut.Markup);
+        Assert.DoesNotContain("_trendToText", cut.Markup);
+    }
+
+    [Fact]
+    public void Discrete_integer_results_render_as_events_without_continuous_statistics()
+    {
+        Config.Snapshot = new AppConfigurationSnapshot
+        {
+            Stations =
+            [
+                new Station
+                {
+                    Id = 10,
+                    Code = "ST010",
+                    Name = "压装",
+                    Tags =
+                    [
+                        new TagDefinition
+                        {
+                            Id = 1,
+                            StationId = 10,
+                            Name = "压力",
+                            DataType = PlcDataType.Float,
+                            Purpose = TagPurpose.QualityMeasurement
+                        },
+                        new TagDefinition
+                        {
+                            Id = 2,
+                            StationId = 10,
+                            Name = "压装结果",
+                            DataType = PlcDataType.Int16,
+                            Purpose = TagPurpose.DiscreteResult
+                        }
+                    ]
+                }
+            ]
+        };
+
+        var cut = Render("2026-09-19", "2026-09-19", tag: 2);
+        OpenTrendTab(cut);
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("结果类别 1", cut.Markup);
+            Assert.Contains("离散结果按事件阶梯显示", cut.Markup);
+            Assert.DoesNotContain("均值 12.5", cut.Markup);
+        });
+        Assert.True(cut.FindComponent<LineChart>().Instance.Series.Single().IsDiscrete);
+
+        ActivateTab(cut, "过程能力");
+        cut.WaitForAssertion(() => Assert.Contains("不适用连续过程能力指数", cut.Markup));
+        Assert.DoesNotContain("Cpk（组内）", cut.Markup);
+    }
 
     [Fact]
     public async Task Selecting_no_recipe_asks_for_records_without_a_recipe()

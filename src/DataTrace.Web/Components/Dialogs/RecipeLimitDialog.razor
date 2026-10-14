@@ -1,4 +1,4 @@
-﻿@using DataTrace.Domain.Evaluation
+@using DataTrace.Domain.Evaluation
 <MudDialog>
     <TitleContent>
         <MudText Typo="Typo.h6">型号限值 · @Recipe.Code @Recipe.Name</MudText>
@@ -30,8 +30,22 @@
         else
         {
             <MudText Typo="Typo.caption" Class="dt-muted mb-2">
-                共 @_rows.Count 个点位，其中 @_rows.Count(r => r.IsOverridden) 个被本型号覆盖。<InfoHint Topic="HelpTexts.LimitMergeRule" />
+                共 @_rows.Count 个点位，其中 @_rows.Count(r => r.IsOverridden) 个被本型号覆盖，本次已编辑 @_rows.Count(r => r.IsEdited) 个。<InfoHint Topic="HelpTexts.LimitMergeRule" />
             </MudText>
+            <div class="dt-recipe-limit-toolbar" role="group" aria-label="筛选型号限值点位">
+                <MudTextField T="string" Value="_searchText" ValueChanged="OnSearchChanged"
+                              Label="搜索工站或点位" Placeholder="工站编号、名称或点位名称"
+                              Immediate="true" Clearable="true" Variant="Variant.Outlined"
+                              Margin="Margin.Dense" Class="dt-recipe-limit-search"
+                              aria-label="按工站或点位搜索" />
+                <label class="dt-recipe-limit-filter">
+                    <input type="checkbox" @bind="_onlyOverriddenOrEdited" />
+                    仅显示已覆盖或已编辑
+                </label>
+                <MudText Typo="Typo.caption" Class="dt-muted" role="status" aria-live="polite">
+                    显示 @VisibleRows.Count / @_rows.Count 个点位
+                </MudText>
+            </div>
             @if (_rows.Any(r => !r.Tag.Enabled))
             {
                 @* 停用点位必须留在矩阵里：以前按"启用中"过滤，用户打开对话框什么都没改，
@@ -41,8 +55,8 @@
                 </MudText>
             }
             @* 限值矩阵刻意不折叠成卡片：五个字段并排才能横向比对；窄屏改为整表横向滚动。 *@
-            <div class="dt-scroll-x">
-                <MudTable Items="_rows" Dense="true" Hover="true" Breakpoint="Breakpoint.None"
+            <div class="dt-scroll-x dt-recipe-limit-matrix">
+                <MudTable Items="VisibleRows" Dense="true" Hover="true" Breakpoint="Breakpoint.None"
                            RowClassFunc="@((row, _) => row.Error is null ? "" : "dt-row-error")">
                 <HeaderContent>
                     <MudTh>点位</MudTh>
@@ -74,15 +88,20 @@
                         </MudText>
                     </MudTd>
                     <MudTd><MudNumericField @bind-Value="context.Lower" @bind-Value:after="@(() => context.Error = null)" Placeholder="默认" Variant="Variant.Outlined"
-                                             Margin="Margin.Dense" Class="dt-limit-field" /></MudTd>
+                                             Margin="Margin.Dense" Class="dt-limit-field dt-recipe-limit-input"
+                                             aria-label="@FieldName(context, "规格下限")" /></MudTd>
                     <MudTd><MudNumericField @bind-Value="context.Upper" @bind-Value:after="@(() => context.Error = null)" Placeholder="默认" Variant="Variant.Outlined"
-                                             Margin="Margin.Dense" Class="dt-limit-field" /></MudTd>
+                                             Margin="Margin.Dense" Class="dt-limit-field dt-recipe-limit-input"
+                                             aria-label="@FieldName(context, "规格上限")" /></MudTd>
                     <MudTd><MudNumericField @bind-Value="context.WarningLower" @bind-Value:after="@(() => context.Error = null)" Placeholder="默认" Variant="Variant.Outlined"
-                                             Margin="Margin.Dense" Class="dt-limit-field" /></MudTd>
+                                             Margin="Margin.Dense" Class="dt-limit-field dt-recipe-limit-input"
+                                             aria-label="@FieldName(context, "预警下限")" /></MudTd>
                     <MudTd><MudNumericField @bind-Value="context.WarningUpper" @bind-Value:after="@(() => context.Error = null)" Placeholder="默认" Variant="Variant.Outlined"
-                                             Margin="Margin.Dense" Class="dt-limit-field" /></MudTd>
+                                             Margin="Margin.Dense" Class="dt-limit-field dt-recipe-limit-input"
+                                             aria-label="@FieldName(context, "预警上限")" /></MudTd>
                     <MudTd><MudNumericField @bind-Value="context.Target" @bind-Value:after="@(() => context.Error = null)" Placeholder="默认" Variant="Variant.Outlined"
-                                             Margin="Margin.Dense" Class="dt-limit-field" /></MudTd>
+                                             Margin="Margin.Dense" Class="dt-limit-field dt-recipe-limit-input"
+                                             aria-label="@FieldName(context, "目标值")" /></MudTd>
                     <MudTd DataLabel="生效值预览" Class="dt-nowrap">
                         @{ var effective = TagLimits.From(context.Tag).Override(context.ToLimits()); }
                         <MudText Typo="Typo.caption">规格 @DisplayLabels.LimitRange(effective.Lower, effective.Upper)</MudText>
@@ -90,6 +109,9 @@
                         <MudText Typo="Typo.caption" Class="dt-muted">目标 @(effective.Target?.ToString("0.###") ?? "—")</MudText>
                     </MudTd>
                 </RowTemplate>
+                <NoRecordsContent>
+                    <MudText Typo="Typo.body2" Class="dt-muted pa-3">没有符合条件的点位；筛选只影响显示，不影响保存。</MudText>
+                </NoRecordsContent>
                 </MudTable>
             </div>
         }
@@ -112,6 +134,23 @@
 
     private readonly List<Row> _rows = [];
     private string? _error;
+    private string _searchText = "";
+    private bool _onlyOverriddenOrEdited;
+
+    private List<Row> VisibleRows
+    {
+        get
+        {
+            var search = _searchText.Trim();
+            return _rows.Where(row =>
+                    (!_onlyOverriddenOrEdited || row.IsOverridden || row.IsEdited)
+                    && (search.Length == 0
+                        || row.StationCode.Contains(search, StringComparison.OrdinalIgnoreCase)
+                        || row.StationName.Contains(search, StringComparison.OrdinalIgnoreCase)
+                        || row.Tag.Name.Contains(search, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
+        }
+    }
 
     protected override void OnInitialized()
     {
@@ -126,16 +165,28 @@
                 {
                     Tag = tag,
                     StationCode = station.Code,
+                    StationName = station.Name,
                     LimitId = existing?.Id ?? 0,
                     Lower = existing?.LowerLimit,
                     Upper = existing?.UpperLimit,
                     WarningLower = existing?.WarningLowerLimit,
                     WarningUpper = existing?.WarningUpperLimit,
-                    Target = existing?.TargetValue
+                    Target = existing?.TargetValue,
+                    InitialLimits = new TagLimits(
+                        existing?.LowerLimit,
+                        existing?.UpperLimit,
+                        existing?.WarningLowerLimit,
+                        existing?.WarningUpperLimit,
+                        existing?.TargetValue)
                 });
             }
         }
     }
+
+    private void OnSearchChanged(string? value) => _searchText = value ?? "";
+
+    private static string FieldName(Row row, string field)
+        => $"{row.StationCode} {row.Tag.Name} {field}";
 
     private void Cancel() => MudDialog?.Cancel();
 
@@ -174,7 +225,9 @@
     {
         public required TagDefinition Tag { get; init; }
         public required string StationCode { get; init; }
+        public required string StationName { get; init; }
         public int LimitId { get; init; }
+        public required TagLimits InitialLimits { get; init; }
         public double? Lower { get; set; }
         public double? Upper { get; set; }
         public double? WarningLower { get; set; }
@@ -189,6 +242,8 @@
             => Lower is null && Upper is null && WarningLower is null && WarningUpper is null && Target is null;
 
         public bool IsOverridden => !IsBlank;
+
+        public bool IsEdited => InitialLimits.DiffersFrom(ToLimits());
 
         public TagLimits ToLimits() => new(Lower, Upper, WarningLower, WarningUpper, Target);
 

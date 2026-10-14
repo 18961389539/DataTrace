@@ -44,7 +44,7 @@ public sealed class RuntimeLegacyBootstrapTests
         // history, not RuntimeDbFactory's per-instance ensured cache.
         await using var reopened = new RuntimeDbFactory(root).Open("202609");
         Assert.Equal("SN-OLD", (await reopened.CollectRecords.AsNoTracking().SingleAsync()).SerialNo);
-        Assert.Equal(10, await reopened.Database.SqlQueryRaw<int>(
+        Assert.Equal(RuntimeSchema.CurrentVersion, await reopened.Database.SqlQueryRaw<int>(
             "SELECT Version AS Value FROM RuntimeSchemaVersion WHERE Id = 1").SingleAsync());
         Assert.Equal(0, await reopened.MesOutboxIntents.CountAsync());
     }

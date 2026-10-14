@@ -13,10 +13,13 @@ public class DashboardSearchTests : WebTestBase
     private IRenderedComponent<Dashboard> Render()
     {
         var hub = new Mock<IRuntimeStatusHub>();
+        var firstByCode = Station(1, "ST010", "上料工站", sequence: 2);
+        var firstBySequence = Station(2, "ST020", "压装工站", sequence: 1);
+        firstBySequence.State = StationRuntimeState.Fault;
         hub.SetupGet(status => status.Stations).Returns(
         [
-            Station(1, "ST010", "上料工站"),
-            Station(2, "ST020", "压装工站")
+            firstByCode,
+            firstBySequence
         ]);
         hub.SetupGet(status => status.Plcs).Returns([]);
         hub.SetupGet(status => status.Recent).Returns([]);
@@ -65,12 +68,18 @@ public class DashboardSearchTests : WebTestBase
         var cut = Render();
         var items = cut.FindAll(".dt-station-grid > .mud-grid-item");
         Assert.Equal(2, items.Count);
+        Assert.Equal("ST020 压装工站", cut.FindAll(".dt-station-title")[0].TextContent.Trim());
+        Assert.Equal("ST010 上料工站", cut.FindAll(".dt-station-title")[1].TextContent.Trim());
+        Assert.Equal(2, cut.FindAll(".dt-station-overview").Count);
+        Assert.Empty(cut.FindAll(".dt-station-curves"));
+
+        ClickButton(cut, "详细监控");
+        items = cut.FindAll(".dt-station-grid > .mud-grid-item");
         Assert.All(items, item => Assert.Contains("mud-grid-item-xs-12", item.ClassName));
         Assert.Single(cut.FindAll(".dt-station-curves"));
         Assert.Contains("定位曲线", cut.Markup);
         Assert.Contains("本次暂无可显示数据", cut.Markup);
         Assert.DoesNotContain("停用曲线", cut.Markup);
-        Assert.DoesNotContain("概览行数", cut.Markup);
     }
 
     [Fact]
@@ -96,12 +105,12 @@ public class DashboardSearchTests : WebTestBase
         Assert.Equal(2, cut.FindAll(".dash-station").Count);
     }
 
-    private static StationRuntimeStatus Station(int id, string code, string name) => new()
+    private static StationRuntimeStatus Station(int id, string code, string name, int? sequence = null) => new()
     {
         StationId = id,
         StationCode = code,
         StationName = name,
-        Sequence = id,
+        Sequence = sequence ?? id,
         State = StationRuntimeState.Idle,
         LastJudgement = Judgement.Ok
     };

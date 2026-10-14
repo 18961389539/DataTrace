@@ -37,7 +37,7 @@ public class AlarmsPageTests : WebTestBase
 
         var cut = RenderAlarms();
         cut.WaitForAssertion(() => Assert.Contains("待接手", cut.Markup));
-        ClickButton(cut, "接手");
+        cut.FindAll("button").Single(button => button.TextContent.Trim() == "接手").Click();
 
         cut.WaitForAssertion(() => Assert.Contains("已接手，尚未解除", cut.Markup));
         Assert.Equal(7, Assert.Single(incidents.Acknowledged));
@@ -223,9 +223,96 @@ public class AlarmsPageTests : WebTestBase
         Assert.Contains("已恢复，待接手", cut.Markup);
     }
 
+    [Fact]
+    public async Task Alarm_status_views_prioritize_current_alarms_and_page_large_lists()
+    {
+        var now = DateTime.Now;
+        var recovered = Enumerable.Range(0, 100)
+            .Select(index => new AlarmIncidentDraft
+            {
+                Id = index + 1,
+                Key = $"warning:{index + 1}",
+                Kind = LineAlarmKind.ConsecutiveWarning,
+                Message = $"恢复告警 {index:000}",
+                RaisedAt = now.AddMinutes(-index - 1),
+                ClearedAt = now.AddMinutes(-index)
+            })
+            .ToList();
+        recovered.Add(new AlarmIncidentDraft
+        {
+            Id = 101,
+            Key = "fault:23",
+            Kind = LineAlarmKind.StationFault,
+            Message = "较早发生的紧急当前故障",
+            RaisedAt = now.AddDays(-30)
+        });
+        recovered.Add(new AlarmIncidentDraft
+        {
+            Id = 102,
+            Key = "heartbeat",
+            Kind = LineAlarmKind.HeartbeatStale,
+            Message = "已接手的当前心跳故障",
+            RaisedAt = now,
+            AcknowledgedAt = now,
+            AcknowledgedBy = "admin"
+        });
+        var incidents = new FakeAlarmIncidents
+        {
+            Attention = recovered,
+            Recent =
+            [
+                new AlarmIncidentDraft
+                {
+                    Id = 201, Key = "closed:1", Kind = LineAlarmKind.MesBacklog, Message = "已解除 MES 报警",
+                    RaisedAt = now.AddHours(-2), AcknowledgedAt = now.AddHours(-1), AcknowledgedBy = "engineer",
+                    ClearedAt = now.AddMinutes(-30)
+                },
+                new AlarmIncidentDraft
+                {
+                    Id = 202, Key = "closed:2", Kind = LineAlarmKind.ConsecutiveNg, Message = "已解除 NG 报警",
+                    RaisedAt = now.AddHours(-4), AcknowledgedAt = now.AddHours(-3), AcknowledgedBy = "admin",
+                    ClearedAt = now.AddHours(-2)
+                }
+            ]
+        };
+        Context.Services.AddSingleton<IAlarmIncidents>(incidents);
+        Context.Services.AddSingleton<ILineAlarmBoard>(new LineAlarmBoard());
+
+        var cut = RenderAlarms();
+
+        Assert.Contains("当前／仍在发生 (2)", cut.Markup);
+        Assert.Contains("已恢复待接手 (100)", cut.Markup);
+        Assert.Contains("已接手／已解除 (3)", cut.Markup);
+        Assert.Contains("当前模式：显示全部待处理记录，以及最近 30 条已解除记录", cut.Markup);
+
+        var attentionTable = cut.FindAll("table").First();
+        Assert.Equal(25, attentionTable.QuerySelectorAll("tbody tr").Count);
+        Assert.Contains("较早发生的紧急当前故障", attentionTable.QuerySelectorAll("tbody tr")[0].TextContent);
+        Assert.Contains("每页 25 条", cut.Markup);
+
+        await cut.InvokeAsync(() => cut.FindComponents<MudPagination>()[0].Instance.SelectedChanged.InvokeAsync(2));
+        attentionTable = cut.FindAll("table").First();
+        Assert.Equal(25, attentionTable.QuerySelectorAll("tbody tr").Count);
+        Assert.DoesNotContain("较早发生的紧急当前故障", attentionTable.TextContent);
+        Assert.Contains("恢复告警 024", attentionTable.TextContent);
+
+        ClickButton(cut, "已恢复待接手");
+        Assert.Contains("已恢复，待接手 100", cut.Markup);
+        Assert.DoesNotContain("较早发生的紧急当前故障", cut.Markup);
+        Assert.Equal("true", cut.FindAll("button")
+            .Single(button => button.TextContent.Contains("已恢复待接手")).GetAttribute("aria-pressed"));
+
+        ClickButton(cut, "已接手／已解除");
+        Assert.Contains("已接手，尚未解除 1", cut.Markup);
+        Assert.Contains("最近已解除 2", cut.Markup);
+        Assert.DoesNotContain("恢复告警 000", cut.Markup);
+    }
+
     private sealed class FakeAlarmIncidents : IAlarmIncidents
     {
         public List<AlarmIncidentDraft> Attention { get; set; } = [];
+
+        public List<AlarmIncidentDraft> Recent { get; set; } = [];
 
         public List<long> Acknowledged { get; } = [];
 
@@ -235,7 +322,7 @@ public class AlarmsPageTests : WebTestBase
             => Task.FromResult<IReadOnlyList<AlarmIncidentDraft>>(Attention);
 
         public Task<IReadOnlyList<AlarmIncidentDraft>> ListRecentClosedAsync(int take, CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<AlarmIncidentDraft>>([]);
+            => Task.FromResult<IReadOnlyList<AlarmIncidentDraft>>(Recent.Take(take).ToList());
 
         public Task RaiseAsync(LineAlarm alarm, DateTime now, CancellationToken cancellationToken = default)
             => Task.CompletedTask;

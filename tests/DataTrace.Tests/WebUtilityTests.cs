@@ -451,9 +451,21 @@ public class ChartUtilTests
     public void RoleText_falls_back_to_the_raw_code_for_unknown_roles()
         => Assert.Equal("Supervisor", DisplayLabels.RoleText("Supervisor"));
 
-    [Fact]
-    public void RoleHint_explains_every_known_role()
-        => Assert.All(AppRoles.All, role => Assert.False(string.IsNullOrWhiteSpace(DisplayLabels.RoleHint(role))));
+    [Theory]
+    [InlineData(
+        AppRoles.Administrator,
+        "可查看全部页面并导出；可接手报警、创建/处置/复核质量异常；可配置并管理用户。")]
+    [InlineData(
+        AppRoles.Engineer,
+        "可查看业务与诊断页面并导出；可接手报警、创建/处置/复核质量异常；可配置，不可管理用户。")]
+    [InlineData(
+        AppRoles.Operator,
+        "可查看看板、报警、查询、报表和质量异常；可接手报警、创建/处置质量异常；不可导出、复核或配置。")]
+    [InlineData(
+        AppRoles.Viewer,
+        "只读查看看板、报警、查询、报表、质量异常和波形；不可导出、接手报警、创建/处置/复核异常或配置。")]
+    public void RoleHint_matches_the_existing_permission_matrix(string role, string expected)
+        => Assert.Equal(expected, DisplayLabels.RoleHint(role));
 }
 
 /// <summary>登录后回跳：目标地址来自查询串/表单，属于用户可控输入，必须挡住站外地址。</summary>

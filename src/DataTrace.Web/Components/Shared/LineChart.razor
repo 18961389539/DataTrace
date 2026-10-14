@@ -24,6 +24,43 @@
     }
     <div @ref="_chartElement" class="dt-chart" style="@ChartStyle"
          role="img" aria-label="@ChartAccessibilityLabel" hidden="@(_plots.Count == 0)"></div>
+    @if (ShowAxis && _plots.Count > 0)
+    {
+        <MudText Typo="Typo.caption" Class="dt-muted">
+            @ChartGuidance
+        </MudText>
+        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="ToggleDataTable"
+                   aria-expanded="@(_showDataTable ? "true" : "false")" aria-controls="@_dataTableId">
+            @(_showDataTable ? "收起数值表" : $"展开数值表（{DisplayedPointCount} 个图表采样点）")
+        </MudButton>
+        @if (_showDataTable)
+        {
+            <div class="table-responsive">
+                <table id="@_dataTableId" class="mud-table-root" aria-label="图表采样点数值表">
+                    <caption>图表实际绘制的采样点。密集数据按极值保留策略抽稀，原始数据请使用对应的数据导出功能。</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col">原始点序号</th>
+                            <th scope="col">@SeriesAxisName</th>
+                            <th scope="col">序列</th>
+                            <th scope="col">数值</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var point in DataTablePoints())
+                        {
+                            <tr>
+                                <td>@point.SourceIndex</td>
+                                <td>@point.XText</td>
+                                <td>@point.SeriesName</td>
+                                <td>@point.ValueText</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    }
 </div>
 
 @code {
@@ -54,6 +91,9 @@
 
     [Parameter] public string EmptyText { get; set; } = "暂无曲线数据";
 
+    /// <summary>完整时间戳仅在调用方提供真实采集时间时启用；否则横轴仍按实际 X 值或采样序号。</summary>
+    [Parameter] public bool EnableZoom { get; set; } = true;
+
     /// <summary>
     /// ECharts 分组名：同组的多张图共享坐标轴指针与提示（联动游标），
     /// 用于详情面板的"多路独立曲线、横轴语义一致"场景。null 不参与联动。
@@ -70,6 +110,9 @@
     private double _yMin;
     private double _yMax;
     private bool _annotated;
+    private bool _timeAxis;
+    private bool _showDataTable;
+    private readonly string _dataTableId = $"dt-chart-data-{Guid.NewGuid():N}";
 
     private string ChartStyle => ShowAxis
         ? $"aspect-ratio:{Math.Max(1, ViewWidth)} / {Math.Max(1, Height)}"
@@ -77,7 +120,26 @@
 
     private string ChartAccessibilityLabel => _plots.Count == 0
         ? EmptyText
-        : $"{SeriesAxisName} 折线图：{string.Join("、", _plots.Select(plot => plot.Name))}";
+        : $"{SeriesAxisName}{(_plots.Any(plot => plot.IsDiscrete) ? " 离散状态阶梯图" : " 折线图")}：{string.Join("、", _plots.Select(plot => plot.Name))}";
+
+    private int DisplayedPointCount => _plots.Sum(plot => plot.X.Length);
+
+    private string ChartGuidance
+    {
+        get
+        {
+            var sampled = _plots.Sum(plot => plot.SourceCount) - DisplayedPointCount;
+            var axisHint = _timeAxis
+                ? "横轴使用实际采集时间"
+                : $"{SeriesAxisName}为横轴";
+            var zoomHint = EnableZoom ? "可用滚轮或图下滑块缩放" : "";
+            var discreteHint = _plots.Any(plot => plot.IsDiscrete) ? "；离散状态以阶梯线表示" : "";
+            var samplingHint = sampled > 0
+                ? $"；密集数据已抽稀，按区段保留极值（原始 {_plots.Sum(plot => plot.SourceCount)} 点，图表显示 {DisplayedPointCount} 点）"
+                : "";
+            return $"{axisHint}{(zoomHint.Length > 0 ? "；" + zoomHint : "")}{discreteHint}{samplingHint}。数值表适合触屏和键盘逐点查看。";
+        }
+    }
 
     protected override void OnParametersSet() => Rebuild();
 
@@ -107,13 +169,17 @@
     private void Rebuild()
     {
         _plots.Clear();
+        _showDataTable = false;
+        _timeAxis = false;
         // 首尾标注与刻度文字各占一行，只有一行留白时两者会叠成一团
         _annotated = ShowAxis && (!string.IsNullOrEmpty(XStartText) || !string.IsNullOrEmpty(XEndText));
 
-        foreach (var series in Series.Where(s => s.Values.Length > 0))
+        var dataSeries = Series.Where(series => series.Values.Length > 0).ToArray();
+        _timeAxis = dataSeries.Length > 0 && dataSeries.All(series =>
+            series.TimeValues is { Length: > 0 } times && times.Length >= series.Values.Length);
+        foreach (var series in dataSeries)
         {
-            var (xs, ys, min, max, indexAxis) = Prepare(series);
-            _plots.Add(new Plot(series.Name, series.Color, series.Unit, xs, ys, min, max, indexAxis));
+            _plots.Add(Prepare(series, _timeAxis));
         }
 
         if (_plots.Count == 0)
@@ -129,6 +195,11 @@
 
         _xMin = _plots.Min(p => p.X.Length == 0 ? 0 : p.X.Min());
         _xMax = _plots.Max(p => p.X.Length == 0 ? 0 : p.X.Max());
+        if (_timeAxis)
+        {
+            _xMin = _plots.Min(plot => plot.X.Min());
+            _xMax = _plots.Max(plot => plot.X.Max());
+        }
         if (Math.Abs(_xMax - _xMin) < 1e-9)
         {
             _xMin -= 0.5;
@@ -144,6 +215,8 @@
             showLegend = ShowLegend,
             annotated = _annotated,
             showPoints = ShowPoints,
+            enableZoom = EnableZoom,
+            xType = _timeAxis ? "time" : "value",
             connectGroup = ConnectGroup,
             xMin = _xMin,
             xMax = _xMax,
@@ -156,7 +229,8 @@
             {
                 name = plot.Name,
                 color = plot.Color,
-                showSymbol = ShowPoints && plot.X.Length <= 120,
+                showSymbol = plot.IsDiscrete || (ShowPoints && plot.X.Length <= 120),
+                isDiscrete = plot.IsDiscrete,
                 data = BuildPoints(plot)
             }).ToArray()
         };
@@ -167,28 +241,38 @@
     /// X 就是点序号的情形（XValues 为空）先拿下标再建两列：否则要为一列最终只会留下
     /// <see cref="MaxPoints"/> 个元素的序号，先铺满整条原始长度（最多两万个）。
     /// </summary>
-    private (float[] X, float[] Y, double Min, double Max, bool IndexAxis) Prepare(LineSeries series)
+    private Plot Prepare(LineSeries series, bool useTimeAxis)
     {
         var values = series.Values;
-        // 自带 X 轴（如位移曲线）时按它抽稀；X 列比数据短就不认这一列，退回按点序号画。
+        if (useTimeAxis && series.TimeValues is { } times)
+        {
+            var timeIndices = ChartUtil.SampleIndices(values, MaxPoints);
+            var sampledTimes = timeIndices.Select(index => times[index]).ToArray();
+            var xs = sampledTimes.Select(ToUnixMilliseconds).ToArray();
+            var ys = timeIndices.Select(index => values[index]).ToArray();
+            var (min, max) = ChartUtil.Range(values);
+            return new Plot(series.Name, series.Color, series.Unit, xs, ys, min, max, false,
+                timeIndices, sampledTimes, series.IsDiscrete, values.Length);
+        }
+
+        // 自带数值 X 轴（如位移曲线）时按它抽稀；X 列比数据短就退回采样序号。
         if (series.XValues is { Length: > 0 } custom && custom.Length >= values.Length)
         {
             var xsForValues = custom.Length == values.Length ? custom : custom[..values.Length];
-            var (xs, ys, min, max) = ChartUtil.SampleEnvelope(values, xsForValues, MaxPoints);
-            return (xs, ys, min, max, false);
+            var customIndices = ChartUtil.SampleIndices(values, MaxPoints);
+            var xs = customIndices.Select(index => (double)xsForValues[index]).ToArray();
+            var ys = customIndices.Select(index => values[index]).ToArray();
+            var (min, max) = ChartUtil.Range(values);
+            return new Plot(series.Name, series.Color, series.Unit, xs, ys, min, max, false,
+                customIndices, null, series.IsDiscrete, values.Length);
         }
 
         var (rangeMin, rangeMax) = ChartUtil.Range(values);
-        var indices = ChartUtil.SampleIndices(values, MaxPoints);
-        var indexX = new float[indices.Length];
-        var indexY = new float[indices.Length];
-        for (var i = 0; i < indices.Length; i++)
-        {
-            indexX[i] = indices[i];
-            indexY[i] = values[indices[i]];
-        }
-
-        return (indexX, indexY, rangeMin, rangeMax, true);
+        var sampleIndices = ChartUtil.SampleIndices(values, MaxPoints);
+        var indexX = sampleIndices.Select(index => (double)index).ToArray();
+        var indexY = sampleIndices.Select(index => values[index]).ToArray();
+        return new Plot(series.Name, series.Color, series.Unit, indexX, indexY, rangeMin, rangeMax, true,
+            sampleIndices, null, series.IsDiscrete, values.Length);
     }
 
     private object[] BuildPoints(Plot plot)
@@ -197,11 +281,10 @@
         for (var i = 0; i < plot.X.Length; i++)
         {
             var unit = string.IsNullOrEmpty(plot.Unit) ? "" : " " + plot.Unit;
-            var xText = plot.IndexAxis
-                ? plot.X[i].ToString("0", CultureInfo.InvariantCulture)
-                : ChartUtil.Label(plot.X[i]);
+            var xText = XText(plot, i);
             var tooltip = $"{SeriesAxisName} {xText} → {plot.Name} {ChartUtil.Label(plot.Y[i])}{unit}";
-            points[i] = new { value = new[] { plot.X[i], plot.Y[i] }, tip = tooltip };
+            var xValue = plot.TimeValues is null ? (object)plot.X[i] : ToUnixMilliseconds(plot.TimeValues[i]);
+            points[i] = new { value = new[] { xValue, (object)plot.Y[i] }, tip = tooltip };
         }
 
         return points;
@@ -210,13 +293,46 @@
     private static string LegendText(Plot plot)
         => string.IsNullOrEmpty(plot.Unit) ? plot.Name : $"{plot.Name}（{plot.Unit}）";
 
+    private void ToggleDataTable() => _showDataTable = !_showDataTable;
+
+    private IEnumerable<DataTablePoint> DataTablePoints()
+    {
+        foreach (var plot in _plots)
+        {
+            for (var i = 0; i < plot.X.Length; i++)
+            {
+                yield return new DataTablePoint(
+                    plot.SourceIndices[i] + 1,
+                    XText(plot, i),
+                    plot.Name,
+                    string.IsNullOrEmpty(plot.Unit) ? ChartUtil.Label(plot.Y[i]) : $"{ChartUtil.Label(plot.Y[i])} {plot.Unit}");
+            }
+        }
+    }
+
+    private static string XText(Plot plot, int index)
+        => plot.TimeValues is { } times
+            ? times[index].ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture)
+            : plot.IndexAxis
+                ? plot.X[index].ToString("0", CultureInfo.InvariantCulture)
+                : ChartUtil.Label(plot.X[index]);
+
+    private static double ToUnixMilliseconds(DateTime time)
+        => new DateTimeOffset(time).ToUnixTimeMilliseconds();
+
+    private sealed record DataTablePoint(int SourceIndex, string XText, string SeriesName, string ValueText);
+
     private sealed record Plot(
         string Name,
         string Color,
         string? Unit,
-        float[] X,
+        double[] X,
         float[] Y,
         double Min,
         double Max,
-        bool IndexAxis);
+        bool IndexAxis,
+        int[] SourceIndices,
+        DateTime[]? TimeValues,
+        bool IsDiscrete,
+        int SourceCount);
 }

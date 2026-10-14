@@ -36,8 +36,7 @@ public sealed class ConfigurationAuthorizer : IConfigurationAuthorizer
     public async Task AuthorizeRoleAsync(
         string actor,
         IReadOnlyCollection<string> allowedRoles,
-        CancellationToken cancellationToken = default,
-        bool allowMustChangePassword = false)
+        CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -47,13 +46,12 @@ public sealed class ConfigurationAuthorizer : IConfigurationAuthorizer
         }
 
         var principal = (await _authenticationStateProvider.GetAuthenticationStateAsync().ConfigureAwait(false)).User;
-        await ValidatePrincipalAsync(principal, actor, allowedRoles, cancellationToken, allowMustChangePassword).ConfigureAwait(false);
+        await ValidatePrincipalAsync(principal, actor, allowedRoles, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task AuthorizeCurrentRoleAsync(
         IReadOnlyCollection<string> allowedRoles,
-        CancellationToken cancellationToken = default,
-        bool allowMustChangePassword = false)
+        CancellationToken cancellationToken = default)
     {
         if (_authenticationStateProvider is null)
         {
@@ -62,15 +60,14 @@ public sealed class ConfigurationAuthorizer : IConfigurationAuthorizer
 
         var principal = (await _authenticationStateProvider.GetAuthenticationStateAsync().ConfigureAwait(false)).User;
         var actor = principal.Identity?.Name ?? "";
-        await ValidatePrincipalAsync(principal, actor, allowedRoles, cancellationToken, allowMustChangePassword).ConfigureAwait(false);
+        await ValidatePrincipalAsync(principal, actor, allowedRoles, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task ValidatePrincipalAsync(
         ClaimsPrincipal principal,
         string actor,
         IReadOnlyCollection<string> allowedRoles,
-        CancellationToken cancellationToken,
-        bool allowMustChangePassword)
+        CancellationToken cancellationToken)
     {
         if (principal.Identity?.IsAuthenticated != true)
         {
@@ -97,10 +94,9 @@ public sealed class ConfigurationAuthorizer : IConfigurationAuthorizer
         }
 
         var lockoutEnd = await users.GetLockoutEndDateAsync(user).ConfigureAwait(false);
-        if ((!allowMustChangePassword && user.MustChangePassword)
-            || (lockoutEnd is { } until && until > DateTimeOffset.UtcNow))
+        if (lockoutEnd is { } until && until > DateTimeOffset.UtcNow)
         {
-            Reject(actor, "账号当前不可执行该操作，请重新登录或完成密码处理");
+            Reject(actor, "账号当前处于锁定状态，无法执行该操作");
         }
 
         var stampClaim = principal.FindFirstValue(_identityOptions.ClaimsIdentity.SecurityStampClaimType);

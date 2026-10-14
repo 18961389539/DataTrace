@@ -10,7 +10,7 @@ namespace DataTrace.Infrastructure.Storage;
 public sealed class CurveFileStore : ICurveFileStore
 {
     private readonly string _root;
-    private const byte Version = 1;
+    private const byte Version = 2;
 
     /// <summary>单条序列的点数上限。仅用于挡住损坏文件里的非法长度，远高于任何真实配置。</summary>
     private const int MaxPointsPerSeries = 1_000_000;
@@ -168,6 +168,7 @@ public sealed class CurveFileStore : ICurveFileStore
             writer.Write((ushort)nameBytes.Length);
             writer.Write(nameBytes);
             writer.Write((byte)series.Role);
+            writer.Write(series.IsDiscrete);
             writer.Write(series.Values.Length);
             foreach (var v in series.Values)
             {
@@ -187,7 +188,7 @@ public sealed class CurveFileStore : ICurveFileStore
         }
 
         var version = reader.ReadByte();
-        if (version != Version)
+        if (version is not (1 or Version))
         {
             throw new InvalidDataException($"不支持的曲线版本 {version}");
         }
@@ -210,6 +211,7 @@ public sealed class CurveFileStore : ICurveFileStore
             var nameLen = reader.ReadUInt16();
             var name = Encoding.UTF8.GetString(reader.ReadBytes(nameLen));
             var role = (SeriesRole)reader.ReadByte();
+            var isDiscrete = version >= 2 && reader.ReadBoolean();
             var n = reader.ReadInt32();
             // 长度先校验再分配：损坏文件里的长度字段是任意的，
             // 直接 new float[n] 会变成一次大内存分配（或直接抛 OverflowException）。
@@ -224,7 +226,7 @@ public sealed class CurveFileStore : ICurveFileStore
                 values[j] = reader.ReadSingle();
             }
 
-            series.Add(new CurveSeriesPayload { Name = name, Role = role, Values = values });
+            series.Add(new CurveSeriesPayload { Name = name, Role = role, Values = values, IsDiscrete = isDiscrete });
         }
 
         return new CurvePayload { PointCount = pointCount, Series = series };

@@ -60,6 +60,23 @@ public class VisualRegressionE2ETests : E2ETestBase
         }
     }
 
+    [Fact]
+    public async Task DesktopTasksRemainUsableAtApproximateTwoHundredPercentZoom()
+    {
+        // A 720x450 CSS viewport approximates a 1440x900 desktop at 200% browser zoom.
+        await Page.SetViewportSizeAsync(720, 450);
+
+        foreach (var path in new[] { "/", "/query", "/quality/incidents", "/config/recipes", "/reports" })
+        {
+            await OpenAsync(path);
+            await WaitForAsync(".dt-page-title");
+            await AssertNoHorizontalOverflow($"{path} @ 200% zoom equivalent");
+            Assert.True(
+                await Page.Locator(".dt-page-title").IsVisibleAsync(),
+                $"{path} 的页面标题在 200% 缩放视口下不可见");
+        }
+    }
+
     /// <summary>
     /// 筛选区曾经叠印过：预设按钮压在日期输入框上，控件互相盖住但 DOM 一切正常。
     /// 这里按同一层块级子元素的包围盒两两比对，并要求所有可交互控件都在卡片框内。

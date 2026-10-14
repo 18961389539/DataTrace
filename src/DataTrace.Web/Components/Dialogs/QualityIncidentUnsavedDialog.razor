@@ -1,0 +1,29 @@
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">有尚未提交的质量异常内容</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="dt-muted">@Message</MudText>
+        <MudText Typo="Typo.caption" Color="Color.Warning" Class="d-block mt-2">
+            不会保存为草稿；只有执行正式业务操作后内容才会写入。
+        </MudText>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => Close("continue"))">继续编辑</MudButton>
+        <MudButton Color="Color.Warning" OnClick="@(() => Close("discard"))">放弃并离开</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" Disabled="@(!CanSave)"
+                   OnClick="@(() => Close("save"))">@SaveText</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance? MudDialog { get; set; }
+
+    [Parameter] public string Message { get; set; } = "";
+
+    [Parameter] public string SaveText { get; set; } = "保存并离开";
+
+    [Parameter] public bool CanSave { get; set; }
+
+    private void Close(string result) => MudDialog?.Close(DialogResult.Ok(result));
+}

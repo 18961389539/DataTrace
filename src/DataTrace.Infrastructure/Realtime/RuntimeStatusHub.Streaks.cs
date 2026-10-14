@@ -15,6 +15,11 @@ partial class RuntimeStatusHub
     {
         foreach (var tag in record.TagValues)
         {
+            if (!tag.PurposeSnapshot.IsStatisticalMeasurement())
+            {
+                continue;
+            }
+
             TagWatchRules.ApplyWarning(
                 _warnings,
                 record.StationId,
@@ -114,6 +119,11 @@ partial class RuntimeStatusHub
             _drifts.Clear();
             foreach (var observation in observations.OrderBy(item => item.CompleteTime).ThenBy(item => item.TagId))
             {
+                if (!observation.PurposeSnapshot.IsStatisticalMeasurement())
+                {
+                    continue;
+                }
+
                 TagWatchRules.ApplyWarning(
                     _warnings,
                     observation.StationId,

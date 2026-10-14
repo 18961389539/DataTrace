@@ -58,7 +58,7 @@ public static class InfrastructureServiceCollectionExtensions
                 options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(SystemDefaults.LockoutMinutes);
             })
             .AddEntityFrameworkStores<ConfigDbContext>()
-            // 用带"必须改密"标记的主体工厂：管道据此在改密前拦下其它页面。
+            // 保留应用自定义 ClaimsPrincipalFactory 注册点，当前只生成 Identity 标准主体。
             .AddClaimsPrincipalFactory<ApplicationUserClaimsPrincipalFactory>()
             .AddDefaultTokenProviders();
 

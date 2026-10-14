@@ -123,6 +123,15 @@ else if (_traces.Count > 0 && SelectedTrace is { } trace)
             <MudText Typo="Typo.caption">
                 <span class="dt-muted">最终判定</span> @FinalJudgement(trace)
             </MudText>
+            @if (FinalJudgementValue(trace) == Judgement.Ok)
+            {
+                <MudText Typo="Typo.caption" Class="dt-muted">
+                    最终 OK 仅表示已配置的判定项通过，不代表每个工站都执行了质量判定。
+                </MudText>
+            }
+            <MudText Typo="Typo.caption" Class="dt-trace-judgement-coverage">
+                @JudgementCoverageText(trace)
+            </MudText>
             @if (FirstNg(trace) is { } firstNg)
             {
                 @* 判定只说"任一站 NG 即 NG"；首因把"从哪一站、哪一刻、因为什么"钉出来，
@@ -535,11 +544,53 @@ else
 
     private string StationCoverageText(CollectSessionTrace trace)
         => _stations.Count == 0
-            ? $"当前路线未配置 · 记录 {trace.Records.Count} 条"
-            : $"工站 {PresentStationCount(trace)}/{ExpectedStationCount} · 记录 {trace.Records.Count} 条";
+            ? $"路线/采集覆盖未知（当前路线未配置）· 记录 {trace.Records.Count} 条"
+            : $"路线/采集覆盖 {PresentStationCount(trace)}/{ExpectedStationCount} 站 · 记录 {trace.Records.Count} 条";
 
     private int PresentStationCount(CollectSessionTrace trace)
         => trace.Records.Select(r => r.StationId).Distinct().Count(id => _stations.Any(s => s.Id == id));
+
+    private string JudgementCoverageText(CollectSessionTrace trace)
+    {
+        if (_stations.Count == 0)
+        {
+            return "判定覆盖未知（当前路线未配置）";
+        }
+
+        var latestByStation = trace.Records
+            .Where(record => _stations.Any(station => station.Id == record.StationId))
+            .GroupBy(record => record.StationId)
+            .Select(group => group.OrderBy(record => record.TriggerTime).ThenBy(record => record.Id).Last())
+            .ToList();
+        var applicable = latestByStation.Where(HasApplicableJudgement).ToList();
+        var collectionOnly = latestByStation.Count - applicable.Count;
+        var missingRecords = _stations.Count - latestByStation.Count;
+        var missingData = applicable
+            .SelectMany(record => record.TagValues)
+            .Count(tag => HasSpecificationSnapshot(tag) && tag.NumericValue is null);
+        var applicableWithoutResult = applicable.Count(record => record.Judgement == Judgement.None);
+
+        var text = $"判定适用 {applicable.Count} 站 · 仅采集/未判定 {collectionOnly} 站 · 缺记录 {missingRecords} 站";
+        if (applicableWithoutResult > 0)
+        {
+            text += $" · 其中 {applicableWithoutResult} 站有判定快照但无判定结果";
+        }
+        if (missingData > 0)
+        {
+            text += $" · 判定数据缺失 {missingData} 项";
+        }
+
+        return text;
+    }
+
+    private static bool HasApplicableJudgement(CollectRecord record)
+        => ((record.ResultCode == ResultCodes.Success || record.ResultCode == ResultCodes.QualityRejected)
+            && record.Judgement != Judgement.None)
+           || record.Products.Any(product => product.Occupied && product.Judgement != Judgement.None)
+           || record.TagValues.Any(HasSpecificationSnapshot);
+
+    private static bool HasSpecificationSnapshot(TagValue tag)
+        => tag.LowerLimit is not null || tag.UpperLimit is not null;
 
     private int MissingStationCount(CollectSessionTrace trace)
     {
@@ -612,7 +663,7 @@ else
             return ResultCodes.Describe(step.Record.ResultCode);
         }
 
-        return DisplayLabels.JudgementText(step.Record.Judgement);
+        return step.Record.Judgement == Judgement.None ? "未判定" : DisplayLabels.JudgementText(step.Record.Judgement);
     }
 
     private static Color JudgementColor(Judgement judgement)
@@ -647,13 +698,16 @@ else
     }
 
     private static string FinalJudgement(CollectSessionTrace trace)
+        => DisplayLabels.JudgementText(FinalJudgementValue(trace));
+
+    private static Judgement FinalJudgementValue(CollectSessionTrace trace)
     {
         var judgement = trace.Session?.Judgement ?? Judgement.None;
         if (judgement == Judgement.None && trace.Records.Count > 0)
         {
             judgement = trace.Records[^1].Judgement;
         }
-        return DisplayLabels.JudgementText(judgement);
+        return judgement;
     }
 
     /// <summary>

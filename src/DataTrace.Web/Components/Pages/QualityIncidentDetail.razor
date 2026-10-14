@@ -5,14 +5,21 @@
 @using DataTrace.Application.Identity
 @using DataTrace.Application.Quality
 @using DataTrace.Application.Runtime
+@using DataTrace.Application.Configuration
 @using DataTrace.Domain.Constants
 @using DataTrace.Domain.Entities
 @using DataTrace.Domain.Enums
+@using DataTrace.Web.Components.Dialogs
 @inject IQualityIncidentService Incidents
 @inject IQualityIncidentActorProvider Actors
 @inject IUserAdministration Users
+@inject ICollectQuery Collect
+@inject IConfigRepository Config
 @inject DtToast Toast
+@inject IDialogService Dialogs
 @inject NavigationManager Nav
+
+<NavigationLock ConfirmExternalNavigation="@Dirty" OnBeforeInternalNavigation="OnBeforeInternalNavigation" />
 
 @if (_loading)
 {
@@ -32,6 +39,14 @@ else if (_loadError is not null)
             <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="LoadAsync">重试</MudButton>
         </MudStack>
     </MudAlert>
+    @if (_canManage && _diagnosticDetails is not null)
+    {
+        <MudExpansionPanels Class="mt-3">
+            <MudExpansionPanel Text="管理员/工程师诊断信息">
+                <MudText Typo="Typo.body2" Class="dt-muted">@_diagnosticDetails</MudText>
+            </MudExpansionPanel>
+        </MudExpansionPanels>
+    }
 }
 else if (_details is null)
 {
@@ -61,6 +76,28 @@ else
     @if (_notice is not null)
     {
         <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-3">@_notice</MudAlert>
+    }
+    @if (_operationError is not null)
+    {
+        <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Class="mb-3">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
+                <span>@_operationError</span>
+                @if (_retryOperation is not null)
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                               Disabled="_working" OnClick="RetryOperationAsync">重试操作</MudButton>
+                }
+                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="DismissOperationError">关闭提示</MudButton>
+            </MudStack>
+        </MudAlert>
+    }
+    @if (_canManage && _diagnosticDetails is not null)
+    {
+        <MudExpansionPanels Class="mb-3">
+            <MudExpansionPanel Text="管理员/工程师诊断信息">
+                <MudText Typo="Typo.body2" Class="dt-muted">@_diagnosticDetails</MudText>
+            </MudExpansionPanel>
+        </MudExpansionPanels>
     }
 
     <MudPaper Class="pa-4 mb-3">
@@ -131,6 +168,11 @@ else
                     </MudButton>
                 </MudTd>
             </RowTemplate>
+            <NoRecordsContent>
+                <div class="dt-empty-hint">
+                    <MudText Typo="Typo.body2" Class="dt-muted py-2">此异常单尚未关联源记录或其他证据。</MudText>
+                </div>
+            </NoRecordsContent>
         </MudTable>
     </MudPaper>
 
@@ -182,7 +224,12 @@ else
                     </MudTd>
                 </RowTemplate>
                 <NoRecordsContent>
-                    <div class="dt-empty-hint"><MudText Typo="Typo.body2" Class="dt-muted py-2">排查范围内没有记录。</MudText></div>
+                    <div class="dt-empty-hint">
+                        @if (_candidateError is null)
+                        {
+                            <MudText Typo="Typo.body2" Class="dt-muted py-2">检索成功，当前排查时间范围内没有潜在影响候选记录。</MudText>
+                        }
+                    </div>
                 </NoRecordsContent>
             </MudTable>
             @if (_candidateTotal > CandidatePageSize)
@@ -212,10 +259,10 @@ else
                 }
                 <MudGrid Class="dt-filters mt-2">
                     <MudItem xs="12" md="8">
-                        <MudTextField T="string" @bind-Value="_noteAction" Label="本次处置措施" Lines="2" MaxLength="2000" />
+                        <MudTextField T="string" @bind-Value="_noteAction" Label="本次处置措施" Lines="2" MaxLength="2000" Immediate="true" />
                     </MudItem>
                     <MudItem xs="12" md="4">
-                        <MudTextField T="string" @bind-Value="_noteComment" Label="补充说明" Lines="2" MaxLength="2000" />
+                        <MudTextField T="string" @bind-Value="_noteComment" Label="补充说明" Lines="2" MaxLength="2000" Immediate="true" />
                     </MudItem>
                 </MudGrid>
                 <MudStack Row="true" Spacing="2" Class="mt-2 flex-wrap">
@@ -224,7 +271,8 @@ else
                 @if (_details.Incident.Status == QualityIncidentStatus.InProgress)
                 {
                     <MudDivider Class="my-4" />
-                    <MudText Typo="Typo.subtitle2" Class="mb-2">提交复核所需信息</MudText>
+                    <MudText Typo="Typo.subtitle2" Class="mb-1">提交复核所需信息</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted mb-2">按流水号、托盘、工站和时间选择验证记录；无需查找月份或内部记录 ID。</MudText>
                     <MudGrid Class="dt-filters">
                         <MudItem xs="12" sm="4">
                             <MudSelect T="string" @bind-Value="_causeCategory" Label="原因分类" Dense="true">
@@ -235,25 +283,82 @@ else
                             </MudSelect>
                         </MudItem>
                         <MudItem xs="12" sm="8">
-                            <MudTextField T="string" @bind-Value="_reviewAction" Label="最终处置措施" MaxLength="2000" />
+                            <MudTextField T="string" @bind-Value="_reviewAction" Label="最终处置措施" MaxLength="2000" Immediate="true" />
                         </MudItem>
                         <MudItem xs="12">
-                            <MudTextField T="string" @bind-Value="_verificationResult" Label="验证结论" Lines="2" MaxLength="2000" />
+                            <MudTextField T="string" @bind-Value="_verificationResult" Label="验证结论" Lines="2" MaxLength="2000" Immediate="true" />
                         </MudItem>
-                        <MudItem xs="12" sm="6">
-                            <MudTextField T="string" @bind-Value="_verificationMonth" Label="验证记录月份" Placeholder="yyyyMM" />
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudTextField T="string" @bind-Value="_verificationSerialSearch" Label="验证流水号" Immediate="true" Clearable="true" />
                         </MudItem>
-                        <MudItem xs="12" sm="6">
-                            <MudNumericField T="long?" @bind-Value="_verificationRecordId" Label="验证记录 ID" Min="1"
-                                             HelperText="在上方候选表选择，或从采集明细复制记录 ID" />
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudTextField T="string" @bind-Value="_verificationPalletSearch" Label="托盘码" Immediate="true" Clearable="true" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="2">
+                            <MudSelect T="int?" @bind-Value="_verificationStationId" Label="工站" Clearable="true" Dense="true">
+                                @foreach (var station in _stations)
+                                {
+                                    <MudSelectItem T="int?" Value="@((int?)station.Id)">@station.Code</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="2">
+                            <MudDatePicker @bind-Date="_verificationFrom" Label="开始日期" />
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="2">
+                            <MudDatePicker @bind-Date="_verificationTo" Label="结束日期" />
                         </MudItem>
                     </MudGrid>
+                    <MudStack Row="true" Spacing="2" Class="mt-2 mb-2 flex-wrap">
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_verificationSearching"
+                                   StartIcon="@Icons.Material.Filled.Search" OnClick="SearchVerificationRecordsAsync">搜索验证记录</MudButton>
+                        <MudText Typo="Typo.caption" Class="dt-muted align-self-center">
+                            @if (_verificationSelection is not null)
+                            {
+                                <span>已选 @_verificationSelection.Record.SerialNo · @_verificationSelection.Record.StationCode · @_verificationSelection.Record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss")</span>
+                            }
+                            else if (_verificationSearchDone)
+                            {
+                                <span>找到 @_verificationTotal 条记录</span>
+                            }
+                        </MudText>
+                    </MudStack>
+                    @if (_verificationSearchError is not null)
+                    {
+                        <MudAlert Severity="Severity.Error" Dense="true" Class="mb-2">@_verificationSearchError</MudAlert>
+                    }
+                    <MudTable Items="_verificationRecords" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm"
+                              Loading="_verificationSearching" Class="mb-3">
+                        <HeaderContent>
+                            <MudTh>触发时间</MudTh>
+                            <MudTh>流水号 / 托盘</MudTh>
+                            <MudTh>工站 / 判定</MudTh>
+                            <MudTh></MudTh>
+                        </HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="触发时间" Class="dt-nowrap">@context.Record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+                            <MudTd DataLabel="流水号 / 托盘">@context.Record.SerialNo<MudText Typo="Typo.caption" Class="dt-muted">@context.Record.PalletCode</MudText></MudTd>
+                            <MudTd DataLabel="工站 / 判定">@context.Record.StationCode · @DisplayLabels.JudgementTextLong(context.Record.Judgement)</MudTd>
+                            <MudTd DataLabel="操作">
+                                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => SelectVerificationRecord(context))">选择</MudButton>
+                            </MudTd>
+                        </RowTemplate>
+                        <NoRecordsContent>
+                            <div class="dt-empty-hint">
+                                @if (_verificationSearchError is null)
+                                {
+                                    <MudText Typo="Typo.body2" Class="dt-muted py-2">
+                                        @(_verificationSearchDone ? "搜索成功，但没有匹配的验证记录；请调整业务标识或时间范围。" : "设置业务标识或时间范围后搜索验证记录。")
+                                    </MudText>
+                                }
+                            </div>
+                        </NoRecordsContent>
+                    </MudTable>
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-2"
                                Disabled="_working || string.IsNullOrWhiteSpace(_causeCategory)
                                          || string.IsNullOrWhiteSpace(_reviewAction)
                                          || string.IsNullOrWhiteSpace(_verificationResult)
-                                         || string.IsNullOrWhiteSpace(_verificationMonth)
-                                         || _verificationRecordId is not > 0"
+                                         || _verificationSelection is null"
                                OnClick="SubmitForReviewAsync">提交复核</MudButton>
                 }
             }
@@ -291,7 +396,7 @@ else
     {
         <MudPaper Class="pa-4 mb-3">
             <MudText Typo="Typo.subtitle1" Class="mb-2">复核结论</MudText>
-            <MudTextField T="string" @bind-Value="_reviewComment" Label="复核意见或退回原因" Lines="2" MaxLength="2000" />
+            <MudTextField T="string" @bind-Value="_reviewComment" Label="复核意见或退回原因" Lines="2" MaxLength="2000" Immediate="true" />
             <MudStack Row="true" Spacing="2" Class="mt-2 flex-wrap">
                 <MudButton Variant="Variant.Filled" Color="Color.Success" StartIcon="@Icons.Material.Filled.CheckCircle"
                            Disabled="_working || string.IsNullOrWhiteSpace(_reviewComment)" OnClick="@(() => ReviewAsync(approved: true))">通过并关闭</MudButton>
@@ -306,7 +411,7 @@ else
         <MudPaper Class="pa-4 mb-3">
             <MudText Typo="Typo.subtitle1" Class="mb-2">重新打开</MudText>
             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
-                <MudTextField T="string" @bind-Value="_reopenReason" Label="重新打开原因" MaxLength="2000" />
+                <MudTextField T="string" @bind-Value="_reopenReason" Label="重新打开原因" MaxLength="2000" Immediate="true" />
                 <MudText Typo="Typo.caption" Class="dt-muted">需说明新发现的证据或未解决问题。</MudText>
                 <MudButton Variant="Variant.Outlined" Color="Color.Warning" StartIcon="@Icons.Material.Filled.Replay"
                            Disabled="_working || string.IsNullOrWhiteSpace(_reopenReason)" OnClick="ReopenAsync">重新打开</MudButton>
@@ -326,14 +431,14 @@ else
                 <HeaderContent>
                     <MudTh>时间</MudTh>
                     <MudTh>操作</MudTh>
-                    <MudTh>状态变化</MudTh>
+                    <MudTh>处置状态变化</MudTh>
                     <MudTh>操作人</MudTh>
                     <MudTh>记录</MudTh>
                 </HeaderContent>
                 <RowTemplate>
                     <MudTd DataLabel="时间" Class="dt-nowrap">@context.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
                     <MudTd DataLabel="操作">@ActivityText(context.Kind)</MudTd>
-                    <MudTd DataLabel="状态变化">@StatusTransition(context)</MudTd>
+                    <MudTd DataLabel="处置状态变化">@StatusTransition(context)</MudTd>
                     <MudTd DataLabel="操作人">@context.Actor</MudTd>
                     <MudTd DataLabel="记录">
                         @if (!string.IsNullOrWhiteSpace(context.CauseCategory))
@@ -368,15 +473,25 @@ else
     private QualityIncidentActor? _actor;
     private IReadOnlyList<UserAccount> _assignableUsers = [];
     private IReadOnlyList<CollectRecordListItem> _candidates = [];
+    private IReadOnlyList<CollectRecordListItem> _verificationRecords = [];
+    private IReadOnlyList<Station> _stations = [];
+    private CollectRecordListItem? _verificationSelection;
     private int _candidateTotal;
     private int _candidatePage;
+    private int _verificationTotal;
     private bool _loading = true;
     private bool _working;
     private bool _candidateLoading;
+    private bool _verificationSearching;
+    private bool _verificationSearchDone;
     private bool _canWork;
     private bool _canManage;
     private string? _loadError;
     private string? _candidateError;
+    private string? _verificationSearchError;
+    private string? _operationError;
+    private string? _diagnosticDetails;
+    private Func<Task>? _retryOperation;
     private string? _notice;
     private string? _assignOwner;
     private string? _noteAction;
@@ -384,11 +499,32 @@ else
     private string? _causeCategory;
     private string? _reviewAction;
     private string? _verificationResult;
-    private string? _verificationMonth;
-    private long? _verificationRecordId;
+    private string? _verificationSerialSearch;
+    private string? _verificationPalletSearch;
+    private int? _verificationStationId;
+    private DateTime? _verificationFrom = DateTime.Today.AddDays(-6);
+    private DateTime? _verificationTo = DateTime.Today;
     private string? _reviewComment;
     private string? _reopenReason;
     private bool HasScope => _details?.Incident.ScopeFrom is not null && _details.Incident.ScopeTo is not null;
+    private bool Dirty => !string.IsNullOrWhiteSpace(_noteAction)
+                          || !string.IsNullOrWhiteSpace(_noteComment)
+                          || !string.IsNullOrWhiteSpace(_causeCategory)
+                          || !string.IsNullOrWhiteSpace(_reviewAction)
+                          || !string.IsNullOrWhiteSpace(_verificationResult)
+                          || _verificationSelection is not null
+                          || !string.IsNullOrWhiteSpace(_reviewComment)
+                          || !string.IsNullOrWhiteSpace(_reopenReason);
+    private bool CanSaveAction => !string.IsNullOrWhiteSpace(_noteAction)
+                                  || (_details?.Incident.Status == QualityIncidentStatus.InProgress
+                                      && !string.IsNullOrWhiteSpace(_causeCategory)
+                                      && !string.IsNullOrWhiteSpace(_reviewAction)
+                                      && !string.IsNullOrWhiteSpace(_verificationResult)
+                                      && _verificationSelection is not null)
+                                  || (_canManage && _details?.Incident.Status == QualityIncidentStatus.Closed
+                                      && !string.IsNullOrWhiteSpace(_reopenReason));
+    private string SaveActionText => !string.IsNullOrWhiteSpace(_noteAction) ? "记录处置措施"
+        : _details?.Incident.Status == QualityIncidentStatus.Closed ? "重新打开异常单" : "提交复核";
 
     protected override Task OnParametersSetAsync() => LoadAsync();
 
@@ -396,6 +532,7 @@ else
     {
         _loading = true;
         _loadError = null;
+        _diagnosticDetails = null;
         try
         {
             _actor = await Actors.GetCurrentAsync();
@@ -405,6 +542,17 @@ else
             _canManage = _actor.IsInRole(AppRoles.Administrator) || _actor.IsInRole(AppRoles.Engineer);
             _details = await Incidents.GetAsync(Id);
             _notice = null;
+            try
+            {
+                _stations = await Config.GetStationsAsync();
+            }
+            catch (Exception ex)
+            {
+                _stations = [];
+                _notice = "验证记录工站筛选暂时无法加载；仍可按其他条件搜索。";
+                SaveDiagnostic(ex);
+            }
+
             if (_details is null)
             {
                 _candidates = [];
@@ -429,7 +577,8 @@ else
                 catch (Exception ex)
                 {
                     _assignableUsers = [];
-                    _notice = $"负责人列表加载失败：{ex.Message}";
+                    _notice = "负责人列表暂时无法加载，请稍后重试或联系管理员。";
+                    SaveDiagnostic(ex);
                 }
             }
 
@@ -446,7 +595,8 @@ else
         catch (Exception ex)
         {
             _details = null;
-            _loadError = $"质量异常单加载失败：{ex.Message}";
+            _loadError = "质量异常单暂时无法加载，请重试；若问题持续，请联系工程师或管理员。";
+            SaveDiagnostic(ex);
         }
         finally
         {
@@ -479,7 +629,8 @@ else
         }
         catch (Exception ex)
         {
-            _candidateError = $"潜在影响候选加载失败：{ex.Message}";
+            _candidateError = "潜在影响候选暂时无法加载，请重试。";
+            SaveDiagnostic(ex);
         }
         finally
         {
@@ -537,10 +688,9 @@ else
 
     private async Task SubmitForReviewAsync()
     {
-        if (_details is null || _actor is null || _verificationRecordId is not > 0
-            || string.IsNullOrWhiteSpace(_verificationMonth))
+        if (_details is null || _actor is null || _verificationSelection is null)
         {
-            Toast.Add("请填写验证记录月份和记录 ID。", Severity.Warning);
+            _operationError = "提交复核前，请搜索并选择一条验证记录。";
             return;
         }
 
@@ -549,19 +699,144 @@ else
             CauseCategory = _causeCategory ?? "",
             ActionTaken = _reviewAction ?? "",
             VerificationResult = _verificationResult ?? "",
-            MonthKey = _verificationMonth.Trim(),
-            RecordId = _verificationRecordId.Value
+            MonthKey = _verificationSelection.MonthKey,
+            RecordId = _verificationSelection.Record.Id
         };
-        await MutateAsync(() => Incidents.SubmitForReviewAsync(Id, command, _details.Incident.Version, _actor));
+        if (await MutateAsync(() => Incidents.SubmitForReviewAsync(Id, command, _details.Incident.Version, _actor)))
+        {
+            _causeCategory = null;
+            _reviewAction = null;
+            _verificationResult = null;
+            _verificationSelection = null;
+        }
     }
 
     private void SelectVerificationRecord(CollectRecordListItem item)
     {
-        _verificationMonth = item.MonthKey;
-        _verificationRecordId = item.Record.Id;
+        _verificationSelection = item;
         _verificationResult ??= item.Record.Judgement == Judgement.Ok ? "复测合格" : "复测结果待说明";
         Toast.Add($"已选择验证记录 {item.Record.SerialNo}", Severity.Info);
     }
+
+    private async Task SearchVerificationRecordsAsync()
+    {
+        if (_verificationSearching)
+        {
+            return;
+        }
+
+        if (_verificationFrom is null || _verificationTo is null || _verificationFrom > _verificationTo)
+        {
+            _verificationSearchError = "请选择有效的开始和结束日期。";
+            return;
+        }
+
+        _verificationSearching = true;
+        _verificationSearchDone = true;
+        _verificationSearchError = null;
+        try
+        {
+            var result = await Collect.QueryAsync(new CollectQueryRequest
+            {
+                From = _verificationFrom.Value.Date,
+                To = _verificationTo.Value.Date.AddDays(1).AddTicks(-1),
+                SerialNo = NullIfWhiteSpace(_verificationSerialSearch),
+                PalletCode = NullIfWhiteSpace(_verificationPalletSearch),
+                StationId = _verificationStationId,
+                Skip = 0,
+                Take = 50
+            });
+            _verificationRecords = result.Items;
+            _verificationTotal = result.Total;
+        }
+        catch (Exception ex)
+        {
+            _verificationRecords = [];
+            _verificationTotal = 0;
+            _verificationSearchError = "验证记录搜索暂时失败，请检查筛选条件后重试。";
+            SaveDiagnostic(ex);
+        }
+        finally
+        {
+            _verificationSearching = false;
+        }
+    }
+
+    private async Task RetryOperationAsync()
+    {
+        if (_retryOperation is { } operation)
+        {
+            await MutateAsync(operation);
+        }
+    }
+
+    private void DismissOperationError()
+    {
+        _operationError = null;
+        _retryOperation = null;
+        _diagnosticDetails = null;
+    }
+
+    private void SaveDiagnostic(Exception exception)
+        => _diagnosticDetails = $"{exception.GetType().Name}: {exception.Message}";
+
+    private async Task OnBeforeInternalNavigation(LocationChangingContext context)
+    {
+        if (!Dirty)
+        {
+            return;
+        }
+
+        var parameters = new DialogParameters<QualityIncidentUnsavedDialog>
+        {
+            { dialog => dialog.Message, "离开页面后，尚未提交的处置内容将无法恢复。" },
+            { dialog => dialog.SaveText, SaveActionText },
+            { dialog => dialog.CanSave, CanSaveAction }
+        };
+        var dialog = await Dialogs.ShowAsync<QualityIncidentUnsavedDialog>(
+            "未提交的处置内容", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true });
+        var result = await dialog.Result;
+        var choice = result is { Canceled: false } ? result.Data as string : "continue";
+        if (choice == "discard")
+        {
+            return;
+        }
+
+        if (choice == "save")
+        {
+            await SavePendingActionAsync();
+        }
+
+        if (choice == "continue" || (choice == "save" && Dirty))
+        {
+            context.PreventNavigation();
+        }
+    }
+
+    private async Task SavePendingActionAsync()
+    {
+        if (!CanSaveAction)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_noteAction))
+        {
+            await AddWorkNoteAsync();
+        }
+        else if (_details?.Incident.Status == QualityIncidentStatus.InProgress)
+        {
+            await SubmitForReviewAsync();
+        }
+        else if (_canManage && _details?.Incident.Status == QualityIncidentStatus.Closed)
+        {
+            await ReopenAsync();
+        }
+    }
+
+    private static string? NullIfWhiteSpace(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private async Task ReviewAsync(bool approved)
     {
@@ -586,27 +861,35 @@ else
     {
         if (_working) return false;
         _working = true;
+        _retryOperation = operation;
+        _operationError = null;
+        _diagnosticDetails = null;
         try
         {
             await operation();
+            _retryOperation = null;
             Toast.Add("处置记录已保存", Severity.Success);
             await LoadAsync();
             return true;
         }
         catch (QualityIncidentConflictException ex)
         {
-            Toast.Add(ex.Message, Severity.Warning);
             await LoadAsync();
+            _operationError = "此异常单已被其他用户更新，页面已刷新。请核对最新状态和负责人后，再重新执行操作。";
+            SaveDiagnostic(ex);
+            _retryOperation = null;
             return false;
         }
         catch (QualityIncidentOperationException ex)
         {
-            Toast.Add(ex.Message, Severity.Warning);
+            _operationError = "该操作未完成。请核对必填信息、当前处置状态和负责人后重试。";
+            SaveDiagnostic(ex);
             return false;
         }
         catch (Exception ex)
         {
-            Toast.Add($"操作失败：{ex.Message}", Severity.Error);
+            _operationError = "操作暂时无法完成。请核对必填信息、当前状态和负责人后重试。";
+            SaveDiagnostic(ex);
             return false;
         }
         finally

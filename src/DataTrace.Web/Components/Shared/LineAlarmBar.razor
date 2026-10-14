@@ -5,63 +5,106 @@
 
 @if (_alarms.Count > 0)
 {
-    <div class="dt-alarm-bar" role="alert" aria-live="assertive">
-        @* dt-alarm-alert 只是个钩子：暗色档下 filled 的 Error 底色取的是暗色调色板的 #ef9a9a，
-           整条横幅会成为夜班屏幕上最亮的块（见 app.css 里 html.dt-theme-dark 的那条覆盖）。 *@
-        <MudAlert Severity="Severity.Error" Variant="Variant.Filled" Dense="true" Class="mb-0 dt-alarm-alert" NoIcon="false">
-            <div class="dt-alarm-bar-row">
-                <div>
-                    @foreach (var alarm in _visibleAlarms)
-                    {
-                        <div>@alarm.Message</div>
-                    }
-                    @if (_hiddenCount > 0)
-                    {
-                        @* 折叠掉的条数必须自己报出来：只剩前几条时，看不出"后面还有"，
-                           容易被当成异常只有这几条，接手完前几条就以为处理完了。 *@
-                        <div class="dt-alarm-bar-more">另有 @_hiddenCount 条异常未逐条铺开，进「去接手」查看并逐条处理。</div>
-                    }
-                    @if (_muted)
-                    {
-                        <div class="dt-alarm-bar-note">声音已静音，异常仍在。</div>
-                    }
-                </div>
-                <div class="dt-alarm-bar-actions">
-                    <MudButton Variant="Variant.Outlined" Color="Color.Inherit" Size="Size.Small" Href="/alarms">
-                        去接手
-                    </MudButton>
-                    <MudButton Variant="Variant.Outlined" Color="Color.Inherit" Size="Size.Small"
-                               OnClick="ToggleMute">
-                        @(_muted ? "重新响铃" : "静音")
-                    </MudButton>
-                </div>
+    <section class="dt-alarm-bar @(_urgentCount > 0 ? "dt-alarm-bar--urgent" : "dt-alarm-bar--attention")"
+             aria-label="整线异常">
+        <div class="dt-alarm-bar-row">
+            <div class="dt-alarm-bar-summary" role="status" aria-live="polite">
+                <strong>整线异常</strong>
+                <span>当前异常 @_activeCount</span>
+                <span>已恢复待确认 @_recoveredCount</span>
+                @if (_urgentCount > 0)
+                {
+                    <span class="dt-alarm-bar-blocker">采集阻断 @_urgentCount</span>
+                }
+                @if (_muted)
+                {
+                    <span class="dt-alarm-bar-note">声音已静音</span>
+                }
             </div>
-        </MudAlert>
-    </div>
+            <div class="dt-alarm-bar-actions">
+                <button type="button" class="dt-alarm-bar-button" aria-expanded="@_expanded"
+                        aria-controls="dt-alarm-details" @onclick="ToggleExpanded">
+                    @(_expanded ? "收起详情" : "展开详情")
+                </button>
+                <a class="dt-alarm-bar-button" href="/alarms">报警列表</a>
+                <button type="button" class="dt-alarm-bar-button" @onclick="ToggleMute">
+                    @(_muted ? "重新响铃" : "静音")
+                </button>
+            </div>
+        </div>
+
+        @if (_urgentCount > 0)
+        {
+            <div class="dt-sr-only" role="alert" aria-live="assertive">
+                采集阻断：@UrgentAnnouncement
+            </div>
+        }
+
+        <div id="dt-alarm-details" class="dt-alarm-bar-details" hidden="@(!_expanded)">
+            <section>
+                <h2 class="dt-alarm-bar-group-title">当前仍在发生（@_activeCount）</h2>
+                @if (_activeCount > 0)
+                {
+                    <ul>
+                        @foreach (var alarm in _activeAlarms)
+                        {
+                            <li>@alarm.Message</li>
+                        }
+                    </ul>
+                }
+                else
+                {
+                    <p>当前没有仍在发生的异常。</p>
+                }
+            </section>
+            <section>
+                <h2 class="dt-alarm-bar-group-title">已恢复，待接手（@_recoveredCount）</h2>
+                @if (_recoveredCount > 0)
+                {
+                    <ul>
+                        @foreach (var alarm in _recoveredAlarms)
+                        {
+                            <li>@DisplayMessage(alarm)</li>
+                        }
+                    </ul>
+                }
+                else
+                {
+                    <p>没有已恢复待接手的异常。</p>
+                }
+            </section>
+        </div>
+    </section>
 }
 
 @code {
-    /// <summary>
-    /// 横幅最多逐条铺开的条数。异常成串时（换型、停线、批量超限）全铺出来能占到半屏，
-    /// 把 KPI 与工站卡整块挤到折叠线以下，而横幅本身还滚动不到 —— 车间看到的反而更少。
-    /// </summary>
-    private const int MaxLines = 4;
+    private const string RecoveredSuffix = "（已恢复，仍待接手）";
 
     private IReadOnlyList<LineAlarm> _alarms = [];
     private string? _mutedSignature;
     private bool _sounding;
+    private bool _expanded;
 
-    /// <summary>报警页按「最久没人接手」排序，取前几条就是等得最久的，正是横幅该叫人看的。</summary>
-    private IReadOnlyList<LineAlarm> _visibleAlarms =>
-        _alarms.Count <= MaxLines ? _alarms : _alarms.Take(MaxLines).ToList();
+    private IReadOnlyList<LineAlarm> _activeAlarms => _alarms.Where(alarm => !IsRecovered(alarm)).ToList();
 
-    private int _hiddenCount => Math.Max(0, _alarms.Count - MaxLines);
+    private IReadOnlyList<LineAlarm> _recoveredAlarms => _alarms.Where(IsRecovered).ToList();
+
+    private IReadOnlyList<LineAlarm> _urgentAlarms =>
+        _activeAlarms.Where(IsUrgentCurrentBlocker).ToList();
+
+    private int _activeCount => _activeAlarms.Count;
+
+    private int _recoveredCount => _recoveredAlarms.Count;
+
+    private int _urgentCount => _urgentAlarms.Count;
 
     private bool _muted => _alarms.Count > 0 && Signature == _mutedSignature;
 
     private bool ShouldSound => _alarms.Count > 0 && !_muted;
 
     private string Signature => string.Join('|', _alarms.Select(a => a.Key));
+
+    private string UrgentAnnouncement => string.Join("；", _urgentAlarms.Select(alarm => alarm.Message));
 
     protected override void OnInitialized()
     {
@@ -95,10 +138,26 @@
         StateHasChanged();
     }
 
+    private void ToggleExpanded() => _expanded = !_expanded;
+
     private void ToggleMute()
     {
         _mutedSignature = _muted ? null : Signature;
     }
+
+    private static bool IsRecovered(LineAlarm alarm)
+        => alarm.Message.EndsWith(RecoveredSuffix, StringComparison.Ordinal);
+
+    private static bool IsUrgentCurrentBlocker(LineAlarm alarm)
+        => alarm.Kind is LineAlarmKind.HeartbeatStale
+            or LineAlarmKind.StationFault
+            or LineAlarmKind.CollectionOverdue
+            or LineAlarmKind.ConsecutiveProcess;
+
+    private static string DisplayMessage(LineAlarm alarm)
+        => IsRecovered(alarm)
+            ? alarm.Message[..^RecoveredSuffix.Length].TrimEnd()
+            : alarm.Message;
 
     public void Dispose()
     {

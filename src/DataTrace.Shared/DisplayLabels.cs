@@ -186,10 +186,10 @@ public static class DisplayLabels
     /// <summary>角色的权限范围说明：创建与编辑用户时都要给同一句解释。</summary>
     public static string RoleHint(string? role) => role switch
     {
-        AppRoles.Administrator => "全部权限：用户管理、配置、查询、报表、审计日志",
-        AppRoles.Engineer => "可改 PLC/工站/系统设置，可用 PLC 仿真、查询报表与审计日志",
-        AppRoles.Operator => "只能查看实时看板、查询数据与报表",
-        AppRoles.Viewer => "只读：看板、查询、报表",
+        AppRoles.Administrator => "可查看全部页面并导出；可接手报警、创建/处置/复核质量异常；可配置并管理用户。",
+        AppRoles.Engineer => "可查看业务与诊断页面并导出；可接手报警、创建/处置/复核质量异常；可配置，不可管理用户。",
+        AppRoles.Operator => "可查看看板、报警、查询、报表和质量异常；可接手报警、创建/处置质量异常；不可导出、复核或配置。",
+        AppRoles.Viewer => "只读查看看板、报警、查询、报表、质量异常和波形；不可导出、接手报警、创建/处置/复核异常或配置。",
         _ => ""
     };
 
@@ -202,6 +202,15 @@ public static class DisplayLabels
         PlcDataType.Double => "双精度浮点",
         PlcDataType.String => "字符串",
         _ => dataType.ToString()
+    };
+
+    public static string TagPurposeText(TagPurpose purpose) => purpose switch
+    {
+        TagPurpose.QualityMeasurement => "质量测量（默认）",
+        TagPurpose.DiscreteResult => "离散结果",
+        TagPurpose.Identity => "身份/追溯",
+        TagPurpose.Diagnostic => "诊断/状态",
+        _ => purpose.ToString()
     };
 
     /// <summary>字序：A 为最高字节，字母顺序即写入顺序，这里补一句人话说明。</summary>

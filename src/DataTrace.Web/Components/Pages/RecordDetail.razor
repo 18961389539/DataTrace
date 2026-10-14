@@ -196,23 +196,23 @@ else
             <MudTd DataLabel="数值" Class="dt-nowrap">
                 @if (context.IsOutOfLimit)
                 {
-                    <strong class="dt-text-error">@Display(context)</strong>
+                    <strong class="dt-text-error">@DisplayWithUnit(context)</strong>
                 }
                 else if (context.IsWarning)
                 {
-                    <strong class="dt-text-warning">@Display(context)</strong>
+                    <strong class="dt-text-warning">@DisplayWithUnit(context)</strong>
                 }
                 else
                 {
-                    @Display(context)
+                    @DisplayWithUnit(context)
                 }
                 @if (OverageText(context) is { } overage)
                 {
                     <MudText Typo="Typo.caption" Class="dt-text-error ml-1">@overage</MudText>
                 }
             </MudTd>
-            <MudTd DataLabel="规格限" Class="dt-num dt-nowrap">@DisplayLabels.LimitRange(context.LowerLimit, context.UpperLimit)</MudTd>
-            <MudTd DataLabel="预警限" Class="dt-num dt-nowrap">@DisplayLabels.LimitRange(context.WarningLowerLimit, context.WarningUpperLimit)</MudTd>
+            <MudTd DataLabel="规格限" Class="dt-num dt-nowrap">@DisplayLimitRange(context)</MudTd>
+            <MudTd DataLabel="预警限" Class="dt-num dt-nowrap">@DisplayLimitRange(context, warning: true)</MudTd>
             <MudTd DataLabel="判定">
                 @if (context.IsOutOfLimit)
                 {
@@ -239,6 +239,10 @@ else
                         </TooltipContent>
                     </MudTooltip>
                     <MudText Typo="Typo.caption" Class="dt-text-warning ml-1">预警</MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.caption">@TagJudgementText(context)</MudText>
                 }
             </MudTd>
         </RowTemplate>
@@ -453,6 +457,30 @@ else
     private static string Display(TagValue value)
         => value.TextValue ?? value.NumericValue?.ToString("0.####", CultureInfo.InvariantCulture) ?? "-";
 
+    private static string UnitLabel(string? unit)
+        => string.IsNullOrWhiteSpace(unit) ? "单位未知" : unit;
+
+    private static string DisplayWithUnit(TagValue value)
+        => $"{Display(value)} {UnitLabel(value.UnitSnapshot)}";
+
+    private static string DisplayLimitRange(TagValue value, bool warning = false)
+    {
+        var lower = warning ? value.WarningLowerLimit : value.LowerLimit;
+        var upper = warning ? value.WarningUpperLimit : value.UpperLimit;
+        var range = DisplayLabels.LimitRange(lower, upper);
+        return lower is null && upper is null ? range : $"{range} {UnitLabel(value.UnitSnapshot)}";
+    }
+
+    private static string TagJudgementText(TagValue value)
+    {
+        if (value.LowerLimit is not null || value.UpperLimit is not null)
+        {
+            return value.NumericValue is null ? "缺数据" : "正常";
+        }
+
+        return "未配置判定";
+    }
+
     /// <summary>导出里留空而不是写 0：下游表格把 0 当成真实限值就会算出错误的合格率。</summary>
     private static string CsvNum(double? value)
         => value?.ToString("0.###", CultureInfo.InvariantCulture) ?? "";
@@ -651,7 +679,8 @@ else
                 "记录信息", _record.SerialNo, _record.PalletCode, _record.StationCode,
                 _record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss"), DisplayLabels.JudgementTextLong(_record.Judgement),
                 ResultCodes.Describe(_record.ResultCode),
-                string.IsNullOrWhiteSpace(_record.RecipeCode) ? "(默认限值)" : _record.RecipeCode
+                string.IsNullOrWhiteSpace(_record.RecipeCode) ? "(默认限值)" : _record.RecipeCode,
+                ""
             },
             Array.Empty<string>()
         };
@@ -660,21 +689,21 @@ else
         // 事后要复核设备写了什么就得有这一行。
         if (!string.IsNullOrWhiteSpace(_record.ArchivePath))
         {
-            rows.Add(new[] { "原始数据文件", _record.ArchivePath, FileSizeText(_record.ArchiveFileSize), "", "", "", "", "" });
-            rows.Add(new string[8]);
+            rows.Add(new[] { "原始数据文件", _record.ArchivePath, FileSizeText(_record.ArchiveFileSize), "", "", "", "", "", "" });
+            rows.Add(new string[9]);
         }
 
-        rows.Add(new[] { "点位名称", "数值", "判定", "规格下限", "规格上限", "预警下限", "预警上限", "" });
+        rows.Add(new[] { "点位名称", "数值", "单位", "判定", "规格下限", "规格上限", "预警下限", "预警上限", "" });
 
         @* 导出顺序跟屏显一致（超差→预警→其余按名称）：对照着看时两份东西行序不同最容易错。 *@
         foreach (var value in _tagRows)
         {
             // 超规格与预警分开写：导出给质量看时，"判废"和"黄区提示"不能混为一谈。
             // 限值留空表示"这条记录没记下来"（早于本版本），不要写 0 让下游当成真实限值。
-            // 末列留空：整份 CSV 固定 8 列，少一列时 Excel 会把后面的曲线段拼错位。
+            // 末列留空：整份 CSV 固定 9 列，少一列时 Excel 会把后面的曲线段拼错位。
             rows.Add(new[]
             {
-                value.TagName, Display(value),
+                value.TagName, Display(value), UnitLabel(value.UnitSnapshot),
                 value.IsOutOfLimit ? "超限" : value.IsWarning ? "预警" : "",
                 CsvNum(value.LowerLimit), CsvNum(value.UpperLimit),
                 CsvNum(value.WarningLowerLimit), CsvNum(value.WarningUpperLimit),
@@ -682,22 +711,22 @@ else
             });
         }
 
-        // 分区空行与曲线段都补满 8 列：列数参差时 Excel 会把两段内容拼错位。
-        rows.Add(new string[8]);
-        rows.Add(new[] { "曲线编码", "曲线名称", "点数", "文件路径", "", "", "", "" });
+        // 分区空行与曲线段都补满 9 列：列数参差时 Excel 会把两段内容拼错位。
+        rows.Add(new string[9]);
+        rows.Add(new[] { "曲线编码", "曲线名称", "点数", "文件路径", "", "", "", "", "" });
         foreach (var curve in _record.Curves)
         {
             rows.Add(new[]
             {
                 curve.CurveCode, curve.CurveName,
                 curve.PointCount.ToString(CultureInfo.InvariantCulture), curve.RelativePath,
-                "", "", "", ""
+                "", "", "", "", ""
             });
         }
 
         try
         {
-            var csv = CsvExporter.Build(new[] { "项目", "A", "B", "C", "D", "E", "F", "G" }, rows);
+            var csv = CsvExporter.Build(new[] { "项目", "A", "B", "C", "D", "E", "F", "G", "H" }, rows);
             await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName($"datatrace_{_record.SerialNo}"),
                 CsvExporter.ToBase64(csv));
         }

@@ -93,9 +93,9 @@ else
             <div class="dt-settings-health-card">
                 <div class="dt-settings-health-label">初始口令</div>
                 <div class="dt-settings-health-value">
-                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">首次登录强制改密</MudChip>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">可自行修改</MudChip>
                 </div>
-                <div class="dt-settings-health-detail">生产首次部署使用随机管理员口令；admin / engineer 演示账号仅供本机开发。</div>
+                <div class="dt-settings-health-detail">生产首次部署使用随机管理员口令；建议登录后自行修改。演示账号仅供本机开发。</div>
                 <MudButton Variant="Variant.Text" Size="Size.Small" Color="Color.Primary" Class="pa-0 mt-1"
                            Href="/users">去用户页</MudButton>
             </div>
@@ -484,7 +484,7 @@ else
                 <MudPaper Class="pa-4 mb-3 dt-settings-section" id="sec-security" Elevation="1">
                     <MudText Typo="Typo.subtitle1" Class="mb-1">安全</MudText>
                     <MudText Typo="Typo.caption" Class="dt-muted mb-3">
-                        生产首次部署生成随机管理员口令，并强制首次登录改密；admin / engineer 演示账号仅供本机开发，勿用于现场。
+                        生产首次部署生成随机管理员口令；管理员可登录后自行修改。admin / engineer 演示账号仅供本机开发，勿用于现场。
                         @if (_softCapWarning is { Length: > 0 })
                         {
                             <text> 另：@_softCapWarning</text>
