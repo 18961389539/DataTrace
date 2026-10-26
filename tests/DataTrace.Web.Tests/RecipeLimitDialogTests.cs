@@ -30,6 +30,7 @@ public class RecipeLimitDialogTests : WebTestBase
     {
         var temperature = Tag(1, "ST010_TEMP", enabled: false);
         var pressure = Tag(2, "ST010_P1", enabled: true);
+        pressure.Unit = "MPa";
         var flow = Tag(3, "ST020_FLOW", enabled: true);
         temperature.UpperLimit = 60;
         var station = new Station
@@ -113,6 +114,28 @@ public class RecipeLimitDialogTests : WebTestBase
         Assert.Contains("生效值预览", provider.Markup);
         Assert.Contains("规格 5 ~ 60", row.TextContent);
         Assert.Contains("预警 — ~ 45", row.TextContent);
+    }
+
+    [Fact]
+    public async Task Limits_carry_the_point_unit_so_values_cannot_be_entered_in_the_wrong_scale()
+    {
+        var (recipe, stations) = Fixtures();
+
+        Context.Services.AddSingleton<IDialogService, DialogService>();
+        RenderPopoverHost();
+        var provider = Context.Render<MudDialogProvider>();
+        await Context.Services.GetRequiredService<IDialogService>().ShowAsync<RecipeLimitDialog>("型号限值", new DialogParameters
+        {
+            ["Recipe"] = recipe,
+            ["Stations"] = stations
+        });
+        provider.Render();
+
+        var row = provider.FindAll("tr").Single(r => r.TextContent.Contains("ST010_P1"));
+        Assert.Contains("（MPa）", row.TextContent);
+        Assert.Contains("5 ~ 20 MPa", row.TextContent);
+        Assert.Contains(provider.FindAll("input[aria-label]").Select(input => input.GetAttribute("aria-label")),
+            name => name!.Contains("单位 MPa"));
     }
 
     [Fact]

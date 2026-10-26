@@ -30,7 +30,7 @@
         else
         {
             <MudText Typo="Typo.caption" Class="dt-muted mb-2">
-                共 @_rows.Count 个点位，其中 @_rows.Count(r => r.IsOverridden) 个被本型号覆盖，本次已编辑 @_rows.Count(r => r.IsEdited) 个。<InfoHint Topic="HelpTexts.LimitMergeRule" />
+                共 @_rows.Count 个点位，其中 @_rows.Count(r => r.IsOverridden) 个被本型号覆盖，本次已编辑 @_rows.Count(r => r.IsEdited) 个。限值单位取自点位配置，不在此处修改。<InfoHint Topic="HelpTexts.LimitMergeRule" />
             </MudText>
             <div class="dt-recipe-limit-toolbar" role="group" aria-label="筛选型号限值点位">
                 <MudTextField T="string" Value="_searchText" ValueChanged="OnSearchChanged"
@@ -71,6 +71,10 @@
                 <RowTemplate>
                     <MudTd Class="dt-nowrap">
                         @context.StationCode · @context.Tag.Name
+                        @if (!string.IsNullOrWhiteSpace(context.Tag.Unit))
+                        {
+                            <MudText Typo="Typo.caption" Class="dt-muted">（@context.Tag.Unit）</MudText>
+                        }
                         @if (!context.Tag.Enabled)
                         {
                             <MudText Typo="Typo.caption" Class="dt-muted">（已停用）</MudText>
@@ -82,9 +86,9 @@
                     </MudTd>
                     <MudTd Class="dt-nowrap">
                         <MudText Typo="Typo.caption" Class="dt-muted">
-                            规格 @DisplayLabels.LimitRange(context.Tag.LowerLimit, context.Tag.UpperLimit)
-                            · 预警 @DisplayLabels.LimitRange(context.Tag.WarningLowerLimit, context.Tag.WarningUpperLimit)
-                            · 目标 @(context.Tag.TargetValue?.ToString("0.###") ?? "-")
+                            规格 @DisplayLabels.LimitRange(context.Tag.LowerLimit, context.Tag.UpperLimit)@UnitText(context)
+                            · 预警 @DisplayLabels.LimitRange(context.Tag.WarningLowerLimit, context.Tag.WarningUpperLimit)@UnitText(context)
+                            · 目标 @(context.Tag.TargetValue?.ToString("0.###") ?? "-")@UnitText(context)
                         </MudText>
                     </MudTd>
                     <MudTd><MudNumericField @bind-Value="context.Lower" @bind-Value:after="@(() => context.Error = null)" Placeholder="默认" Variant="Variant.Outlined"
@@ -104,9 +108,9 @@
                                              aria-label="@FieldName(context, "目标值")" /></MudTd>
                     <MudTd DataLabel="生效值预览" Class="dt-nowrap">
                         @{ var effective = TagLimits.From(context.Tag).Override(context.ToLimits()); }
-                        <MudText Typo="Typo.caption">规格 @DisplayLabels.LimitRange(effective.Lower, effective.Upper)</MudText>
-                        <MudText Typo="Typo.caption">预警 @DisplayLabels.LimitRange(effective.WarningLower, effective.WarningUpper)</MudText>
-                        <MudText Typo="Typo.caption" Class="dt-muted">目标 @(effective.Target?.ToString("0.###") ?? "—")</MudText>
+                        <MudText Typo="Typo.caption">规格 @DisplayLabels.LimitRange(effective.Lower, effective.Upper)@UnitText(context)</MudText>
+                        <MudText Typo="Typo.caption">预警 @DisplayLabels.LimitRange(effective.WarningLower, effective.WarningUpper)@UnitText(context)</MudText>
+                        <MudText Typo="Typo.caption" Class="dt-muted">目标 @(effective.Target?.ToString("0.###") ?? "—")@UnitText(context)</MudText>
                     </MudTd>
                 </RowTemplate>
                 <NoRecordsContent>
@@ -185,8 +189,14 @@
 
     private void OnSearchChanged(string? value) => _searchText = value ?? "";
 
+    /// <summary>限值单位属于点位配置，不在这里编辑；输入与预览都带上，避免 MPa / kPa 混填。</summary>
+    private static string UnitText(Row row)
+        => string.IsNullOrWhiteSpace(row.Tag.Unit) ? "" : $" {row.Tag.Unit}";
+
     private static string FieldName(Row row, string field)
-        => $"{row.StationCode} {row.Tag.Name} {field}";
+        => string.IsNullOrWhiteSpace(row.Tag.Unit)
+            ? $"{row.StationCode} {row.Tag.Name} {field}"
+            : $"{row.StationCode} {row.Tag.Name} 单位 {row.Tag.Unit} {field}";
 
     private void Cancel() => MudDialog?.Cancel();
 

@@ -149,17 +149,27 @@ else
             </div>
         </NoRecordsContent>
     </MudTable>
-    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mt-2 flex-wrap">
-        <MudText Typo="Typo.caption" Class="dt-muted">第 @_page / @PageCount 页</MudText>
-        <MudStack Row="true" Spacing="1">
-            <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_loading || _page <= 1" OnClick="PreviousPageAsync">上一页</MudButton>
-            <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_loading || _page >= PageCount" OnClick="NextPageAsync">下一页</MudButton>
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mt-2 flex-wrap gap-2">
+        <MudText Typo="Typo.caption" Class="dt-muted">
+            第 @_page / @PageCount 页 · 共 @_total 张，每页 @_pageSize 张
+        </MudText>
+        <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center" Class="flex-wrap">
+            <MudSelect T="int" Value="_pageSize" ValueChanged="OnPageSizeChanged" Dense="true"
+                       Class="dt-pagesize" Label="每页条数" Disabled="_loading">
+                @foreach (var size in PageSizes)
+                {
+                    <MudSelectItem T="int" Value="size">@size</MudSelectItem>
+                }
+            </MudSelect>
+            <MudPagination Count="PageCount" Selected="_page" SelectedChanged="OnPageChanged"
+                           BoundaryCount="1" MiddleCount="2" Disabled="_loading"
+                           aria-label="质量异常分页" />
         </MudStack>
     </MudStack>
 }
 
 @code {
-    private const int PageSize = 25;
+    private static readonly int[] PageSizes = [25, 50, 100];
     private IReadOnlyList<QualityIncidentListItem> _items = [];
     private IReadOnlyList<DataTrace.Domain.Entities.Station> _stations = [];
     private QualityIncidentStatus? _status;
@@ -170,6 +180,7 @@ else
     private string _queue = "all";
     private IReadOnlyList<QualityIncidentListItem>? _queueCache;
     private int _page = 1;
+    private int _pageSize = 25;
     private int _total;
     private bool _loading;
     private bool _canWork;
@@ -177,7 +188,21 @@ else
     private bool _hasAnyIncidents;
     private string? _error;
     private string? _diagnosticDetails;
-    private int PageCount => Math.Max(1, (int)Math.Ceiling(_total / (double)PageSize));
+    private int PageCount => Math.Max(1, (int)Math.Ceiling(_total / (double)_pageSize));
+
+    [SupplyParameterFromQuery(Name = "queue")] public string? QueueQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "status")] public string? StatusQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "station")] public int? StationQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "owner")] public string? OwnerQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "q")] public string? KeywordQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "page")] public int? PageQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "size")] public int? SizeQuery { get; set; }
     private string FilteredEmptyMessage
     {
         get
@@ -201,6 +226,28 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        // 列表状态写回地址栏后，刷新、后退和转发链接都还能停在同一批单据上。
+        _queue = QueueQuery is "mine" or "unassigned" or "review" ? QueueQuery : "all";
+        if (Enum.TryParse<QualityIncidentStatus>(StatusQuery, ignoreCase: true, out var status))
+        {
+            _status = status;
+        }
+
+        if (_queue == "review")
+        {
+            _status = QualityIncidentStatus.PendingReview;
+        }
+        else if (_queue == "unassigned")
+        {
+            _status = QualityIncidentStatus.Open;
+        }
+
+        _stationId = StationQuery is > 0 ? StationQuery : null;
+        _owner = string.IsNullOrWhiteSpace(OwnerQuery) ? null : OwnerQuery.Trim();
+        _keyword = string.IsNullOrWhiteSpace(KeywordQuery) ? null : KeywordQuery.Trim();
+        _page = PageQuery is > 0 ? PageQuery.Value : 1;
+        _pageSize = SizeQuery is { } size && PageSizes.Contains(size) ? size : 25;
+
         _actor = await Actors.GetCurrentAsync();
         _canWork = _actor.IsInRole(AppRoles.Administrator)
                    || _actor.IsInRole(AppRoles.Engineer)
@@ -210,11 +257,12 @@ else
         await LoadAsync();
     }
 
-    private Task SearchAsync()
+    private async Task SearchAsync()
     {
         _page = 1;
         _queueCache = null;
-        return LoadAsync();
+        await LoadAsync();
+        SyncUrl();
     }
 
     private async Task ResetAsync()
@@ -227,6 +275,7 @@ else
         _page = 1;
         _queueCache = null;
         await LoadAsync();
+        SyncUrl();
     }
 
     private async Task SelectQueueAsync(string queue)
@@ -242,18 +291,79 @@ else
         _page = 1;
         _queueCache = null;
         await LoadAsync();
+        SyncUrl();
     }
 
-    private Task PreviousPageAsync()
+    private async Task OnPageChanged(int page)
     {
-        _page--;
-        return LoadAsync();
+        _page = Math.Clamp(page, 1, PageCount);
+        await LoadAsync();
+        SyncUrl();
     }
 
-    private Task NextPageAsync()
+    private async Task OnPageSizeChanged(int size)
     {
-        _page++;
-        return LoadAsync();
+        if (size == _pageSize)
+        {
+            return;
+        }
+
+        _pageSize = size;
+        _page = 1;
+        await LoadAsync();
+        SyncUrl();
+    }
+
+    private void SyncUrl()
+    {
+        var target = CurrentListUrl();
+        if (Nav.ToBaseRelativePath(Nav.Uri) == target)
+        {
+            return;
+        }
+
+        Nav.NavigateTo(target, replace: true);
+    }
+
+    private string CurrentListUrl()
+    {
+        var parts = new List<string>();
+        if (_queue != "all")
+        {
+            parts.Add($"queue={Uri.EscapeDataString(_queue)}");
+        }
+
+        if (_queue is not ("review" or "unassigned") && _status is { } status)
+        {
+            parts.Add($"status={status}");
+        }
+
+        if (_stationId is { } station)
+        {
+            parts.Add($"station={station}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(_owner))
+        {
+            parts.Add($"owner={Uri.EscapeDataString(_owner.Trim())}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(_keyword))
+        {
+            parts.Add($"q={Uri.EscapeDataString(_keyword.Trim())}");
+        }
+
+        if (_pageSize != 25)
+        {
+            parts.Add($"size={_pageSize}");
+        }
+
+        if (_page > 1)
+        {
+            parts.Add($"page={_page}");
+        }
+
+        return parts.Count == 0 ? "quality/incidents" : $"quality/incidents?{string.Join("&", parts)}";
     }
 
     private async Task OnSearchKeyDown(KeyboardEventArgs args)
@@ -279,7 +389,7 @@ else
                 _queueCache ??= await LoadQueueItemsAsync();
                 var resultItems = _queueCache;
                 _total = resultItems.Count;
-                _items = resultItems.Skip((_page - 1) * PageSize).Take(PageSize).ToList();
+                _items = resultItems.Skip((_page - 1) * _pageSize).Take(_pageSize).ToList();
             }
             else
             {
@@ -289,8 +399,8 @@ else
                     StationId = _stationId,
                     Owner = _owner,
                     Keyword = _keyword,
-                    Skip = (_page - 1) * PageSize,
-                    Take = PageSize
+                    Skip = (_page - 1) * _pageSize,
+                    Take = _pageSize
                 });
                 _items = result.Items;
                 _total = result.Total;

@@ -26,7 +26,7 @@ public class LineChartTests
 
     private static void SetupJs(TestContext ctx)
     {
-        var module = ctx.JSInterop.SetupModule("./js/echarts-line-chart.js");
+        var module = ctx.JSInterop.SetupModule(LineChart.ModulePath);
         module.SetupVoid("update", _ => true);
         module.SetupVoid("dispose", _ => true);
     }

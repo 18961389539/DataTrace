@@ -10,6 +10,7 @@
 @inject IUserAdministration UsersAdmin
 @inject AuthenticationStateProvider Auth
 @inject DtToast Toast
+@inject NavigationManager Nav
 
 <MudThemeProvider Theme="DataTraceTheme.Current" @bind-IsDarkMode="_isDarkMode" />
 <MudPopoverProvider />
@@ -36,6 +37,11 @@
         <MudText Typo="Typo.subtitle1">@_siteName</MudText>
         <MudSpacer />
         <div class="dt-appbar-utilities">
+            <MudTooltip Text="扫码或输入流水号 / 托盘码快速查找">
+                <MudIconButton Icon="@Icons.Material.Filled.QrCodeScanner" Color="Color.Inherit"
+                               Class="dt-quick-lookup" aria-label="扫码或流水号快速查找"
+                               OnClick="QuickLookupAsync" />
+            </MudTooltip>
             <PwaInstallButton />
             @* 大屏开关放顶栏：原来只挂看板页头，不在看板上就找不到，换班的人更是无从下手。
                大屏开启后顶栏整条隐藏，这里就不再渲染——退出改走右下角那个按钮。 *@
@@ -109,6 +115,12 @@
     }
 </MudLayout>
 
+@* 车间常亮屏没有换班提醒，空闲锁定只在普通模式下生效。 *@
+@if (!_shopFloor)
+{
+    <IdleLock />
+}
+
 @code {
     private bool _open = true;
     private bool _isDarkMode;
@@ -158,6 +170,45 @@
         {
             // 读不到就按关闭处理；body class 仍由 datatrace.js 里的内联脚本负责。
         }
+    }
+
+    private async Task QuickLookupAsync()
+    {
+        var dialog = await DialogService.ShowAsync<QuickLookupDialog>("快速查找",
+            new DialogOptions { MaxWidth = MaxWidth.ExtraSmall, FullWidth = true, CloseOnEscapeKey = true });
+        var result = await dialog.Result;
+        if (result is null || result.Canceled
+            || result.Data is not QuickLookupDialog.LookupRequest request)
+        {
+            return;
+        }
+
+        var parts = new List<string>();
+        if (request.IsSerial)
+        {
+            parts.Add($"serial={Uri.EscapeDataString(request.Value)}");
+            // 流水号前缀就是日期：直接把区间收到那一天，跨月查历史件也不会得到「0 条」。
+            if (request.Value.Length >= 8
+                && DateTime.TryParseExact(request.Value[..8], "yyyyMMdd",
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var day))
+            {
+                parts.Add($"from={day:yyyy-MM-dd}");
+                parts.Add($"to={day:yyyy-MM-dd}");
+            }
+            else
+            {
+                parts.Add("days=31");
+            }
+        }
+        else
+        {
+            parts.Add($"pallet={Uri.EscapeDataString(request.Value)}");
+            parts.Add("days=31");
+        }
+
+        parts.Add("scan=1");
+        Nav.NavigateTo($"query?{string.Join("&", parts)}");
     }
 
     /// <summary>

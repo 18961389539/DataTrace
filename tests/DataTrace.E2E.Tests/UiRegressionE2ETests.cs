@@ -484,6 +484,132 @@ public class UiRegressionE2ETests : E2ETestBase
         Assert.DoesNotContain("未配置", body);
     }
 
+    [Fact]
+    public async Task AlarmAndIncidentListStateCanBeRestoredFromTheUrl()
+    {
+        await OpenAsync("/alarms?view=Current");
+        await WaitForAsync(".dt-page-title");
+        await Page.WaitForFunctionAsync("""
+            () => [...document.querySelectorAll('button')]
+                .some(button => button.textContent.includes('当前／仍在发生')
+                    && button.getAttribute('aria-pressed') === 'true')
+            """);
+
+        await OpenAsync("/quality/incidents?queue=unassigned&size=50");
+        await WaitForAsync(".dt-page-title");
+        await Page.WaitForFunctionAsync("""
+            () => [...document.querySelectorAll('button')]
+                .some(button => button.textContent.trim() === '未接手'
+                    && button.getAttribute('aria-pressed') === 'true')
+            """);
+        Assert.Contains("每页 50 张", await Page.InnerTextAsync("body"));
+    }
+
+    [Fact]
+    public async Task DashboardOverviewOrDetailChoiceSurvivesReload()
+    {
+        await OpenAsync("/");
+        await WaitForAsync(".dt-station-view-mode");
+
+        await Page.GetByRole(AriaRole.Button, new() { Name = "详细监控", Exact = true }).ClickAsync();
+        await Page.WaitForFunctionAsync("() => localStorage.getItem('dt-dashboard-detail') === '1'");
+        await Page.ReloadAsync();
+        await WaitForAsync(".dt-station-view-mode");
+        await Page.WaitForFunctionAsync("""
+            () => [...document.querySelectorAll('.dt-station-view-mode button')]
+                .some(button => button.textContent.trim() === '详细监控' && button.getAttribute('aria-pressed') === 'true')
+            """);
+
+        await Page.GetByRole(AriaRole.Button, new() { Name = "概览", Exact = true }).ClickAsync();
+        await Page.WaitForFunctionAsync("() => localStorage.getItem('dt-dashboard-detail') === '0'");
+        await Page.ReloadAsync();
+        await WaitForAsync(".dt-station-view-mode");
+        await Page.WaitForFunctionAsync("""
+            () => [...document.querySelectorAll('.dt-station-view-mode button')]
+                .some(button => button.textContent.trim() === '概览' && button.getAttribute('aria-pressed') === 'true')
+            """);
+    }
+
+    [Fact]
+    public async Task TopbarQuickLookupFindsASerialAndLeavesFocusReadyForTheNextScan()
+    {
+        await OpenAsync("/query");
+        await WaitBodyContainsAsync("明细");
+        var serial = (await Page.Locator(".dt-query-results tbody tr").First
+            .Locator("td").Nth(1).InnerTextAsync()).Trim();
+
+        await OpenAsync("/");
+        await WaitForAsync(".dt-page-title");
+        await Page.GetByRole(AriaRole.Button, new() { Name = "扫码或流水号快速查找" }).ClickAsync();
+
+        var input = Page.Locator(".mud-dialog input");
+        await input.WaitForAsync();
+        await input.FillAsync(serial);
+        await input.PressAsync("Enter");
+
+        await Page.WaitForURLAsync(new System.Text.RegularExpressions.Regex(@"\?serial="));
+        Assert.Equal(serial, await Page.Locator(".dt-query-core-inputs input").First.InputValueAsync());
+        await Page.WaitForFunctionAsync(
+            "() => document.activeElement === document.querySelector('.dt-query-core-inputs input')");
+    }
+
+    [Fact]
+    public async Task IdleTimerRaisesTheLockOverlayAfterInactivity()
+    {
+        await using var context = await Browser.NewContextAsync();
+        var page = await context.NewPageAsync();
+        await page.AddInitScriptAsync("""
+            (() => {
+                let module;
+                Object.defineProperty(window, 'dtIdle', {
+                    configurable: true,
+                    get: () => module,
+                    set: value => {
+                        const original = value.start;
+                        value.start = function (reference, milliseconds) {
+                            window.__dtIdleReference = reference;
+                            return original.call(this, reference, 400);
+                        };
+                        module = value;
+                    }
+                });
+            })();
+            """);
+        await page.GotoAsync(App.BaseUrl + "/");
+        await page.WaitForFunctionAsync("() => window.__dtIdleReference");
+        await page.Locator(".dt-idle-overlay").WaitForAsync(new() { Timeout = 5000 });
+
+        Assert.Contains("即将退出登录", await page.Locator(".dt-idle-overlay").InnerTextAsync());
+        Assert.Contains("继续使用", await page.Locator(".dt-idle-overlay").InnerTextAsync());
+    }
+
+    [Fact]
+    public async Task PrintModeHidesTheApplicationShellAndKeepsTheRecordBody()
+    {
+        await OpenAsync("/query");
+        await WaitBodyContainsAsync("明细");
+        var row = Page.Locator(".dt-query-results tbody tr").Filter(new() { HasText = "明细" }).First;
+        await ActUntilAsync(() => row.ClickAsync(), "返回查询", "点开明细");
+        await WaitForAsync(".dt-page-title");
+
+        Assert.True(await Page.GetByRole(AriaRole.Button, new() { Name = "打印", Exact = true }).IsVisibleAsync());
+
+        await Page.EmulateMediaAsync(new() { Media = Media.Print });
+        try
+        {
+            Assert.Equal("none", await Page.Locator(".mud-appbar")
+                .EvaluateAsync<string>("element => getComputedStyle(element).display"));
+            Assert.Equal("none", await Page.Locator(".mud-drawer")
+                .EvaluateAsync<string>("element => getComputedStyle(element).display"));
+            Assert.Equal("visible", await Page.Locator(".mud-table-container").First
+                .EvaluateAsync<string>("element => getComputedStyle(element).overflow"));
+        }
+        finally
+        {
+            await Page.EmulateMediaAsync(new() { Media = Media.Screen });
+        }
+    }
+
     /// <summary>
     /// 过程能力那块曾经只由单测背书：报表页改一版布局（分段渲染）就可能整个不出现，
     /// 而单测照样全绿。这里补一条"界面真的画出来了"的兜底。
@@ -569,6 +695,20 @@ public class UiRegressionE2ETests : E2ETestBase
         var text = await readout.InnerTextAsync();
         Assert.Contains("→", text);
         Assert.Contains("采样点", text);
+
+        // 点击固定读数；再用方向键逐点查看，键盘/触屏用户不依赖悬停。
+        await Page.Mouse.ClickAsync((float)point[0], (float)point[1]);
+        var pinned = Page.Locator(".dt-chart-readout:visible").First;
+        await pinned.WaitForAsync(new() { Timeout = 5000 });
+        var pinnedText = await pinned.InnerTextAsync();
+        Assert.Contains("已固定", pinnedText);
+
+        await chart.FocusAsync();
+        await Page.Keyboard.PressAsync("ArrowRight");
+        await Page.WaitForFunctionAsync("""
+            previous => [...document.querySelectorAll('.dt-chart-readout:not([hidden])')]
+                .some(element => element.textContent !== previous && element.textContent.includes('方向键移动'))
+            """, pinnedText, new() { Timeout = 5000 });
     }
 
     /// <summary>

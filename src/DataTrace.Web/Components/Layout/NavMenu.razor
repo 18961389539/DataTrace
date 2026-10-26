@@ -1,7 +1,23 @@
+@using DataTrace.Application.Alarms
+@using DataTrace.Application.Quality
+@using DataTrace.Domain.Constants
+@implements IDisposable
+@inject ILineAlarmBoard AlarmBoard
+@inject IQualityIncidentService Incidents
+@inject IQualityIncidentActorProvider Actors
+
 <MudNavMenu Class="pb-6">
     <MudText Typo="Typo.overline" Class="dt-nav-group">运行监控</MudText>
     <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">实时看板</MudNavLink>
-    <MudNavLink Href="/alarms" Icon="@Icons.Material.Filled.NotificationImportant">报警</MudNavLink>
+    <MudNavLink Href="/alarms" Icon="@Icons.Material.Filled.NotificationImportant">
+        <span class="dt-nav-item">
+            <span>报警</span>
+            @if (AlarmBadge is { } alarms)
+            {
+                <span class="dt-nav-badge" aria-label="@($"{alarms} 条待处理报警")">@alarms</span>
+            }
+        </span>
+    </MudNavLink>
     <AuthorizeView Roles="Administrator,Engineer">
         <Authorized>
             <MudNavLink Href="/logs" Icon="@Icons.Material.Filled.History">审计日志</MudNavLink>
@@ -10,7 +26,15 @@
 
     <MudText Typo="Typo.overline" Class="dt-nav-group">生产数据</MudText>
     <MudNavLink Href="/query" Icon="@Icons.Material.Filled.Search">数据查询</MudNavLink>
-    <MudNavLink Href="/quality/incidents" Icon="@Icons.Material.Filled.Rule">异常处置台</MudNavLink>
+    <MudNavLink Href="/quality/incidents" Icon="@Icons.Material.Filled.Rule">
+        <span class="dt-nav-item">
+            <span>异常处置台</span>
+            @if (QualityBadge is { } incidents)
+            {
+                <span class="dt-nav-badge" aria-label="@($"{incidents} 张我的待办异常单")">@incidents</span>
+            }
+        </span>
+    </MudNavLink>
     <MudNavLink Href="/reports" Icon="@Icons.Material.Filled.Assessment">报表</MudNavLink>
     <MudNavLink Href="/curve-baseline" Icon="@Icons.Material.Filled.Timeline">波形基线</MudNavLink>
 
@@ -36,3 +60,86 @@
     <MudDivider Class="my-3" />
     <MudText Typo="Typo.caption" Class="px-4 dt-muted">配置改动即时下发给采集器</MudText>
 </MudNavMenu>
+
+@code {
+    /// <summary>质量待办每 60 秒对一次；报警走现有 Board 推送，不额外轮询。</summary>
+    private static readonly TimeSpan QualityRefreshInterval = TimeSpan.FromSeconds(60);
+
+    private int _alarmCount;
+    private int _qualityCount;
+    private bool _canWork;
+    private QualityIncidentActor? _actor;
+    private Timer? _timer;
+
+    private string? AlarmBadge => _alarmCount > 0 ? Format(_alarmCount) : null;
+
+    private string? QualityBadge => _canWork && _qualityCount > 0 ? Format(_qualityCount) : null;
+
+    private static string Format(int count) => count > 99 ? "99+" : count.ToString();
+
+    protected override async Task OnInitializedAsync()
+    {
+        _alarmCount = AlarmBoard.Current.Alarms.Count;
+        AlarmBoard.Changed += OnAlarmChanged;
+
+        try
+        {
+            _actor = await Actors.GetCurrentAsync();
+            _canWork = _actor.IsInRole(AppRoles.Administrator)
+                       || _actor.IsInRole(AppRoles.Engineer)
+                       || _actor.IsInRole(AppRoles.Operator);
+            await RefreshQualityAsync();
+        }
+        catch
+        {
+            // 角标是辅助信息；取不到就保持不显示，不挡住导航本身。
+            _canWork = false;
+        }
+
+        _timer = new Timer(_ => _ = InvokeAsync(RefreshQualityAsync), null,
+            QualityRefreshInterval, QualityRefreshInterval);
+    }
+
+    private void OnAlarmChanged() => _ = InvokeAsync(() =>
+    {
+        _alarmCount = AlarmBoard.Current.Alarms.Count;
+        StateHasChanged();
+    });
+
+    private async Task RefreshQualityAsync()
+    {
+        if (!_canWork || _actor is null)
+        {
+            return;
+        }
+
+        try
+        {
+            // 与处置台「我的待办」同一口径：负责人是我、尚未关闭的单据。
+            var open = await Incidents.ListAsync(new QualityIncidentQuery
+            {
+                Status = QualityIncidentStatus.Open,
+                Owner = _actor.UserName,
+                Take = 1
+            });
+            var inProgress = await Incidents.ListAsync(new QualityIncidentQuery
+            {
+                Status = QualityIncidentStatus.InProgress,
+                Owner = _actor.UserName,
+                Take = 1
+            });
+            _qualityCount = open.Total + inProgress.Total;
+            StateHasChanged();
+        }
+        catch
+        {
+            // 统计失败时保留上一次的数字，下一轮再试。
+        }
+    }
+
+    public void Dispose()
+    {
+        AlarmBoard.Changed -= OnAlarmChanged;
+        _timer?.Dispose();
+    }
+}

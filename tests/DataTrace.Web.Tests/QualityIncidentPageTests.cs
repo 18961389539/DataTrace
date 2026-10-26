@@ -494,6 +494,21 @@ public class QualityIncidentPageTests : WebTestBase
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public void Queue_selection_is_written_to_the_url_for_refresh_and_back_navigation()
+    {
+        RegisterServices();
+        RenderPopoverHost();
+
+        var cut = Context.Render<QualityIncidents>();
+        cut.WaitForAssertion(() => Assert.Contains("QI-20261008-000007", cut.Markup));
+
+        cut.FindAll("button").First(button => button.TextContent.Contains("未接手")).Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("queue=unassigned",
+            Context.Services.GetRequiredService<NavigationManager>().Uri));
+    }
+
     private void RegisterServices()
     {
         Context.Services.AddSingleton(_incidents.Object);

@@ -74,8 +74,17 @@ document.addEventListener('click', function (event) {
 // 复制文本到剪贴板，用于托盘码/流水号一键复制。
 // 返回值必须可信：界面按它决定提示"已复制"还是"复制失败"，
 // 而工控机通常走 http://局域网IP，非安全上下文下 navigator.clipboard 是不可用的。
-window.dtCopy = async function (text) {
-    if (!text) { return false; }
+// 单条记录/异常单打印：浏览器打印对话框，样式由 app.css 的 @media print 负责去掉导航与操作区。
+window.dtPrint = function () {
+    try {
+        window.print();
+        return true;
+    } catch (error) {
+        return false;
+    }
+};
+
+window.dtCopy = async function (text) {    if (!text) { return false; }
     if (navigator.clipboard && window.isSecureContext) {
         try {
             await navigator.clipboard.writeText(text);
@@ -162,6 +171,15 @@ window.dtScrollIntoView = function (id) {
     return true;
 };
 
+// 页面跳转后的焦点会被「跳到页标题」接管；扫码这类流程要等它落定后再把焦点放回输入框。
+window.dtFocusSoon = function (selector, delay) {
+    setTimeout(function () {
+        var el = document.querySelector(selector);
+        if (el) { el.focus({ preventScroll: true }); }
+    }, delay || 150);
+    return true;
+};
+
 // 大屏/车间模式：给 body 挂 class，偏好写入 localStorage；退出按钮始终由页面提供。
 
 // Dashboard recent-collect collapse preference; same pattern as shop-floor. Default collapsed when unset.
@@ -186,6 +204,18 @@ window.dtQueryPresets = {
 
 window.dtRecentOpen = {
     key: 'dt-recent-open',
+    get: function () {
+        try { return localStorage.getItem(this.key) === '1'; } catch (e) { return false; }
+    },
+    set: function (on) {
+        try { localStorage.setItem(this.key, on ? '1' : '0'); } catch (e) { }
+        return !!on;
+    }
+};
+
+// 看板「概览 / 详细监控」偏好：换班或刷新后保持上次选择，别每次都回到概览。
+window.dtDashboardView = {
+    key: 'dt-dashboard-detail',
     get: function () {
         try { return localStorage.getItem(this.key) === '1'; } catch (e) { return false; }
     },
@@ -252,6 +282,75 @@ window.dtShopFloor = {
             document.body.classList.add('dt-shopfloor');
         }
     } catch (e) { }
+})();
+
+// 空闲锁定：25 分钟无操作由 .NET 组件提示，继续使用会重新计时；不确认则由组件提交退出表单。
+window.dtIdle = (function () {
+    var dotNet = null;
+    var warnMs = 25 * 60 * 1000;
+    var timer = null;
+    var paused = false;
+    var lastActivity = 0;
+    var events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'wheel', 'scroll'];
+
+    function clear() {
+        if (timer) {
+            clearTimeout(timer);
+            timer = null;
+        }
+    }
+
+    function schedule() {
+        clear();
+        if (!dotNet || paused) {
+            return;
+        }
+        timer = setTimeout(function () {
+            timer = null;
+            paused = true;
+            var ref = dotNet;
+            if (ref) {
+                ref.invokeMethodAsync('OnIdleWarning').catch(function () { });
+            }
+        }, warnMs);
+    }
+
+    function activity() {
+        var now = Date.now();
+        if (now - lastActivity < 1000) {
+            return;
+        }
+        lastActivity = now;
+        schedule();
+    }
+
+    return {
+        start: function (ref, milliseconds) {
+            dotNet = ref;
+            warnMs = Math.max(1000, milliseconds || warnMs);
+            paused = false;
+            lastActivity = Date.now();
+            events.forEach(function (name) { document.addEventListener(name, activity, { passive: true }); });
+            schedule();
+        },
+        reset: function () {
+            paused = false;
+            lastActivity = Date.now();
+            schedule();
+        },
+        stop: function () {
+            events.forEach(function (name) { document.removeEventListener(name, activity, { passive: true }); });
+            clear();
+            paused = false;
+            dotNet = null;
+        },
+        logout: function () {
+            var form = document.getElementById('dt-idle-logout');
+            if (form) {
+                form.submit();
+            }
+        }
+    };
 })();
 
 // 异常呼叫：方波短鸣，不依赖音频文件。浏览器未授权自动播放时，点「重新响铃」会在用户手势里恢复。

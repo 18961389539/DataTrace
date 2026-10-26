@@ -5,7 +5,7 @@
    于是这段界面在角色越权时永远不可达 —— 用户只看到"无声地被扔回看板"，
    不知道自己去的是哪一页、为什么不让看。 *@
 <MudPaper Class="pa-6">
-    <MudText Typo="Typo.h5" Class="mb-2">没有权限访问该页面</MudText>
+    <MudText Typo="Typo.h5" Class="mb-2 dt-denied-title">没有权限访问该页面</MudText>
     <MudText Typo="Typo.body2" Class="dt-muted mb-4">
         @if (!string.IsNullOrWhiteSpace(UserName))
         {

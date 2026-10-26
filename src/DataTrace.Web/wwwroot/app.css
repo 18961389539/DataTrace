@@ -152,6 +152,12 @@
     max-width: 120px;
 }
 
+.dt-recipe-limit-matrix .mud-input-control.mud-input-number-control .mud-input-numeric-spin {
+    /* 密集矩阵里 20px 步进按钮既难点又挡住输入框中部：输入框本身可键入，直接去掉。
+       选择器要比 MudBlazor 的 .mud-input-control.mud-input-number-control 更高，否则 display:inline-flex 会赢。 */
+    display: none;
+}
+
 /* 不折叠的宽表在平板上给一个明确的横向滚动区，而不是把对话框撑破 */
 .dt-scroll-x {
     overflow-x: auto;
@@ -357,6 +363,28 @@
     padding: 14px 16px 4px;
     letter-spacing: .08em;
     color: var(--mud-palette-text-secondary);
+}
+
+/* 导航待办角标：数字只做提醒，宽度不随位数跳动 */
+.dt-nav-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+}
+
+.dt-nav-badge {
+    min-width: 1.5em;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--mud-palette-error);
+    color: var(--mud-palette-error-text);
+    font-size: .75rem;
+    font-weight: 600;
+    line-height: 1.45;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
 }
 
 /* 表单筛选区：让日期与输入框底部对齐 */
@@ -3548,4 +3576,143 @@ body.dt-shopfloor .dt-station-parameters .dash-tag-value { font-size: clamp(1.5r
     .dt-station-parameters { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
     .dt-station-parameters .dash-tag { padding: 10px; }
     .dt-point-summary { flex-wrap: wrap; }
+}
+
+/* 空闲锁定：盖住顶栏与抽屉，避免无人值守时下一个人直接操作上一个人的账号 */
+.dt-idle-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1400;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(8, 18, 28, .62);
+    backdrop-filter: blur(2px);
+}
+
+.dt-idle-card {
+    max-width: 420px;
+    width: 100%;
+    padding: 24px;
+    border-radius: var(--dt-radius, 8px);
+    background: var(--mud-palette-surface);
+    color: var(--mud-palette-text-primary);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, .32);
+}
+
+.dt-idle-card h2 {
+    margin: 0 0 10px;
+    font-size: 1.15rem;
+}
+
+.dt-idle-card p {
+    margin: 0 0 18px;
+    line-height: 1.6;
+}
+
+.dt-idle-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+/* 顶栏快速查找：窄屏只留图标，触控目标不缩小 */
+.dt-quick-lookup {
+    margin-inline: 2px;
+}
+
+@media (max-width: 600px) {
+    .dt-appbar-utilities .mud-icon-button {
+        min-width: 44px;
+        min-height: 44px;
+    }
+}
+
+/* 图表固定读数：点击/方向键选中后停在这里，方便对照与抄录 */
+.dt-chart:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 2px;
+}
+
+/* 只读提示不能挡住点击：否则鼠标停在提示上时点不到下面的数据点 */
+.echarts-tooltip {
+    pointer-events: none !important;
+}
+
+.dt-chart-readout {
+    pointer-events: none;
+    margin-top: 6px;
+    padding: 6px 10px;
+    border-left: 3px solid var(--mud-palette-primary);
+    background: var(--mud-palette-action-default-hover);
+    color: var(--mud-palette-text-primary);
+    font-size: .8125rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+/* 单条记录 / 异常单打印：只保留内容与表格，导航、操作按钮、实时提示全部让位 */
+@media print {
+    .mud-appbar,
+    .mud-drawer,
+    .dt-alarm-bar,
+    .dt-shopfloor-exit,
+    .dt-idle-overlay,
+    .dt-page-actions,
+    .dt-print-hide,
+    .dt-filter-card,
+    .dt-query-presets,
+    .dt-recipe-limit-toolbar,
+    .dt-chart-box .mud-button-root,
+    .mud-button-root,
+    .mud-icon-button,
+    .mud-snackbar,
+    .mud-popover,
+    #components-reconnect-modal {
+        display: none !important;
+    }
+
+    .mud-main-content,
+    .mud-main-content > main {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    body,
+    .mud-layout,
+    .mud-paper,
+    .mud-table-root {
+        background: #fff !important;
+        color: #000 !important;
+        box-shadow: none !important;
+    }
+
+    .mud-table-container,
+    .dt-scroll-x,
+    .table-responsive {
+        overflow: visible !important;
+        max-height: none !important;
+        height: auto !important;
+    }
+
+    .mud-table-root,
+    .mud-table-root thead {
+        position: static !important;
+    }
+
+    .mud-chip {
+        border: 1px solid #777 !important;
+    }
+
+    a {
+        color: #000 !important;
+        text-decoration: none !important;
+    }
+
+    .dt-chart-box,
+    .mud-paper {
+        break-inside: avoid;
+    }
 }

@@ -197,6 +197,8 @@ public class VisualRegressionE2ETests : E2ETestBase
     /// </summary>
     private static readonly Dictionary<string, string[]> GoldenMasks = new()
     {
+        // app-shell 截的是左侧导航：待办角标数量随报警/异常单变化，截图前统一隐藏，
+        // 不把动态计数带进像素基线（布局位置不变，只去掉颜色与数字）。
         // 系统设置页：顶部四张健康卡的状态（备份成功时间、授权上限用量）与两处目录路径
         // 都依赖运行环境，E2E 用的还是每次新建的临时 DataRoot。
         ["settings-form"] = [".dt-settings-health-value", ".dt-settings-health-detail", ".dt-path-trunc",
@@ -228,6 +230,9 @@ public class VisualRegressionE2ETests : E2ETestBase
         try
         {
             await OpenAsync(path);
+
+            // 角标是实时计数，不属于外壳样式；隐藏后不改变导航文字位置。
+            await Page.AddStyleTagAsync(new() { Content = ".dt-nav-badge { visibility: hidden !important; }" });
 
             var masks = GoldenMasks.TryGetValue(target, out var selectors)
                 ? selectors.Select(selector => Page.Locator(selector)).ToArray()

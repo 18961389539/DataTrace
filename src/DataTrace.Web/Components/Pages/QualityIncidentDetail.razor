@@ -18,6 +18,7 @@
 @inject DtToast Toast
 @inject IDialogService Dialogs
 @inject NavigationManager Nav
+@inject IJSRuntime Js
 
 <NavigationLock ConfirmExternalNavigation="@Dirty" OnBeforeInternalNavigation="OnBeforeInternalNavigation" />
 
@@ -70,6 +71,8 @@ else
         </ChildContent>
         <Actions>
             <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Href="/quality/incidents">返回列表</MudButton>
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Print"
+                       Class="dt-print-hide" OnClick="PrintAsync">打印</MudButton>
         </Actions>
     </PageHeader>
 
@@ -468,6 +471,21 @@ else
     private const int CandidatePageSize = 25;
     private static readonly string[] CauseCategories = ["设备故障", "工艺参数", "原材料", "操作偏差", "测量系统", "其他"];
     [Parameter] public long Id { get; set; }
+
+    private async Task PrintAsync()
+    {
+        try
+        {
+            if (!await Js.InvokeAsync<bool>("dtPrint"))
+            {
+                Toast.Add("浏览器没有打开打印对话框，请用 Ctrl+P 重试", Severity.Warning);
+            }
+        }
+        catch (JSException)
+        {
+            Toast.Add("打印不可用，请用 Ctrl+P 重试", Severity.Warning);
+        }
+    }
 
     private QualityIncidentDetails? _details;
     private QualityIncidentActor? _actor;

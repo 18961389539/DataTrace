@@ -299,9 +299,9 @@ else
                 }
                 <div class="dt-station-view-mode" role="group" aria-label="工站显示方式">
                     <button type="button" class="dt-station-filter @(!_fullDetailMode ? "active" : null)"
-                            aria-pressed="@(!_fullDetailMode ? "true" : "false")" @onclick="() => _fullDetailMode = false">概览</button>
+                            aria-pressed="@(!_fullDetailMode ? "true" : "false")" @onclick="() => SetFullDetailModeAsync(false)">概览</button>
                     <button type="button" class="dt-station-filter @(_fullDetailMode ? "active" : null)"
-                            aria-pressed="@(_fullDetailMode ? "true" : "false")" @onclick="() => _fullDetailMode = true">详细监控</button>
+                            aria-pressed="@(_fullDetailMode ? "true" : "false")" @onclick="() => SetFullDetailModeAsync(true)">详细监控</button>
                 </div>
             </div>
             <p class="dt-station-filter-note">需关注按工站故障、最近 NG 与点位异常统计工站；过程报警数量在页面顶部报警栏单独显示。</p>
@@ -500,6 +500,20 @@ else
 
     private void ToggleSimulationDetails() => _showSimulationDetails = !_showSimulationDetails;
 
+    /// <summary>概览/详细是查看习惯，存浏览器而不是每次回默认值。</summary>
+    private async Task SetFullDetailModeAsync(bool detail)
+    {
+        _fullDetailMode = detail;
+        try
+        {
+            await Js.InvokeVoidAsync("dtDashboardView.set", detail);
+        }
+        catch (JSException)
+        {
+            // 浏览器禁用存储时只影响下次进入的默认视图。
+        }
+    }
+
     private int SecondaryAlertCount
         => (_inProcessNote is null ? 0 : 1)
            + (_backupStale && _isAdmin ? 1 : 0)
@@ -559,6 +573,17 @@ else
         catch
         {
             // JS not ready: keep recent records collapsed.
+        }
+
+        // 概览/详细沿用上次选择；读不到就停在概览。
+        try
+        {
+            _fullDetailMode = await Js.InvokeAsync<bool>("dtDashboardView.get");
+            StateHasChanged();
+        }
+        catch
+        {
+            // JS not ready: keep overview mode.
         }
     }
     private void OnChanged() => _ = InvokeAsync(async () =>

@@ -3,6 +3,7 @@ using DataTrace.Domain.Constants;
 using DataTrace.Web.Components.Pages;
 using DataTrace.Web.Services;
 using DataTrace.Shared;
+using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DataTrace.Web.Tests;
@@ -13,6 +14,22 @@ public class AlarmsPageTests : WebTestBase
     {
         RenderPopoverHost();
         return Context.Render<Alarms>();
+    }
+
+    [Fact]
+    public void Status_view_is_written_to_the_url_for_refresh_and_back_navigation()
+    {
+        Context.Services.AddSingleton<IAlarmIncidents>(new FakeAlarmIncidents());
+        Context.Services.AddSingleton<ILineAlarmBoard>(new LineAlarmBoard());
+
+        var cut = RenderAlarms();
+        cut.WaitForAssertion(() => Assert.Contains(cut.FindAll("button"),
+            button => button.TextContent.Contains("当前／仍在发生")));
+
+        cut.FindAll("button").First(button => button.TextContent.Contains("当前／仍在发生")).Click();
+
+        cut.WaitForAssertion(() => Assert.Contains("view=Current",
+            Context.Services.GetRequiredService<NavigationManager>().Uri));
     }
 
     [Fact]

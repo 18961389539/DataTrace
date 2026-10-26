@@ -438,6 +438,7 @@ else
     private bool _traceMode;
     private bool _advancedFiltersExpanded;
     private bool _recordsLoaded;
+    private bool _focusSerialAfterLoad;
     private CancellationTokenSource? _debounceCts;
 
     /// <summary>当前排序列与方向。默认最近的在前，与默认视图一致。</summary>
@@ -458,6 +459,10 @@ else
 
     [SupplyParameterFromQuery(Name = "serial")]
     public string? SerialQuery { get; set; }
+
+    /// <summary>从顶栏快速查找进入时置 1：结果出来后把焦点放回流水号框，方便连续扫码。</summary>
+    [SupplyParameterFromQuery(Name = "scan")]
+    public int? ScanQuery { get; set; }
 
     [SupplyParameterFromQuery(Name = "view")]
     public string? ViewQuery { get; set; }
@@ -522,6 +527,8 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        // 地址栏的 scan 会被结果刷新时的 SyncUrl 去掉，先记下来。
+        _focusSerialAfterLoad = ScanQuery == 1;
         _traceMode = string.Equals(ViewQuery, "trace", StringComparison.OrdinalIgnoreCase);
         var auth = await Auth.GetAuthenticationStateAsync();
         _canExport = auth.User.IsInRole(AppRoles.Administrator) || auth.User.IsInRole(AppRoles.Engineer);
@@ -1125,6 +1132,21 @@ else
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (_focusSerialAfterLoad)
+        {
+            _focusSerialAfterLoad = false;
+            ScanQuery = 0;
+            try
+            {
+                // 页面导航会把焦点交给 h1，等它落定后再把焦点放回流水号框。
+                await Js.InvokeVoidAsync("dtFocusSoon", ".dt-query-core-inputs input", 150);
+            }
+            catch (JSException)
+            {
+                // 聚焦失败不影响查询结果。
+            }
+        }
+
         if (_loading || !_restoreScroll || _traceMode) return;
         _restoreScroll = false;
         try

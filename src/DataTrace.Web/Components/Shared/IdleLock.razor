@@ -1,0 +1,139 @@
+@implements IAsyncDisposable
+@inject IJSRuntime Js
+
+@if (_warning)
+{
+    <div class="dt-idle-overlay" role="alertdialog" aria-modal="true" aria-labelledby="dt-idle-title">
+        <div class="dt-idle-card">
+            <h2 id="dt-idle-title">即将退出登录</h2>
+            <p>
+                已 @WarnMinutes 分钟没有操作。为保护账号，将在
+                <strong>@_remainingText</strong> 后自动退出；未保存的输入会丢失。
+            </p>
+            <div class="dt-idle-actions">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ContinueAsync">继续使用</MudButton>
+                <MudButton Variant="Variant.Outlined" OnClick="LogoutAsync">立即退出</MudButton>
+            </div>
+        </div>
+    </div>
+}
+<form id="dt-idle-logout" method="post" action="/account/logout" data-enhance="false" hidden></form>
+
+@code {
+    /// <summary>
+    /// 车间共用终端：长时间无人操作时先提示，宽限期内没有确认就退出登录。
+    /// 不是安全边界（Cookie 仍是 12 小时滑动过期），目的是避免换班后下一个人直接沿用上一个人的账号。
+    /// </summary>
+    [Parameter] public int WarnMinutes { get; set; } = 25;
+
+    [Parameter] public int GraceMinutes { get; set; } = 5;
+
+    private DotNetObjectReference<IdleLock>? _self;
+    private Timer? _countdownTimer;
+    private bool _warning;
+    private DateTime _deadline;
+
+    private string _remainingText => _warning
+        ? $"{(int)Math.Ceiling(Math.Max(0, (_deadline - DateTime.Now).TotalSeconds))} 秒"
+        : "";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        try
+        {
+            _self = DotNetObjectReference.Create(this);
+            await Js.InvokeVoidAsync("dtIdle.start", _self, WarnMinutes * 60_000);
+        }
+        catch (JSException)
+        {
+            // 脚本不可用时退化为原来的行为：仍然受 Cookie 过期约束。
+        }
+    }
+
+    [JSInvokable]
+    public void OnIdleWarning()
+    {
+        _ = InvokeAsync(() =>
+        {
+            _warning = true;
+            _deadline = DateTime.Now.AddMinutes(GraceMinutes);
+            _countdownTimer?.Dispose();
+            _countdownTimer = new Timer(_ => _ = InvokeAsync(TickAsync), null, 1_000, 1_000);
+            StateHasChanged();
+        });
+    }
+
+    private async Task TickAsync()
+    {
+        if (!_warning)
+        {
+            return;
+        }
+
+        if (DateTime.Now >= _deadline)
+        {
+            await LogoutAsync();
+            return;
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task ContinueAsync()
+    {
+        _warning = false;
+        _countdownTimer?.Dispose();
+        _countdownTimer = null;
+        try
+        {
+            await Js.InvokeVoidAsync("dtIdle.reset");
+        }
+        catch (JSException)
+        {
+            // 继续使用不依赖脚本。
+        }
+    }
+
+    private async Task LogoutAsync()
+    {
+        _warning = false;
+        _countdownTimer?.Dispose();
+        _countdownTimer = null;
+        try
+        {
+            await Js.InvokeVoidAsync("dtIdle.logout");
+        }
+        catch (JSException)
+        {
+            // 脚本失败时至少把界面切回可操作状态，用户仍可用顶栏退出。
+            StateHasChanged();
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _countdownTimer?.Dispose();
+        if (_self is null)
+        {
+            // 静态预渲染阶段也会走释放，但那次从未启动过 JS；此时调用 interop 会抛
+            // InvalidOperationException（不是 JSException），把每个页面请求都以错误收尾。
+            return;
+        }
+
+        try
+        {
+            await Js.InvokeVoidAsync("dtIdle.stop");
+        }
+        catch (JSException)
+        {
+            // 页面正在卸载，脚本可能已经不可用。
+        }
+
+        _self.Dispose();
+    }
+}

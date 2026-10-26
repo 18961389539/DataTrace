@@ -23,7 +23,10 @@
         <MudText Typo="Typo.body2" Class="dt-muted py-3">@EmptyText</MudText>
     }
     <div @ref="_chartElement" class="dt-chart" style="@ChartStyle"
-         role="img" aria-label="@ChartAccessibilityLabel" hidden="@(_plots.Count == 0)"></div>
+         tabindex="@(ShowAxis ? "0" : null)"
+         role="img" aria-label="@ChartAccessibilityLabel"
+         aria-keyshortcuts="@(ShowAxis ? "ArrowLeft ArrowRight Escape" : null)"
+         hidden="@(_plots.Count == 0)"></div>
     @if (ShowAxis && _plots.Count > 0)
     {
         <MudText Typo="Typo.caption" Class="dt-muted">
@@ -100,7 +103,8 @@
     /// </summary>
     [Parameter] public string? ConnectGroup { get; set; }
 
-    private const string ModulePath = "./js/echarts-line-chart.js";
+    /// <summary>模块地址带版本：脚本更新后浏览器不会继续用旧模块；测试也引用同一常量。</summary>
+    public const string ModulePath = "./js/echarts-line-chart.js?v=20261025-readout2";
 
     private readonly List<Plot> _plots = [];
     private ElementReference _chartElement;
@@ -137,7 +141,7 @@
             var samplingHint = sampled > 0
                 ? $"；密集数据已抽稀，按区段保留极值（原始 {_plots.Sum(plot => plot.SourceCount)} 点，图表显示 {DisplayedPointCount} 点）"
                 : "";
-            return $"{axisHint}{(zoomHint.Length > 0 ? "；" + zoomHint : "")}{discreteHint}{samplingHint}。数值表适合触屏和键盘逐点查看。";
+            return $"{axisHint}{(zoomHint.Length > 0 ? "；" + zoomHint : "")}{discreteHint}{samplingHint}。点击图表固定读数，聚焦后可用左右方向键逐点查看、Esc 取消；数值表适合触屏和键盘通读。";
         }
     }
 

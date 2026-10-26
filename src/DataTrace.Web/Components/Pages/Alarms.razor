@@ -10,6 +10,7 @@
 @inject AuthenticationStateProvider Auth
 @inject DtToast Toast
 @inject IConfigRepository Config
+@inject NavigationManager Nav
 
 <PageHeader Title="报警" HelpRoute="alarms" Busy="@_refreshing" Description="还没人接手的会一直留在这里，并在所有页面顶部响铃。静音只关本机声音。" />
 
@@ -32,7 +33,7 @@ else
 {
 <MudGrid Class="mb-3">
     <MudItem xs="12" sm="4">
-        <MudSelect T="int?" @bind-Value="_stationFilter" @bind-Value:after="ResetPages" Label="报警工站" Clearable="true">
+        <MudSelect T="int?" @bind-Value="_stationFilter" @bind-Value:after="OnFiltersChanged" Label="报警工站" Clearable="true">
             <MudSelectItem T="int?" Value="@((int?)0)">全线／会话报警</MudSelectItem>
             @foreach (var station in StationOptions)
             {
@@ -41,7 +42,7 @@ else
         </MudSelect>
     </MudItem>
     <MudItem xs="12" sm="4">
-        <MudSelect T="LineAlarmKind?" @bind-Value="_kindFilter" @bind-Value:after="ResetPages" Label="报警类型" Clearable="true">
+        <MudSelect T="LineAlarmKind?" @bind-Value="_kindFilter" @bind-Value:after="OnFiltersChanged" Label="报警类型" Clearable="true">
             @foreach (var kind in Enum.GetValues<LineAlarmKind>())
             {
                 <MudSelectItem T="LineAlarmKind?" Value="@((LineAlarmKind?)kind)">@KindText(kind)</MudSelectItem>
@@ -49,7 +50,7 @@ else
         </MudSelect>
     </MudItem>
     <MudItem xs="12" sm="4" Class="d-flex align-center flex-wrap gap-2">
-        <MudCheckBox T="bool" @bind-Value="_mineOnly" @bind-Value:after="ResetPages" Label="我的已接手" />
+        <MudCheckBox T="bool" @bind-Value="_mineOnly" @bind-Value:after="OnFiltersChanged" Label="我的已接手" />
         <MudButton StartIcon="@Icons.Material.Filled.FilterAltOff" Size="Size.Small" OnClick="ResetFilters">清空筛选</MudButton>
     </MudItem>
 </MudGrid>
@@ -275,6 +276,20 @@ else
     private int _needsOwnerPage = 1;
     private int _acknowledgedPage = 1;
     private int _recentPage = 1;
+
+    [SupplyParameterFromQuery(Name = "view")] public string? ViewQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "station")] public int? StationQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "kind")] public string? KindQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "mine")] public int? MineQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "page")] public int? PageQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "ack")] public int? AckPageQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "recent")] public int? RecentPageQuery { get; set; }
     private string? _actor;
     private DateTime _now = DateTime.Now;
     private readonly CancellationTokenSource _durationCts = new();
@@ -366,6 +381,13 @@ else
     {
         _alarmView = view;
         ResetPages();
+        SyncUrl();
+    }
+
+    private void OnFiltersChanged()
+    {
+        ResetPages();
+        SyncUrl();
     }
 
     private void ResetFilters()
@@ -374,6 +396,7 @@ else
         _kindFilter = null;
         _mineOnly = false;
         ResetPages();
+        SyncUrl();
     }
 
     private void ResetPages()
@@ -383,6 +406,59 @@ else
         _recentPage = 1;
     }
 
+    /// <summary>筛选、状态页和分页都写回地址栏，刷新或转发后仍停在同一组报警上。</summary>
+    private void SyncUrl()
+    {
+        var target = CurrentListUrl();
+        if (Nav.ToBaseRelativePath(Nav.Uri) == target)
+        {
+            return;
+        }
+
+        Nav.NavigateTo(target, replace: true);
+    }
+
+    private string CurrentListUrl()
+    {
+        var parts = new List<string>();
+        if (_alarmView != AlarmView.All)
+        {
+            parts.Add($"view={_alarmView}");
+        }
+
+        if (_stationFilter is { } station)
+        {
+            parts.Add($"station={station}");
+        }
+
+        if (_kindFilter is { } kind)
+        {
+            parts.Add($"kind={kind}");
+        }
+
+        if (_mineOnly)
+        {
+            parts.Add("mine=1");
+        }
+
+        if (_needsOwnerPage > 1)
+        {
+            parts.Add($"page={_needsOwnerPage}");
+        }
+
+        if (_acknowledgedPage > 1)
+        {
+            parts.Add($"ack={_acknowledgedPage}");
+        }
+
+        if (_recentPage > 1)
+        {
+            parts.Add($"recent={_recentPage}");
+        }
+
+        return parts.Count == 0 ? "alarms" : $"alarms?{string.Join("&", parts)}";
+    }
+
     private static int PageCount(int count) => Math.Max(1, (int)Math.Ceiling(count / (double)PageSize));
 
     private static int PageNumber(int count, int page) => Math.Clamp(page, 1, PageCount(count));
@@ -390,9 +466,9 @@ else
     private static IReadOnlyList<AlarmIncidentDraft> PageItems(IReadOnlyList<AlarmIncidentDraft> items, int page)
         => items.Skip((PageNumber(items.Count, page) - 1) * PageSize).Take(PageSize).ToList();
 
-    private Task SetNeedsOwnerPage(int page) { _needsOwnerPage = PageNumber(NeedsOwner.Count, page); return Task.CompletedTask; }
-    private Task SetAcknowledgedPage(int page) { _acknowledgedPage = PageNumber(AcknowledgedOpen.Count, page); return Task.CompletedTask; }
-    private Task SetRecentPage(int page) { _recentPage = PageNumber(FilteredRecent.Count, page); return Task.CompletedTask; }
+    private Task SetNeedsOwnerPage(int page) { _needsOwnerPage = PageNumber(NeedsOwner.Count, page); SyncUrl(); return Task.CompletedTask; }
+    private Task SetAcknowledgedPage(int page) { _acknowledgedPage = PageNumber(AcknowledgedOpen.Count, page); SyncUrl(); return Task.CompletedTask; }
+    private Task SetRecentPage(int page) { _recentPage = PageNumber(FilteredRecent.Count, page); SyncUrl(); return Task.CompletedTask; }
 
     private static string DurationText(AlarmIncidentDraft item, DateTime now)
     {
@@ -423,6 +499,26 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        if (Enum.TryParse<AlarmView>(ViewQuery, ignoreCase: true, out var view))
+        {
+            _alarmView = view;
+        }
+
+        if (StationQuery is { } station)
+        {
+            _stationFilter = station;
+        }
+
+        if (Enum.TryParse<LineAlarmKind>(KindQuery, ignoreCase: true, out var kind))
+        {
+            _kindFilter = kind;
+        }
+
+        _mineOnly = MineQuery == 1;
+        _needsOwnerPage = PageQuery is > 0 ? PageQuery.Value : 1;
+        _acknowledgedPage = AckPageQuery is > 0 ? AckPageQuery.Value : 1;
+        _recentPage = RecentPageQuery is > 0 ? RecentPageQuery.Value : 1;
+
         var user = (await Auth.GetAuthenticationStateAsync()).User;
         _actor = user.Identity?.Name;
         try { _stations = (await Config.GetSnapshotAsync()).Stations; }

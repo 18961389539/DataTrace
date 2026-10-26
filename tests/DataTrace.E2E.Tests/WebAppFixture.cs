@@ -391,7 +391,7 @@ public abstract class E2ETestBase : IAsyncLifetime
         }
 
         await Page.WaitForFunctionAsync(
-            "() => document.activeElement === document.querySelector('.dt-page-title')",
+            "() => document.activeElement === document.querySelector('.dt-page-title, .dt-denied-title')",
             arg: null,
             new PageWaitForFunctionOptions { Timeout = 20000 });
         _circuitReady = true;

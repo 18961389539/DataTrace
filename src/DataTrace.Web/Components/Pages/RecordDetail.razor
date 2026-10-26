@@ -77,6 +77,8 @@ else
             </MudTooltip>
             <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.History"
                        Href="@PalletHistoryUrl()">同托盘近 30 天</MudButton>
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Print"
+                       Class="dt-print-hide" OnClick="PrintAsync">打印</MudButton>
             @if (_canCreateQualityIncident)
             {
                 <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning"
@@ -304,6 +306,21 @@ else
 @code {
     [Parameter] public string MonthKey { get; set; } = "";
     [Parameter] public long RecordId { get; set; }
+
+    private async Task PrintAsync()
+    {
+        try
+        {
+            if (!await Js.InvokeAsync<bool>("dtPrint"))
+            {
+                Toast.Add("浏览器没有打开打印对话框，请用 Ctrl+P 重试", Severity.Warning);
+            }
+        }
+        catch (JSException)
+        {
+            Toast.Add("打印不可用，请用 Ctrl+P 重试", Severity.Warning);
+        }
+    }
 
     /// <summary>查询页带过来的列表地址，返回时不再把用户筛选过的条件丢掉。</summary>
     [SupplyParameterFromQuery(Name = "back")]
