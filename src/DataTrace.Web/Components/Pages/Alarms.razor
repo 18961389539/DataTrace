@@ -17,17 +17,17 @@
     <ChildContent>
         @if (_loadError is null)
         {
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="dt-alarms-summary-chip"
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="@SummaryChipClass(needs: true)"
                      Color="@(NeedsOwner.Count > 0 ? Color.Error : Color.Default)" OnClick="@(() => FocusNeeds())" title="切到待接手相关视图">
                 待接手 @NeedsOwner.Count
             </MudChip>
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="dt-alarms-summary-chip"
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="@SummaryChipClass(current: true)"
                      Color="@(CurrentCount > 0 ? Color.Warning : Color.Default)" OnClick="@(() => SetView(AlarmView.Current))" title="只看仍在发生">
                 当前 @CurrentCount
             </MudChip>
             @if (UrgentOpenCount > 0)
             {
-                <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled" Class="dt-alarms-summary-chip" OnClick="@(() => SetView(AlarmView.Current))" title="紧急仍在发生">
+                <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled" Class="@SummaryChipClass(current: true, urgent: true)" OnClick="@(() => SetView(AlarmView.Current))" title="紧急仍在发生">
                     紧急 @UrgentOpenCount
                 </MudChip>
             }
@@ -156,7 +156,17 @@ else
     @if (NeedsOwner.Count > 0)
     {
         <div class="dt-alarms-section dt-alarms-section--action mb-2">
-        <MudText Typo="Typo.subtitle1" Class="dt-alarms-section-title mb-2">@NeedsOwnerTitle @NeedsOwner.Count</MudText>
+        <MudText Typo="Typo.subtitle1" Class="dt-alarms-section-title mb-2" id="dt-alarms-needs">@NeedsOwnerTitle @NeedsOwner.Count</MudText>
+        @if (_canTake && NeedsOwner.Count > 0)
+        {
+            <div class="dt-alarms-action-callout mb-2" role="status">
+                <span>有 <strong>@NeedsOwner.Count</strong> 条等人接手，点右侧「接手」确认。</span>
+                @if (OldestNeedsAgeText is { } age)
+                {
+                    <span class="dt-alarms-action-callout-age">最早一条已持续 @age</span>
+                }
+            </div>
+        }
         @if (!_canTake)
         {
             <MudText Typo="Typo.body2" Class="dt-muted mb-2">当前账号是访客，只能查看，不能接手。</MudText>
@@ -166,27 +176,29 @@ else
         {
             <section class="dt-alarms-group mb-3" aria-label="@StationSectionTitle(group.Key)">
                 <header class="dt-alarms-group-head">
-                    <span class="dt-alarms-group-title">@StationSectionTitle(group.Key)</span>
+                    <button type="button" class="dt-alarms-group-filter" title="只看这个工站"
+                            disabled="@(group.Key <= 0)"
+                            @onclick="@(() => FilterStation(group.Key))">
+                        <span class="dt-alarms-group-title">@StationSectionTitle(group.Key)</span>
+                    </button>
                     <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@group.Count() 条</MudChip>
                 </header>
             <MudTable Items="@(group.ToList())" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-0 dt-alarms-table dt-alarms-table--action" RowClassFunc="@AlarmRowClass">
             <HeaderContent>
                 <MudTh>优先级</MudTh>
-                <MudTh>发生时间</MudTh>
-                <MudTh>持续时间</MudTh>
+                <MudTh>发生</MudTh>
+                <MudTh>持续</MudTh>
                 <MudTh>报警</MudTh>
                 <MudTh>状态</MudTh>
-                <MudTh>接手</MudTh>
                 <MudTh>定位</MudTh>
-                <MudTh></MudTh>
+                <MudTh Class="dt-alarms-col-take">接手</MudTh>
             </HeaderContent>
             <RowTemplate>
                 <MudTd DataLabel="优先级"><MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@PriorityColor(context.Kind)" Class="dt-alarm-priority">@PriorityText(context.Kind)</MudChip></MudTd>
-                <MudTd DataLabel="发生时间"><span class="dt-alarm-time" title="@When(context.RaisedAt)">@WhenRelative(context.RaisedAt)</span></MudTd>
-                <MudTd DataLabel="持续时间"><span class="dt-alarm-duration">@DurationText(context, _now)</span></MudTd>
+                <MudTd DataLabel="发生"><span class="dt-alarm-time" title="@When(context.RaisedAt)">@WhenRelative(context.RaisedAt)</span></MudTd>
+                <MudTd DataLabel="持续"><span class="@DurationClass(context)">@DurationText(context, _now)</span></MudTd>
                 <MudTd DataLabel="报警"><div class="dt-alarm-incident"><span class="dt-alarm-message">@context.Message</span><span class="dt-alarm-kind">@KindText(context.Kind)</span></div></MudTd>
                 <MudTd DataLabel="状态"><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@StatusColor(context)" Class="dt-alarm-status">@StatusText(context)</MudChip></MudTd>
-                <MudTd DataLabel="接手">@OwnerText(context)</MudTd>
                 <MudTd DataLabel="定位">
                     @{ var action = ActionFor(context); }
                     <div class="dt-alarm-actions">
@@ -201,12 +213,11 @@ else
                     }
                     @if (_canTake && context.Kind == LineAlarmKind.ConsecutiveNg)
                     {
-                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning" StartIcon="@Icons.Material.Filled.ReportProblem" Href="@CreateQualityIncidentUrl(context.Id)">建质量异常
-                        </MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning" StartIcon="@Icons.Material.Filled.ReportProblem" Href="@CreateQualityIncidentUrl(context.Id)">建质量异常</MudButton>
                     }
                     </div>
                 </MudTd>
-                <MudTd DataLabel="操作">
+                <MudTd DataLabel="接手" Class="dt-alarms-col-take">
                     @if (_canTake)
                     {
                         @* 进度落在本行：一次只处理一条，行内能看清当前进度。 *@
@@ -238,14 +249,18 @@ else
         {
             <section class="dt-alarms-group mb-3" aria-label="@StationSectionTitle(group.Key)">
                 <header class="dt-alarms-group-head">
-                    <span class="dt-alarms-group-title">@StationSectionTitle(group.Key)</span>
+                    <button type="button" class="dt-alarms-group-filter" title="只看这个工站"
+                            disabled="@(group.Key <= 0)"
+                            @onclick="@(() => FilterStation(group.Key))">
+                        <span class="dt-alarms-group-title">@StationSectionTitle(group.Key)</span>
+                    </button>
                     <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@group.Count() 条</MudChip>
                 </header>
             <MudTable Items="@(group.ToList())" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-0 dt-alarms-table dt-acknowledged-alarms" RowClassFunc="@AlarmRowClass">
             <HeaderContent>
                 <MudTh>优先级</MudTh>
-                <MudTh>发生时间</MudTh>
-                <MudTh>持续时间</MudTh>
+                <MudTh>发生</MudTh>
+                <MudTh>持续</MudTh>
                 <MudTh>报警</MudTh>
                 <MudTh>状态</MudTh>
                 <MudTh>接手人</MudTh>
@@ -253,8 +268,8 @@ else
             </HeaderContent>
             <RowTemplate>
                 <MudTd DataLabel="优先级"><MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@PriorityColor(context.Kind)" Class="dt-alarm-priority">@PriorityText(context.Kind)</MudChip></MudTd>
-                <MudTd DataLabel="发生时间"><span class="dt-alarm-time" title="@When(context.RaisedAt)">@WhenRelative(context.RaisedAt)</span></MudTd>
-                <MudTd DataLabel="持续时间"><span class="dt-alarm-duration">@DurationText(context, _now)</span></MudTd>
+                <MudTd DataLabel="发生"><span class="dt-alarm-time" title="@When(context.RaisedAt)">@WhenRelative(context.RaisedAt)</span></MudTd>
+                <MudTd DataLabel="持续"><span class="@DurationClass(context)">@DurationText(context, _now)</span></MudTd>
                 <MudTd DataLabel="报警"><div class="dt-alarm-incident"><span class="dt-alarm-message">@context.Message</span><span class="dt-alarm-kind">@KindText(context.Kind)</span></div></MudTd>
                 <MudTd DataLabel="状态"><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@StatusColor(context)" Class="dt-alarm-status">@StatusText(context)</MudChip></MudTd>
                 <MudTd DataLabel="接手人">@OwnerText(context)</MudTd>
@@ -272,8 +287,7 @@ else
                     }
                     @if (_canTake && context.Kind == LineAlarmKind.ConsecutiveNg)
                     {
-                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning" StartIcon="@Icons.Material.Filled.ReportProblem" Href="@CreateQualityIncidentUrl(context.Id)">建质量异常
-                        </MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning" StartIcon="@Icons.Material.Filled.ReportProblem" Href="@CreateQualityIncidentUrl(context.Id)">建质量异常</MudButton>
                     }
                     </div>
                 </MudTd>
@@ -321,31 +335,34 @@ else
         {
             <section class="dt-alarms-group mb-3" aria-label="@StationSectionTitle(group.Key)">
                 <header class="dt-alarms-group-head">
-                    <span class="dt-alarms-group-title">@StationSectionTitle(group.Key)</span>
+                    <button type="button" class="dt-alarms-group-filter" title="只看这个工站"
+                            disabled="@(group.Key <= 0)"
+                            @onclick="@(() => FilterStation(group.Key))">
+                        <span class="dt-alarms-group-title">@StationSectionTitle(group.Key)</span>
+                    </button>
                     <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@group.Count() 条</MudChip>
                 </header>
             <MudTable Items="@(group.ToList())" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-0 dt-alarms-table dt-archived-table">
             <HeaderContent>
                 <MudTh>优先级</MudTh>
-                <MudTh>发生时间</MudTh>
-                <MudTh>解除时间</MudTh>
-                <MudTh>持续时间</MudTh>
+                <MudTh>发生</MudTh>
+                <MudTh>解除</MudTh>
+                <MudTh>持续</MudTh>
                 <MudTh>报警</MudTh>
                 <MudTh>接手</MudTh>
                 <MudTh>处置</MudTh>
             </HeaderContent>
             <RowTemplate>
                 <MudTd DataLabel="优先级"><MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@PriorityColor(context.Kind)" Class="dt-alarm-priority">@PriorityText(context.Kind)</MudChip></MudTd>
-                <MudTd DataLabel="发生时间"><span class="dt-alarm-time" title="@When(context.RaisedAt)">@WhenRelative(context.RaisedAt)</span></MudTd>
-                <MudTd DataLabel="解除时间"><span class="dt-alarm-time">@When(context.ClearedAt)</span></MudTd>
-                <MudTd DataLabel="持续时间"><span class="dt-alarm-duration">@DurationText(context, _now)</span></MudTd>
+                <MudTd DataLabel="发生"><span class="dt-alarm-time" title="@When(context.RaisedAt)">@WhenRelative(context.RaisedAt)</span></MudTd>
+                <MudTd DataLabel="解除"><span class="dt-alarm-time">@When(context.ClearedAt)</span></MudTd>
+                <MudTd DataLabel="持续"><span class="@DurationClass(context)">@DurationText(context, _now)</span></MudTd>
                 <MudTd DataLabel="报警"><div class="dt-alarm-incident"><span class="dt-alarm-message">@context.Message</span><span class="dt-alarm-kind">@KindText(context.Kind)</span></div></MudTd>
                 <MudTd DataLabel="接手">@OwnerText(context)</MudTd>
                 <MudTd DataLabel="处置">
                     @if (_canTake && context.Kind == LineAlarmKind.ConsecutiveNg)
                     {
-                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning" StartIcon="@Icons.Material.Filled.ReportProblem" Href="@CreateQualityIncidentUrl(context.Id)">建质量异常
-                        </MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning" StartIcon="@Icons.Material.Filled.ReportProblem" Href="@CreateQualityIncidentUrl(context.Id)">建质量异常</MudButton>
                     }
                 </MudTd>
             </RowTemplate>
@@ -893,6 +910,44 @@ else
     private void ToggleArchive()
     {
         _archiveExpanded = !_archiveExpanded;
+    }
+
+    private string SummaryChipClass(bool needs = false, bool current = false, bool urgent = false)
+    {
+        var selected = (needs && _alarmView is AlarmView.All or AlarmView.RecoveredUnowned)
+                       || (current && _alarmView == AlarmView.Current);
+        return selected ? "dt-alarms-summary-chip dt-alarms-summary-chip--on" : "dt-alarms-summary-chip";
+    }
+
+    private string? OldestNeedsAgeText
+    {
+        get
+        {
+            var oldest = NeedsOwner.OrderBy(item => item.RaisedAt).FirstOrDefault();
+            return oldest is null ? null : DurationText(oldest, _now);
+        }
+    }
+
+    private string DurationClass(AlarmIncidentDraft item)
+    {
+        var duration = (item.ClearedAt ?? _now) - item.RaisedAt;
+        if (item.NeedsOwner && duration >= TimeSpan.FromMinutes(30))
+        {
+            return "dt-alarm-duration dt-alarm-duration--stale";
+        }
+
+        return "dt-alarm-duration";
+    }
+
+    private void FilterStation(int stationId)
+    {
+        if (stationId <= 0)
+        {
+            return;
+        }
+
+        _stationFilter = stationId;
+        OnFiltersChanged();
     }
     public void Dispose()
     {

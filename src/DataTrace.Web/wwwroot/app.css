@@ -4007,3 +4007,80 @@ body:has(.dt-alarm-bar) .dt-alarms-toolbar {
         display: block;
     }
 }
+
+/* 设备报警页 · 第三轮：行动条、工站筛选、超时时长、接手粘性列 */
+.dt-alarms-summary-chip--on {
+    box-shadow: inset 0 0 0 2px currentColor;
+    font-weight: 700;
+}
+
+.dt-alarms-action-callout {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+    padding: 8px 12px;
+    border-radius: var(--dt-radius, 4px);
+    border: 1px solid color-mix(in srgb, var(--mud-palette-error) 35%, var(--mud-palette-lines-default));
+    background: color-mix(in srgb, var(--mud-palette-error) 8%, var(--mud-palette-surface));
+    font-size: 0.9rem;
+}
+
+.dt-alarms-action-callout-age {
+    color: var(--mud-palette-error);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.dt-alarms-group-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+}
+
+.dt-alarms-group-filter:hover .dt-alarms-group-title,
+.dt-alarms-group-filter:focus-visible .dt-alarms-group-title {
+    text-decoration: underline;
+}
+
+.dt-alarms-group-filter:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
+.dt-alarms-group-filter:disabled {
+    cursor: default;
+}
+
+.dt-alarms-group-filter:disabled:hover .dt-alarms-group-title {
+    text-decoration: none;
+}
+
+.dt-alarm-duration--stale {
+    color: var(--mud-palette-error);
+    font-weight: 700;
+}
+
+@media (min-width: 960px) {
+    .dt-alarms-table--action th.dt-alarms-col-take,
+    .dt-alarms-table--action td.dt-alarms-col-take {
+        position: sticky;
+        right: 0;
+        z-index: 2;
+        background: var(--mud-palette-surface);
+        box-shadow: -6px 0 8px -6px rgba(0, 0, 0, 0.18);
+    }
+
+    .dt-alarms-table--action thead th.dt-alarms-col-take {
+        z-index: 3;
+    }
+}
