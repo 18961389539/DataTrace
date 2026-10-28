@@ -83,6 +83,11 @@ public class StationDetailPanelTests
         // 异常页签默认激活：超限点位与 NG 曲线原因都直接可见。
         Assert.Contains("压力峰值", cut.Markup);
         Assert.Contains("压装曲线波形异常：峰值超基线 3σ", cut.Markup);
+
+        tabs[3].Click();
+        Assert.Contains("202610", cut.Markup);
+        Assert.Contains("77", cut.Markup);
+        Assert.Contains("产品间隔", cut.Markup);
     }
 
     [Fact]
@@ -130,7 +135,8 @@ public class StationDetailPanelTests
         Assert.Contains("曲线 压装曲线", cut.FindAll(".dt-curve-block")[0].GetAttribute("aria-label"));
         Assert.Contains("曲线 位移曲线", cut.FindAll(".dt-curve-block")[1].GetAttribute("aria-label"));
         Assert.Contains("压装曲线波形异常：峰值超基线 3σ", cut.Markup);
-        Assert.Contains("打开整份采集记录（历史曲线与原始数据）", cut.Markup);
+        Assert.Contains("查看采集记录", cut.Markup);
+        Assert.Contains("/query/202610/77", cut.Find(".dt-station-record-link").GetAttribute("href"));
     }
 
     [Fact]

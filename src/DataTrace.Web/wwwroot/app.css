@@ -1015,9 +1015,11 @@
 .dt-station-filter {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
-    min-height: 34px;
-    padding: 4px 10px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 8px 12px;
     border: 0;
     border-radius: var(--dt-radius);
     background: transparent;
@@ -1335,23 +1337,44 @@
     overflow-wrap: anywhere;
 }
 
-.dt-station-grid.dt-station-grid-overview .mud-grid-item {
-    flex-basis: 33.333%;
-    max-width: 33.333%;
+.dt-station-overview-quiet {
+    margin: 2px 0 0;
+    color: var(--mud-palette-text-disabled);
+    font-size: 0.75rem;
 }
 
-@media (max-width: 960px) {
-    .dt-station-grid.dt-station-grid-overview .mud-grid-item {
-        flex-basis: 50%;
-        max-width: 50%;
-    }
+.dt-station-hit {
+    display: flex;
+    width: 100%;
+    min-width: 0;
 }
 
-@media (max-width: 600px) {
-    .dt-station-grid.dt-station-grid-overview .mud-grid-item {
-        flex-basis: 100%;
-        max-width: 100%;
-    }
+.dt-station-hit > .dash-station {
+    flex: 1 1 auto;
+    width: 100%;
+}
+
+.dt-station-hit.is-action {
+    cursor: pointer;
+    border-radius: var(--dt-radius);
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: inherit;
+}
+
+.dt-station-hit.is-action:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 2px;
+}
+
+.dt-station-idle-status {
+    flex: 1 1 150px;
+    min-width: 0;
+    margin: 0;
+    font-weight: 600;
 }
 
 .dt-live-cadence-secondary {
@@ -1402,11 +1425,11 @@
     margin-left: auto;
 }
 
-.dt-station-detail-link {
-    flex: 0 0 30px;
-    width: 30px;
-    height: 30px;
-    margin-top: -3px;
+.dt-station-open-details.mud-button-root,
+.dt-station-expand.mud-button-root,
+.dt-station-record-link.mud-button-root {
+    min-width: 44px;
+    min-height: 44px;
 }
 
 .dt-station-subline {
@@ -1445,24 +1468,38 @@
     font-variant-numeric: tabular-nums;
 }
 
-/* 左边框标状态：车间一眼扫过哪台不对 */
+/* 左边框只跟运行状态：采集中 / 故障 / 空闲 / 停用。质量看芯片，不留在边框上。 */
 .dash-station {
     padding: 18px 20px;
     border-left: 4px solid var(--mud-palette-lines-default);
     height: auto;
 }
 
-    .dash-station.ok {
-        border-left-color: var(--mud-palette-success);
+    .dash-station.idle {
+        border-left-color: var(--mud-palette-lines-default);
     }
 
-    .dash-station.ng,
     .dash-station.fault {
         border-left-color: var(--mud-palette-error);
     }
 
     .dash-station.busy {
         border-left-color: var(--mud-palette-info);
+    }
+
+    /* 空闲且上一件 NG：边框闪一下就回到空闲色，不把红边留在「空闲」芯片旁边。 */
+    .dash-station.idle.dt-quality-flash {
+        animation: dt-quality-flash 1.6s ease-out 1;
+    }
+
+    @keyframes dt-quality-flash {
+        0%, 25% {
+            border-left-color: var(--mud-palette-error);
+        }
+
+        100% {
+            border-left-color: var(--mud-palette-lines-default);
+        }
     }
 
     /* 整卡压到 55% 不透明会把站名、点位值、节拍一起拉灰：浅色下 #1f2933 落在白底上只剩约 2.9:1，
@@ -2425,7 +2462,8 @@
 /* 动效对远端屏是必要的，但对晕动与读屏用户是干扰 */
 @media (prefers-reduced-motion: reduce) {
     .dt-flash,
-    .dash-station.busy {
+    .dash-station.busy,
+    .dash-station.idle.dt-quality-flash {
         animation: none;
     }
 }
@@ -2765,11 +2803,6 @@ body.dt-shopfloor .dt-station-meta-value {
 }
 body.dt-shopfloor .dt-station-meta-label {
     font-size: clamp(0.6875rem, 0.75vw, 0.8125rem);
-}
-/* 日常与大屏模式均为一行一个设备。 */
-.dt-station-grid .mud-grid-item {
-    flex-basis: 100%;
-    max-width: 100%;
 }
 body.dt-shopfloor .mud-chip {
     font-size: 0.95rem;
@@ -3520,7 +3553,14 @@ html.dt-theme-dark button.dt-settings-nav-btn.active {
 .dt-detail-follow-row {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
   margin-bottom: 8px;
+}
+
+.dt-detail-pin {
+  margin-left: auto;
 }
 
 @media (max-width: 600px) {
@@ -3626,17 +3666,6 @@ html.dt-theme-dark button.dt-settings-nav-btn.active {
 .dt-station-curves .dt-curve-block-head { flex-wrap: wrap; }
 .dt-station-curves .dt-chart { height: 160px; aspect-ratio: auto !important; }
 .dt-curve-empty { padding: 12px 0; }
-.dt-station-diagnostics {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px 28px;
-    border-top: 1px solid var(--mud-palette-lines-default);
-    margin: 14px 0 0;
-    padding-top: 10px;
-    font-size: .75rem;
-}
-.dt-station-diagnostics dt { color: var(--mud-palette-text-secondary); }
-.dt-station-diagnostics dd { margin: 3px 0 0; overflow-wrap: anywhere; }
 body.dt-shopfloor .dt-station-parameters .dash-tag-value { font-size: clamp(1.5rem, 2vw, 2rem); }
 @media (max-width: 600px) {
     .dash-station { padding: 14px; }

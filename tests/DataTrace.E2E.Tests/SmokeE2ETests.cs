@@ -63,16 +63,18 @@ public class SmokeE2ETests : E2ETestBase
     }
 
     [Fact]
-    public async Task StationCardKeepsDetailsInHeaderAndShowsConfiguredCurvesWithoutEmptyRegions()
+    public async Task StationCardOpensDetailFromOverviewAndShowsPrimaryCurves()
     {
         await OpenAsync("");
-        await WaitForAsync(".dash-station");
-        await WaitForAsync(".dt-station-detail-link");
+        await WaitForAsync(".dash-station.overview");
+        Assert.Equal(0, await Page.Locator(".dt-station-detail-link").CountAsync());
 
-        var detailsLink = Page.Locator(".dt-station-detail-link").First;
-        Assert.Equal("查看本站明细", await detailsLink.GetAttributeAsync("aria-label"));
-        Assert.True(await detailsLink.EvaluateAsync<bool>(
-            "element => !!element.closest('.dt-station-header')"));
+        var card = Page.Locator(".dt-station-hit.is-action").First;
+        Assert.Equal("button", await card.GetAttributeAsync("role"));
+        await card.ClickAsync();
+        await WaitForAsync(".dt-station-dialog");
+        await WaitForAsync(".dt-detail-tabs");
+        await Page.Keyboard.PressAsync("Escape");
 
         await Page.GetByRole(AriaRole.Button, new() { Name = "详细监控", Exact = true }).ClickAsync();
         await WaitForAsync(".dt-station-curves .dt-station-curve");
@@ -81,11 +83,12 @@ public class SmokeE2ETests : E2ETestBase
             cards => cards.every(card => {
                 const region = card.querySelector('.dt-station-curves');
                 const curves = card.querySelectorAll('.dt-station-curve');
-                // 未配置曲线的卡片不应留下空图表区域；有区域时，所有曲线定义都要有可见卡片。
+                // 未配置曲线的卡片不应留下空图表区域。默认只展示主曲线和异常曲线。
+                const label = region?.getAttribute('aria-label');
                 return region === null
                     ? curves.length === 0
                     : curves.length > 0
-                        && region.getAttribute('aria-label') === '全部采集曲线'
+                        && (label === '主要采集曲线' || label === '全部采集曲线')
                         && [...curves].every(curve => {
                             const name = curve.getAttribute('aria-label')?.replace(/^曲线 /, '');
                             return !!name && curve.innerText.includes(name);

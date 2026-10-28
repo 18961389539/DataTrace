@@ -16,6 +16,15 @@
     else
     {
         <div class="dt-detail-follow-row">
+            @if (DetailUrl is { } recordUrl)
+            {
+                <MudButton Variant="Variant.Outlined" Size="Size.Medium"
+                           StartIcon="@Icons.Material.Filled.Visibility"
+                           Href="@recordUrl" Class="dt-station-record-link"
+                           aria-label="查看采集记录">
+                    查看采集记录
+                </MudButton>
+            }
             @* 固定的是整份采集快照，参数与曲线同进同退。 *@
             <MudChip T="string" Size="Size.Small"
                      Variant="@(Following ? Variant.Filled : Variant.Outlined)"
@@ -189,13 +198,6 @@
                             }
                         </div>
                     }
-                    @if (DetailUrl is { } detailUrl)
-                    {
-                        <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.History"
-                                   Href="@detailUrl" Class="mt-2">
-                            打开整份采集记录（历史曲线与原始数据）
-                        </MudButton>
-                    }
                 }
             }
             else
@@ -208,6 +210,7 @@
                     <tr><td>托盘 / 流水</td><td>@(View.LastPalletCode ?? "-") / @(View.LastSerialNo ?? "-")</td></tr>
                     <tr><td>完成时间</td><td>@(View.LastCompleteTime?.ToString("yyyy-MM-dd HH:mm:ss") ?? "-")</td></tr>
                     <tr><td>采集节拍</td><td>@(View.LastDurationMs is { } ms ? $"{ms} ms" : "-")</td></tr>
+                    <tr><td>产品间隔</td><td>@StationPaceRules.Format(View.LastPieceGap ?? TimeSpan.Zero)</td></tr>
                     <tr><td>响应码回写</td><td>@(View.LastWriteBackAttempts == 0 ? "未写回" : $"尝试 {View.LastWriteBackAttempts} 次，{(View.LastWriteBackOk ? "成功" : "失败")}")</td></tr>
                     <tr><td>月库 / 记录</td><td>@(View.LastMonthKey ?? "-") / @(View.LastRecordId?.ToString() ?? "-")</td></tr>
                     @if (!string.IsNullOrEmpty(View.LastError))

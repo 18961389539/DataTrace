@@ -116,7 +116,7 @@ public class StationCardTests
         Assert.True(cut.RenderCount > before);
     }
 
-    /// <summary>所有曲线同时展示，并保留各自的判定和异常原因。</summary>
+    /// <summary>默认只展示主曲线和 NG 曲线；展开后保留每条曲线自己的判定和异常原因。</summary>
     [Fact]
     public async Task Shows_all_curves_with_per_curve_judgement()
     {
@@ -135,14 +135,22 @@ public class StationCardTests
 
         var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station));
 
+        // 默认只留主曲线和 NG 曲线，规格内/未判定的其余曲线先收起。
+        Assert.Equal(2, cut.FindAll(".dt-station-curve").Count);
+        Assert.Contains("压力曲线", cut.Markup);
+        Assert.DoesNotContain("位移曲线", cut.Markup);
+        Assert.Contains("压装曲线", cut.Markup);
+        Assert.Contains("峰值超基线 3σ", cut.Find(".dt-curve-reason").TextContent);
+        Assert.Equal("主要采集曲线", cut.Find(".dt-station-curves").GetAttribute("aria-label"));
+
+        cut.Find(".dt-station-expand").Click();
+
         Assert.Equal(3, cut.FindAll(".dt-station-curve").Count);
         Assert.Equal(3, cut.FindComponents<StationSparkChart>().Count);
-        Assert.Contains("压力曲线", cut.Markup);
         Assert.Contains("位移曲线", cut.Markup);
-        Assert.Contains("压装曲线", cut.Markup);
         Assert.Contains("OK", cut.Markup);
         Assert.Contains("未判定", cut.Markup);
-        Assert.Contains("峰值超基线 3σ", cut.Find(".dt-curve-reason").TextContent);
+        Assert.Equal("全部采集曲线", cut.Find(".dt-station-curves").GetAttribute("aria-label"));
         Assert.Empty(cut.FindAll("[role=tablist]"));
     }
 
@@ -169,6 +177,7 @@ public class StationCardTests
             new StationLiveCurve { Name = "位移曲线", Key = "2:1", Values = [5f, 6f, 7f], Judgement = Judgement.Ok }
         ];
         cut.Render(p => p.Add(x => x.Station, next));
+        cut.Find(".dt-station-expand").Click();
 
         var charts = cut.FindComponents<StationSparkChart>();
         Assert.Equal(2, charts.Count);
@@ -197,8 +206,13 @@ public class StationCardTests
         Assert.Contains("无数据 1", summary);
         Assert.Contains("未判定 1", summary);
         Assert.DoesNotContain("均正常", summary);
+        // 未配限值先收起，避免一整站身份字段把详细卡撑满；汇总里仍然计数。
+        Assert.Equal(2, cut.FindAll(".dash-tag").Count);
         Assert.Contains("无数据", cut.Markup);
-        Assert.Contains("未判定", cut.Markup);
+
+        cut.Find(".dt-station-expand").Click();
+        Assert.Equal(3, cut.FindAll(".dash-tag").Count);
+        Assert.Contains("未判定", cut.FindAll(".dash-tag")[2].TextContent);
     }
 
     /// <summary>双状态：工站运行状态（采集中）与最近产品判定（上次 NG）分开显示；
@@ -216,6 +230,8 @@ public class StationCardTests
         Assert.Contains("采集中", cut.Markup);
         Assert.Contains("上次 NG", cut.Markup);
         Assert.Contains("最近完成", cut.Markup);
+        Assert.Contains("dash-station detail busy", cut.Markup);
+        Assert.DoesNotContain("dash-station detail ng", cut.Markup);
     }
 
     /// <summary>状态不能只靠颜色：色觉障碍用户分不出红绿边条时，图标与文字仍要能分辨。</summary>
@@ -309,9 +325,12 @@ public class StationCardTests
 
         var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station));
 
+        Assert.Empty(cut.FindAll(".dash-tag"));
+        Assert.Contains("参数 5 项：均正常", cut.Find(".dt-point-summary-label").TextContent);
+        cut.Find(".dt-station-expand").Click();
         Assert.Equal(5, cut.FindAll(".dash-tag").Count);
         Assert.Equal(5, cut.FindAll(".dt-limit-scale").Count);
-        Assert.Empty(cut.FindAll(".dt-point-expand"));
+        Assert.Empty(cut.FindAll(".dash-tag .mud-chip"));
     }
 
     [Fact]
@@ -332,13 +351,19 @@ public class StationCardTests
 
         var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station));
 
+        var dense = cut.FindAll(".dash-tag");
+        Assert.Equal(2, dense.Count);
+        Assert.Contains("超限", dense[0].TextContent);
+        Assert.Contains("预警", dense[1].TextContent);
+
+        cut.Find(".dt-station-expand").Click();
         var rows = cut.FindAll(".dash-tag");
         Assert.Equal(7, rows.Count);
         Assert.Contains("正常1", rows[0].TextContent);
+        Assert.Empty(rows[0].QuerySelectorAll(".mud-chip"));
         Assert.Contains("超限", rows[5].TextContent);
         Assert.Contains("预警", rows[6].TextContent);
         Assert.Equal(7, cut.FindAll(".dt-limit-scale").Count);
-        Assert.Empty(cut.FindAll(".dt-point-expand"));
     }
 
     [Fact]
@@ -351,8 +376,12 @@ public class StationCardTests
         var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station));
 
         // 全部正常才说「均正常」；有任意异常/无数据/未判定时按类计数。
+        // 规格内点位默认收起，展开后也不再给每一项贴「正常」芯片。
         Assert.Contains("参数 7 项：均正常", cut.Find(".dt-point-summary-label").TextContent);
+        Assert.Empty(cut.FindAll(".dash-tag"));
+        cut.Find(".dt-station-expand").Click();
         Assert.Equal(7, cut.FindAll(".dash-tag").Count);
+        Assert.Empty(cut.FindAll(".dash-tag .mud-chip"));
     }
 
     [Fact]
@@ -411,7 +440,8 @@ public class StationCardTests
         next.LastCurves = [new StationLiveCurve { Key = "1:1", Name = "压力曲线", Values = [1f, 2f], Judgement = Judgement.Ng, JudgementReason = "新原因" }];
         cut.Render(p => p.Add(x => x.Station, next));
         Assert.Contains("新原因", cut.Find(".dt-curve-reason").TextContent);
-        Assert.Contains("3 次 · 成功", cut.Find(".dt-station-diagnostics").TextContent);
+        Assert.Contains("重试 3 次后成功", cut.Markup);
+        Assert.Empty(cut.FindAll(".dt-station-diagnostics"));
     }
 
     /// <summary>模拟器跑出来的单件耗时只有几十毫秒，按秒格式化会塌成「0.0 s」。</summary>
@@ -473,6 +503,117 @@ public class StationCardTests
         Assert.Equal("预警参数", cut.FindAll(".dt-overview-parameter-name")[1].TextContent);
         Assert.Equal("无数据参数", cut.FindAll(".dt-overview-parameter-name")[2].TextContent);
         Assert.Empty(cut.FindAll(".dt-station-curves"));
-        Assert.Contains("打开工站详情", cut.Markup);
+        Assert.Equal("button", cut.Find(".dt-station-hit").GetAttribute("role"));
+        Assert.Contains("打开 ST010 上料工站 详情", cut.Find(".dt-station-hit").GetAttribute("aria-label"));
+        Assert.Empty(cut.FindAll(".dt-station-open-details"));
+        Assert.Empty(cut.FindAll(".dt-station-detail-link"));
+    }
+
+    [Theory]
+    [InlineData(Judgement.Ok, false)]
+    [InlineData(Judgement.Ng, true)]
+    public async Task Idle_border_follows_run_state_not_last_judgement(Judgement judgement, bool flashes)
+    {
+        await using var ctx = NewContext();
+        var station = Station();
+        station.State = StationRuntimeState.Idle;
+        station.LastJudgement = judgement;
+
+        var cut = ctx.Render<StationCard>(p => p.Add(x => x.Station, station));
+
+        Assert.Contains("dash-station detail idle", cut.Markup);
+        Assert.Contains("空闲", cut.Markup);
+        Assert.DoesNotContain("dash-station detail ok", cut.Markup);
+        Assert.DoesNotContain("dash-station detail ng", cut.Markup);
+        if (flashes)
+        {
+            Assert.Contains("dt-quality-flash", cut.Markup);
+            Assert.Contains("上次 NG", cut.Markup);
+        }
+        else
+        {
+            Assert.DoesNotContain("dt-quality-flash", cut.Markup);
+        }
+    }
+
+    [Fact]
+    public async Task Overview_card_opens_details_without_a_competing_record_link()
+    {
+        await using var ctx = NewContext();
+        var opened = 0;
+        var cut = ctx.Render<StationCard>(p => p
+            .Add(x => x.Station, Station())
+            .Add(x => x.Compact, true)
+            .Add(x => x.OnOpenDetails, EventCallback.Factory.Create(this, () => opened++)));
+
+        cut.Find(".dt-station-hit").Click();
+        Assert.Equal(1, opened);
+        Assert.Empty(cut.FindAll(".dt-station-detail-link"));
+        Assert.DoesNotContain("/query/", cut.Markup);
+    }
+
+    [Fact]
+    public async Task Detail_mode_keeps_an_explicit_open_control()
+    {
+        await using var ctx = NewContext();
+        var cut = ctx.Render<StationCard>(p => p
+            .Add(x => x.Station, Station())
+            .Add(x => x.OnOpenDetails, EventCallback.Factory.Create(this, () => { })));
+
+        Assert.Contains("打开工站详情", cut.Find(".dt-station-open-details").TextContent);
+        Assert.Null(cut.Find(".dt-station-hit").GetAttribute("role"));
+    }
+
+    [Fact]
+    public async Task Idle_empty_station_collapses_to_one_status_line()
+    {
+        await using var ctx = NewContext();
+        var station = new StationRuntimeStatus
+        {
+            StationId = 10,
+            StationCode = "OP10",
+            StationName = "壳体上料",
+            State = StationRuntimeState.Idle,
+            LastJudgement = Judgement.None,
+            LastTags = []
+        };
+
+        var cut = ctx.Render<StationCard>(p => p
+            .Add(x => x.Station, station)
+            .Add(x => x.Compact, true));
+
+        Assert.Equal("等待托盘", cut.Find(".dt-station-idle-status").TextContent.Trim());
+        Assert.DoesNotContain("最近判定", cut.Markup);
+        Assert.DoesNotContain("暂无点位数据", cut.Markup);
+        Assert.DoesNotContain("暂无参数数据", cut.Markup);
+        Assert.DoesNotContain("尚无节拍", cut.Markup);
+        Assert.Equal("尚无参数", cut.Find(".dt-station-overview-quiet").TextContent.Trim());
+        Assert.Empty(cut.FindAll(".dt-station-subline .dt-station-meta"));
+    }
+
+    [Fact]
+    public async Task Idle_empty_station_keeps_last_successful_pace()
+    {
+        await using var ctx = NewContext();
+        var station = new StationRuntimeStatus
+        {
+            StationId = 10,
+            StationCode = "OP10",
+            StationName = "壳体上料",
+            State = StationRuntimeState.Idle,
+            LastDurationMs = 1850,
+            LastPieceGap = TimeSpan.FromSeconds(12),
+            LastTags = []
+        };
+
+        var cut = ctx.Render<StationCard>(p => p
+            .Add(x => x.Station, station)
+            .Add(x => x.Compact, true));
+
+        Assert.Equal("上次节拍", cut.FindAll(".dt-station-meta-label")[0].TextContent.Trim());
+        Assert.Equal("1.9 s", cut.FindAll(".dt-station-meta-value")[0].TextContent.Trim());
+        Assert.Equal("上次间隔", cut.FindAll(".dt-station-meta-label")[1].TextContent.Trim());
+        Assert.Equal("12 秒", cut.FindAll(".dt-station-meta-value")[1].TextContent.Trim());
+        Assert.DoesNotContain("最近判定", cut.Markup);
     }
 }

@@ -68,6 +68,12 @@ public class DashboardSearchTests : WebTestBase
         var cut = Render();
         var items = cut.FindAll(".dt-station-grid > .mud-grid-item");
         Assert.Equal(2, items.Count);
+        Assert.All(items, item =>
+        {
+            Assert.Contains("mud-grid-item-xs-12", item.ClassName);
+            Assert.Contains("mud-grid-item-md-6", item.ClassName);
+            Assert.Contains("mud-grid-item-lg-4", item.ClassName);
+        });
         Assert.Equal("ST020 压装工站", cut.FindAll(".dt-station-title")[0].TextContent.Trim());
         Assert.Equal("ST010 上料工站", cut.FindAll(".dt-station-title")[1].TextContent.Trim());
         Assert.Equal(2, cut.FindAll(".dt-station-overview").Count);
@@ -75,7 +81,12 @@ public class DashboardSearchTests : WebTestBase
 
         ClickButton(cut, "详细监控");
         items = cut.FindAll(".dt-station-grid > .mud-grid-item");
-        Assert.All(items, item => Assert.Contains("mud-grid-item-xs-12", item.ClassName));
+        Assert.All(items, item =>
+        {
+            Assert.Contains("mud-grid-item-xs-12", item.ClassName);
+            Assert.Contains("mud-grid-item-md-12", item.ClassName);
+            Assert.Contains("mud-grid-item-lg-12", item.ClassName);
+        });
         Assert.Single(cut.FindAll(".dt-station-curves"));
         Assert.Contains("定位曲线", cut.Markup);
         Assert.Contains("本次暂无可显示数据", cut.Markup);

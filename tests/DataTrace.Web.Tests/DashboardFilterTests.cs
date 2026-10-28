@@ -174,6 +174,28 @@ public class DashboardFilterTests : WebTestBase
     }
 
     [Fact]
+    public void PinAbnormalStationsAboveSequenceWhenEnabled()
+    {
+        var stations = new[]
+        {
+            Station(1, StationRuntimeState.Idle, Judgement.Ok),
+            Station(2, StationRuntimeState.Idle, Judgement.Ok),
+            Station(3, StationRuntimeState.Fault),
+            Station(4, StationRuntimeState.Idle, Judgement.Ng)
+        };
+        var cut = Render(stations: stations);
+        string[] Titles() => cut.FindAll(".dt-station-title").Select(title => title.TextContent.Trim()).ToArray();
+
+        Assert.Equal(["ST001 工站 1", "ST002 工站 2", "ST003 工站 3", "ST004 工站 4"], Titles());
+
+        cut.FindAll(".dt-station-filter").Single(button => button.TextContent.Contains("异常置顶")).Click();
+        Assert.Equal(["ST003 工站 3", "ST004 工站 4", "ST001 工站 1", "ST002 工站 2"], Titles());
+
+        cut.FindAll(".dt-station-filters .dt-station-filter").Single(button => button.TextContent.Contains("需关注")).Click();
+        Assert.Equal(["ST003 工站 3", "ST004 工站 4"], Titles());
+    }
+
+    [Fact]
     public void First_kpi_card_is_labeled_shift_ok()
     {
         var cut = Render();

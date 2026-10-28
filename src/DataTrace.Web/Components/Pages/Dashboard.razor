@@ -355,8 +355,13 @@ else
                     <button type="button" class="dt-station-filter @(_fullDetailMode ? "active" : null)"
                             aria-pressed="@(_fullDetailMode ? "true" : "false")" @onclick="() => SetFullDetailModeAsync(true)">详细监控</button>
                 </div>
+                <div class="dt-station-view-mode" role="group" aria-label="工站排序">
+                    <button type="button" class="dt-station-filter"
+                            aria-pressed="@(_pinAbnormal ? "true" : "false")"
+                            @onclick="() => _pinAbnormal = !_pinAbnormal">异常置顶</button>
+                </div>
             </div>
-            <p class="dt-station-filter-note">需关注按工站故障、最近 NG 与点位异常统计工站；过程报警数量在页面顶部报警栏单独显示。</p>
+            <p class="dt-station-filter-note">需关注按工站故障、最近 NG 与点位异常统计工站，点它只看这些工站。异常置顶只在「全部」里把它们排到前面，关闭时仍按工艺顺序。过程报警数量在页面顶部报警栏单独显示。</p>
         </div>
         @if (visibleStations.Count == 0)
         {
@@ -367,11 +372,11 @@ else
         }
         else
         {
-            <MudGrid Class="@($"dt-station-grid {(_fullDetailMode ? "" : "dt-station-grid-overview")}")">
+            <MudGrid Class="dt-station-grid">
                 @foreach (var station in visibleStations)
                 {
-                <MudItem xs="12">
-                        <StationCard Station="station" ShiftCounts="@StationShiftCounts(station.StationId)"
+                    <MudItem xs="12" md="@StationColumnMd" lg="@StationColumnLg">
+                        <StationCard @key="station.StationId" Station="station" ShiftCounts="@StationShiftCounts(station.StationId)"
                                      ConfiguredCurves="@_configuredCurves.GetValueOrDefault(station.StationId)"
                                      Compact="@(!_fullDetailMode)"
                                      OnOpenDetails="@(() => OpenStationDetailsAsync(station))" />
@@ -543,6 +548,11 @@ else
     private bool _shiftBusy;
     private bool _shiftError;
     private bool _fullDetailMode;
+    /// <summary>仅在「全部」视图生效。关闭时工站保持工艺顺序。</summary>
+    private bool _pinAbnormal;
+
+    private int StationColumnMd => _fullDetailMode ? 12 : 6;
+    private int StationColumnLg => _fullDetailMode ? 12 : 4;
 
     private bool _shiftHasSuccess => _shiftFetchedAt != DateTime.MinValue;
 
@@ -1024,11 +1034,24 @@ else
                 ? _orderedStations
                 : _orderedStations.Where(station => MatchesFilter(station, _selectedFilter)).ToList();
             var query = _stationSearch.Trim();
-            return query.Length == 0
-                ? stations
-                : stations.Where(station =>
+            if (query.Length > 0)
+            {
+                stations = stations.Where(station =>
                     station.StationCode.Contains(query, StringComparison.OrdinalIgnoreCase)
                     || station.StationName.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+            }
+
+            // 默认按工艺顺序。异常置顶只在「全部」下把故障 / 最近 NG / 点位异常排到前面，组内仍按顺序。
+            if (_pinAbnormal && (ShopFloor || _selectedFilter == StationFilter.All))
+            {
+                stations = stations
+                    .OrderBy(station => IsAttention(station) ? 0 : 1)
+                    .ThenBy(station => station.Sequence)
+                    .ThenBy(station => station.StationId)
+                    .ToList();
+            }
+
+            return stations;
         }
     }
 
