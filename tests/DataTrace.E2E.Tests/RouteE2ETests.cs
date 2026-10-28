@@ -20,6 +20,7 @@ public class RouteE2ETests : E2ETestBase
     [InlineData("/config/plc", "PLC")]
     [InlineData("/config/stations", "工站")]
     [InlineData("/config/recipes", "产品型号")]
+    [InlineData("/config/workorders", "工单管理")]
     [InlineData("/config/settings", "系统设置")]
     [InlineData("/simulate", "PLC 仿真")]
     [InlineData("/diagnostics", "运行诊断")]

@@ -149,6 +149,22 @@ public interface IConfigRepository
     /// </summary>
     Task SetActiveRecipeAsync(int? recipeId, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// 全部工单档案（含已完成/已取消），按状态与创建时间排序。
+    /// 工单不参与采集配置快照：修改它不会下发采集器，也不会生成配置修订。
+    /// </summary>
+    Task<IReadOnlyList<WorkOrder>> GetWorkOrdersAsync(CancellationToken cancellationToken = default);
+
+    Task<WorkOrder?> GetWorkOrderAsync(int id, CancellationToken cancellationToken = default);
+
+    /// <summary>保存工单：工单号唯一（忽略大小写），型号可为空；ID 为 0 时新增。</summary>
+    Task SaveWorkOrderAsync(WorkOrder workOrder, CancellationToken cancellationToken = default);
+
+    Task DeleteWorkOrderAsync(int id, CancellationToken cancellationToken = default);
+
+    /// <summary>设置当前工单（null = 取消）；最多一张，设为当前会同时把状态改为生产中。</summary>
+    Task SetCurrentWorkOrderAsync(int? id, CancellationToken cancellationToken = default);
+
     Task BumpVersionAsync(CancellationToken cancellationToken = default);
 
     /// <summary>

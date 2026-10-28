@@ -84,6 +84,15 @@ public sealed class ConfigurationChangeService : IConfigurationChanges
     public Task SaveSettingsAsync(SystemSettings settings, ConfigAudit audit, CancellationToken cancellationToken = default)
         => Change(() => _repository.SaveSettingsAsync(SaveSettingsCommand.From(settings), cancellationToken), audit, cancellationToken);
 
+    public Task SaveWorkOrderAsync(WorkOrder workOrder, ConfigAudit audit, CancellationToken cancellationToken = default)
+        => ChangeBusinessData(() => _repository.SaveWorkOrderAsync(workOrder, cancellationToken), audit, cancellationToken);
+
+    public Task DeleteWorkOrderAsync(int id, ConfigAudit audit, CancellationToken cancellationToken = default)
+        => ChangeBusinessData(() => _repository.DeleteWorkOrderAsync(id, cancellationToken), audit, cancellationToken);
+
+    public Task SetCurrentWorkOrderAsync(int? id, ConfigAudit audit, CancellationToken cancellationToken = default)
+        => ChangeBusinessData(() => _repository.SetCurrentWorkOrderAsync(id, cancellationToken), audit, cancellationToken);
+
     public Task RestoreRevisionAsync(long revisionId, ConfigAudit audit, CancellationToken cancellationToken = default)
         => Change(() => _repository.RestoreRevisionAsync(revisionId, cancellationToken), audit with
         {
@@ -153,6 +162,39 @@ public sealed class ConfigurationChangeService : IConfigurationChanges
             {
                 await maintenanceLease.DisposeAsync().ConfigureAwait(false);
             }
+        }
+    }
+
+    /// <summary>
+    /// 业务档案写入（工单）：配置 + 审计同事务，但不生成配置修订、不重载采集器。
+    /// </summary>
+    /// <remarks>
+    /// 工单不在 <see cref="AppConfigurationSnapshot"/> 里 —— 让它产生"空差分"修订会污染回滚链，
+    /// 而回滚配置也不应该改变台账。
+    /// </remarks>
+    private async Task ChangeBusinessData(Func<Task> save, ConfigAudit audit, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await (_authorizer?.AuthorizeChangeAsync(audit.UserName, cancellationToken) ?? Task.CompletedTask).ConfigureAwait(false);
+            await _repository.InTransactionAsync(async token =>
+            {
+                await save().ConfigureAwait(false);
+                await _audit.WriteAsync(
+                        audit.UserName,
+                        audit.Action,
+                        audit.EntityType,
+                        audit.EntityKey,
+                        audit.OldValue,
+                        audit.NewValue,
+                        token)
+                    .ConfigureAwait(false);
+                return true;
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            throw new ConfigurationChangeFailedException($"改动已回滚或未写入：{ex.Message}", ex);
         }
     }
 

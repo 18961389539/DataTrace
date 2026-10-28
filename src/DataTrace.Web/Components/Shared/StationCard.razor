@@ -1,4 +1,5 @@
 @using DataTrace.Application.Realtime
+@using DataTrace.Application.Reporting
 @using DataTrace.Application.Runtime
 @using DataTrace.Domain.Constants
 @using DataTrace.Domain.Enums
@@ -33,6 +34,16 @@
                     <span class="dt-station-meta-label">产品间隔</span>
                     <span class="dt-station-meta-value">@ProductGapText</span>
                 </div>
+                @if (ShiftCounts is { } counts)
+                {
+                    <div class="dt-station-meta">
+                        <span class="dt-station-meta-label">本班</span>
+                        <span class="dt-station-meta-value">
+                            <span class="dt-station-ok">OK @counts.Ok</span>
+                            <span class="dt-station-ng">NG @counts.Ng</span>
+                        </span>
+                    </div>
+                }
                 @* 只有"不止试了一次"才出现：一次就写回成功是常态，常驻一个「回写 1 次」只是噪音。
                    回写重试变多意味着握手通道在变差，比等到彻底写不回去早得多。 *@
                 @if (WriteBackText is { } writeBack)
@@ -287,6 +298,9 @@
 
     /// <summary>当前配置中的启用曲线，用于显示尚未采到数据的曲线。null 表示配置未知。</summary>
     [Parameter] public IReadOnlyList<StationLiveCurve>? ConfiguredCurves { get; set; }
+
+    /// <summary>本班该工站的 OK/NG 记录数；null 表示统计不可用，卡片不显示这一项。</summary>
+    [Parameter] public StationJudgementCount? ShiftCounts { get; set; }
 
     private string? _fingerprint;
     private bool _render;
@@ -560,6 +574,7 @@
           .Append(Station.LastWriteBackAttempts).Append('|')
           .Append(Station.LastWriteBackOk).Append('|')
           .Append(ConfiguredCurves is not null).Append('|')
+          .Append(ShiftCounts?.Ok).Append('/').Append(ShiftCounts?.Ng).Append('|')
           .Append((int)Station.State).Append('|')
           .Append((int)Station.LastJudgement).Append('|')
           .Append(Station.LastPalletCode).Append('|')

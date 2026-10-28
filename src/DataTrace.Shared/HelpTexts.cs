@@ -36,7 +36,7 @@ public static class HelpTexts
     public static readonly HelpTopic TodayScope = new(
         "本班统计",
         "从系统设置里的班次起点起算，到本班结束；夜班跨零点仍算同一班。",
-        "看板本班完成的是走出末站的件数。数据查询的「今天」仍是自然日。");
+        "大字是本班 OK 件数，小字是走出末站的总件数；数据查询的「今天」仍是自然日。");
 
     public static readonly HelpTopic JudgementThreeState = new(
         "判定三态",
@@ -63,10 +63,10 @@ public static class HelpTexts
         "距最近一次工站完成的时间；产线本就没料时变慢不算异常。",
         $"超过 {SystemDefaults.CadenceWarnSeconds} 秒转黄、{SystemDefaults.CadenceIdleSeconds / 60} 分钟转灰，要和顶部「数据已停止更新」的告警一起看。");
 
-    public static readonly HelpTopic PieceGap = new(
-        "当前间隔",
-        "同一工站相邻两件完成的间隔；看板上是间隔最长的那一站。",
-        "这一站决定这一班最多能做多少件，班中去疏通不用等到班后。");
+    public static readonly HelpTopic StationNg = new(
+        "工站 NG",
+        "柱状图与工站卡片按工站统计本班 OK/NG 记录数；同一件在多个工站 NG 会分别计数。",
+        "与直通率按整件算的 NG 不同；工站卡片显示的是本站自己的记录数。");
 
     public static readonly HelpTopic FirstNgStation = new(
         "最先坏站",
@@ -272,12 +272,29 @@ public static class HelpTexts
         "模拟器不走网络，读写落在本机内存，且与「PLC 仿真」页共用同一份寄存器。",
         "仿真写进去的值会被采集读走并落库：用它验证流程没问题，但它不是只看不写。");
 
+    // ---------- 工单管理 ----------
+
+    public static readonly HelpTopic WorkOrderScope = new(
+        "工单档案",
+        "工单只记录单号、型号、计划数量、状态与起止，不参与采集判定，也不写运行记录；同一工单号唯一。",
+        "同一时刻只有一张当前工单，设为当前会改为生产中；删除工单不影响已采集记录。");
+
+    public static readonly HelpTopic WorkOrderProgress = new(
+        "工单完成估算",
+        "从设为当前的时刻起，统计该工单型号走出末站的件数，并拆分 OK 与 NG。",
+        "未判定计入完成但不进 OK/NG；换型号或重新设为当前会重新计时，属于估算。");
+
     // ---------- 产品型号 ----------
 
     public static readonly HelpTopic RecipeCode = new(
         "系统编码",
-        "由系统自动分配的内部标识，用于采集记录追溯、查询筛选和曲线基线分桶。",
+        "由系统自动分配的内部标识，用于采集记录追溯、查询筛选和曲线基线分桶，列表默认不显示。",
         "编码固定；改名称不影响历史。复制型号使用新编码，不继承历史样本或基线。");
+
+    public static readonly HelpTopic RecipeModel = new(
+        "型号",
+        "型号与名称一起用于日常识别（如 A100 / 演示型号 A100），型号可留空。",
+        "型号只影响显示；采集记录的归属仍按系统编码，改型号不会改写历史。");
 
     public static readonly HelpTopic RecipeEnabled = new(
         "型号启用",
@@ -433,14 +450,15 @@ public static class HelpTexts
         var path = route.Split('?')[0].Trim('/').ToLowerInvariant();
         return path switch
         {
-            "" => [YieldRate, TodayScope, JudgementThreeState, LimitThreeTiers, StaleData, Cadence, ShiftShortfall, NgSource, PieceGap, FirstNgStation, SpecClearance],
+            "" => [YieldRate, TodayScope, JudgementThreeState, LimitThreeTiers, StaleData, Cadence, ShiftShortfall, NgSource, StationNg, FirstNgStation, SpecClearance, WorkOrderProgress],
             "query" => [RangeScope, MatchMode, ExportLimit, ResultCode, RecipeScope, JudgementThreeState, PalletTransit],
             "reports" => [YieldRate, AverageYield, ShiftWindow, ShiftShortfall, NgSource, RecipeScope, IssueShare, LimitThreeTiers, TrendSampleLimit, Capability, SegmentAsterisk, FirstNgStation, SpecClearance, MissingPoint],
             "curve-baseline" => [BaselineSampleCounts, RecipeMismatch, DeviationThresholds, OnlineBaseline, CriterionDisabled, CurveFeatureAxis],
             "logs" => [LogTimeRange, LogTimestamp, LogEntityKey, LogChange, LogKeyword],
             "config/plc" => [Heartbeat, PlcEnabled, MergeGap, SimulatorBrand],
             "config/stations" => [TriggerValue, TagDataSource, BoolAddress, FirstLastStation],
-            "config/recipes" => [RecipeCode, RecipeEnabled, RecipeCopy, LimitMergeRule, TargetValue, LimitEffect, CoverablePoints],
+            "config/recipes" => [RecipeCode, RecipeModel, RecipeEnabled, RecipeCopy, LimitMergeRule, TargetValue, LimitEffect, CoverablePoints],
+            "config/workorders" => [WorkOrderScope, WorkOrderProgress],
             "config/settings" => [SaveToDispatch, ScanInterval, WriteRetry, ShiftWindow, ConfigSource, Retention, MesOutbox, AlarmCall],
             "alarms" => [AlarmCall],
             "diagnostics" => [CollectorLoop, PlcTraffic, SpoolQueue],
@@ -466,7 +484,7 @@ public static class HelpTexts
                     "先看顶部采集状态、心跳和 PLC 异常，再看工站卡片。每行一个工站，运行状态与最近产品判定分开显示；点位异常会突出显示。点选「本站明细」可直接检查最近一条记录。",
                     "「最近采集」是便于巡线的 12 条摘要，不是完整历史；需要按时间、托盘、工站等条件查找时进入数据查询。"),
                 Section("指标与点位",
-                    "本班完成按走出末站的件数统计，从班次起点算到本班结束。一件在任一站不合格，整件算不合格；未判定不进直通率。不合格再分成质量不合格和没采成。直通率旁边写出本班拉低合格率最多的工站和点位，只统计质量不合格，并写明这个点偏高还是偏低、合格件离红线还有多远。不合格件按工站顺序取第一次判废的那一站。少做停点按整线安静的时间记在当时件停住的工站，并估出少做的件数。当前间隔是同一工站相邻两件完成相隔的时间，看板上写出间隔最长的那一站。",
+                    "本班 OK 按走出末站且判定 OK 的件数统计，从班次起点算到本班结束。一件在任一站不合格，整件算不合格；未判定不进直通率。不合格再分成质量不合格和没采成。直通率旁边写出本班拉低合格率最多的工站和点位，只统计质量不合格，并写明这个点偏高还是偏低、合格件离红线还有多远。不合格件按工站顺序取第一次判废的那一站。少做停点按整线安静的时间记在当时件停住的工站，并估出少做的件数。本班 NG 卡按工站统计 NG 采集记录数并画柱状图；同一件在多个工站 NG 会分别计数。",
                     "顶部最近节拍表示距离最近一次工站完成经过的时间，与当前间隔含义不同。卡片直接平铺全部参数和曲线；没有曲线时省去图表区，已配置但本次缺少数据的曲线保留提示。采集中显示的仍是最近完成产品的数据。"),
                 Section("异常排查",
                     "若数据新鲜度异常，先确认采集服务是否运行，再看 PLC 连接状态、工站握手地址及最近记录的结果码和错误信息。若 PLC 正常但最近节拍变慢，也要区分产线无料、工站停用和采集链路停止。",
@@ -622,6 +640,25 @@ public static class HelpTexts
                 Section("上线前检查",
                     "核对编码唯一性、型号启用状态、目标型号是否已设为当前，以及覆盖后的有效值是否符合工艺要求。对一个字段留空时，务必确认继承的默认值符合该型号要求。",
                     "型号限值影响后续判定，建议在切换前确认在制品策略，并通过一条代表性记录检查实际生效限值。")
+            ],
+            "config/workorders" =>
+            [
+                Section("页面用途",
+                    "工单管理维护生产台账：工单号、产品型号、型号快照、计划数量、状态、计划起止和备注。工单不参与采集判定，也不下发 PLC；改动只影响台账本身。",
+                    "列表按状态排序，生产中在前；看板「当前工单」卡会显示生产中工单张数、最近一张的型号与名称，以及待生产数量。工单数据每 30 秒刷新一次。"),
+                Section("字段与校验",
+                    "工单号必填且全系统唯一（忽略大小写）。选择产品型号后会自动带出产品名称（只读，不能手改）并维护型号快照；型号改名不会回写已建工单。计划数量和日期可以留空，但计划数量必须大于 0，结束日期不能早于开始日期。",
+                    "型号快照只用于工单台账显示与交接，不改变采集记录的型号归属；采集仍按首站建立会话时冻结的型号编码口径判定与统计。"),
+                Section("状态怎么用",
+                    "状态由人工维护：待生产表示已下达未开工，生产中表示正在执行，已完成表示产量结束，已取消表示台账作废但需要保留历史。状态不自动推进，也不会因为计划数量达成而自动变为已完成。",
+                    "同一时刻最多一张当前工单：点「设为当前」指定，状态会同时改为生产中；把状态改离生产中会自动取消当前标记。看板「当前工单」卡显示这张工单号、型号与名称。",
+                    "工单型号与「当前型号」不一致时，工单页顶部会出现提示并可一键同步当前型号；产品型号页与看板也会提示，但不会阻止切换。"),
+                Section("与采集的关系",
+                    "当前版本工单只做档案管理：首站建会话、采集记录、报表、查询和 MES 报文都没有工单号字段，因此不能按工单统计完成数量或合格率。",
+                    "若现场需要按工单追溯，需要先完成采集侧绑定（首站建会话时写入工单号，运行库与 MES 报文带出），仅维护本页不会产生这些数据。"),
+                Section("删除与历史",
+                    "删除工单只删除台账，不影响已采集的历史记录；同一工单号可再次重建。需要保留可查的作废记录时，优先把状态改为已取消而不是删除。",
+                    "工单的新增、修改与删除都会写审计日志，可在审计日志页按对象类型「工单」查询操作人和变更内容。")
             ],
             "config/settings" =>
             [

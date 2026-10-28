@@ -32,6 +32,7 @@ public sealed class ConfigDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<QualityIncidentActivity> QualityIncidentActivities => Set<QualityIncidentActivity>();
     public DbSet<Recipe> Recipes => Set<Recipe>();
     public DbSet<RecipeLimit> RecipeLimits => Set<RecipeLimit>();
+    public DbSet<WorkOrder> WorkOrders => Set<WorkOrder>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -79,7 +80,20 @@ public sealed class ConfigDbContext : IdentityDbContext<ApplicationUser>
 
         builder.Entity<Recipe>(e =>
         {
+            e.Property(x => x.Model).HasMaxLength(DataTrace.Domain.Validation.ProductModelRules.MaxLength);
             e.HasIndex(x => x.Code).IsUnique();
+        });
+
+        builder.Entity<WorkOrder>(e =>
+        {
+            e.Property(x => x.Code).HasMaxLength(DataTrace.Domain.Validation.WorkOrderRules.MaxCodeLength).IsRequired();
+            e.Property(x => x.Model).HasMaxLength(DataTrace.Domain.Validation.ProductModelRules.MaxLength);
+            e.Property(x => x.Remark).HasMaxLength(DataTrace.Domain.Validation.WorkOrderRules.MaxRemarkLength);
+            e.HasIndex(x => x.Code).IsUnique();
+            e.HasOne(x => x.Recipe)
+                .WithMany()
+                .HasForeignKey(x => x.RecipeId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         builder.Entity<QualityIncident>(e =>

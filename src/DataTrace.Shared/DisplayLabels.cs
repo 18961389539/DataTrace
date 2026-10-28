@@ -59,6 +59,7 @@ public static class DisplayLabels
             "config/plc" => "PLC 连接",
             "config/stations" => "工站配置",
             "config/recipes" => "产品型号",
+            "config/workorders" => "工单管理",
             "config/settings" => "系统设置",
             "users" => "用户",
             "logs" => "审计日志",
@@ -80,7 +81,7 @@ public static class DisplayLabels
     public static readonly string[] KnownEntityTypes =
     [
         "PlcConnection", "Station", "TagDefinition", "CurveDefinition", "CurveCriterion",
-        "Recipe", "RecipeLimit", "SystemSettings", "User", "Backup", "Query", "Record", "Report",
+        "Recipe", "RecipeLimit", "WorkOrder", "SystemSettings", "User", "Backup", "Query", "Record", "Report",
         "AuditLog", "RuntimeData", "Alarm"
     ];
 
@@ -122,6 +123,7 @@ public static class DisplayLabels
         "CurveCriterion" => "波形判据",
         "Recipe" => "产品型号",
         "RecipeLimit" => "型号限值",
+        "WorkOrder" => "工单",
         "SystemSettings" => "系统设置",
         "User" => "用户",
         "Backup" => "数据库备份",
@@ -223,6 +225,16 @@ public static class DisplayLabels
         _ => order.ToString()
     };
 
+
+    /// <summary>工单状态的中文名；列表、编辑对话框与审计说明共用一份。</summary>
+    public static string WorkOrderStatusText(WorkOrderStatus status) => status switch
+    {
+        WorkOrderStatus.Pending => "待生产",
+        WorkOrderStatus.InProgress => "生产中",
+        WorkOrderStatus.Completed => "已完成",
+        WorkOrderStatus.Cancelled => "已取消",
+        _ => status.ToString()
+    };
 
     public static string JudgementText(Judgement judgement) => judgement switch
     {

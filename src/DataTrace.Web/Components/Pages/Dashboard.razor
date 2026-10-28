@@ -89,21 +89,21 @@
 }
 
 @* KPI 独立成条：跟页头的状态芯片平铺在一起时它们权重相同，扫一眼分不出主次。
-   本班完成的口径与三态判定的说明跟着各自的 ⓘ 走。 *@
+   本班 OK 的口径与三态判定的说明跟着各自的 ⓘ 走。 *@
 <div class="dt-kpi-bar">
     <div class="dt-kpi-card">
         <div class="dt-kpi-main">
-            <span class="dt-kpi-label">本班完成<InfoHint Topic="HelpTexts.TodayScope" /></span>
+            <span class="dt-kpi-label">本班OK<InfoHint Topic="HelpTexts.TodayScope" /></span>
             @if (_shiftHasSuccess)
             {
-                <span class="dt-kpi-value">@_shiftTotal <span class="dt-kpi-unit">件</span></span>
+                <span class="dt-kpi-value">@_shiftOk <span class="dt-kpi-unit">件</span></span>
             }
             else
             {
                 <span class="dt-kpi-value">不可用</span>
             }
         </div>
-        <span class="dt-kpi-hint dt-kpi-hint-wide">@(_shiftHasSuccess ? $"{_shiftWindowText} · OK {_shiftOk} · 未判定 {_shiftNone}" : "统计暂不可用")</span>
+        <span class="dt-kpi-hint dt-kpi-hint-wide">@(_shiftHasSuccess ? $"{_shiftWindowText} · 总数 {_shiftTotal} 件 · 未判定 {_shiftNone}" : "统计暂不可用")</span>
         @if (_shiftHasSuccess)
         {
             <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftStopText <InfoHint Topic="HelpTexts.ShiftShortfall" /></span>
@@ -127,6 +127,7 @@
         @if (_shiftHasSuccess)
         {
             <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftDragText</span>
+            <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftNgSourceText <InfoHint Topic="HelpTexts.NgSource" /></span>
             @if (!string.IsNullOrEmpty(_shiftSideText))
             {
                 <span class="dt-kpi-hint dt-kpi-hint-wide">@_shiftSideText</span>
@@ -148,25 +149,76 @@
     </div>
     <div class="dt-kpi-card">
         <div class="dt-kpi-main">
-            <span class="dt-kpi-label">本班 NG<InfoHint Topic="HelpTexts.JudgementThreeState" /></span>
-            @if (_shiftHasSuccess)
+            <span class="dt-kpi-label">当前工单<InfoHint Topic="HelpTexts.WorkOrderScope" /></span>
+            @if (_workOrderLoadFailed && _workOrderFetchedAt == DateTime.MinValue)
             {
-                <span class="dt-kpi-value dt-kpi-value-alert">@_shiftNg</span>
+                <span class="dt-kpi-value">—</span>
+            }
+            else if (_currentWorkOrder is { } current)
+            {
+                <span class="dt-kpi-value">@current.Code</span>
             }
             else
             {
-                <span class="dt-kpi-value">不可用</span>
+                <span class="dt-kpi-value">无</span>
             }
         </div>
-        <span class="dt-kpi-hint dt-kpi-hint-wide">@(_shiftHasSuccess ? _shiftNgSourceText : "统计暂不可用") @if (_shiftHasSuccess) { <InfoHint Topic="HelpTexts.NgSource" /> }</span>
-        <span class="dt-kpi-updated">统计更新于 @(_shiftHasSuccess ? _shiftFetchedAt.ToString("HH:mm") : "暂无成功记录")</span>
+        @if (_currentWorkOrder is { } currentWorkOrder)
+        {
+            <span class="dt-kpi-hint dt-kpi-hint-wide">
+                @WorkOrderModel(currentWorkOrder)
+                · @(currentWorkOrder.Recipe?.Name ?? "未指定型号")
+                · 计划 @(currentWorkOrder.PlannedQuantity?.ToString() ?? "—") 件
+            </span>
+            @if (WorkOrderModelMismatchText is { } mismatchText)
+            {
+                <span class="dt-kpi-hint dt-kpi-hint-wide">注意：@mismatchText</span>
+            }
+            @if (WorkOrderProgressText is { } progressText)
+            {
+                <span class="dt-kpi-hint dt-kpi-hint-wide">@progressText <InfoHint Topic="HelpTexts.WorkOrderProgress" /></span>
+            }
+        }
+        else
+        {
+            <span class="dt-kpi-hint dt-kpi-hint-wide">
+                @(_workOrderLoadFailed ? "工单档案读取失败，稍后自动重试" : "未指定当前工单（在工单管理里点「设为当前」）")
+            </span>
+        }
+        <span class="dt-kpi-updated">
+            @(_workOrderLoadFailed
+                ? (_workOrderFetchedAt == DateTime.MinValue ? "工单读取失败" : $"工单读取失败，上次 {_workOrderFetchedAt:HH:mm}")
+                : (_workOrderFetchedAt == DateTime.MinValue ? "暂无工单数据" : $"工单更新于 {_workOrderFetchedAt:HH:mm}"))
+        </span>
     </div>
-    <div class="dt-kpi-card">
+    <div class="dt-kpi-card dt-kpi-card-chart">
         <div class="dt-kpi-main">
-            <span class="dt-kpi-label">当前间隔<InfoHint Topic="HelpTexts.PieceGap" /></span>
-            <span class="dt-kpi-value">@PaceText</span>
+            <span class="dt-kpi-label">本班 NG<InfoHint Topic="HelpTexts.StationNg" /></span>
+            @if (_stationNgUnavailable)
+            {
+                <span class="dt-kpi-value">—</span>
+            }
+            else
+            {
+                <span class="dt-kpi-value dt-kpi-value-alert">@_ngTotal</span>
+            }
         </div>
-        <span class="dt-kpi-hint dt-kpi-hint-wide">@PaceHint</span>
+        @if (!_stationNgUnavailable && _ngBars.Count > 0)
+        {
+            <div class="dt-kpi-chart dt-ng-chart" role="img" aria-label="@($"按工站 NG 数量：{_ngSummary}")">
+                @foreach (var bar in _ngBars)
+                {
+                    <div class="dt-ng-bar">
+                        <span class="dt-ng-bar-value">@bar.Ng</span>
+                        <div class="dt-ng-bar-track">
+                            <div class="dt-ng-bar-fill" style="@($"height:{NgBarHeight(bar.Ng)}px")"></div>
+                        </div>
+                        <span class="dt-ng-bar-label">@bar.StationCode</span>
+                    </div>
+                }
+            </div>
+        }
+        <span class="dt-kpi-hint dt-kpi-hint-wide">@(_stationNgUnavailable ? "统计暂不可用" : _ngSummary)</span>
     </div>
 </div>
 @if (_shiftError)
@@ -319,8 +371,9 @@ else
                 @foreach (var station in visibleStations)
                 {
                 <MudItem xs="12">
-                        <StationCard Station="station" ConfiguredCurves="@_configuredCurves.GetValueOrDefault(station.StationId)"
-                                 Compact="@(!_fullDetailMode)"
+                        <StationCard Station="station" ShiftCounts="@StationShiftCounts(station.StationId)"
+                                     ConfiguredCurves="@_configuredCurves.GetValueOrDefault(station.StationId)"
+                                     Compact="@(!_fullDetailMode)"
                                      OnOpenDetails="@(() => OpenStationDetailsAsync(station))" />
                     </MudItem>
                 }
@@ -493,6 +546,24 @@ else
 
     private bool _shiftHasSuccess => _shiftFetchedAt != DateTime.MinValue;
 
+    /// <summary>本班按工站统计的判定数，供看板 NG 柱状图与工站卡片使用。</summary>
+    private IReadOnlyList<StationJudgementCount> _stationJudgements = [];
+    private readonly Dictionary<int, StationJudgementCount> _stationCountsById = [];
+    private IReadOnlyList<StationJudgementCount> _ngBars = [];
+    private int _ngMax;
+    private int _ngTotal;
+    private string _ngSummary = "本班没有 NG";
+    private bool _stationNgUnavailable;
+
+    /// <summary>工单档案：不推进配置版本，按固定间隔自行轮询。</summary>
+    private const int WorkOrderCacheSeconds = 30;
+    private WorkOrder? _currentWorkOrder;
+    private DateTime _workOrderFetchedAt = DateTime.MinValue;
+    private bool _workOrderLoadFailed;
+    private int? _currentProduced;
+    private int? _currentOk;
+    private int? _currentNg;
+
     /// <summary>系统配置读取失败时的一句话提示；null 表示读取正常，不显示提示条。</summary>
     private string? _configNote;
     private int _configVersion = -1;
@@ -558,6 +629,7 @@ else
         // 时钟与节拍芯片各自有 1 秒计时器，不受这里影响。
         _uiTimer = new Timer(_ => _ = InvokeAsync(OnUiTickAsync), null, UiTickMs, UiTickMs);
         await RefreshShiftAsync(force: true);
+        await RefreshWorkOrdersAsync(force: true);
     }
 
         protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -621,10 +693,151 @@ else
             // ignore tick errors
         }
 
+        await RefreshWorkOrdersAsync(force: false);
+
         // 这一跳还得重画：卡片上的「30 秒前」只能靠它推进 —— hub 只在状态真的变了时才推事件，
         // 停机（或采集关闭）之后就没有事件了，不重画的话那些相对时间会一直冻在最后一次采集上。
         StateHasChanged();
     }
+
+    /// <summary>
+    /// 工单档案不随配置版本变化，也不推 hub；按 30 秒缓存自行轮询。
+    /// 读取失败时保留上一次结果，只在卡片脚注说明。
+    /// </summary>
+    private async Task RefreshWorkOrdersAsync(bool force)
+    {
+        if (!force && (DateTime.Now - _workOrderFetchedAt).TotalSeconds < WorkOrderCacheSeconds)
+        {
+            return;
+        }
+
+        try
+        {
+            var orders = await Config.GetWorkOrdersAsync();
+            _currentWorkOrder = orders.FirstOrDefault(order => order.IsCurrent);
+            _currentProduced = null;
+            _currentOk = null;
+            _currentNg = null;
+            if (_currentWorkOrder is { CurrentSince: { } since })
+            {
+                try
+                {
+                    // 轻量估算：从设为当前起、按工单型号统计走出末站的件数，不绑定会话。
+                    var progress = await Reports.GetPieceYieldAsync(
+                        since, DateTime.Now, null, _currentWorkOrder.Recipe?.Code);
+                    _currentProduced = progress.ByShift.Sum(row => row.Total);
+                    _currentOk = progress.ByShift.Sum(row => row.Ok);
+                    _currentNg = progress.ByShift.Sum(row => row.Ng);
+                }
+                catch
+                {
+                    // 统计失败不影响工单卡其它信息；下一轮再试。
+                    _currentProduced = null;
+                    _currentOk = null;
+                    _currentNg = null;
+                }
+            }
+
+            _workOrderLoadFailed = false;
+            _workOrderFetchedAt = DateTime.Now;
+        }
+        catch
+        {
+            _workOrderLoadFailed = true;
+        }
+    }
+
+    private static string WorkOrderModel(WorkOrder order)
+    {
+        if (!string.IsNullOrWhiteSpace(order.Model))
+        {
+            return order.Model!;
+        }
+
+        return string.IsNullOrWhiteSpace(order.Recipe?.Model) ? "—" : order.Recipe!.Model!;
+    }
+
+    /// <summary>当前工单的完成/剩余估算；没有起点或统计失败时只提示从下次设为当前起算。</summary>
+    private string? WorkOrderProgressText
+    {
+        get
+        {
+            if (_currentWorkOrder is not { } order)
+            {
+                return null;
+            }
+
+            if (order.CurrentSince is null || _currentProduced is not int produced
+                || _currentOk is not int ok || _currentNg is not int ng)
+            {
+                return "完成数从下次设为当前起统计";
+            }
+
+            var split = $"已完成 {produced} 件（OK {ok} · NG {ng}）";
+            if (order.PlannedQuantity is not int planned)
+            {
+                return $"{split} · 未设计划数量";
+            }
+
+            var remaining = planned - produced;
+            return remaining >= 0
+                ? $"{split} · 剩余 {remaining} 件"
+                : $"{split} · 超产 {-remaining} 件";
+        }
+    }
+
+    /// <summary>当前工单型号与当前型号不一致时返回给现场看的一句提示；一致时返回 null。</summary>
+    private string? WorkOrderModelMismatchText
+    {
+        get
+        {
+            if (_currentWorkOrder is not { Recipe: { } recipe })
+            {
+                return null;
+            }
+
+            if (string.IsNullOrEmpty(Status.ActiveRecipeCode))
+            {
+                return "未设置当前型号，新采集按点位默认限值判定";
+            }
+
+            return string.Equals(recipe.Code, Status.ActiveRecipeCode, StringComparison.OrdinalIgnoreCase)
+                ? null
+                : $"当前型号不一致（当前 {Status.ActiveRecipeCode}），新采集仍按当前型号判定";
+        }
+    }
+
+    /// <summary>柱状图按工站顺序排列；只画有 NG 的工站，没有时给一句“本班没有 NG”。</summary>
+    private void BuildStationNgChart(IReadOnlyList<Station>? stations)
+    {
+        var order = new Dictionary<int, int>();
+        if (stations is not null)
+        {
+            foreach (var station in stations.Where(item => item.Enabled))
+            {
+                order[station.Id] = station.Sequence;
+            }
+        }
+
+        var points = _stationJudgements.Where(item => item.Ng > 0)
+            .OrderBy(item => order.TryGetValue(item.StationId, out var sequence) ? sequence : int.MaxValue)
+            .ThenBy(item => item.StationCode, StringComparer.Ordinal)
+            .ToList();
+
+        _ngTotal = points.Sum(item => item.Ng);
+        _ngBars = points;
+        _ngMax = points.Count == 0 ? 0 : points.Max(item => item.Ng);
+        _ngSummary = points.Count == 0
+            ? "本班没有 NG"
+            : string.Join(" · ", points.Select(item => $"{item.StationCode} {item.Ng} 件"));
+    }
+
+    private StationJudgementCount? StationShiftCounts(int stationId)
+        => _stationCountsById.GetValueOrDefault(stationId);
+
+    /// <summary>柱高按本班最高的一站归一，最矮也留 4px，免得 1 件看起来像没有。</summary>
+    private int NgBarHeight(int count)
+        => _ngMax <= 0 ? 4 : Math.Max(4, (int)Math.Round(count * 56.0 / _ngMax));
 
     private async Task RefreshSpoolAsync()
     {
@@ -734,6 +947,27 @@ else
             _shiftClearanceText = report.Clearance?.Text ?? "";
             _shiftStopText = stops.ByShift.FirstOrDefault(row => row.ShiftStart == window.Start)?.Detail
                 ?? "本班各站没有明显停顿";
+
+            // 工站 NG 图单独取数：它挂了不该把整班 KPI 一起判成失败。
+            try
+            {
+                _stationJudgements = await Reports.GetStationJudgementsAsync(window.Start, window.End.AddTicks(-1));
+                _stationCountsById.Clear();
+                foreach (var counts in _stationJudgements)
+                {
+                    _stationCountsById[counts.StationId] = counts;
+                }
+
+                _stationNgUnavailable = false;
+            }
+            catch
+            {
+                _stationJudgements = [];
+                _stationCountsById.Clear();
+                _stationNgUnavailable = true;
+            }
+
+            BuildStationNgChart(snap?.Stations);
             _shiftWindowText = window.Label;
             _shiftWindowStart = window.Start;
             _shiftFetchedAt = DateTime.Now;
@@ -779,18 +1013,6 @@ else
             : _dataStale
             ? $"心跳超时 · {_collectorAgeText}"
             : $"心跳正常 · {_collectorAgeText}";
-
-    /// <summary>当前间隔：同一工站相邻两件的完成间隔里，最长的那一站。还没有两件时给「—」。</summary>
-    private StationPaceRules.Pace? CurrentPace => StationPaceRules.Slowest(
-        _stations.Select(station => new StationPaceRules.Sample(
-            station.StationCode,
-            station.Sequence,
-            station.State != StationRuntimeState.Disabled,
-            station.LastPieceGap)));
-
-    private string PaceText => CurrentPace?.Text ?? "—";
-
-    private string PaceHint => CurrentPace?.Hint ?? "还没有相邻的两件";
 
     private enum StationFilter { All, Attention, Busy, Idle, Disabled }
 

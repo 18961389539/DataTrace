@@ -181,6 +181,16 @@ public sealed class PieceYieldReport
     public SpecClearance? Clearance { get; init; }
 }
 
+/// <summary>按工站统计的本班判定数；同一件可能在多个工站各记一次。</summary>
+public sealed class StationJudgementCount
+{
+    public int StationId { get; init; }
+    public string StationCode { get; init; } = "";
+    public int Ok { get; init; }
+    public int Ng { get; init; }
+    public int None { get; init; }
+}
+
 public interface IReportService
 {
     /// <summary>产量报表：按日与按型号两个切面，同一次取数完成。</summary>
@@ -198,6 +208,10 @@ public interface IReportService
     /// 工站和型号筛选不参与：停的是整条线，不是某一张报表的筛选结果。
     /// </summary>
     Task<ShiftStopReport> GetShiftStopsAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default);
+
+    /// <summary>区间内按工站统计 OK/NG/未判定记录数，供看板 NG 柱状图与工站卡片使用。</summary>
+    Task<IReadOnlyList<StationJudgementCount>> GetStationJudgementsAsync(
+        DateTime from, DateTime to, CancellationToken cancellationToken = default);
 
     /// <summary>超规格点位 Top N（真实不良）。</summary>
     /// <param name="stationId">工站过滤：null = 全部工站。</param>

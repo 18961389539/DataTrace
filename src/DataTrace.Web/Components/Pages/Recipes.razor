@@ -51,13 +51,25 @@
     型号里的限值是<b>覆盖值</b>：留空的字段沿用点位默认限值（不是「不判」）。
     当前没有选择型号时，全部点位按自身默认限值判定。
     曲线判据定义全型号共用；曲线基线按系统编码分桶构建，切换后需存在该型号基线才会对偏离度打分。
-    系统编码由系统生成并用于采集追溯，创建后固定；日常按型号名称识别和维护。
+    型号与名称用于日常识别；系统编码由系统生成、仅内部追溯使用，列表默认不显示。
 </MudAlert>
+
+@if (WorkOrderModelMismatch)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mb-3" role="status">
+        <div class="d-flex align-center flex-wrap gap-2">
+            <span>
+                当前工单 @_currentWorkOrder!.Code 的型号为 @WorkOrderModelText(_currentWorkOrder!)，与当前型号不一致：新采集仍按当前型号判定。
+            </span>
+            <MudButton Size="Size.Small" Variant="Variant.Text" Href="/config/workorders">去工单管理</MudButton>
+        </div>
+    </MudAlert>
+}
 
 <MudPaper Class="pa-4">
     <MudTable Items="_recipes" Dense="true" Hover="true" Loading="_loading" Breakpoint="Breakpoint.Sm">
         <HeaderContent>
-            <MudTh>系统编码</MudTh>
+            <MudTh>型号 <InfoHint Topic="HelpTexts.RecipeModel" /></MudTh>
             <MudTh>名称</MudTh>
             <MudTh Class="dt-nowrap">覆盖点位</MudTh>
             <MudTh Class="dt-nowrap">启用 <InfoHint Topic="HelpTexts.RecipeEnabled" /></MudTh>
@@ -66,10 +78,15 @@
             <MudTh></MudTh>
         </HeaderContent>
         <RowTemplate>
-            <MudTd DataLabel="系统编码">
-                <MudTooltip Text="@context.Code">
-                    <MudText Typo="Typo.caption" Class="dt-muted">@SystemCodeLabel(context.Code)</MudText>
-                </MudTooltip>
+            <MudTd DataLabel="型号">
+                @if (string.IsNullOrWhiteSpace(context.Model))
+                {
+                    <MudText Typo="Typo.caption" Class="dt-muted">—</MudText>
+                }
+                else
+                {
+                    @context.Model
+                }
             </MudTd>
             <MudTd DataLabel="名称">@context.Name</MudTd>
             <MudTd DataLabel="覆盖点位">
@@ -159,6 +176,7 @@
     private IReadOnlyList<Recipe> _recipes = [];
     private IReadOnlyList<Station> _stations = [];
     private Recipe? _active;
+    private WorkOrder? _currentWorkOrder;
     private bool _loading;
     private bool _saving;
     private string? _loadError;
@@ -176,6 +194,16 @@
             _stations = snapshot.Stations;
             _active = snapshot.ActiveRecipe;
             Status.SetActiveRecipe(_active?.Code, _active?.Name);
+            try
+            {
+                _currentWorkOrder = (await Config.GetWorkOrdersAsync())
+                    .FirstOrDefault(order => order.IsCurrent);
+            }
+            catch
+            {
+                // 工单读取失败只影响顶部一致性提示，不挡住型号页本身。
+                _currentWorkOrder = null;
+            }
         }
         catch (Exception ex)
         {
@@ -189,13 +217,22 @@
     }
 
     private static int Overrides(Recipe recipe) => RecipeLimitResolver.CountOverrides(recipe);
-    private static string SystemCodeLabel(string code) => code.Length > 15 ? $"{code[..12]}..." : code;
+
+    /// <summary>当前工单的型号与当前型号不一致（工单没填型号不算）。</summary>
+    private bool WorkOrderModelMismatch
+        => _currentWorkOrder is { RecipeId: { } recipeId } && _active?.Id != recipeId;
+
+    private static string WorkOrderModelText(WorkOrder order)
+        => !string.IsNullOrWhiteSpace(order.Model) ? order.Model!
+            : string.IsNullOrWhiteSpace(order.Recipe?.Model) ? "未填型号"
+            : order.Recipe!.Model!;
 
     private static Recipe CloneRecipe(Recipe recipe) => new()
     {
         Id = recipe.Id,
         Code = recipe.Code,
         Name = recipe.Name,
+        Model = recipe.Model,
         Enabled = recipe.Enabled,
         Remark = recipe.Remark,
         PreviousCodes = recipe.PreviousCodes,
@@ -251,7 +288,7 @@
         {
             { x => x.Title, "新增型号" },
             { x => x.Name, "" },
-            { x => x.ExtraHint, "系统会自动分配固定的内部编码；新增后可在列表中设置型号限值。" }
+            { x => x.ExtraHint, "型号与名称用于日常识别；系统编码自动分配且不在列表显示。新增后可在列表中设置型号限值。" }
         };
         var dialog = await DialogService.ShowAsync<RecipeEditDialog>("新增型号", parameters, FormOptions);
         var result = await dialog.Result;
@@ -262,9 +299,9 @@
 
         await Write("新增型号", async () =>
         {
-            var recipe = new Recipe { Name = created.Name, Remark = created.Remark };
+            var recipe = new Recipe { Name = created.Name, Model = created.Model, Remark = created.Remark };
             await Changes.SaveRecipeAsync(recipe, await AuditOf(
-                "Create", recipe.Code, null, $"{created.Name} / {created.Remark}"));
+                "Create", recipe.Code, null, $"{created.Model} / {created.Name} / {created.Remark}"));
             await Reload();
             Toast.Add($"型号「{created.Name}」已新增（尚未激活，先用「限值」设定覆盖值）", Severity.Success);
         });
@@ -274,11 +311,13 @@
     {
         var oldCode = recipe.Code;
         var oldName = recipe.Name;
+        var oldModel = recipe.Model;
         var oldRemark = recipe.Remark;
         var parameters = new DialogParameters<RecipeEditDialog>
         {
             { x => x.Title, $"编辑型号 · {recipe.Name}" },
             { x => x.Code, recipe.Code },
+            { x => x.Model, recipe.Model },
             { x => x.Name, recipe.Name },
             { x => x.Remark, recipe.Remark }
         };
@@ -292,11 +331,12 @@
             var updated = CloneRecipe(recipe);
             updated.Code = edited.Code;
             updated.Name = edited.Name;
+            updated.Model = edited.Model;
             updated.Remark = edited.Remark;
             await Changes.SaveRecipeAsync(updated, await AuditOf(
                 "Save", oldCode,
-                $"{oldCode}/{oldName}/{oldRemark}",
-                $"{edited.Code}/{edited.Name}/{edited.Remark}"));
+                $"{oldCode}/{oldModel}/{oldName}/{oldRemark}",
+                $"{edited.Code}/{edited.Model}/{edited.Name}/{edited.Remark}"));
             await Reload();
             Toast.Add($"已保存型号「{edited.Name}」", Severity.Success);
         });
@@ -307,6 +347,7 @@
         var parameters = new DialogParameters<RecipeEditDialog>
         {
             { x => x.Title, $"复制型号 · {source.Name}" },
+            { x => x.Model, source.Model },
             { x => x.Name, $"{source.Name} 副本" },
             { x => x.Remark, source.Remark },
             { x => x.ExtraHint, $"将复制源型号「{source.Name}」的全部限值覆盖（{Overrides(source)} 项）；新型号会分配独立系统编码，不会自动设为当前。" }
@@ -321,6 +362,7 @@
             var clone = new Recipe
             {
                 Name = edited.Name,
+                Model = edited.Model,
                 Remark = edited.Remark,
                 Enabled = true,
                 Limits = source.Limits.Select(l => new RecipeLimit

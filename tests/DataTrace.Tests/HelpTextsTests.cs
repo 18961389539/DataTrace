@@ -145,18 +145,19 @@ public class HelpTextsTests
         var count = Enumerate().Count();
         // 上限随页面增加而上移：这条断言防的是"文案库被塞进一堆一次性条目"，
         // 不是精确配额，所以只在真的新增页面时调。
-        Assert.True(count is >= 40 and <= 75, $"文案条目数 {count} 超出预期区间（40~75）");
+        Assert.True(count is >= 40 and <= 85, $"文案条目数 {count} 超出预期区间（40~85）");
     }
 
     [Theory]
-    [InlineData("", 11)]
+    [InlineData("", 12)]
     [InlineData("query", 7)]
     [InlineData("reports", 14)]
     [InlineData("curve-baseline", 6)]
     [InlineData("logs", 5)]
     [InlineData("config/plc", 4)]
     [InlineData("config/stations", 4)]
-    [InlineData("config/recipes", 7)]
+    [InlineData("config/recipes", 8)]
+    [InlineData("config/workorders", 2)]
     [InlineData("config/settings", 8)]
     [InlineData("simulate", 5)]
     [InlineData("users", 5)]

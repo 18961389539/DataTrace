@@ -108,6 +108,12 @@ public sealed class ReportService : IReportService
         return StationStopRules.Summarize(ordered, from, to, asOf, startHour, lengthHours);
     }
 
+    public Task<IReadOnlyList<StationJudgementCount>> GetStationJudgementsAsync(
+        DateTime from,
+        DateTime to,
+        CancellationToken cancellationToken = default)
+        => _store.CountStationJudgementsAsync(from, to, cancellationToken);
+
     private async Task<IReadOnlyList<FinishedPieceObservation>> WithPieceOrderAsync(
         IReadOnlyList<FinishedPieceObservation> pieces,
         CancellationToken cancellationToken)

@@ -35,6 +35,7 @@ partial class DatabaseSeeder
         {
             Code = "A100",
             Name = "演示型号 A100",
+            Model = "A100",
             Enabled = true,
             Remark = "压力规格上限收紧到 16kN；工站温度预警上限收紧到 45℃"
         };

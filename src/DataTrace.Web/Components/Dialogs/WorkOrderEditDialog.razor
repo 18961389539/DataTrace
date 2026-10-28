@@ -1,0 +1,187 @@
+@using DataTrace.Domain.Enums
+@using DataTrace.Domain.Entities
+@using DataTrace.Domain.Validation
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@Title</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudGrid>
+            <MudItem xs="12" sm="6">
+                <MudTextField @bind-Value="_code" @bind-Value:after="OnEdited" Label="工单号" Immediate="true"
+                              data-dt-validation="code" Error="@(_showErrors && _codeError is not null)" ErrorText="@_codeError"
+                              HelperText="必填，全系统唯一" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudSelect T="int?" Value="_recipeId" ValueChanged="OnRecipeChanged" Label="产品型号"
+                           Clearable="true" HelperText="留空 = 暂不指定型号">
+                    @foreach (var recipe in Recipes)
+                    {
+                        <MudSelectItem T="int?" Value="@((int?)recipe.Id)">@RecipeLabel(recipe)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudTextField Value="RecipeName" Label="产品名称" ReadOnly="true"
+                              HelperText="由所选产品型号自动带出，不可修改" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudNumericField @bind-Value="_plannedQuantity" @bind-Value:after="OnEdited" Label="计划数量"
+                                 Immediate="true" Min="1" HelperText="留空 = 未下达数量"
+                                 data-dt-validation="quantity" Error="@(_showErrors && _quantityError is not null)" ErrorText="@_quantityError" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudSelect T="WorkOrderStatus" @bind-Value="_status" @bind-Value:after="OnEdited" Label="状态">
+                    @foreach (var status in Enum.GetValues<WorkOrderStatus>())
+                    {
+                        <MudSelectItem T="WorkOrderStatus" Value="status">@DisplayLabels.WorkOrderStatusText(status)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudDatePicker @bind-Date="_startDate" @bind-Date:after="OnEdited" Label="计划开始日期" Clearable="true" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudDatePicker @bind-Date="_endDate" @bind-Date:after="OnEdited" Label="计划结束日期" Clearable="true"
+                               data-dt-validation="dates" Error="@(_showErrors && _dateError is not null)" ErrorText="@_dateError" />
+            </MudItem>
+            <MudItem xs="12">
+                <MudTextField @bind-Value="_remark" Label="备注" Lines="2" />
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudText Typo="Typo.caption" Class="dt-muted mr-auto">@SubmitHint</MudText>
+        <MudButton OnClick="Cancel">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit" Disabled="@(!CanSubmit)">确定</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance? MudDialog { get; set; }
+
+    [Parameter] public string Title { get; set; } = "编辑工单";
+    [Parameter] public WorkOrder WorkOrder { get; set; } = new();
+    [Parameter] public IReadOnlyList<Recipe> Recipes { get; set; } = [];
+    [Parameter] public IReadOnlyList<WorkOrder> Siblings { get; set; } = [];
+
+    private string _code = "";
+    private int? _recipeId;
+    private string? _model;
+    private int? _plannedQuantity;
+    private WorkOrderStatus _status = WorkOrderStatus.Pending;
+    private DateTime? _startDate;
+    private DateTime? _endDate;
+    private string? _remark;
+
+    private string? _codeError;
+    private string? _quantityError;
+    private string? _dateError;
+
+    /// <summary>首次打开不标红；用户动过字段或点过确定才显示错误，避免空表单一进来满屏红字。</summary>
+    private bool _showErrors;
+
+    private int SourceId => WorkOrder.Id;
+
+    protected override void OnParametersSet()
+    {
+        _code = WorkOrder.Code;
+        _recipeId = WorkOrder.RecipeId;
+        _model = WorkOrder.Model;
+        // 老工单没有型号快照：编辑时用所选型号的当前型号补上，保存后即固化。
+        if (string.IsNullOrWhiteSpace(_model) && WorkOrder.RecipeId is { } recipeId)
+        {
+            _model = Recipes.FirstOrDefault(item => item.Id == recipeId)?.Model;
+        }
+
+        _plannedQuantity = WorkOrder.PlannedQuantity;
+        _status = WorkOrder.Status;
+        _startDate = WorkOrder.StartDate;
+        _endDate = WorkOrder.EndDate;
+        _remark = WorkOrder.Remark;
+        _showErrors = false;
+        Validate();
+    }
+
+    /// <summary>产品名称完全由所选型号决定，只读展示。</summary>
+    private string RecipeName
+        => _recipeId is int recipeId
+            ? Recipes.FirstOrDefault(item => item.Id == recipeId)?.Name ?? ""
+            : "";
+
+    /// <summary>型号快照随所选产品型号自动维护；界面上不提供编辑。</summary>
+    private void OnRecipeChanged(int? recipeId)
+    {
+        _recipeId = recipeId;
+        _model = recipeId is int id ? Recipes.FirstOrDefault(item => item.Id == id)?.Model : null;
+        _showErrors = true;
+        Validate();
+    }
+
+    private static string RecipeLabel(Recipe recipe)
+        => string.IsNullOrWhiteSpace(recipe.Model) ? recipe.Name : $"{recipe.Model} · {recipe.Name}";
+
+    private void OnEdited()
+    {
+        _showErrors = true;
+        Validate();
+    }
+
+    private void Validate()
+    {
+        _codeError = WorkOrderRules.CodeError(_code);
+        if (_codeError is null && Siblings.Any(order => order.Id != SourceId
+                && string.Equals(order.Code?.Trim(), _code.Trim(), StringComparison.OrdinalIgnoreCase)))
+        {
+            _codeError = $"工单号 {_code.Trim()} 已被占用";
+        }
+
+        _quantityError = WorkOrderRules.PlannedQuantityError(_plannedQuantity);
+        _dateError = WorkOrderRules.DateRangeError(_startDate, _endDate);
+    }
+
+    private bool CanSubmit => _codeError is null && _quantityError is null && _dateError is null
+                              && !string.IsNullOrWhiteSpace(_code);
+
+    /// <summary>按钮变灰时在左侧说清楚原因，避免用户盯着灰按钮猜。</summary>
+    private string SubmitHint => CanSubmit ? ""
+        : _showErrors ? (_codeError ?? _quantityError ?? _dateError ?? "")
+        : "请先完善表单内容";
+
+    private void Cancel() => MudDialog?.Cancel();
+
+    private void Submit()
+    {
+        _showErrors = true;
+        Validate();
+        if (!CanSubmit)
+        {
+            return;
+        }
+
+        MudDialog?.Close(DialogResult.Ok(new WorkOrderEditResult
+        {
+            Code = _code.Trim(),
+            RecipeId = _recipeId,
+            Model = string.IsNullOrWhiteSpace(_model) ? null : _model.Trim(),
+            PlannedQuantity = _plannedQuantity,
+            Status = _status,
+            StartDate = _startDate?.Date,
+            EndDate = _endDate?.Date,
+            Remark = string.IsNullOrWhiteSpace(_remark) ? null : _remark.Trim()
+        }));
+    }
+
+    public sealed class WorkOrderEditResult
+    {
+        public string Code { get; init; } = "";
+        public int? RecipeId { get; init; }
+        public string? Model { get; init; }
+        public int? PlannedQuantity { get; init; }
+        public WorkOrderStatus Status { get; init; }
+        public DateTime? StartDate { get; init; }
+        public DateTime? EndDate { get; init; }
+        public string? Remark { get; init; }
+    }
+}

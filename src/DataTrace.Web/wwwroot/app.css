@@ -1091,6 +1091,73 @@
     gap: 2px;
 }
 
+/* 本班 NG 的小柱状图：整行占满，卡片高度由它撑开。 */
+.dt-kpi-chart {
+    flex: 1 1 100%;
+    min-width: 0;
+    height: 84px;
+    margin-top: 2px;
+}
+
+.dt-ng-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    padding: 2px 2px 0;
+}
+
+.dt-ng-bar {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.dt-ng-bar-value {
+    font-size: 0.6875rem;
+    line-height: 1;
+    color: var(--mud-palette-error);
+    font-variant-numeric: tabular-nums;
+}
+
+.dt-ng-bar-track {
+    width: 100%;
+    max-width: 26px;
+    height: 56px;
+    display: flex;
+    align-items: flex-end;
+}
+
+.dt-ng-bar-fill {
+    width: 100%;
+    background: var(--mud-palette-error);
+    border-radius: 2px 2px 0 0;
+}
+
+.dt-ng-bar-label {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.6875rem;
+    line-height: 1.2;
+    color: var(--mud-palette-text-secondary);
+}
+
+/* 工站卡片里的本班 OK/NG：颜色只用来区分判定，不加底块。 */
+.dt-station-ok {
+    color: var(--mud-palette-success);
+    font-variant-numeric: tabular-nums;
+}
+
+.dt-station-ng {
+    margin-left: 8px;
+    color: var(--mud-palette-error);
+    font-variant-numeric: tabular-nums;
+}
+
 .dt-kpi-label {
     display: flex;
     align-items: center;

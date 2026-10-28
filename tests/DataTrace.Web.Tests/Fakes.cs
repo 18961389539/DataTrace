@@ -241,6 +241,61 @@ public sealed class FakeConfigRepository : IConfigRepository
     public Task SetActiveRecipeAsync(int? recipeId, CancellationToken cancellationToken = default)
         => Recorded(nameof(SetActiveRecipeAsync));
 
+    /// <summary>工单档案：页面用例直接从这里取列表并断言写下了什么。</summary>
+    public List<WorkOrder> WorkOrders { get; } = [];
+
+    public List<WorkOrder> SavedWorkOrders { get; } = [];
+
+    public List<int> DeletedWorkOrderIds { get; } = [];
+
+    public Task<IReadOnlyList<WorkOrder>> GetWorkOrdersAsync(CancellationToken cancellationToken = default)
+    {
+        Calls.Add(nameof(GetWorkOrdersAsync));
+        ThrowIfConfigured();
+        return Task.FromResult<IReadOnlyList<WorkOrder>>(WorkOrders
+            .OrderBy(order => order.Status)
+            .ThenByDescending(order => order.CreatedAt)
+            .ThenBy(order => order.Code)
+            .ToList());
+    }
+
+    public Task<WorkOrder?> GetWorkOrderAsync(int id, CancellationToken cancellationToken = default)
+        => Task.FromResult(WorkOrders.FirstOrDefault(order => order.Id == id));
+
+    public Task SaveWorkOrderAsync(WorkOrder workOrder, CancellationToken cancellationToken = default)
+    {
+        Calls.Add(nameof(SaveWorkOrderAsync));
+        ThrowIfConfigured();
+        SavedWorkOrders.Add(workOrder);
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteWorkOrderAsync(int id, CancellationToken cancellationToken = default)
+    {
+        Calls.Add(nameof(DeleteWorkOrderAsync));
+        ThrowIfConfigured();
+        DeletedWorkOrderIds.Add(id);
+        return Task.CompletedTask;
+    }
+
+    public Task SetCurrentWorkOrderAsync(int? id, CancellationToken cancellationToken = default)
+    {
+        Calls.Add(nameof(SetCurrentWorkOrderAsync));
+        ThrowIfConfigured();
+        foreach (var order in WorkOrders)
+        {
+            order.IsCurrent = false;
+        }
+
+        if (id is int workOrderId && WorkOrders.FirstOrDefault(order => order.Id == workOrderId) is { } target)
+        {
+            target.IsCurrent = true;
+            target.Status = WorkOrderStatus.InProgress;
+        }
+
+        return Task.CompletedTask;
+    }
+
     public Task BumpVersionAsync(CancellationToken cancellationToken = default)
         => Recorded(nameof(BumpVersionAsync));
 
@@ -346,6 +401,12 @@ public sealed class DialogSpy
     /// <summary>确认框的返回值；不设按"用户点了确认"算，设成 false 模拟用户取消。</summary>
     public bool? MessageBoxResult { get; set; } = true;
 
+    /// <summary>普通三选确认框（ShowMessageBox）：标题、正文、两个按钮文案。</summary>
+    public List<(string Title, string Message, string? YesText, string? NoText)> Prompts { get; } = [];
+
+    /// <summary>三选确认框的返回值：true=是，false=否，null=关闭。</summary>
+    public bool? PromptResult { get; set; } = true;
+
     /// <summary>对话框的返回结果；不设则视为用户取消（页面据此不做任何写入）。</summary>
     public DialogResult? DialogResult { get; set; }
 
@@ -375,6 +436,24 @@ public sealed class DialogSpy
                 return Task.FromResult(reference.Object);
             });
 
+        // 普通三选确认框（如“是否同时切换当前型号”）：页面用返回值区分“是/否/关闭”。
+        Mock.Setup(d => d.ShowMessageBox(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<DialogOptions>()))
+            .Returns((string title, string message, string yesText, string? noText, string? cancelText, DialogOptions? _) =>
+            {
+                lock (Prompts)
+                {
+                    Prompts.Add((title, message, yesText, noText));
+                }
+
+                return Task.FromResult(PromptResult);
+            });
+
         Mock.Setup(d => d.ShowAsync<PlcEditDialog>(
                 It.IsAny<string>(),
                 It.IsAny<DialogParameters>(),
@@ -393,6 +472,23 @@ public sealed class DialogSpy
 
         // 点位编辑对话框：页面把它当"表单入口"，用例要断言下发过哪些参数、拿到结果后写了什么。
         Mock.Setup(d => d.ShowAsync<TagEditDialog>(
+                It.IsAny<string>(),
+                It.IsAny<DialogParameters>(),
+                It.IsAny<DialogOptions>()))
+            .Returns((string title, DialogParameters parameters, DialogOptions _) =>
+            {
+                lock (Shown)
+                {
+                    Shown.Add((title, parameters));
+                }
+
+                var reference = new Mock<IDialogReference>();
+                reference.SetupGet(r => r.Result).Returns(() => Task.FromResult(DialogResult));
+                return Task.FromResult(reference.Object);
+            });
+
+        // 工单编辑对话框：页面把它当"表单入口"，用例断言默认值与提交后的写入。
+        Mock.Setup(d => d.ShowAsync<WorkOrderEditDialog>(
                 It.IsAny<string>(),
                 It.IsAny<DialogParameters>(),
                 It.IsAny<DialogOptions>()))

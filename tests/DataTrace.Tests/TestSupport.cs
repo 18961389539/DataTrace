@@ -96,6 +96,8 @@ internal static class ConfigMigrationTestSupport
             "CREATE INDEX \"IX_MesOutbox_Status_CreatedAt\" ON \"MesOutbox\" (\"Status\", \"CreatedAt\")");
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"ActiveSessions\" DROP COLUMN \"RecipeSnapshot\"");
         await db.Database.ExecuteSqlRawAsync("DROP TABLE IF EXISTS \"ConfigurationRevisions\"");
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE IF EXISTS \"WorkOrders\"");
+        await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"Recipes\" DROP COLUMN \"Model\"");
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE Stations DROP COLUMN EventIdAddress");
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE Stations DROP COLUMN ConfirmationRequestAddress");
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE Stations DROP COLUMN ConfirmationAckAddress");
@@ -531,6 +533,9 @@ internal class FakeRuntimeStore : IRuntimeStore
             StationPasses
                 .Where(pass => pass.CompleteTime >= from && pass.CompleteTime <= to)
                 .ToList());
+
+    public Task<IReadOnlyList<StationJudgementCount>> CountStationJudgementsAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<StationJudgementCount>>([]);
 
     public List<FinishedPieceObservation> FinishedPieces { get; } = [];
 

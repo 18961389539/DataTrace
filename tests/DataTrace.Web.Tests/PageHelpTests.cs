@@ -24,7 +24,7 @@ public sealed class PageHelpTests : WebTestBase
         pageHelp.Find("button[aria-label='本页说明']").Click();
         provider.Render();
 
-        Assert.Contains("16 条说明", provider.Markup);
+        Assert.Contains("17 条说明", provider.Markup);
         Assert.Equal("页面用途", provider.Find(".dt-page-help-detail .dt-help-title").TextContent);
         Assert.Contains("采集器", provider.Find(".dt-page-help-detail").TextContent);
 
@@ -34,7 +34,7 @@ public sealed class PageHelpTests : WebTestBase
         provider.Render();
 
         Assert.Equal("限值三档", provider.Find(".dt-page-help-detail .dt-help-title").TextContent);
-        Assert.Contains("说明项 9 / 16", provider.Markup);
+        Assert.Contains("说明项 9 / 17", provider.Markup);
     }
 
     [Fact]

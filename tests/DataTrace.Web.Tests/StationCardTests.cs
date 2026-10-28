@@ -25,6 +25,24 @@ public class StationCardTests
         return ctx;
     }
 
+    [Fact]
+    public void Shift_counts_render_ok_and_ng()
+    {
+        var ctx = NewContext();
+        var cut = ctx.Render<StationCard>(parameters => parameters
+            .Add(card => card.Station, Station())
+            .Add(card => card.ShiftCounts, new DataTrace.Application.Reporting.StationJudgementCount
+            {
+                StationId = 1,
+                StationCode = "ST010",
+                Ok = 12,
+                Ng = 3
+            }));
+
+        Assert.Contains("OK 12", cut.Markup);
+        Assert.Contains("NG 3", cut.Markup);
+    }
+
     private static StationRuntimeStatus Station(int? durationMs = 3200) => new()
     {
         StationId = 1,

@@ -47,4 +47,11 @@ public interface IConfigurationChanges
     Task SavePlcConnectionAsync(PlcConnection connection, ConfigAudit audit, CancellationToken cancellationToken = default);
     Task DeletePlcConnectionAsync(int id, ConfigAudit audit, CancellationToken cancellationToken = default);
     Task SaveSettingsAsync(SystemSettings settings, ConfigAudit audit, CancellationToken cancellationToken = default);
+
+    /// <summary>保存工单档案：写审计，但不进配置修订、不触发采集器重载。</summary>
+    Task SaveWorkOrderAsync(WorkOrder workOrder, ConfigAudit audit, CancellationToken cancellationToken = default);
+
+    Task DeleteWorkOrderAsync(int id, ConfigAudit audit, CancellationToken cancellationToken = default);
+
+    Task SetCurrentWorkOrderAsync(int? id, ConfigAudit audit, CancellationToken cancellationToken = default);
 }

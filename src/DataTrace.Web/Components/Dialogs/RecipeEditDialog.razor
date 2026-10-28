@@ -1,10 +1,14 @@
 @using DataTrace.Domain.Entities
+@using DataTrace.Domain.Validation
 
 <MudDialog>
     <TitleContent>
         <MudText Typo="Typo.h6">@Title</MudText>
     </TitleContent>
     <DialogContent>
+        <MudTextField @bind-Value="_model" @bind-Value:after="ValidateModel" Label="型号" Class="mb-2"
+                      Immediate="true" Error="@(_modelError is not null)" ErrorText="@_modelError"
+                      HelperText="可留空；与名称一起用于列表识别" />
         <MudTextField @bind-Value="_name" Label="型号名称" Class="mb-2"
                       HelperText="必填。名称为空时「确定」会一直灰着" />
         <MudTextField @bind-Value="_remark" Label="备注" Lines="2" />
@@ -25,32 +29,40 @@
 
     [Parameter] public string Title { get; set; } = "编辑型号";
     [Parameter] public string Code { get; set; } = "";
+    [Parameter] public string? Model { get; set; }
     [Parameter] public string Name { get; set; } = "";
     [Parameter] public string? Remark { get; set; }
     [Parameter] public string? ExtraHint { get; set; }
 
     private string _code = "";
+    private string? _model;
     private string _name = "";
     private string? _remark;
+    private string? _modelError;
 
     protected override void OnParametersSet()
     {
         _code = Code;
+        _model = Model;
         _name = Name;
         _remark = Remark;
+        ValidateModel();
     }
 
-    private bool CanSubmit => !string.IsNullOrWhiteSpace(_name);
+    private void ValidateModel() => _modelError = ProductModelRules.Error(_model);
+
+    private bool CanSubmit => !string.IsNullOrWhiteSpace(_name) && _modelError is null;
 
     /// <summary>名字为空时按钮会禁用，页脚左侧同步说一句为什么 —— 静默变灰最让人困惑。</summary>
-    private string SubmitHint => CanSubmit ? "" : "请先填写型号名称";
+    private string SubmitHint => CanSubmit ? "" : _modelError ?? "请先填写型号名称";
 
     private void Cancel() => MudDialog?.Cancel();
 
     private void Submit()
     {
+        ValidateModel();
         _name = _name.Trim();
-        if (string.IsNullOrWhiteSpace(_name))
+        if (!CanSubmit)
         {
             return;
         }
@@ -58,6 +70,7 @@
         MudDialog?.Close(DialogResult.Ok(new RecipeEditResult
         {
             Code = _code,
+            Model = string.IsNullOrWhiteSpace(_model) ? null : _model.Trim(),
             Name = _name,
             Remark = string.IsNullOrWhiteSpace(_remark) ? null : _remark.Trim()
         }));
@@ -66,6 +79,7 @@
     public sealed class RecipeEditResult
     {
         public string Code { get; init; } = "";
+        public string? Model { get; init; }
         public string Name { get; init; } = "";
         public string? Remark { get; init; }
     }

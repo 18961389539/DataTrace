@@ -29,6 +29,11 @@ partial class ConfigRepository
         }
 
         recipe.Name = recipe.Name.Trim();
+        recipe.Model = string.IsNullOrWhiteSpace(recipe.Model) ? null : recipe.Model.Trim();
+        if (ProductModelRules.Error(recipe.Model) is { } modelError)
+        {
+            throw new InvalidOperationException(modelError);
+        }
 
         // 编码是运行记录和曲线基线使用的内部键；旧调用方可继续传自定义码，新建空码时由仓储生成。
         if (RecipeCodeRules.Error(recipe.Code) is { } codeError)
@@ -108,6 +113,7 @@ partial class ConfigRepository
             await ReleasePreviousCodeAsync(existing.Id, newCode, cancellationToken).ConfigureAwait(false);
 
             existing.Name = recipe.Name;
+            existing.Model = recipe.Model;
             existing.Enabled = recipe.Enabled;
             existing.Remark = recipe.Remark;
             await SyncLimitsAsync(existing.Id, recipe.Limits, cancellationToken).ConfigureAwait(false);

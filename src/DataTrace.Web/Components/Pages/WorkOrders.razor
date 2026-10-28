@@ -1,0 +1,429 @@
+@page "/config/workorders"
+@attribute [Authorize(Roles = "Administrator,Engineer")]
+@using DataTrace.Application.Configuration
+@using DataTrace.Domain.Enums
+@inject IConfigRepository Config
+@inject IConfigurationChanges Changes
+@inject AuthenticationStateProvider Auth
+@inject IDialogService DialogService
+@inject DtToast Toast
+
+<PageHeader Title="工单管理"
+            Description="维护生产工单档案：单号、型号、计划数量、状态与计划起止。工单不参与采集判定，也不会下发 PLC。"
+            HelpRoute="config/workorders"
+            Busy="@_saving">
+    <Actions>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_saving"
+                   StartIcon="@(_saving ? Icons.Material.Filled.Sync : Icons.Material.Filled.Add)"
+                   OnClick="@(() => ShowEditor(null))">
+            @(_saving ? "处理中…" : "新增工单")
+        </MudButton>
+    </Actions>
+</PageHeader>
+
+@if (_loadError is { } loadError)
+{
+    <MudAlert Severity="Severity.Error" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+        <div class="d-flex align-center flex-wrap gap-2">
+            <span>@loadError 上次成功读取的列表仍保留，当前可能不是最新。</span>
+            <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_loading" OnClick="Reload">重试</MudButton>
+        </div>
+    </MudAlert>
+}
+
+<MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+    工单是业务档案：删除工单不会删除已采集的历史记录，改工单也不会改变采集口径。
+    同一工单号（忽略大小写）只能存在一张；型号可以先留空，之后再补。
+    同一时刻最多一张<b>当前工单</b>：设为当前会把状态改为“生产中”，状态改离生产中会自动取消当前标记。
+    当前工单的型号与「当前型号」不一致时，页面顶部会给出提示并可一键同步。
+</MudAlert>
+
+@if (ModelMismatch)
+{
+    <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mb-3" role="status">
+        <div class="d-flex align-center flex-wrap gap-2">
+            <span>
+                当前工单 @CurrentOrder!.Code 的型号为 @OrderModelText(CurrentOrder!)，
+                与当前型号 @ActiveModelText 不一致：新采集仍按当前型号判定。
+                @if (!CanSyncModel)
+                {
+                    <text>该型号已停用或不存在，请先到「产品型号」处理。</text>
+                }
+            </span>
+            @if (CanSyncModel)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                           Disabled="_saving" OnClick="SyncCurrentModel">同步当前型号</MudButton>
+            }
+            <MudButton Size="Size.Small" Variant="Variant.Text" Href="/config/recipes">去产品型号</MudButton>
+        </div>
+    </MudAlert>
+}
+
+<MudPaper Class="pa-4">
+    <MudTable Items="_orders" Dense="true" Hover="true" Loading="_loading" Breakpoint="Breakpoint.Sm">
+        <HeaderContent>
+            <MudTh>工单号</MudTh>
+            <MudTh>型号</MudTh>
+            <MudTh>名称</MudTh>
+            <MudTh Class="dt-nowrap">计划数量</MudTh>
+            <MudTh Class="dt-nowrap">状态</MudTh>
+            <MudTh>当前</MudTh>
+            <MudTh Class="dt-nowrap">计划起止</MudTh>
+            <MudTh>备注</MudTh>
+            <MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="工单号">@context.Code</MudTd>
+            <MudTd DataLabel="型号">
+                @if (string.IsNullOrWhiteSpace(context.Model) && string.IsNullOrWhiteSpace(context.Recipe?.Model))
+                {
+                    <MudText Typo="Typo.caption" Class="dt-muted">—</MudText>
+                }
+                else
+                {
+                    @(string.IsNullOrWhiteSpace(context.Model) ? context.Recipe?.Model : context.Model)
+                }
+            </MudTd>
+            <MudTd DataLabel="名称">
+                @if (context.Recipe is { } recipe)
+                {
+                    @recipe.Name
+                }
+                else if (context.RecipeId is { } recipeId)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Warning">型号 #@recipeId 已不存在</MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.caption" Class="dt-muted">未指定</MudText>
+                }
+            </MudTd>
+            <MudTd DataLabel="计划数量">@(context.PlannedQuantity?.ToString() ?? "—")</MudTd>
+            <MudTd DataLabel="状态">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@StatusColor(context.Status)">
+                    @DisplayLabels.WorkOrderStatusText(context.Status)
+                </MudChip>
+            </MudTd>
+            <MudTd DataLabel="当前">
+                @if (context.IsCurrent)
+                {
+                    <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small"
+                             Color="Color.Success" aria-label="当前工单" />
+                }
+            </MudTd>
+            <MudTd DataLabel="计划起止" Class="dt-nowrap">@DateRange(context)</MudTd>
+            <MudTd DataLabel="备注">
+                @if (string.IsNullOrWhiteSpace(context.Remark))
+                {
+                    <MudText Typo="Typo.caption" Class="dt-muted">—</MudText>
+                }
+                else
+                {
+                    @context.Remark
+                }
+            </MudTd>
+            <MudTd Class="dt-nowrap">
+                @if (context.IsCurrent)
+                {
+                    <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Text" Disabled="_saving"
+                               aria-label="@($"取消当前工单 {context.Code}")"
+                               OnClick="ClearCurrent">取消选择</MudButton>
+                }
+                else
+                {
+                    <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Text" Disabled="_saving || !CanBeCurrent(context)"
+                               aria-label="@($"把工单 {context.Code} 设为当前")"
+                               OnClick="@(() => SetCurrent(context))">设为当前</MudButton>
+                }
+                <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Text" Disabled="_saving"
+                           aria-label="@($"编辑工单 {context.Code}")"
+                           OnClick="@(() => ShowEditor(context))">编辑</MudButton>
+                <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Text" Disabled="_saving"
+                           aria-label="@($"删除工单 {context.Code}")"
+                           OnClick="@(() => DeleteOrder(context))">删除</MudButton>
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText Typo="Typo.body2" Class="dt-muted py-3">还没有工单，点右上「新增工单」创建第一张。</MudText>
+        </NoRecordsContent>
+    </MudTable>
+</MudPaper>
+
+@code {
+    private static readonly DialogOptions FormOptions = new()
+    {
+        MaxWidth = MaxWidth.Medium,
+        FullWidth = true,
+        CloseOnEscapeKey = true
+    };
+
+    private IReadOnlyList<WorkOrder> _orders = [];
+    private IReadOnlyList<Recipe> _recipes = [];
+    private Recipe? _activeRecipe;
+    private bool _loading;
+    private bool _saving;
+    private string? _loadError;
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        _loading = true;
+        _loadError = null;
+        try
+        {
+            var snapshot = await Config.GetSnapshotAsync();
+            _recipes = snapshot.Recipes;
+            _activeRecipe = snapshot.ActiveRecipe;
+            _orders = await Config.GetWorkOrdersAsync();
+        }
+        catch (Exception ex)
+        {
+            _loadError = $"加载工单失败：{ex.Message}";
+            Toast.Add($"加载工单失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private static Color StatusColor(WorkOrderStatus status) => status switch
+    {
+        WorkOrderStatus.InProgress => Color.Primary,
+        WorkOrderStatus.Completed => Color.Success,
+        WorkOrderStatus.Cancelled => Color.Default,
+        _ => Color.Info
+    };
+
+    private static string DateText(DateTime? date) => date?.ToString("yyyy-MM-dd") ?? "—";
+
+    private static string DateRange(WorkOrder order)
+        => order.StartDate is null && order.EndDate is null
+            ? "—"
+            : $"{DateText(order.StartDate)} ~ {DateText(order.EndDate)}";
+
+    /// <summary>当前工单的型号与当前型号不一致（工单没填型号不算不一致）。</summary>
+    private WorkOrder? CurrentOrder => _orders.FirstOrDefault(order => order.IsCurrent);
+
+    private bool ModelMismatch
+        => CurrentOrder is { RecipeId: { } recipeId } && _activeRecipe?.Id != recipeId;
+
+    private bool CanSyncModel
+        => CurrentOrder?.RecipeId is int recipeId && _recipes.Any(recipe => recipe.Id == recipeId && recipe.Enabled);
+
+    private string ActiveModelText => _activeRecipe is null ? "未选择" : ModelText(_activeRecipe);
+
+    private static string ModelText(Recipe recipe)
+        => string.IsNullOrWhiteSpace(recipe.Model) ? recipe.Name : $"{recipe.Model}（{recipe.Name}）";
+
+    private static string OrderModelText(WorkOrder order)
+        => !string.IsNullOrWhiteSpace(order.Model) ? order.Model!
+            : string.IsNullOrWhiteSpace(order.Recipe?.Model) ? "未填型号"
+            : order.Recipe!.Model!;
+
+    private static WorkOrder Clone(WorkOrder order) => new()
+    {
+        Id = order.Id,
+        Code = order.Code,
+        RecipeId = order.RecipeId,
+        Model = order.Model,
+        PlannedQuantity = order.PlannedQuantity,
+        Status = order.Status,
+        IsCurrent = order.IsCurrent,
+        StartDate = order.StartDate,
+        EndDate = order.EndDate,
+        Remark = order.Remark,
+        CreatedAt = order.CreatedAt
+    };
+
+    private async Task<ConfigAudit> AuditOf(string action, string key, string? oldValue, string? newValue,
+        string entityType = "WorkOrder")
+    {
+        var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+        return new ConfigAudit(user, action, entityType, key, oldValue, newValue);
+    }
+
+    private static string Describe(WorkOrder order)
+        => $"model={order.Model ?? "-"}; status={DisplayLabels.WorkOrderStatusText(order.Status)}; " +
+           $"recipe={(order.Recipe?.Name ?? order.RecipeId?.ToString() ?? "-")}; " +
+           $"qty={order.PlannedQuantity?.ToString() ?? "-"}; " +
+           $"start={DateText(order.StartDate)}; end={DateText(order.EndDate)}; " +
+           $"remark={order.Remark ?? "-"}";
+
+    /// <summary>保存动作统一加锁：连点不会重复下发，也不会在上一次写库未完成时改下一张。</summary>
+    private async Task Write(string what, Func<Task> action)
+    {
+        if (_saving)
+        {
+            return;
+        }
+
+        _saving = true;
+        try
+        {
+            await action();
+        }
+        catch (InvalidOperationException ex)
+        {
+            Toast.Add(ex.Message, Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"{what}失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task ShowEditor(WorkOrder? existing)
+    {
+        if (_saving)
+        {
+            return;
+        }
+
+        var model = existing is null ? new WorkOrder { Status = WorkOrderStatus.Pending } : Clone(existing);
+        var parameters = new DialogParameters<WorkOrderEditDialog>
+        {
+            { x => x.Title, existing is null ? "新增工单" : $"编辑工单 · {existing.Code}" },
+            { x => x.WorkOrder, model },
+            { x => x.Recipes, _recipes },
+            { x => x.Siblings, _orders }
+        };
+        var dialog = await DialogService.ShowAsync<WorkOrderEditDialog>(
+            existing is null ? "新增工单" : $"编辑工单 · {existing.Code}", parameters, FormOptions);
+        var result = await dialog.Result;
+        if (result is null || result.Canceled || result.Data is not WorkOrderEditDialog.WorkOrderEditResult edited)
+        {
+            return;
+        }
+
+        await Write(existing is null ? "新增工单" : "保存工单", async () =>
+        {
+            var target = existing is null ? new WorkOrder() : model;
+            target.Code = edited.Code;
+            target.RecipeId = edited.RecipeId;
+            target.Model = edited.Model;
+            target.PlannedQuantity = edited.PlannedQuantity;
+            target.Status = edited.Status;
+            target.StartDate = edited.StartDate;
+            target.EndDate = edited.EndDate;
+            target.Remark = edited.Remark;
+
+            await Changes.SaveWorkOrderAsync(target, await AuditOf(
+                existing is null ? "Create" : "Save", edited.Code,
+                existing is null ? null : Describe(existing), Describe(target)));
+            await Reload();
+            Toast.Add(existing is null ? $"工单 {edited.Code} 已新增" : $"工单 {edited.Code} 已保存", Severity.Success);
+        });
+    }
+
+    private static bool CanBeCurrent(WorkOrder order)
+        => order.Status is WorkOrderStatus.Pending or WorkOrderStatus.InProgress;
+
+    /// <summary>
+    /// 设为当前；工单型号与当前型号不一致时先问一句，确认后一并切换当前型号。
+    /// </summary>
+    private async Task SetCurrent(WorkOrder order)
+    {
+        if (_saving)
+        {
+            return;
+        }
+
+        var targetRecipe = order.RecipeId is int recipeId
+            ? _recipes.FirstOrDefault(recipe => recipe.Id == recipeId)
+            : null;
+        var switchModel = false;
+        if (order.RecipeId is null)
+        {
+            Toast.Add("该工单未指定型号，只标记当前工单，当前型号保持不变", Severity.Info);
+        }
+        else if (targetRecipe is null)
+        {
+            Toast.Add("工单引用的型号已不存在，只标记当前工单", Severity.Warning);
+        }
+        else if (_activeRecipe?.Id != targetRecipe.Id)
+        {
+            var answer = await DialogService.ShowMessageBox(
+                "当前型号不一致",
+                $"工单 {order.Code} 的型号为 {ModelText(targetRecipe)}，" +
+                $"当前型号是 {(_activeRecipe is null ? "未选择" : ModelText(_activeRecipe))}。\n\n" +
+                "是否同时把当前型号切换为该工单的型号？不切换也能继续，只会在页面顶部提示不一致。",
+                yesText: "同时切换当前型号", noText: "只设当前工单", cancelText: "取消");
+            if (answer is null)
+            {
+                return;
+            }
+
+            switchModel = answer == true;
+        }
+
+        await Write("设为当前工单", async () =>
+        {
+            await Changes.SetCurrentWorkOrderAsync(order.Id, await AuditOf(
+                "Activate", order.Code, "current=false", "current=true; status=生产中"));
+            if (switchModel && targetRecipe is not null)
+            {
+                await Changes.SetActiveRecipeAsync(targetRecipe.Id, await AuditOf(
+                    "Activate", targetRecipe.Code,
+                    _activeRecipe is null ? "(none)" : $"{_activeRecipe.Code}/{_activeRecipe.Name}",
+                    $"{targetRecipe.Code}/{targetRecipe.Name}", "Recipe"));
+            }
+
+            await Reload();
+            Toast.Add(switchModel && targetRecipe is not null
+                ? $"工单 {order.Code} 已设为当前，当前型号同步为 {targetRecipe.Code}"
+                : $"工单 {order.Code} 已设为当前（状态改为生产中）", Severity.Success);
+        });
+    }
+
+    private Task SyncCurrentModel() => Write("同步当前型号", async () =>
+    {
+        var current = CurrentOrder;
+        var recipe = current?.RecipeId is int recipeId
+            ? _recipes.FirstOrDefault(item => item.Id == recipeId && item.Enabled)
+            : null;
+        if (current is null || recipe is null)
+        {
+            return;
+        }
+
+        await Changes.SetActiveRecipeAsync(recipe.Id, await AuditOf(
+            "Activate", recipe.Code,
+            _activeRecipe is null ? "(none)" : $"{_activeRecipe.Code}/{_activeRecipe.Name}",
+            $"{recipe.Code}/{recipe.Name}", "Recipe"));
+        await Reload();
+        Toast.Add($"当前型号已同步为 {recipe.Code}", Severity.Success);
+    });
+
+    private Task ClearCurrent() => Write("取消当前工单", async () =>
+    {
+        var current = _orders.FirstOrDefault(order => order.IsCurrent);
+        await Changes.SetCurrentWorkOrderAsync(null, await AuditOf(
+            "Deactivate", current?.Code ?? "", "current=true", "current=false"));
+        await Reload();
+        Toast.Add("已取消当前工单", Severity.Success);
+    });
+
+    private Task DeleteOrder(WorkOrder order) => Write("删除工单", async () =>
+    {
+        var confirmed = await DialogService.ConfirmDangerAsync(
+            "删除工单",
+            $"确定删除工单「{order.Code}」？已采集的历史记录不受影响，但删除后无法恢复。",
+            acknowledge: "我了解将删除该工单档案，且无法恢复",
+            yesText: "删除", cancelText: "取消");
+        if (confirmed != true)
+        {
+            return;
+        }
+
+        await Changes.DeleteWorkOrderAsync(order.Id, await AuditOf("Delete", order.Code, Describe(order), null));
+        await Reload();
+        Toast.Add($"工单 {order.Code} 已删除", Severity.Success);
+    });
+}

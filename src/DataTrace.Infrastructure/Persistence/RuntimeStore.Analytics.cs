@@ -77,6 +77,48 @@ partial class RuntimeStore
         return counts;
     }
 
+    public async Task<IReadOnlyList<StationJudgementCount>> CountStationJudgementsAsync(
+        DateTime from,
+        DateTime to,
+        CancellationToken cancellationToken = default)
+    {
+        var rows = new Dictionary<int, (string Code, int Ok, int Ng, int None)>();
+        foreach (var month in ExistingMonthKeys())
+        {
+            await using var db = _factory.Open(month);
+            var part = await db.CollectRecords.AsNoTracking()
+                .Where(x => x.CompleteTime >= from && x.CompleteTime <= to)
+                .GroupBy(x => new { x.StationId, x.StationCode, x.Judgement })
+                .Select(g => new { g.Key.StationId, g.Key.StationCode, g.Key.Judgement, Count = g.Count() })
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            foreach (var row in part)
+            {
+                var current = rows.TryGetValue(row.StationId, out var existing)
+                    ? existing
+                    : (row.StationCode, 0, 0, 0);
+                rows[row.StationId] = row.Judgement switch
+                {
+                    Judgement.Ok => (row.StationCode, current.Item2 + row.Count, current.Item3, current.Item4),
+                    Judgement.Ng => (row.StationCode, current.Item2, current.Item3 + row.Count, current.Item4),
+                    _ => (row.StationCode, current.Item2, current.Item3, current.Item4 + row.Count)
+                };
+            }
+        }
+
+        return rows
+            .Select(pair => new StationJudgementCount
+            {
+                StationId = pair.Key,
+                StationCode = pair.Value.Code,
+                Ok = pair.Value.Ok,
+                Ng = pair.Value.Ng,
+                None = pair.Value.None
+            })
+            .ToList();
+    }
+
     public async Task<IReadOnlyList<FinishedPieceObservation>> ListFinishedPiecesAsync(
         DateTime from,
         DateTime to,

@@ -16,6 +16,9 @@ public class Recipe
 
     public string Name { get; set; } = "";
 
+    /// <summary>业务型号（如 A100）；与名称一起用于界面识别，可留空。系统编码仍是追溯键。</summary>
+    public string? Model { get; set; }
+
     /// <summary>停用的型号不能被设为当前型号。</summary>
     public bool Enabled { get; set; } = true;
 

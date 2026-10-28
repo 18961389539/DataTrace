@@ -287,6 +287,10 @@ public interface IRuntimeAnalytics
     /// </summary>
     Task<IReadOnlyList<StationPass>> ListStationPassesAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default);
 
+    /// <summary>区间内按工站统计 OK/NG/未判定的采集记录数（按完成时刻圈定）。</summary>
+    Task<IReadOnlyList<StationJudgementCount>> CountStationJudgementsAsync(
+        DateTime from, DateTime to, CancellationToken cancellationToken = default);
+
     /// <summary>日期范围内出现过的型号编码（含空串）；跨月库去重。</summary>
     Task<IReadOnlyList<string>> ListRecipeCodesAsync(DateTime from, DateTime to, CancellationToken cancellationToken = default);
 
