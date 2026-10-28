@@ -11,10 +11,10 @@
     <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">实时看板</MudNavLink>
     <MudNavLink Href="/alarms" Icon="@Icons.Material.Filled.NotificationImportant">
         <span class="dt-nav-item">
-            <span>报警</span>
+            <span>设备报警</span>
             @if (AlarmBadge is { } alarms)
             {
-                <span class="dt-nav-badge" aria-label="@($"{alarms} 条待处理报警")">@alarms</span>
+                <span class="dt-nav-badge" aria-label="@($"{alarms} 条待处理设备报警")">@alarms</span>
             }
         </span>
     </MudNavLink>

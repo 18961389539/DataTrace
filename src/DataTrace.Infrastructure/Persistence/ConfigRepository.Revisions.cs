@@ -101,6 +101,7 @@ partial class ConfigRepository
 
         var positions = snapshot.Stations.SelectMany(x => x.Positions).ToList();
         var tags = snapshot.Stations.SelectMany(x => x.Tags).ToList();
+        var alarms = snapshot.Stations.SelectMany(x => x.Alarms).ToList();
         var curves = snapshot.Stations.SelectMany(x => x.Curves).ToList();
         var series = curves.SelectMany(x => x.Series).ToList();
         var criteria = curves.SelectMany(x => x.Criteria).ToList();
@@ -113,6 +114,7 @@ partial class ConfigRepository
         await _db.CurveSeries.ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
         await _db.Curves.ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
         await _db.RecipeLimits.ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
+        await _db.StationAlarms.ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
         await _db.Tags.ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
         await _db.ProductPositions.ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
         await _db.Stations.ExecuteDeleteAsync(cancellationToken).ConfigureAwait(false);
@@ -133,6 +135,7 @@ partial class ConfigRepository
             x.PlcConnection = null;
             x.Positions = [];
             x.Tags = [];
+            x.Alarms = [];
             x.Curves = [];
             return x;
         }));
@@ -144,6 +147,12 @@ partial class ConfigRepository
         _db.Tags.AddRange(tags.Select(x =>
         {
             x.Station = null;
+            return x;
+        }));
+        _db.StationAlarms.AddRange(alarms.Select(x =>
+        {
+            x.Station = null;
+            x.TagDefinition = null;
             return x;
         }));
         _db.Curves.AddRange(curves.Select(x =>
@@ -210,6 +219,7 @@ partial class ConfigRepository
             ValidateAddress(plc.Brand, station.TriggerAddress, $"工站 {station.Code} 触发地址", revisionId);
             ValidateAddress(plc.Brand, station.PalletCodeAddress, $"工站 {station.Code} 托盘码地址", revisionId);
             EnsureUnique(station.Tags.Select(x => x.Id), $"工站 {station.Code} 点位", revisionId);
+            EnsureUnique(station.Alarms.Select(x => x.Id), $"宸ョ珯 {station.Code} 鎶ヨ", revisionId);
             EnsureUnique(station.Curves.Select(x => x.Id), $"工站 {station.Code} 曲线", revisionId);
             EnsureUnique(station.Positions.Select(x => x.Id), $"工站 {station.Code} 产品位置", revisionId);
             if (station.Positions.Any(x => x.StationId != station.Id))
@@ -220,6 +230,13 @@ partial class ConfigRepository
                     throw new InvalidDataException($"修订 {revisionId} 的点位 {tag.Name} 外键与所属工站不一致");
                 if (tag.Source == TagDataSource.Plc)
                     ValidateAddress(plc.Brand, tag.Address, $"点位 {station.Code}/{tag.Name}", revisionId);
+            }
+            foreach (var alarm in station.Alarms)
+            {
+                if (alarm.StationId != station.Id)
+                    throw new InvalidDataException($"修订 {revisionId} 的报警 {alarm.Name} 外键与所属工站不一致");
+                if (alarm.TagDefinitionId is { } alarmTagId && !tagIds.Contains(alarmTagId))
+                    throw new InvalidDataException($"修订 {revisionId} 的报警 {alarm.Name} 引用了不存在的点位");
             }
             foreach (var curve in station.Curves)
             {

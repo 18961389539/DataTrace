@@ -37,6 +37,8 @@ public interface IConfigurationChanges
     Task DeleteStationAsync(int id, ConfigAudit audit, CancellationToken cancellationToken = default);
     Task SaveTagAsync(TagDefinition tag, ConfigAudit audit, CancellationToken cancellationToken = default);
     Task DeleteTagAsync(int id, ConfigAudit audit, CancellationToken cancellationToken = default);
+    Task SaveStationAlarmAsync(StationAlarmDefinition alarm, ConfigAudit audit, CancellationToken cancellationToken = default);
+    Task DeleteStationAlarmAsync(int id, ConfigAudit audit, CancellationToken cancellationToken = default);
     Task SaveCurveAsync(CurveDefinition curve, ConfigAudit audit, CancellationToken cancellationToken = default);
     Task DeleteCurveAsync(int id, ConfigAudit audit, CancellationToken cancellationToken = default);
     Task SaveCurveCriteriaAsync(int curveId, IReadOnlyList<CurveCriterion> criteria, ConfigAudit audit, CancellationToken cancellationToken = default);

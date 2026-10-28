@@ -49,4 +49,5 @@ public class Station
     public ICollection<ProductPositionDefinition> Positions { get; set; } = new List<ProductPositionDefinition>();
     public ICollection<TagDefinition> Tags { get; set; } = new List<TagDefinition>();
     public ICollection<CurveDefinition> Curves { get; set; } = new List<CurveDefinition>();
+    public ICollection<StationAlarmDefinition> Alarms { get; set; } = new List<StationAlarmDefinition>();
 }

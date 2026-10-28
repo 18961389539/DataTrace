@@ -1160,6 +1160,12 @@
     font-variant-numeric: tabular-nums;
 }
 
+.dt-station-yield {
+    margin-left: 8px;
+    color: var(--mud-palette-text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
 .dt-kpi-label {
     display: flex;
     align-items: center;
@@ -3812,3 +3818,121 @@ body.dt-shopfloor .dt-station-parameters .dash-tag-value { font-size: clamp(1.5r
         break-inside: avoid;
     }
 }
+
+.dt-overview-alarm {
+  color: var(--mud-palette-error, #c62828);
+  text-decoration: none;
+  font-weight: 600;
+}
+.dt-overview-alarm:hover {
+  text-decoration: underline;
+}
+.dt-station-alarm-chip {
+  cursor: pointer;
+}
+/* ---------- 设备报警页 ---------- */
+.dt-alarms-toolbar {
+    position: sticky;
+    top: calc(var(--mud-appbar-height) + 4px);
+    z-index: 15;
+    margin: 0 0 12px;
+    padding-bottom: 4px;
+    background: var(--mud-palette-background);
+}
+
+/* 顶栏报警条展开时，筛选条贴在报警条下方，避免压住操作按钮 */
+body:has(.dt-alarm-bar) .dt-alarms-toolbar {
+    top: calc(var(--mud-appbar-height) + 4px);
+}
+
+.dt-alarms-filters {
+    background: var(--mud-palette-surface);
+}
+
+.dt-alarms-section-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+}
+
+.dt-alarms-section--action .dt-alarms-section-title {
+    border-inline-start: 4px solid var(--mud-palette-error);
+    padding-inline-start: 10px;
+}
+
+.dt-alarms-section--owned .dt-alarms-section-title {
+    border-inline-start: 4px solid var(--mud-palette-info);
+    padding-inline-start: 10px;
+}
+
+.dt-alarms-section--archive .dt-alarms-section-title {
+    border-inline-start: 4px solid var(--mud-palette-lines-default);
+    padding-inline-start: 10px;
+}
+
+.dt-alarms-group {
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--dt-radius, 4px);
+    background: var(--mud-palette-surface);
+    overflow: hidden;
+}
+
+.dt-alarms-group--archive {
+    opacity: 0.92;
+}
+
+.dt-alarms-group-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    background: color-mix(in srgb, var(--mud-palette-primary) 6%, var(--mud-palette-surface));
+    border-bottom: 1px solid var(--mud-palette-lines-default);
+}
+
+.dt-alarms-group-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+}
+
+.dt-alarms-table .dt-alarm-message {
+    display: inline-block;
+    max-width: min(42ch, 100%);
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+}
+
+.dt-alarms-table .dt-alarm-time,
+.dt-alarms-table .dt-alarm-duration {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.dt-alarm-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+}
+
+.dt-alarms-empty {
+    padding: 16px 8px 8px;
+}
+
+@media (max-width: 600px) {
+    .dt-alarms-toolbar {
+        position: static;
+    }
+
+    .dt-alarms-table .dt-alarm-message {
+        max-width: 100%;
+    }
+
+    .dt-alarms-group-head {
+        padding: 8px 10px;
+    }
+}
+

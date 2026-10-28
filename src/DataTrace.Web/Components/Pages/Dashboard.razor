@@ -20,6 +20,7 @@
 @inject ISpoolStore Spool
 @inject IJSRuntime Js
 @inject IDialogService DialogService
+@inject ILineAlarmBoard AlarmBoard
 
 <PageHeader Title="实时看板" HelpRoute="/" Busy="@_shiftBusy">
     <ChildContent>
@@ -361,7 +362,7 @@ else
                             @onclick="() => _pinAbnormal = !_pinAbnormal">异常置顶</button>
                 </div>
             </div>
-            <p class="dt-station-filter-note">需关注按工站故障、最近 NG 与点位异常统计工站，点它只看这些工站。异常置顶只在「全部」里把它们排到前面，关闭时仍按工艺顺序。过程报警数量在页面顶部报警栏单独显示。</p>
+            <p class="dt-station-filter-note">需关注按工站故障、最近 NG、点位异常与未解除设备报警统计工站，点它只看这些工站。异常置顶只在「全部」里把它们排到前面，关闭时仍按工艺顺序。过程报警数量在页面顶部报警栏单独显示。</p>
         </div>
         @if (visibleStations.Count == 0)
         {
@@ -379,6 +380,8 @@ else
                         <StationCard @key="station.StationId" Station="station" ShiftCounts="@StationShiftCounts(station.StationId)"
                                      ConfiguredCurves="@_configuredCurves.GetValueOrDefault(station.StationId)"
                                      Compact="@(!_fullDetailMode)"
+                                     OpenAlarmCount="@OpenAlarmCount(station.StationId)"
+                                     OpenAlarmHint="@OpenAlarmHint(station.StationId)"
                                      OnOpenDetails="@(() => OpenStationDetailsAsync(station))" />
                     </MudItem>
                 }
@@ -635,6 +638,8 @@ else
         await RefreshSpoolAsync();
         EvaluateStale();
         Status.Changed += OnChanged;
+        AlarmBoard.Changed += OnAlarmBoardChanged;
+        RefreshStationAlarmHints();
         // 5 秒一跳：这一跳只做"轻活"（比版本号 + 推进卡片上的相对时间），
         // 时钟与节拍芯片各自有 1 秒计时器，不受这里影响。
         _uiTimer = new Timer(_ => _ = InvokeAsync(OnUiTickAsync), null, UiTickMs, UiTickMs);
@@ -1024,6 +1029,9 @@ else
             ? $"心跳超时 · {_collectorAgeText}"
             : $"心跳正常 · {_collectorAgeText}";
 
+    private IReadOnlyDictionary<int, StationOpenAlarmSummary> _stationAlarmHints =
+        new Dictionary<int, StationOpenAlarmSummary>();
+
     private enum StationFilter { All, Attention, Busy, Idle, Disabled }
 
     private IReadOnlyList<StationRuntimeStatus> VisibleStations
@@ -1074,7 +1082,7 @@ else
         _ => _orderedStations.Count(station => MatchesFilter(station, filter))
     };
 
-    private static bool MatchesFilter(StationRuntimeStatus station, StationFilter filter)
+    private bool MatchesFilter(StationRuntimeStatus station, StationFilter filter)
         => filter switch
         {
             StationFilter.Attention => IsAttention(station),
@@ -1084,10 +1092,27 @@ else
             _ => true
         };
 
-    private static bool IsAttention(StationRuntimeStatus station)
+    private bool IsAttention(StationRuntimeStatus station)
         => station.State == StationRuntimeState.Fault
            || station.LastJudgement == Judgement.Ng
-           || station.LastTags.Any(tag => tag.OutOfLimit || tag.Warning || IsNoData(tag));
+           || station.LastTags.Any(tag => tag.OutOfLimit || tag.Warning || IsNoData(tag))
+           || OpenAlarmCount(station.StationId) > 0;
+
+    private int OpenAlarmCount(int stationId)
+        => _stationAlarmHints.TryGetValue(stationId, out var summary) ? summary.Count : 0;
+
+    private string OpenAlarmHint(int stationId)
+        => _stationAlarmHints.TryGetValue(stationId, out var summary) ? summary.Hint : string.Empty;
+
+    private void RefreshStationAlarmHints()
+        => _stationAlarmHints = LineAlarmStation.Summarize(AlarmBoard.Current.Alarms);
+
+    private void OnAlarmBoardChanged()
+        => _ = InvokeAsync(() =>
+        {
+            RefreshStationAlarmHints();
+            StateHasChanged();
+        });
 
     private static bool IsNoData(StationLiveTag tag)
         => tag.NumericValue is null && string.IsNullOrWhiteSpace(tag.TextValue);
@@ -1150,6 +1175,7 @@ else
     public void Dispose()
     {
         Status.Changed -= OnChanged;
+        AlarmBoard.Changed -= OnAlarmBoardChanged;
         _uiTimer?.Dispose();
     }
 }

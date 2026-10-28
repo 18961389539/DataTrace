@@ -18,6 +18,7 @@ partial class ConfigRepository
                 .Include(x => x.PlcConnection)
                 .Include(x => x.Positions)
                 .Include(x => x.Tags)
+                .Include(x => x.Alarms)
                 .Include(x => x.Curves).ThenInclude(c => c.Series)
                 .Include(x => x.Curves).ThenInclude(c => c.Criteria)
                 .OrderBy(x => x.Sequence)
@@ -31,6 +32,7 @@ partial class ConfigRepository
         => _db.Stations.AsNoTracking()
             .Include(x => x.Positions)
             .Include(x => x.Tags)
+                .Include(x => x.Alarms)
             .Include(x => x.Curves).ThenInclude(c => c.Series)
             .Include(x => x.Curves).ThenInclude(c => c.Criteria)
             .FirstOrDefaultAsync(x => x.Id == id, cancellationToken);
@@ -282,6 +284,93 @@ partial class ConfigRepository
         // 同一事务清掉型号覆盖行，避免 TagId 悬空孤儿。
         await RemoveRecipeLimitsForTagAsync(id, cancellationToken).ConfigureAwait(false);
         _db.Tags.Remove(item);
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<int> SaveStationAlarmAsync(SaveStationAlarmCommand command, CancellationToken cancellationToken = default)
+    {
+        var alarm = command.ToEntity();
+        alarm.Name = (alarm.Name ?? "").Trim();
+        if (alarm.Name.Length == 0)
+        {
+            throw new InvalidOperationException("报警名称不能为空");
+        }
+
+        if (alarm.Name.Length > 64)
+        {
+            throw new InvalidOperationException("报警名称不能超过 64 个字符");
+        }
+
+        if (alarm.Remark is { Length: > 200 })
+        {
+            throw new InvalidOperationException("备注不能超过 200 个字符");
+        }
+
+        if (alarm.SampleIntervalMs < 500)
+        {
+            alarm.SampleIntervalMs = 500;
+        }
+        else if (alarm.SampleIntervalMs > 60000)
+        {
+            alarm.SampleIntervalMs = 60000;
+        }
+
+        if (alarm.TagDefinitionId is not null && alarm.Limit is null)
+        {
+            throw new InvalidOperationException($"报警 {alarm.Name} 已关联点位，必须填写限值");
+        }
+
+        if (alarm.TagDefinitionId is { } tagId)
+        {
+            var tagOk = await _db.Tags.AsNoTracking()
+                .AnyAsync(x => x.Id == tagId && x.StationId == alarm.StationId, cancellationToken)
+                .ConfigureAwait(false);
+            if (!tagOk)
+            {
+                throw new InvalidOperationException($"报警 {alarm.Name} 关联的点位不属于本工站或不存在");
+            }
+        }
+
+        if (await _db.StationAlarms.AnyAsync(
+                x => x.StationId == alarm.StationId && x.Id != alarm.Id && x.Name.ToLower() == alarm.Name.ToLower(),
+                cancellationToken).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException($"报警名称「{alarm.Name}」在该工站下已存在");
+        }
+
+        if (alarm.Id == 0)
+        {
+            _db.StationAlarms.Add(alarm);
+        }
+        else
+        {
+            var existing = await _db.StationAlarms.FirstOrDefaultAsync(x => x.Id == alarm.Id, cancellationToken)
+                .ConfigureAwait(false);
+            if (existing is null)
+            {
+                _db.StationAlarms.Add(alarm);
+            }
+            else
+            {
+                _db.Entry(existing).CurrentValues.SetValues(alarm);
+            }
+        }
+
+        await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+        await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
+        return alarm.Id;
+    }
+
+    public async Task DeleteStationAlarmAsync(int id, CancellationToken cancellationToken = default)
+    {
+        var item = await _db.StationAlarms.FindAsync([id], cancellationToken).ConfigureAwait(false);
+        if (item is null)
+        {
+            return;
+        }
+
+        _db.StationAlarms.Remove(item);
         await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
         await BumpVersionAsync(cancellationToken).ConfigureAwait(false);
     }

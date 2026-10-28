@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using DataTrace.Application.Alarms;
 using DataTrace.Application.Backup;
 using DataTrace.Application.Configuration;
 using DataTrace.Application.Identity;
@@ -29,6 +30,8 @@ public abstract class WebTestBase : IAsyncLifetime
     protected TestContext Context { get; }
 
     protected FakeConfigRepository Config { get; }
+
+    protected LineAlarmBoard AlarmBoard { get; private set; } = null!;
 
     protected FakeLineSimulator Simulator { get; }
 
@@ -82,6 +85,8 @@ public abstract class WebTestBase : IAsyncLifetime
         RuntimeStatus = new RuntimeStatusHub();
         RuntimeStatus.SetCollectionReadiness(ready: true);
         Context.Services.AddSingleton<IRuntimeStatusHub>(RuntimeStatus);
+        AlarmBoard = new LineAlarmBoard();
+        Context.Services.AddSingleton<ILineAlarmBoard>(AlarmBoard);
         Context.Services.AddSingleton<IConfigurationAuthorizer, AllowConfigurationAuthorizer>();
         Context.Services.AddSingleton<IConfigurationChanges>(sp =>
             new ConfigurationChangeService(sp.GetRequiredService<IConfigRepository>(), sp.GetRequiredService<IAuditLogger>()));

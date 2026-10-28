@@ -1,3 +1,4 @@
+using DataTrace.Application.Alarms;
 using DataTrace.Application.Realtime;
 using DataTrace.Application.Reporting;
 using DataTrace.Application.Runtime;
@@ -377,4 +378,31 @@ public class DashboardFilterTests : WebTestBase
             Warning = warning,
             OutOfLimit = outOfLimit
         };
+
+    [Fact]
+    public void AttentionIncludesStationsWithOpenDeviceAlarms()
+    {
+        // seeded via WebTestBase.AlarmBoard before first service resolve
+        AlarmBoard.Replace(new LineAlarmSnapshot(
+        [
+            new LineAlarm("custom:8:1", LineAlarmKind.CustomDevice, "工站 ST008 电机过热：当前 90，限值 80（高于）")
+        ]));
+
+        var stations = new[]
+        {
+            Station(8, StationRuntimeState.Idle, Judgement.Ok),
+            Station(9, StationRuntimeState.Idle, Judgement.Ok)
+        };
+        var cut = Render(stations: stations);
+        var attentionButton = cut.FindAll(".dt-station-filters .dt-station-filter")
+            .Single(button => button.TextContent.Contains("需关注"));
+        Assert.Contains("1", attentionButton.TextContent);
+
+        attentionButton.Click();
+        Assert.Single(cut.FindAll(".dash-station"));
+        Assert.Contains("ST008", cut.Markup);
+        Assert.Contains("报警 1", cut.Markup);
+        Assert.DoesNotContain("ST009", cut.Markup);
+    }
+
 }

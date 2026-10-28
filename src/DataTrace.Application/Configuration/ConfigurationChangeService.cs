@@ -48,6 +48,12 @@ public sealed class ConfigurationChangeService : IConfigurationChanges
     public Task DeleteTagAsync(int id, ConfigAudit audit, CancellationToken cancellationToken = default)
         => Change(() => _repository.DeleteTagAsync(id, cancellationToken), audit, cancellationToken);
 
+    public Task SaveStationAlarmAsync(StationAlarmDefinition alarm, ConfigAudit audit, CancellationToken cancellationToken = default)
+        => Change(() => _repository.SaveStationAlarmAsync(SaveStationAlarmCommand.From(alarm), cancellationToken), audit, cancellationToken);
+
+    public Task DeleteStationAlarmAsync(int id, ConfigAudit audit, CancellationToken cancellationToken = default)
+        => Change(() => _repository.DeleteStationAlarmAsync(id, cancellationToken), audit, cancellationToken);
+
     public Task SaveCurveAsync(CurveDefinition curve, ConfigAudit audit, CancellationToken cancellationToken = default)
         => Change(() => _repository.SaveCurveAsync(SaveCurveCommand.From(curve), cancellationToken), audit, cancellationToken);
 

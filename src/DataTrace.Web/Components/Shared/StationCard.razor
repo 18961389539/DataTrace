@@ -68,6 +68,7 @@
                         <span class="dt-station-meta-value">
                             <span class="dt-station-ok">OK @counts.Ok</span>
                             <span class="dt-station-ng">NG @counts.Ng</span>
+                            <span class="dt-station-yield">合格率 @FormatShiftYield(counts)</span>
                         </span>
                     </div>
                 }
@@ -94,6 +95,18 @@
                              Icon="@OutcomeIcon" Class="@OutcomeChipClass">@OutcomeLabel</MudChip>
                 </MudTooltip>
             }
+            @if (OpenAlarmCount > 0)
+            {
+                <span @onclick:stopPropagation="true" @onkeydown:stopPropagation="true">
+                    <MudTooltip Text="@AlarmTooltip" Arrow="true" Placement="Placement.Top">
+                        <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Outlined"
+                                 Icon="@Icons.Material.Filled.NotificationsActive"
+                                 Href="@AlarmListHref" Class="dt-station-alarm-chip">
+                            报警 @OpenAlarmCount
+                        </MudChip>
+                    </MudTooltip>
+                </span>
+            }
         </MudStack>
     </MudStack>
 
@@ -107,6 +120,11 @@
             else
             {
                 <div class="dt-station-overview-issues" aria-label="工站异常与质量风险">
+                    @if (OpenAlarmCount > 0)
+                    {
+                        <a class="dt-overview-issue dt-overview-alarm" href="@AlarmListHref"
+                           @onclick:stopPropagation="true">@AlarmOverviewText</a>
+                    }
                     @if (Station.State == StationRuntimeState.Fault)
                     {
                         <span class="dt-overview-issue dt-overview-fault">运行故障</span>
@@ -327,6 +345,12 @@
     /// <summary>本班该工站的 OK/NG 记录数；null 表示统计不可用，卡片不显示这一项。</summary>
     [Parameter] public StationJudgementCount? ShiftCounts { get; set; }
 
+    /// <summary>该工站当前板上未解除报警条数；0 不显示提示。</summary>
+    [Parameter] public int OpenAlarmCount { get; set; }
+
+    /// <summary>首条报警短文案，配合条数做轻量提示。</summary>
+    [Parameter] public string OpenAlarmHint { get; set; } = string.Empty;
+
     private string? _fingerprint;
     private bool _render;
     private bool _showAll;
@@ -392,6 +416,17 @@
     private string BeatKey => $"{Station.LastPalletCode}|{Station.LastSerialNo}";
 
     private string StationTitle => $"{Station.StationCode} {Station.StationName}";
+
+    private string AlarmListHref => $"/alarms?station={Station.StationId}";
+
+    private string AlarmTooltip => string.IsNullOrWhiteSpace(OpenAlarmHint)
+        ? $"未解除报警 {OpenAlarmCount} 条，打开设备报警"
+        : $"{OpenAlarmHint}（共 {OpenAlarmCount} 条）· 打开设备报警";
+
+    private string AlarmOverviewText => string.IsNullOrWhiteSpace(OpenAlarmHint)
+        ? $"报警 {OpenAlarmCount}"
+        : $"报警 {OpenAlarmCount} · {OpenAlarmHint}";
+
 
     private string CadenceText => DurationFormat.Text(Station.LastDurationMs);
 
@@ -659,6 +694,14 @@
         return "超出规格范围";
     }
 
+
+    /// <summary>本班合格率：OK / (OK+NG)。尚无判定件时显示 —。</summary>
+    private static string FormatShiftYield(StationJudgementCount counts)
+    {
+        var judged = counts.Ok + counts.Ng;
+        return judged == 0 ? "—" : ((double)counts.Ok / judged).ToString("P1");
+    }
+
     private static string FormatLimit(double? value)
         => value?.ToString("0.###", Culture) ?? "—";
 
@@ -676,6 +719,7 @@
           .Append(Station.LastWriteBackOk).Append('|')
           .Append(ConfiguredCurves is not null).Append('|')
           .Append(ShiftCounts?.Ok).Append('/').Append(ShiftCounts?.Ng).Append('|')
+          .Append(OpenAlarmCount).Append(':').Append(OpenAlarmHint).Append('|')
           .Append((int)Station.State).Append('|')
           .Append((int)Station.LastJudgement).Append('|')
           .Append(Station.LastPalletCode).Append('|')

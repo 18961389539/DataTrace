@@ -41,6 +41,8 @@ public class StationCardTests
 
         Assert.Contains("OK 12", cut.Markup);
         Assert.Contains("NG 3", cut.Markup);
+        Assert.Contains("合格率", cut.Markup);
+        Assert.Contains(((12.0 / 15.0).ToString("P1")), cut.Markup);
     }
 
     private static StationRuntimeStatus Station(int? durationMs = 3200) => new()
@@ -616,4 +618,22 @@ public class StationCardTests
         Assert.Equal("12 秒", cut.FindAll(".dt-station-meta-value")[1].TextContent.Trim());
         Assert.DoesNotContain("最近判定", cut.Markup);
     }
+
+    [Fact]
+    public void Open_alarm_hint_renders_chip_and_overview_link()
+    {
+        var ctx = NewContext();
+        var cut = ctx.Render<StationCard>(parameters => parameters
+            .Add(card => card.Station, Station())
+            .Add(card => card.Compact, true)
+            .Add(card => card.OpenAlarmCount, 2)
+            .Add(card => card.OpenAlarmHint, "电机过热：当前 90"));
+
+        Assert.Contains("报警 2", cut.Markup);
+        Assert.Contains("/alarms?station=1", cut.Markup);
+        Assert.Contains("dt-station-alarm-chip", cut.Markup);
+        Assert.Contains("dt-overview-alarm", cut.Markup);
+        Assert.Contains("电机过热", cut.Markup);
+    }
+
 }

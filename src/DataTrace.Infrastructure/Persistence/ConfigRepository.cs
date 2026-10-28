@@ -111,6 +111,7 @@ public sealed partial class ConfigRepository : IConfigRepository
             .AsNoTracking()
             .Include(x => x.Positions)
             .Include(x => x.Tags)
+                .Include(x => x.Alarms)
             .Include(x => x.Curves).ThenInclude(c => c.Series)
             .Include(x => x.Curves).ThenInclude(c => c.Criteria)
             .OrderBy(x => x.Sequence)

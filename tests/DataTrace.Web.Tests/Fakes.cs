@@ -193,6 +193,18 @@ public sealed class FakeConfigRepository : IConfigRepository
         return Task.FromResult(entity.Id);
     }
 
+    public Task<int> SaveStationAlarmAsync(SaveStationAlarmCommand alarm, CancellationToken cancellationToken = default)
+    {
+        Calls.Add(nameof(SaveStationAlarmAsync));
+        return Task.FromResult(alarm.Id == 0 ? 1 : alarm.Id);
+    }
+
+    public Task DeleteStationAlarmAsync(int id, CancellationToken cancellationToken = default)
+    {
+        Calls.Add(nameof(DeleteStationAlarmAsync));
+        return Task.CompletedTask;
+    }
+
     public Task DeleteTagAsync(int id, CancellationToken cancellationToken = default)
         => Recorded(nameof(DeleteTagAsync));
 

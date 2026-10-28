@@ -97,6 +97,8 @@ public interface IConfigRepository
 
     Task<int> SaveTagAsync(SaveTagCommand tag, CancellationToken cancellationToken = default);
     Task DeleteTagAsync(int id, CancellationToken cancellationToken = default);
+    Task<int> SaveStationAlarmAsync(SaveStationAlarmCommand alarm, CancellationToken cancellationToken = default);
+    Task DeleteStationAlarmAsync(int id, CancellationToken cancellationToken = default);
     Task<int> SaveCurveAsync(SaveCurveCommand curve, CancellationToken cancellationToken = default);
     Task DeleteCurveAsync(int id, CancellationToken cancellationToken = default);
 

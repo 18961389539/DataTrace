@@ -27,6 +27,12 @@ public static class ConfigurationWriteExtensions
         tag.Name = (tag.Name ?? "").Trim();
     }
 
+    public static async Task SaveStationAlarmAsync(this IConfigRepository repository, StationAlarmDefinition alarm, CancellationToken cancellationToken = default)
+    {
+        alarm.Id = await repository.SaveStationAlarmAsync(SaveStationAlarmCommand.From(alarm), cancellationToken).ConfigureAwait(false);
+        alarm.Name = (alarm.Name ?? "").Trim();
+    }
+
     public static async Task SaveCurveAsync(this IConfigRepository repository, CurveDefinition curve, CancellationToken cancellationToken = default)
     {
         curve.Id = await repository.SaveCurveAsync(SaveCurveCommand.From(curve), cancellationToken).ConfigureAwait(false);

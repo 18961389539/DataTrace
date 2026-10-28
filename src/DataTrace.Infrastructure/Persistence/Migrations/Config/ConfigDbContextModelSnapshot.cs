@@ -873,6 +873,49 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Config
                     b.ToTable("Stations");
                 });
 
+            modelBuilder.Entity("DataTrace.Domain.Entities.StationAlarmDefinition", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Compare")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double?>("Limit")
+                        .HasColumnType("REAL");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Remark")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SampleIntervalMs")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("StationId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("TagDefinitionId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TagDefinitionId");
+
+                    b.HasIndex("StationId", "Name")
+                        .IsUnique();
+
+                    b.ToTable("StationAlarms");
+                });
+
             modelBuilder.Entity("DataTrace.Domain.Entities.SystemSettings", b =>
                 {
                     b.Property<int>("Id")
@@ -1391,6 +1434,24 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Config
                     b.Navigation("PlcConnection");
                 });
 
+            modelBuilder.Entity("DataTrace.Domain.Entities.StationAlarmDefinition", b =>
+                {
+                    b.HasOne("DataTrace.Domain.Entities.Station", "Station")
+                        .WithMany("Alarms")
+                        .HasForeignKey("StationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("DataTrace.Domain.Entities.TagDefinition", "TagDefinition")
+                        .WithMany()
+                        .HasForeignKey("TagDefinitionId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Station");
+
+                    b.Navigation("TagDefinition");
+                });
+
             modelBuilder.Entity("DataTrace.Domain.Entities.TagDefinition", b =>
                 {
                     b.HasOne("DataTrace.Domain.Entities.Station", "Station")
@@ -1491,6 +1552,8 @@ namespace DataTrace.Infrastructure.Persistence.Migrations.Config
 
             modelBuilder.Entity("DataTrace.Domain.Entities.Station", b =>
                 {
+                    b.Navigation("Alarms");
+
                     b.Navigation("Curves");
 
                     b.Navigation("Positions");

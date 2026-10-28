@@ -12,7 +12,28 @@
 @inject IConfigRepository Config
 @inject NavigationManager Nav
 
-<PageHeader Title="报警" HelpRoute="alarms" Busy="@_refreshing" Description="还没人接手的会一直留在这里，并在所有页面顶部响铃。静音只关本机声音。" />
+<PageHeader Title="设备报警" HelpRoute="alarms" Busy="@_refreshing"
+            Description="还没人接手的会一直留在这里，并在所有页面顶部响铃。静音只关本机声音。">
+    <ChildContent>
+        @if (_loadError is null)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                     Color="@(NeedsOwner.Count > 0 ? Color.Error : Color.Default)">
+                待接手 @NeedsOwner.Count
+            </MudChip>
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                     Color="@(CurrentCount > 0 ? Color.Warning : Color.Default)">
+                当前 @CurrentCount
+            </MudChip>
+            @if (UrgentOpenCount > 0)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled">
+                    紧急 @UrgentOpenCount
+                </MudChip>
+            }
+        }
+    </ChildContent>
+</PageHeader>
 
 @if (_loadError is not null)
 {
@@ -31,9 +52,11 @@
 }
 else
 {
-<MudGrid Class="mb-3">
+<div class="dt-alarms-toolbar" aria-label="报警筛选">
+<MudPaper Class="dt-filter-card dt-alarms-filters pa-3 mb-2" Elevation="0" Outlined="true">
+<MudGrid Spacing="2">
     <MudItem xs="12" sm="4">
-        <MudSelect T="int?" @bind-Value="_stationFilter" @bind-Value:after="OnFiltersChanged" Label="报警工站" Clearable="true">
+        <MudSelect T="int?" @bind-Value="_stationFilter" @bind-Value:after="OnFiltersChanged" Label="报警工站" Clearable="true" Dense="true">
             <MudSelectItem T="int?" Value="@((int?)0)">全线／会话报警</MudSelectItem>
             @foreach (var station in StationOptions)
             {
@@ -42,7 +65,7 @@ else
         </MudSelect>
     </MudItem>
     <MudItem xs="12" sm="4">
-        <MudSelect T="LineAlarmKind?" @bind-Value="_kindFilter" @bind-Value:after="OnFiltersChanged" Label="报警类型" Clearable="true">
+        <MudSelect T="LineAlarmKind?" @bind-Value="_kindFilter" @bind-Value:after="OnFiltersChanged" Label="报警类型" Clearable="true" Dense="true">
             @foreach (var kind in Enum.GetValues<LineAlarmKind>())
             {
                 <MudSelectItem T="LineAlarmKind?" Value="@((LineAlarmKind?)kind)">@KindText(kind)</MudSelectItem>
@@ -50,11 +73,42 @@ else
         </MudSelect>
     </MudItem>
     <MudItem xs="12" sm="4" Class="d-flex align-center flex-wrap gap-2">
-        <MudCheckBox T="bool" @bind-Value="_mineOnly" @bind-Value:after="OnFiltersChanged" Label="我的已接手" />
+        <MudCheckBox T="bool" @bind-Value="_mineOnly" @bind-Value:after="OnFiltersChanged" Label="我的已接手" Dense="true" />
         <MudButton StartIcon="@Icons.Material.Filled.FilterAltOff" Size="Size.Small" OnClick="ResetFilters">清空筛选</MudButton>
     </MudItem>
 </MudGrid>
-<section class="mb-3" aria-label="报警状态查询模式">
+@if (HasActiveFilters)
+{
+    <div class="dt-filter-chips mt-2" aria-label="当前筛选条件">
+        <MudText Typo="Typo.caption" Class="dt-muted">当前条件</MudText>
+        @if (_stationFilter is { } stationFilter)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                     >
+                工站：@StationSectionTitle(stationFilter)
+                <MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close" aria-label="移除工站筛选" OnClick="ClearStationFilter" />
+            </MudChip>
+        }
+        @if (_kindFilter is { } kindFilter)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                     >
+                类型：@KindText(kindFilter)
+                <MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close" aria-label="移除类型筛选" OnClick="ClearKindFilter" />
+            </MudChip>
+        }
+        @if (_mineOnly)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary"
+                     >
+                我的已接手
+                <MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close" aria-label="移除我的已接手筛选" OnClick="ClearMineFilter" />
+            </MudChip>
+        }
+    </div>
+}
+</MudPaper>
+<section class="dt-alarms-views mb-3" aria-label="报警状态查询模式">
     <MudText Typo="Typo.subtitle2" Class="mb-1">按状态查看</MudText>
     <div role="group" aria-label="报警状态快捷筛选" class="d-flex flex-wrap gap-2">
         <MudButton Size="Size.Small" Variant="@ViewVariant(AlarmView.All)" Color="@ViewColor(AlarmView.All)"
@@ -78,26 +132,44 @@ else
         @_viewDescription；工站、类型和“我的已接手”筛选会同步作用于计数与列表。最近已解除只查询最新 30 条。
     </MudText>
 </section>
+</div>
 @if (VisibleAttentionCount == 0 && FilteredRecent.Count == 0 && _attention.Count + _recent.Count > 0)
 {
-    <MudAlert Severity="Severity.Info" Dense="true" Class="mb-3">当前状态与筛选条件没有匹配的报警。</MudAlert>
+    <div class="dt-empty-hint dt-alarms-empty mb-3">
+    <MudAlert Severity="Severity.Info" Dense="true" Class="mb-2">当前状态与筛选条件没有匹配的报警。</MudAlert>
+    <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.FilterAltOff" OnClick="ResetFilters">
+        清空筛选再看
+    </MudButton>
+</div>
 }
 else if (VisibleAttentionCount == 0 && FilteredRecent.Count == 0)
 {
-    <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true" Class="mb-3">
-        当前查询范围内没有报警。
-    </MudAlert>
+    <div class="dt-empty-hint dt-alarms-empty mb-3">
+        <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true" Class="mb-2">
+            当前查询范围内没有报警。
+        </MudAlert>
+        <MudText Typo="Typo.caption" Class="dt-muted">产线正常时这里会空着；从工站卡片的「报警」芯片也可以深链到本页。</MudText>
+    </div>
 }
 else
 {
     @if (NeedsOwner.Count > 0)
     {
-        <MudText Typo="Typo.subtitle1" Class="mb-2">@NeedsOwnerTitle @NeedsOwner.Count</MudText>
+        <div class="dt-alarms-section dt-alarms-section--action mb-2">
+        <MudText Typo="Typo.subtitle1" Class="dt-alarms-section-title mb-2">@NeedsOwnerTitle @NeedsOwner.Count</MudText>
         @if (!_canTake)
         {
             <MudText Typo="Typo.body2" Class="dt-muted mb-2">当前账号是访客，只能查看，不能接手。</MudText>
         }
-        <MudTable Items="PagedNeedsOwner" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-2">
+        <div class="dt-needs-owner-alarms">
+        @foreach (var group in GroupByStation(PagedNeedsOwner))
+        {
+            <section class="dt-alarms-group mb-3" aria-label="@StationSectionTitle(group.Key)">
+                <header class="dt-alarms-group-head">
+                    <span class="dt-alarms-group-title">@StationSectionTitle(group.Key)</span>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@group.Count() 条</MudChip>
+                </header>
+            <MudTable Items="@(group.ToList())" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-0 dt-alarms-table">
             <HeaderContent>
                 <MudTh>优先级</MudTh>
                 <MudTh>发生时间</MudTh>
@@ -110,15 +182,16 @@ else
                 <MudTh></MudTh>
             </HeaderContent>
             <RowTemplate>
-                <MudTd DataLabel="优先级">@PriorityText(context.Kind)</MudTd>
-                <MudTd DataLabel="发生时间">@When(context.RaisedAt)</MudTd>
-                <MudTd DataLabel="持续时间">@DurationText(context, _now)</MudTd>
+                <MudTd DataLabel="优先级"><MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@PriorityColor(context.Kind)" Class="dt-alarm-priority">@PriorityText(context.Kind)</MudChip></MudTd>
+                <MudTd DataLabel="发生时间"><span class="dt-alarm-time">@When(context.RaisedAt)</span></MudTd>
+                <MudTd DataLabel="持续时间"><span class="dt-alarm-duration">@DurationText(context, _now)</span></MudTd>
                 <MudTd DataLabel="类型">@KindText(context.Kind)</MudTd>
-                <MudTd DataLabel="内容">@context.Message</MudTd>
-                <MudTd DataLabel="状态">@StatusText(context)</MudTd>
+                <MudTd DataLabel="内容"><span class="dt-alarm-message">@context.Message</span></MudTd>
+                <MudTd DataLabel="状态"><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@StatusColor(context)" Class="dt-alarm-status">@StatusText(context)</MudChip></MudTd>
                 <MudTd DataLabel="接手">@OwnerText(context)</MudTd>
                 <MudTd DataLabel="定位">
                     @{ var action = ActionFor(context); }
+                    <div class="dt-alarm-actions">
                     @if (action.Href is not null)
                     {
                         <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
@@ -135,6 +208,7 @@ else
                             创建质量异常
                         </MudButton>
                     }
+                    </div>
                 </MudTd>
                 <MudTd DataLabel="操作">
                     @if (_canTake)
@@ -150,6 +224,9 @@ else
                 </MudTd>
             </RowTemplate>
         </MudTable>
+            </section>
+        }
+        </div>
         <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4 flex-wrap" Spacing="2">
             <MudPagination Count="@PageCount(NeedsOwner.Count)" Selected="@PageNumber(NeedsOwner.Count, _needsOwnerPage)"
                            SelectedChanged="SetNeedsOwnerPage" Disabled="false" aria-label="待接手报警分页" />
@@ -157,11 +234,20 @@ else
                 待接手报警：第 @PageNumber(NeedsOwner.Count, _needsOwnerPage) / @PageCount(NeedsOwner.Count) 页，共 @NeedsOwner.Count 条，每页 @PageSize 条
             </MudText>
         </MudStack>
+        </div>
     }
     @if (AcknowledgedOpen.Count > 0)
     {
-        <MudText Typo="Typo.subtitle1" Class="mb-2">@AcknowledgedOpenTitle @AcknowledgedOpen.Count</MudText>
-        <MudTable Items="PagedAcknowledgedOpen" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-2 dt-acknowledged-alarms">
+        <div class="dt-alarms-section dt-alarms-section--owned mb-2">
+        <MudText Typo="Typo.subtitle1" Class="dt-alarms-section-title mb-2">@AcknowledgedOpenTitle @AcknowledgedOpen.Count</MudText>
+        @foreach (var group in GroupByStation(PagedAcknowledgedOpen))
+        {
+            <section class="dt-alarms-group mb-3" aria-label="@StationSectionTitle(group.Key)">
+                <header class="dt-alarms-group-head">
+                    <span class="dt-alarms-group-title">@StationSectionTitle(group.Key)</span>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@group.Count() 条</MudChip>
+                </header>
+            <MudTable Items="@(group.ToList())" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-0 dt-alarms-table dt-acknowledged-alarms">
             <HeaderContent>
                 <MudTh>优先级</MudTh>
                 <MudTh>发生时间</MudTh>
@@ -173,15 +259,16 @@ else
                 <MudTh>定位</MudTh>
             </HeaderContent>
             <RowTemplate>
-                <MudTd DataLabel="优先级">@PriorityText(context.Kind)</MudTd>
-                <MudTd DataLabel="发生时间">@When(context.RaisedAt)</MudTd>
-                <MudTd DataLabel="持续时间">@DurationText(context, _now)</MudTd>
+                <MudTd DataLabel="优先级"><MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@PriorityColor(context.Kind)" Class="dt-alarm-priority">@PriorityText(context.Kind)</MudChip></MudTd>
+                <MudTd DataLabel="发生时间"><span class="dt-alarm-time">@When(context.RaisedAt)</span></MudTd>
+                <MudTd DataLabel="持续时间"><span class="dt-alarm-duration">@DurationText(context, _now)</span></MudTd>
                 <MudTd DataLabel="类型">@KindText(context.Kind)</MudTd>
-                <MudTd DataLabel="内容">@context.Message</MudTd>
-                <MudTd DataLabel="状态">@StatusText(context)</MudTd>
+                <MudTd DataLabel="内容"><span class="dt-alarm-message">@context.Message</span></MudTd>
+                <MudTd DataLabel="状态"><MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@StatusColor(context)" Class="dt-alarm-status">@StatusText(context)</MudChip></MudTd>
                 <MudTd DataLabel="接手人">@OwnerText(context)</MudTd>
                 <MudTd DataLabel="定位">
                     @{ var action = ActionFor(context); }
+                    <div class="dt-alarm-actions">
                     @if (action.Href is not null)
                     {
                         <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
@@ -198,9 +285,12 @@ else
                             创建质量异常
                         </MudButton>
                     }
+                    </div>
                 </MudTd>
             </RowTemplate>
         </MudTable>
+            </section>
+        }
         <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4 flex-wrap" Spacing="2">
             <MudPagination Count="@PageCount(AcknowledgedOpen.Count)" Selected="@PageNumber(AcknowledgedOpen.Count, _acknowledgedPage)"
                            SelectedChanged="SetAcknowledgedPage" Disabled="false" aria-label="已接手报警分页" />
@@ -208,20 +298,29 @@ else
                 已接手未解除：第 @PageNumber(AcknowledgedOpen.Count, _acknowledgedPage) / @PageCount(AcknowledgedOpen.Count) 页，共 @AcknowledgedOpen.Count 条，每页 @PageSize 条
             </MudText>
         </MudStack>
+        </div>
     }
 }
 
 @if (ShowRecent)
 {
     @* 历史归档与待办分开呈现，避免旧的已解除记录挤在当前报警之前。 *@
-    <MudText Typo="Typo.subtitle1" Class="mb-2 dt-archived-title">最近已解除 @FilteredRecent.Count</MudText>
+    <div class="dt-alarms-section dt-alarms-section--archive">
+    <MudText Typo="Typo.subtitle1" Class="mb-2 dt-archived-title dt-alarms-section-title">最近已解除 @FilteredRecent.Count</MudText>
     @if (FilteredRecent.Count == 0)
     {
         <MudText Typo="Typo.body2" Class="dt-muted">@(_recent.Count == 0 ? "还没有已经接手并解除的报警。" : "当前筛选没有最近已解除的报警。")</MudText>
     }
     else
     {
-        <MudTable Items="PagedRecent" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-2 dt-archived-table">
+        @foreach (var group in GroupByStation(PagedRecent))
+        {
+            <section class="dt-alarms-group mb-3" aria-label="@StationSectionTitle(group.Key)">
+                <header class="dt-alarms-group-head">
+                    <span class="dt-alarms-group-title">@StationSectionTitle(group.Key)</span>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@group.Count() 条</MudChip>
+                </header>
+            <MudTable Items="@(group.ToList())" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-0 dt-alarms-table dt-archived-table">
             <HeaderContent>
                 <MudTh>优先级</MudTh>
                 <MudTh>发生时间</MudTh>
@@ -233,12 +332,12 @@ else
                 <MudTh>处置</MudTh>
             </HeaderContent>
             <RowTemplate>
-                <MudTd DataLabel="优先级">@PriorityText(context.Kind)</MudTd>
-                <MudTd DataLabel="发生时间">@When(context.RaisedAt)</MudTd>
-                <MudTd DataLabel="解除时间">@When(context.ClearedAt)</MudTd>
-                <MudTd DataLabel="持续时间">@DurationText(context, _now)</MudTd>
+                <MudTd DataLabel="优先级"><MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@PriorityColor(context.Kind)" Class="dt-alarm-priority">@PriorityText(context.Kind)</MudChip></MudTd>
+                <MudTd DataLabel="发生时间"><span class="dt-alarm-time">@When(context.RaisedAt)</span></MudTd>
+                <MudTd DataLabel="解除时间"><span class="dt-alarm-time">@When(context.ClearedAt)</span></MudTd>
+                <MudTd DataLabel="持续时间"><span class="dt-alarm-duration">@DurationText(context, _now)</span></MudTd>
                 <MudTd DataLabel="类型">@KindText(context.Kind)</MudTd>
-                <MudTd DataLabel="内容">@context.Message</MudTd>
+                <MudTd DataLabel="内容"><span class="dt-alarm-message">@context.Message</span></MudTd>
                 <MudTd DataLabel="接手">@OwnerText(context)</MudTd>
                 <MudTd DataLabel="处置">
                     @if (_canTake && context.Kind == LineAlarmKind.ConsecutiveNg)
@@ -251,6 +350,8 @@ else
                 </MudTd>
             </RowTemplate>
         </MudTable>
+            </section>
+        }
         <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-4 flex-wrap" Spacing="2">
             <MudPagination Count="@PageCount(FilteredRecent.Count)" Selected="@PageNumber(FilteredRecent.Count, _recentPage)"
                            SelectedChanged="SetRecentPage" Disabled="false" aria-label="最近已解除报警分页" />
@@ -259,6 +360,7 @@ else
             </MudText>
         </MudStack>
     }
+    </div>
 }
 }
 
@@ -338,12 +440,42 @@ else
             .Where(id => _stations.All(station => station.Id != id)).Select(id => (id, $"历史工站 #{id}")));
 
     private static int StationOf(AlarmIncidentDraft item)
+        => LineAlarmStation.IdOf(item.Key, item.Kind);
+
+    private int StationSortKey(AlarmIncidentDraft item)
+
     {
-        if (item.Kind is not (LineAlarmKind.ConsecutiveNg or LineAlarmKind.ConsecutiveWarning or LineAlarmKind.ProcessDrift
-            or LineAlarmKind.StationFault or LineAlarmKind.ConsecutiveProcess)) return 0;
-        var parts = item.Key.Split(':');
-        return parts.Length >= 2 && int.TryParse(parts[1], out var id) && id > 0 ? id : 0;
+
+        var id = StationOf(item);
+
+        if (id == 0) return int.MinValue;
+
+        var station = _stations.FirstOrDefault(s => s.Id == id);
+
+        return station?.Sequence ?? (1_000_000 + id);
+
     }
+
+
+
+    private string StationSectionTitle(int stationId)
+
+    {
+
+        if (stationId <= 0) return "全线／会话";
+
+        var station = _stations.FirstOrDefault(s => s.Id == stationId);
+
+        return station is null ? $"历史工站 #{stationId}" : $"{station.Code} {station.Name}";
+
+    }
+
+
+
+    private static IEnumerable<IGrouping<int, AlarmIncidentDraft>> GroupByStation(IEnumerable<AlarmIncidentDraft> items)
+
+        => items.GroupBy(StationOf);
+
 
     private bool Matches(AlarmIncidentDraft item)
         => (_stationFilter is null || StationOf(item) == _stationFilter)
@@ -351,15 +483,16 @@ else
            && (!_mineOnly || item.AcknowledgedAt is not null && !string.IsNullOrEmpty(_actor)
                && string.Equals(item.AcknowledgedBy, _actor, StringComparison.OrdinalIgnoreCase));
 
-    private static IReadOnlyList<AlarmIncidentDraft> SortByPriority(IEnumerable<AlarmIncidentDraft> items)
-        => items.OrderByDescending(item => PriorityRank(item.Kind))
+    private IReadOnlyList<AlarmIncidentDraft> SortByPriority(IEnumerable<AlarmIncidentDraft> items)
+        => items.OrderBy(StationSortKey)
+            .ThenByDescending(item => PriorityRank(item.Kind))
             .ThenByDescending(item => item.RaisedAt)
             .ThenByDescending(item => item.Id)
             .ToList();
 
     private static int PriorityRank(LineAlarmKind kind) => kind switch
     {
-        LineAlarmKind.HeartbeatStale or LineAlarmKind.StationFault or LineAlarmKind.DiskLow
+        LineAlarmKind.HeartbeatStale or LineAlarmKind.StationFault or LineAlarmKind.DiskLow or LineAlarmKind.CustomDevice
             or LineAlarmKind.CollectionOverdue => 3,
         LineAlarmKind.ConsecutiveNg or LineAlarmKind.ConsecutiveProcess
             or LineAlarmKind.MesBacklog or LineAlarmKind.SpoolBacklog => 2,
@@ -627,6 +760,7 @@ else
         LineAlarmKind.ProcessDrift => "过程漂移",
         LineAlarmKind.OpenSession => "在制超时",
         LineAlarmKind.DiskLow => "磁盘空间",
+        LineAlarmKind.CustomDevice => "设备报警",
         _ => kind.ToString()
     };
 
@@ -667,6 +801,7 @@ else
                 keyParts.Length == 2 && long.TryParse(keyParts[1], out var sessionId) && sessionId > 0
                     ? $"/query?view=trace&sessionId={sessionId}" : "/query?view=trace"),
             LineAlarmKind.StationFault or LineAlarmKind.ConsecutiveProcess => ("打开运行诊断", "/diagnostics" + (station.Length > 0 ? "?" + station.TrimStart('&') : "")),
+            LineAlarmKind.CustomDevice => ("打开工站配置", "/config/stations"),
             _ => ("打开运行诊断", "/diagnostics")
         };
     }
@@ -676,6 +811,46 @@ else
 
     private static string When(DateTime? time)
         => time?.ToString("yyyy-MM-dd HH:mm:ss") ?? "—";
+
+
+    private int UrgentOpenCount => FilteredAttention.Count(item => PriorityRank(item.Kind) >= 3 && item.StillActive);
+
+    private bool HasActiveFilters => _stationFilter is not null || _kindFilter is not null || _mineOnly;
+
+    private static Color PriorityColor(LineAlarmKind kind) => PriorityRank(kind) switch
+    {
+        3 => Color.Error,
+        2 => Color.Warning,
+        _ => Color.Default
+    };
+
+    private static Color StatusColor(AlarmIncidentDraft item)
+    {
+        if (item.NeedsOwner)
+        {
+            return item.StillActive ? Color.Error : Color.Warning;
+        }
+
+        return Color.Info;
+    }
+
+    private void ClearStationFilter()
+    {
+        _stationFilter = null;
+        OnFiltersChanged();
+    }
+
+    private void ClearKindFilter()
+    {
+        _kindFilter = null;
+        OnFiltersChanged();
+    }
+
+    private void ClearMineFilter()
+    {
+        _mineOnly = false;
+        OnFiltersChanged();
+    }
 
     public void Dispose()
     {

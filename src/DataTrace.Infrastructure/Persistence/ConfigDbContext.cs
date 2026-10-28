@@ -15,6 +15,7 @@ public sealed class ConfigDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Station> Stations => Set<Station>();
     public DbSet<ProductPositionDefinition> ProductPositions => Set<ProductPositionDefinition>();
     public DbSet<TagDefinition> Tags => Set<TagDefinition>();
+    public DbSet<StationAlarmDefinition> StationAlarms => Set<StationAlarmDefinition>();
     public DbSet<CurveDefinition> Curves => Set<CurveDefinition>();
     public DbSet<CurveSeries> CurveSeries => Set<CurveSeries>();
     public DbSet<CurveCriterion> CurveCriteria => Set<CurveCriterion>();
@@ -62,6 +63,20 @@ public sealed class ConfigDbContext : IdentityDbContext<ApplicationUser>
                 .HasColumnType("INTEGER")
                 .HasDefaultValue(DataTrace.Domain.Enums.TagPurpose.QualityMeasurement);
             e.HasIndex(x => new { x.StationId, x.Name }).IsUnique();
+        });
+        builder.Entity<StationAlarmDefinition>(e =>
+        {
+            e.Property(x => x.Name).HasMaxLength(64).IsRequired();
+            e.Property(x => x.Remark).HasMaxLength(200);
+            e.HasIndex(x => new { x.StationId, x.Name }).IsUnique();
+            e.HasOne(x => x.Station)
+                .WithMany(x => x.Alarms)
+                .HasForeignKey(x => x.StationId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.TagDefinition)
+                .WithMany()
+                .HasForeignKey(x => x.TagDefinitionId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         builder.Entity<CurveDefinition>(e =>

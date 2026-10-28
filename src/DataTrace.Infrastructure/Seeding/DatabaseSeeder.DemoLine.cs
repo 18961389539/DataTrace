@@ -107,6 +107,8 @@ partial class DatabaseSeeder
             .Include(p => p.Stations)
                 .ThenInclude(s => s.Tags)
             .Include(p => p.Stations)
+                .ThenInclude(s => s.Alarms)
+            .Include(p => p.Stations)
                 .ThenInclude(s => s.Curves)
                     .ThenInclude(curve => curve.Series)
             .FirstOrDefaultAsync(
@@ -869,6 +871,7 @@ partial class DatabaseSeeder
         var stations = await _db.Stations
             .Include(s => s.Positions)
             .Include(s => s.Tags)
+            .Include(s => s.Alarms)
             .Include(s => s.Curves)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);

@@ -472,6 +472,50 @@
                             「波形判据」对整段波形设阈值（峰值、面积、上升/保压段斜率…），能拦住「点位值在限内但波形异常」的漏检。
                         </MudText>
                     </MudTabPanel>
+                    <MudTabPanel Text="@($"报警（{_current.Alarms.Count} 个）")">
+                        <MudText Typo="Typo.caption" Class="dt-muted mb-3">
+                            自定义设备报警条目；有关联点位时按最近一次采集值与限值比较；采样周期字段为连续监视预留，当前判定随报警后台约 5 秒汇总。
+                        </MudText>
+                        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3">
+                            <MudSpacer />
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                                       OnClick="AddAlarm" Disabled="_busy">新增报警</MudButton>
+                        </MudStack>
+                        <MudTable Items="_current.Alarms.OrderBy(a => a.Name).ToList()" Dense="true" Hover="true" Breakpoint="Breakpoint.Xs">
+                            <HeaderContent>
+                                <MudTh>名称</MudTh>
+                                <MudTh>启用</MudTh>
+                                <MudTh>关联点位</MudTh>
+                                <MudTh>条件</MudTh>
+                                <MudTh>限值</MudTh>
+                                <MudTh>采样周期(ms)</MudTh>
+                                <MudTh>备注</MudTh>
+                                <MudTh></MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="名称">@context.Name</MudTd>
+                                <MudTd DataLabel="启用">
+                                    <MudSwitch T="bool" Value="context.Enabled" ValueChanged="@(value => ToggleAlarmEnabled(context, value))"
+                                               Color="Color.Primary" Disabled="_busy"
+                                               aria-label="@($"{(context.Enabled ? "停用" : "启用")}报警 {context.Name}")" />
+                                </MudTd>
+                                <MudTd DataLabel="关联点位">@AlarmTagName(context)</MudTd>
+                                <MudTd DataLabel="条件">@(context.Compare == StationAlarmCompare.Above ? "高于" : "低于")</MudTd>
+                                <MudTd DataLabel="限值">@(context.Limit?.ToString() ?? "—")</MudTd>
+                                <MudTd DataLabel="采样周期(ms)">@context.SampleIntervalMs</MudTd>
+                                <MudTd DataLabel="备注">@(context.Remark ?? "—")</MudTd>
+                                <MudTd Class="dt-nowrap">
+                                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary" Disabled="_busy"
+                                               OnClick="@(() => EditAlarm(context))">编辑</MudButton>
+                                    <MudButton Size="Size.Small" Color="Color.Error" Variant="Variant.Text" Disabled="_busy"
+                                               OnClick="@(() => DeleteAlarm(context))">删除</MudButton>
+                                </MudTd>
+                            </RowTemplate>
+                            <NoRecordsContent>
+                                <MudText Typo="Typo.body2" Class="dt-muted py-3">还没有自定义报警，点右上「新增报警」添加（如电机过热）。</MudText>
+                            </NoRecordsContent>
+                        </MudTable>
+                    </MudTabPanel>
                 </MudTabs>
             </MudPaper>
         }
@@ -1246,6 +1290,7 @@
         _current.Positions = persisted.Positions;
         _current.Tags = persisted.Tags;
         _current.Curves = persisted.Curves;
+        _current.Alarms = persisted.Alarms;
         _loadedSnapshot = Snapshot(persisted);
         _loadedOccupiedAddress = persisted.Positions.FirstOrDefault()?.OccupiedAddress ?? "";
         ClearErrors();
@@ -1395,6 +1440,84 @@
     });
 
     /// <summary>新增曲线：地址与序列在对话框里填，页面只负责下发品牌与落库。</summary>
+    private string AlarmTagName(StationAlarmDefinition alarm)
+    {
+        if (alarm.TagDefinitionId is not int tagId || _current is null) return "—";
+        return _current.Tags.FirstOrDefault(t => t.Id == tagId)?.Name ?? $"#{tagId}";
+    }
+    private Task AddAlarm() => ShowAlarmDialog(
+        new StationAlarmDefinition
+        {
+            StationId = _current?.Id ?? 0,
+            Enabled = true,
+            Compare = StationAlarmCompare.Above,
+            SampleIntervalMs = 2000
+        },
+        isNew: true);
+
+    private Task EditAlarm(StationAlarmDefinition alarm) => ShowAlarmDialog(alarm.Clone(), isNew: false);
+    private async Task ShowAlarmDialog(StationAlarmDefinition alarm, bool isNew)
+    {
+        if (_current is null || _busy) return;
+        var station = _current;
+        var parameters = new DialogParameters
+        {
+            ["Alarm"] = alarm,
+            ["IsNew"] = isNew,
+            ["Tags"] = station.Tags.ToList(),
+            ["Siblings"] = station.Alarms.ToList()
+        };
+        var dialog = await DialogService.ShowAsync<StationAlarmEditDialog>(
+            isNew ? "新增报警" : $"编辑报警 · {alarm.Name}",
+            parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true, CloseOnEscapeKey = true });
+        var result = await dialog.Result;
+        if (result is null || result.Canceled || result.Data is not StationAlarmDefinition edited) return;
+        await Run(isNew ? "添加报警" : "保存报警", async () =>
+        {
+            edited.StationId = station.Id;
+            var oldAlarm = isNew ? null : station.Alarms.FirstOrDefault(a => a.Id == edited.Id);
+            var oldSnap = oldAlarm is null ? null
+                : $"{oldAlarm.Name}; enabled={oldAlarm.Enabled}; tag={oldAlarm.TagDefinitionId}; limit={oldAlarm.Limit}";
+            await Changes.SaveStationAlarmAsync(edited, await AuditOf(
+                isNew ? "Create" : "Save", "StationAlarmDefinition", $"{station.Code}/{edited.Name}", oldSnap,
+                $"enabled={edited.Enabled}; tag={edited.TagDefinitionId}; compare={edited.Compare}; limit={edited.Limit}; interval={edited.SampleIntervalMs}"));
+            await RefreshAfterChildChange(station, _tab);
+            Toast.Add(isNew ? $"报警 {edited.Name} 已添加" : $"报警 {edited.Name} 已保存", Severity.Success);
+        });
+    }
+    private Task ToggleAlarmEnabled(StationAlarmDefinition alarm, bool enabled) => Run("保存报警", async () =>
+    {
+        if (_current is null || alarm.Enabled == enabled) return;
+        var clone = alarm.Clone();
+        clone.Enabled = enabled;
+        try
+        {
+            await Changes.SaveStationAlarmAsync(clone, await AuditOf(
+                "Save", "StationAlarmDefinition", $"{_current.Code}/{alarm.Name}",
+                $"enabled={alarm.Enabled}", $"enabled={enabled}"));
+        }
+        finally
+        {
+            await RefreshAfterChildChange(_current, _tab);
+        }
+    });
+
+    private Task DeleteAlarm(StationAlarmDefinition alarm) => Run("删除报警", async () =>
+    {
+        if (_current is null) return;
+        var confirmed = await DialogService.ConfirmDangerAsync(
+            "删除报警",
+            $"确定删除报警「{alarm.Name}」？",
+            acknowledge: "我了解将删除该报警条目，且无法恢复",
+            yesText: "删除", cancelText: "取消");
+        if (confirmed != true) return;
+        await Changes.DeleteStationAlarmAsync(alarm.Id, await AuditOf(
+            "Delete", "StationAlarmDefinition", $"{_current.Code}/{alarm.Name}",
+            $"{alarm.Name}; tag={alarm.TagDefinitionId}; limit={alarm.Limit}", null));
+        await RefreshAfterChildChange(_current, _tab);
+        Toast.Add($"已删除报警 {alarm.Name}", Severity.Success);
+    });
     private Task AddCurve() => ShowCurveDialog(
         new CurveDefinition { StationId = _current?.Id ?? 0, PointCount = 50, PositionIndex = 1, Enabled = true },
         isNew: true);

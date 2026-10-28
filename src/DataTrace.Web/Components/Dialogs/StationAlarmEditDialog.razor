@@ -1,0 +1,112 @@
+@using DataTrace.Domain.Entities
+@using DataTrace.Domain.Enums
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">@(IsNew ? "新增报警" : $"编辑报警 · {Alarm.Name}")</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.caption" Class="dt-muted mb-3">
+            自定义设备报警条目。有关联点位时按最近一次采集值与限值比较；采样周期字段为连续监视预留，当前判定随报警后台约 5 秒汇总。
+        </MudText>
+        <MudGrid>
+            <MudItem xs="12" md="6">
+                <MudTextField @bind-Value="Alarm.Name" @bind-Value:after="Validate" Label="名称"
+                              Immediate="true" Error="@(_nameError is not null)" ErrorText="@_nameError" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudSwitch T="bool" @bind-Value="Alarm.Enabled" Color="Color.Primary" Label="启用" />
+            </MudItem>
+            <MudItem xs="12" md="6">
+                <MudSelect T="int?" @bind-Value="Alarm.TagDefinitionId" @bind-Value:after="Validate"
+                           Label="关联点位" Clearable="true" HelperText="留空表示仅作配置占位，不参与限值判定">
+                    @foreach (var tag in Tags.OrderBy(t => t.Name))
+                    {
+                        <MudSelectItem T="int?" Value="@((int?)tag.Id)">@tag.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="3">
+                <MudSelect T="StationAlarmCompare" @bind-Value="Alarm.Compare" Label="条件">
+                    <MudSelectItem T="StationAlarmCompare" Value="StationAlarmCompare.Above">高于</MudSelectItem>
+                    <MudSelectItem T="StationAlarmCompare" Value="StationAlarmCompare.Below">低于</MudSelectItem>
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="3">
+                <MudNumericField T="double?" @bind-Value="Alarm.Limit" @bind-Value:after="Validate"
+                                 Label="限值" Immediate="true"
+                                 Error="@(_limitError is not null)" ErrorText="@_limitError" />
+            </MudItem>
+            <MudItem xs="12" md="4">
+                <MudNumericField T="int" @bind-Value="Alarm.SampleIntervalMs" @bind-Value:after="Validate"
+                                 Label="采样周期(ms)" Immediate="true" Min="500" Max="60000"
+                                 HelperText="预留：500–60000，默认 2000"
+                                 Error="@(_intervalError is not null)" ErrorText="@_intervalError" />
+            </MudItem>
+            <MudItem xs="12" md="8">
+                <MudTextField @bind-Value="Alarm.Remark" @bind-Value:after="Validate" Label="备注"
+                              Immediate="true" Error="@(_remarkError is not null)" ErrorText="@_remarkError" />
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">取消</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit" Disabled="@(!CanSubmit)">确定</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance? MudDialog { get; set; }
+
+    [Parameter] public StationAlarmDefinition Alarm { get; set; } = new();
+    [Parameter] public bool IsNew { get; set; }
+    [Parameter] public IReadOnlyList<TagDefinition> Tags { get; set; } = [];
+    [Parameter] public IReadOnlyList<StationAlarmDefinition> Siblings { get; set; } = [];
+
+    private string? _nameError;
+    private string? _limitError;
+    private string? _intervalError;
+    private string? _remarkError;
+
+    private bool CanSubmit => _nameError is null && _limitError is null && _intervalError is null && _remarkError is null
+                              && !string.IsNullOrWhiteSpace(Alarm.Name);
+
+    protected override void OnParametersSet() => Validate();
+
+    private void Validate()
+    {
+        var name = (Alarm.Name ?? "").Trim();
+        _nameError = name.Length == 0 ? "名称不能为空"
+            : name.Length > 64 ? "名称不能超过 64 个字符"
+            : Siblings.Any(s => s.Id != Alarm.Id && string.Equals(s.Name?.Trim(), name, StringComparison.OrdinalIgnoreCase))
+                ? "该工站下已有同名报警"
+                : null;
+
+        _limitError = Alarm.TagDefinitionId is not null && Alarm.Limit is null
+            ? "已关联点位时必须填写限值"
+            : null;
+
+        _intervalError = Alarm.SampleIntervalMs is < 500 or > 60000
+            ? "采样周期需在 500–60000 ms"
+            : null;
+
+        _remarkError = Alarm.Remark is { Length: > 200 } ? "备注不能超过 200 个字符" : null;
+    }
+
+    private void Cancel() => MudDialog?.Cancel();
+
+    private void Submit()
+    {
+        Validate();
+        if (!CanSubmit)
+        {
+            return;
+        }
+
+        Alarm.Name = Alarm.Name.Trim();
+        Alarm.Remark = string.IsNullOrWhiteSpace(Alarm.Remark) ? null : Alarm.Remark.Trim();
+        if (Alarm.SampleIntervalMs < 500) Alarm.SampleIntervalMs = 500;
+        if (Alarm.SampleIntervalMs > 60000) Alarm.SampleIntervalMs = 60000;
+        MudDialog?.Close(DialogResult.Ok(Alarm));
+    }
+}

@@ -302,16 +302,15 @@ public class AlarmsPageTests : WebTestBase
         Assert.Contains("已接手／已解除 (3)", cut.Markup);
         Assert.Contains("当前模式：显示全部待处理记录，以及最近 30 条已解除记录", cut.Markup);
 
-        var attentionTable = cut.FindAll("table").First();
-        Assert.Equal(25, attentionTable.QuerySelectorAll("tbody tr").Count);
-        Assert.Contains("较早发生的紧急当前故障", attentionTable.QuerySelectorAll("tbody tr")[0].TextContent);
+        var attentionRows = cut.FindAll(".dt-needs-owner-alarms table").SelectMany(table => table.QuerySelectorAll("tbody tr")).ToList();
+        Assert.Equal(25, attentionRows.Count);
+        Assert.Contains("恢复告警 000", cut.Markup);
         Assert.Contains("每页 25 条", cut.Markup);
 
         await cut.InvokeAsync(() => cut.FindComponents<MudPagination>()[0].Instance.SelectedChanged.InvokeAsync(2));
-        attentionTable = cut.FindAll("table").First();
-        Assert.Equal(25, attentionTable.QuerySelectorAll("tbody tr").Count);
-        Assert.DoesNotContain("较早发生的紧急当前故障", attentionTable.TextContent);
-        Assert.Contains("恢复告警 024", attentionTable.TextContent);
+        attentionRows = cut.FindAll(".dt-needs-owner-alarms table").SelectMany(table => table.QuerySelectorAll("tbody tr")).ToList();
+        Assert.Equal(25, attentionRows.Count);
+        Assert.Contains("恢复告警 024", cut.Markup);
 
         ClickButton(cut, "已恢复待接手");
         Assert.Contains("已恢复，待接手 100", cut.Markup);

@@ -122,6 +122,12 @@ public sealed class LineAlarmHostedService : BackgroundService
             DiskSpace.FreeMegabytesOf(_paths.Root),
             _collectorDiagnostics?.ActiveCollections,
             _collectorDiagnostics?.CollectionMaxAgeSeconds ?? 0);
+        var custom = StationCustomAlarmRules.Evaluate(snapshot.Stations, _status.Stations);
+        if (custom.Count > 0)
+        {
+            active = new LineAlarmSnapshot(active.Alarms.Concat(custom).ToList());
+        }
+
         var incidents = scope.ServiceProvider.GetRequiredService<IAlarmIncidents>();
         var attention = await incidents.ApplyAsync(active.Alarms, now, cancellationToken).ConfigureAwait(false);
         var calling = attention
