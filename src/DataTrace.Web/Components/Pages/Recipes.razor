@@ -47,12 +47,7 @@
     </MudAlert>
 }
 
-<MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-3">
-    型号里的限值是<b>覆盖值</b>：留空的字段沿用点位默认限值（不是「不判」）。
-    当前没有选择型号时，全部点位按自身默认限值判定。
-    曲线判据定义全型号共用；曲线基线按系统编码分桶构建，切换后需存在该型号基线才会对偏离度打分。
-    型号与名称用于日常识别；系统编码由系统生成、仅内部追溯使用，列表默认不显示。
-</MudAlert>
+<p class="dt-page-hint">限值是覆盖值：留空沿用点位默认。无当前型号时全部按默认限值判定。系统编码仅内部追溯，列表默认不显示。</p>
 
 @if (WorkOrderModelMismatch)
 {
@@ -66,8 +61,8 @@
     </MudAlert>
 }
 
-<MudPaper Class="pa-4">
-    <MudTable Items="_recipes" Dense="true" Hover="true" Loading="_loading" Breakpoint="Breakpoint.Sm">
+<MudPaper Class="dt-list-card" Elevation="0">
+    <MudTable Items="_recipes" Dense="true" Hover="true" Loading="_loading" Breakpoint="Breakpoint.Sm" Class="dt-list-table">
         <HeaderContent>
             <MudTh>型号 <InfoHint Topic="HelpTexts.RecipeModel" /></MudTh>
             <MudTh>名称</MudTh>

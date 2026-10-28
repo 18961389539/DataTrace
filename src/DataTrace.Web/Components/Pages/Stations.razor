@@ -33,7 +33,7 @@
     </MudAlert>
 }
 
-<section class="dt-station-picker" aria-label="工站选择">
+<section class="dt-station-picker dt-page-toolbar" aria-label="工站选择">
     <div class="dt-station-picker-heading">
         <MudText Typo="Typo.subtitle1">选择工站（@_stations.Count）</MudText>
         <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
@@ -71,7 +71,7 @@
 
 <MudGrid>
     <MudItem xs="12" md="3" Class="dt-station-list">
-        <MudPaper Class="pa-3 station-pane">
+        <MudPaper Class="pa-3 station-pane dt-list-card" Elevation="0">
             <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3">
                 <MudText Typo="Typo.subtitle1">工站 @_stations.Count</MudText>
                 <MudSpacer />

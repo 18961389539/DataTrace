@@ -65,7 +65,7 @@
    而其中一半（配置库、数据盘、磁盘余量、采集服务心跳）原本要另开一个标签页才看得到。 *@
 @if (_health is { } health)
 {
-    <MudPaper Class="pa-2 mb-3 dt-diag-health">
+    <MudPaper Class="pa-2 mb-3 dt-diag-health dt-list-card" Elevation="0">
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
             <MudText Typo="Typo.subtitle2">系统健康</MudText>
             <MudChip T="string" Size="Size.Small"

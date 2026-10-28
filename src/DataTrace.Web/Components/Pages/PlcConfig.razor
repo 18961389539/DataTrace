@@ -10,6 +10,9 @@
 @* 主操作按钮进页头 Actions，与型号/用户页一致：落在页头右端，
    而不是在标题和表格之间另起一行、把「共 N 台」挤成唯一的操作位。 *@
 <PageHeader Title="PLC 连接" HelpRoute="config/plc" Busy="@(_loading || _saving)">
+    <ChildContent>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">共 @_items.Count 台</MudChip>
+    </ChildContent>
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">共 @_items.Count 台，被工站引用的连接不能删除</MudText>
         <MudTooltip Text="重新读取 PLC 连接">
@@ -33,6 +36,8 @@
     </MudAlert>
 }
 
+<p class="dt-page-hint">先配置 PLC 连接，再到「工站配置」把工站挂到对应连接上。被工站引用的连接不能删除。</p>
+
 @if (_items.Count == 0 && _loadError is null)
 {
     <MudAlert Severity="Severity.Info" Dense="true" Class="mt-3">
@@ -40,7 +45,7 @@
     </MudAlert>
 }
 
-<MudTable Items="_items" Dense="true" Hover="true" Class="mt-3" Breakpoint="Breakpoint.Sm" Loading="_loading"
+<MudPaper Class="dt-list-card mt-2" Elevation="0"><MudTable Items="_items" Dense="true" Hover="true" Class="dt-list-table" Breakpoint="Breakpoint.Sm" Loading="_loading"
           LoadingProgressColor="Color.Info">
     <HeaderContent>
         <MudTh>名称</MudTh>
@@ -93,7 +98,7 @@
             @(_loading ? "正在加载…" : _loadError is not null ? "读取失败，尚不能确认 PLC 列表为空。" : "还没有 PLC 连接，点上方「新增连接」开始。")
         </MudText>
     </NoRecordsContent>
-</MudTable>
+</MudTable></MudPaper>
 
 @code {
     private IReadOnlyList<PlcConnection> _items = [];

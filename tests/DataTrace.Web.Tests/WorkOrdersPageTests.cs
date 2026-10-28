@@ -217,7 +217,10 @@ public class WorkOrdersPageTests : WebTestBase
 
         // 页面列表仍是库里的那一份（状态没有被界面上的编辑结果改掉）。
         Assert.Contains("待生产", cut.Markup);
-        Assert.DoesNotContain("已取消", cut.Markup);
+        // status filter chips always render labels; assert table cells only
+        var statusCells = cut.FindAll("td").Select(td => td.TextContent).ToList();
+        Assert.Contains(statusCells, text => text.Contains("待生产", StringComparison.Ordinal));
+        Assert.DoesNotContain(statusCells, text => text.Contains("已取消", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -4084,3 +4084,73 @@ body:has(.dt-alarm-bar) .dt-alarms-toolbar {
         z-index: 3;
     }
 }
+
+/* ---------- 多页共用：粘性筛选、视图切换、列表卡 ---------- */
+.dt-page-toolbar {
+    position: sticky;
+    top: calc(var(--mud-appbar-height) + 4px);
+    z-index: 14;
+    margin: 0 0 12px;
+    padding-bottom: 2px;
+    background: var(--mud-palette-background);
+}
+
+.dt-page-toolbar .dt-filter-card {
+    background: var(--mud-palette-surface);
+}
+
+.dt-view-toggle {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.dt-list-card {
+    padding: 12px 16px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--dt-radius, 4px);
+    background: var(--mud-palette-surface);
+}
+
+.dt-list-table .mud-table-cell {
+    padding-top: 6px;
+    padding-bottom: 6px;
+}
+
+.dt-list-table {
+    font-size: 0.9rem;
+}
+
+.dt-queue-panel {
+    padding: 12px 16px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--dt-radius, 4px);
+    background: var(--mud-palette-surface);
+}
+
+.dt-queue-panel .dt-view-toggle {
+    margin-top: 4px;
+}
+
+.dt-page-hint {
+    margin: 0 0 12px;
+    padding: 8px 12px;
+    border-radius: var(--dt-radius, 4px);
+    border: 1px solid var(--mud-palette-lines-default);
+    background: color-mix(in srgb, var(--mud-palette-info) 6%, var(--mud-palette-surface));
+    font-size: 0.875rem;
+    color: var(--mud-palette-text-secondary);
+}
+
+.dt-nav-group {
+    margin-top: 12px !important;
+    letter-spacing: 0.06em;
+    opacity: 0.85;
+}
+
+@media (max-width: 600px) {
+    .dt-page-toolbar {
+        position: static;
+    }
+}

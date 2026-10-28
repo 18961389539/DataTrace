@@ -8,6 +8,13 @@
 @inject DtToast Toast
 
 <PageHeader Title="用户" HelpRoute="users" Busy="@_loading">
+    <ChildContent>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@VisibleUsers.Count / @_users.Count</MudChip>
+        @if (LockedCount > 0)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning">@LockedCount 个已锁定</MudChip>
+        }
+    </ChildContent>
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">显示 @VisibleUsers.Count / @_users.Count 个账号</MudText>
         <MudTooltip Text="重新读取用户与锁定状态">
@@ -17,14 +24,6 @@
         <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled"
                    StartIcon="@Icons.Material.Filled.PersonAdd" Disabled="_working"
                    OnClick="OpenCreateDialog">新增用户</MudButton>
-        @* 锁定是"连续登录失败"的自动结果。有人在登不上来的时候，这个数得在页头就看得见，
-           而不是等扫到表格里那枚小 chip。 *@
-        @if (LockedCount > 0)
-        {
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning">
-                @LockedCount 个已锁定
-            </MudChip>
-        }
     </Actions>
 </PageHeader>
 
@@ -41,7 +40,7 @@
     </MudAlert>
 }
 
-<MudPaper Class="dt-filter-card mb-2">
+<div class="dt-page-toolbar" aria-label="用户筛选"><MudPaper Class="dt-filter-card mb-0" Elevation="0" Outlined="true">
     <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
         <MudTextField T="string" Value="_search" ValueChanged="OnSearchChanged"
                       Label="搜索账号" Placeholder="用户名或显示名" Immediate="true" Clearable="true"
@@ -69,10 +68,10 @@
         <MudSpacer />
         <MudText Typo="Typo.caption" Class="dt-muted">@VisibleUsers.Count 条结果</MudText>
     </MudStack>
-</MudPaper>
+</MudPaper></div>
 
-<MudTable Items="VisibleUsers" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading"
-          LoadingProgressColor="Color.Info">
+<MudPaper Class="dt-list-card mt-3" Elevation="0"><MudTable Items="VisibleUsers" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading"
+          LoadingProgressColor="Color.Info" Class="dt-list-table">
     <HeaderContent>
         <MudTh>用户名</MudTh>
         <MudTh>显示名</MudTh>
@@ -182,7 +181,7 @@
             </div>
         }
     </NoRecordsContent>
-</MudTable>
+</MudTable></MudPaper>
 
 @* 角色说明保留触屏可访问的完整文案，但默认收起，减少账号列表下方的纵向占用。 *@
 <MudExpansionPanels Class="mt-3" Dense="true" Elevation="0">

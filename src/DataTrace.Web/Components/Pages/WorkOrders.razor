@@ -12,6 +12,15 @@
             Description="维护生产工单档案：单号、型号、计划数量、状态与计划起止。工单不参与采集判定，也不会下发 PLC。"
             HelpRoute="config/workorders"
             Busy="@_saving">
+    <ChildContent>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_orders.Count 张</MudChip>
+        @if (CurrentOrder is { } current)
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled" title="当前工单">
+                当前 @current.Code
+            </MudChip>
+        }
+    </ChildContent>
     <Actions>
         <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_saving"
                    StartIcon="@(_saving ? Icons.Material.Filled.Sync : Icons.Material.Filled.Add)"
@@ -31,12 +40,7 @@
     </MudAlert>
 }
 
-<MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-3">
-    工单是业务档案：删除工单不会删除已采集的历史记录，改工单也不会改变采集口径。
-    同一工单号（忽略大小写）只能存在一张；型号可以先留空，之后再补。
-    同一时刻最多一张<b>当前工单</b>：设为当前会把状态改为“生产中”，状态改离生产中会自动取消当前标记。
-    当前工单的型号与「当前型号」不一致时，页面顶部会给出提示并可一键同步。
-</MudAlert>
+<p class="dt-page-hint">工单是业务档案，不改采集口径。同一工单号只能一张；最多一张「当前工单」（设为当前会改为生产中）。型号可先留空。</p>
 
 @if (ModelMismatch)
 {
@@ -60,8 +64,31 @@
     </MudAlert>
 }
 
-<MudPaper Class="pa-4">
-    <MudTable Items="_orders" Dense="true" Hover="true" Loading="_loading" Breakpoint="Breakpoint.Sm">
+<div class="dt-page-toolbar" aria-label="工单筛选">
+    <MudPaper Class="dt-filter-card dt-list-card mb-0" Elevation="0">
+        <MudGrid Spacing="2" Class="dt-filters">
+            <MudItem xs="12" sm="6" md="5">
+                <MudTextField T="string" @bind-Value="_search" Label="搜索工单" Placeholder="单号 / 型号 / 备注" Immediate="true"
+                              Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Clearable="true" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="7" Class="d-flex align-center flex-wrap gap-2">
+                <span class="dt-muted" style="font-size:.8rem">状态</span>
+                <div class="dt-view-toggle" role="group" aria-label="工单状态筛选">
+                    <MudButton Size="Size.Small" Variant="@StatusFilterVariant(null)" Color="@StatusFilterColor(null)"
+                               aria-pressed="@StatusFilterPressed(null)" OnClick="@(() => SetStatusFilter(null))">全部</MudButton>
+                    @foreach (var status in Enum.GetValues<WorkOrderStatus>())
+                    {
+                        <MudButton Size="Size.Small" Variant="@StatusFilterVariant(status)" Color="@StatusFilterColor(status)"
+                                   aria-pressed="@StatusFilterPressed(status)" OnClick="@(() => SetStatusFilter(status))">@DisplayLabels.WorkOrderStatusText(status)</MudButton>
+                    }
+                </div>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+</div>
+
+<MudPaper Class="dt-list-card mt-3" Elevation="0">
+    <MudTable Items="FilteredOrders" Dense="true" Hover="true" Loading="_loading" Breakpoint="Breakpoint.Sm" Class="dt-list-table">
         <HeaderContent>
             <MudTh>工单号</MudTh>
             <MudTh>型号</MudTh>
@@ -145,7 +172,17 @@
             </MudTd>
         </RowTemplate>
         <NoRecordsContent>
-            <MudText Typo="Typo.body2" Class="dt-muted py-3">还没有工单，点右上「新增工单」创建第一张。</MudText>
+            <div class="dt-empty-hint py-3">
+                @if (_orders.Count == 0)
+                {
+                    <MudText Typo="Typo.body2" Class="dt-muted">还没有工单，点右上「新增工单」创建第一张。</MudText>
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Class="dt-muted">当前筛选没有匹配的工单。</MudText>
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Class="mt-1" OnClick="ClearFilters">清空筛选</MudButton>
+                }
+            </div>
         </NoRecordsContent>
     </MudTable>
 </MudPaper>
@@ -161,6 +198,47 @@
     private IReadOnlyList<WorkOrder> _orders = [];
     private IReadOnlyList<Recipe> _recipes = [];
     private Recipe? _activeRecipe;
+    private string _search = string.Empty;
+    private WorkOrderStatus? _statusFilter;
+
+    private IEnumerable<WorkOrder> FilteredOrders
+    {
+        get
+        {
+            IEnumerable<WorkOrder> q = _orders;
+            if (!string.IsNullOrWhiteSpace(_search))
+            {
+                var key = _search.Trim();
+                q = q.Where(o =>
+                    (o.Code?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (o.Model?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (o.Recipe?.Model?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (o.Recipe?.Name?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (o.Remark?.Contains(key, StringComparison.OrdinalIgnoreCase) ?? false));
+            }
+            if (_statusFilter is { } status)
+            {
+                q = q.Where(o => o.Status == status);
+            }
+            return q;
+        }
+    }
+
+    private void SetStatusFilter(WorkOrderStatus? status) => _statusFilter = status;
+
+    private Variant StatusFilterVariant(WorkOrderStatus? status) =>
+        _statusFilter == status ? Variant.Filled : Variant.Outlined;
+
+    private Color StatusFilterColor(WorkOrderStatus? status) =>
+        _statusFilter == status ? Color.Primary : Color.Default;
+
+    private bool StatusFilterPressed(WorkOrderStatus? status) => _statusFilter == status;
+
+    private void ClearFilters()
+    {
+        _search = string.Empty;
+        _statusFilter = null;
+    }
     private bool _loading;
     private bool _saving;
     private string? _loadError;

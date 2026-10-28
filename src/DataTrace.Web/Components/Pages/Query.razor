@@ -30,7 +30,7 @@
     </Actions>
 </PageHeader>
 
-<MudStack Row="true" Spacing="1" Class="mb-3" role="group" aria-label="查询模式">
+<MudStack Row="true" Spacing="1" Class="mb-3 dt-view-toggle" role="group" aria-label="查询模式">
     <MudButton Size="Size.Small" Variant="@(_traceMode ? Variant.Outlined : Variant.Filled)"
                Color="Color.Primary" StartIcon="@Icons.Material.Filled.TableRows"
                aria-pressed="@(_traceMode ? "false" : "true")"
@@ -60,7 +60,7 @@ else
                            StartHour="_shiftSettings.ShiftStartHour" LengthHours="_shiftSettings.ShiftLengthHours"
                            Disabled="_exporting" Apply="ApplyPresetAsync" />
     </div>
-    <MudPaper Class="dt-filter-card mb-3">
+    <div class="dt-page-toolbar" aria-label="查询筛选"><MudPaper Class="dt-filter-card mb-0" Elevation="0" Outlined="true">
         <form class="dt-query-form" @onsubmit="OnSubmit" @onsubmit:preventDefault="true">
             <section class="dt-query-primary" aria-labelledby="dt-query-primary-heading">
                 <h2 id="dt-query-primary-heading" class="dt-query-section-heading">快速查询</h2>
@@ -171,6 +171,7 @@ else
             </div>
         </form>
     </MudPaper>
+</div>
 </div>
 
 @* 「变更即查询」之后，六个条件散在各个控件里，筛完只剩一个命中数，回头看不出自己是按什么在筛。

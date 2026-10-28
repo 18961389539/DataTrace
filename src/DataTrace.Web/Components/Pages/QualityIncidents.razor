@@ -10,7 +10,10 @@
 @inject DtToast Toast
 @inject NavigationManager Nav
 
-<PageHeader Title="异常处置台" Description="从异常证据到复核关闭的处置记录。">
+<PageHeader Title="异常处置台" Description="从异常证据到复核关闭的处置记录。" HelpRoute="quality/incidents">
+    <ChildContent>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">共 @_total 张</MudChip>
+    </ChildContent>
     <Actions>
         @if (_canWork)
         {
@@ -22,8 +25,8 @@
 
 @if (_canWork)
 {
-    <MudPaper Class="pa-3 mb-3">
-        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap"
+    <MudPaper Class="dt-queue-panel mb-3" Elevation="0">
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap dt-view-toggle"
                   role="group" aria-label="质量异常工作队列">
             <MudText Typo="Typo.subtitle2">工作队列</MudText>
             <MudButton Size="Size.Small" Variant="@QueueVariant("all")" aria-pressed="@(_queue == "all" ? "true" : "false")"
@@ -42,7 +45,8 @@
     </MudPaper>
 }
 
-<MudPaper Class="dt-filter-card mb-3">
+<div class="dt-page-toolbar" aria-label="异常单筛选">
+<MudPaper Class="dt-filter-card mb-0" Elevation="0" Outlined="true">
     <MudGrid Class="dt-filters">
         <MudItem xs="12" sm="6" md="3">
             <MudSelect T="QualityIncidentStatus?" @bind-Value="_status" Label="状态" HelperText="可用快捷队列聚焦待办" Clearable="true" Dense="true">
@@ -79,6 +83,7 @@
         状态、工站、负责人和关键词在点击“查询”后生效；上方工作队列切换后立即刷新。
     </MudText>
 </MudPaper>
+</div>
 
 @if (_error is not null)
 {
@@ -100,7 +105,7 @@
 else
 {
     <MudTable Items="_items" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading" FixedHeader="true"
-              Height="var(--dt-grid-height)" Class="dt-clickable">
+              Height="var(--dt-grid-height)" Class="dt-clickable dt-list-table">
         <HeaderContent>
             <MudTh>单号</MudTh>
             <MudTh>异常</MudTh>

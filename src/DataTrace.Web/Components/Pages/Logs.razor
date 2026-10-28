@@ -1,4 +1,4 @@
-﻿@page "/logs"
+@page "/logs"
 @attribute [Authorize(Roles = "Administrator,Engineer")]
 @using DataTrace.Application.Configuration
 @using DataTrace.Domain.Entities
@@ -11,6 +11,10 @@
 @inject DtToast Toast
 
 <PageHeader Title="审计日志" HelpRoute="logs" Busy="_loading">
+    <ChildContent>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">命中 @_total</MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">每页 @_pageSize</MudChip>
+    </ChildContent>
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">
             命中 @_total 条（配置库 AuditLogs；每页 @_pageSize 条）
@@ -35,7 +39,7 @@
     }
 </MudPaper>
 
-<MudPaper Class="dt-filter-card mb-3">
+<div class="dt-page-toolbar" aria-label="审计筛选"><MudPaper Class="dt-filter-card mb-0" Elevation="0" Outlined="true">
     <MudGrid Class="dt-filters">
         <MudItem xs="12" sm="6" md="6">
             <MudTextField @bind-Value="_keyword" @bind-Value:after="OnFilterChanged" Label="关键字"
@@ -108,7 +112,7 @@
             @(_exporting ? $"导出中 {_exportedRows:N0}/{_exportTotal:N0}" : "完整导出")
         </MudButton>
     </MudStack>
-</MudPaper>
+</MudPaper></div>
 
 @* 筛完只剩一个命中数，当前条件就看不回来了 —— 这里把条件摊开，逐个可删。
    与查询页/报表页同一套数据驱动写法；aria-label 带上具体条件，

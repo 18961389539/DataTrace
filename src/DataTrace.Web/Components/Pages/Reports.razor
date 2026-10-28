@@ -23,12 +23,16 @@
 @inject NavigationManager Nav
 
 <PageHeader Title="报表" HelpRoute="reports" Busy="_loading">
+    <ChildContent>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@DateRangeFilter.Format(_from, _to)</MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">共 @_fpy.Sum(x => x.Total) 条</MudChip>
+    </ChildContent>
     <Actions>
-        <MudText Typo="Typo.caption" Class="dt-muted">@DateRangeFilter.Format(_from, _to) 　共 @_fpy.Sum(x => x.Total) 条记录</MudText>
+        <MudText Typo="Typo.caption" Class="dt-muted">改条件即重算</MudText>
     </Actions>
 </PageHeader>
 
-<MudPaper Class="dt-filter-card mb-3">
+<div class="dt-page-toolbar" aria-label="报表筛选"><MudPaper Class="dt-filter-card mb-0" Elevation="0" Outlined="true">
     @* 统计要动几组查询，期间下面的图表还是上一轮的值；没有这根进度条就是"看着有数、其实是旧的"。 *@
     @if (_loading)
     {
@@ -88,7 +92,7 @@
             <MudText Typo="Typo.caption" Class="dt-muted align-self-center">改任一条件即自动重算</MudText>
         </MudStack>
     </form>
-</MudPaper>
+</MudPaper></div>
 
 @* 与查询页、日志页同一套：改完条件只剩一屏数字，条件本身就看不回来了。
    点位不列进来 —— 它不是"筛掉什么"，只是趋势与过程能力共用的看图对象。 *@
