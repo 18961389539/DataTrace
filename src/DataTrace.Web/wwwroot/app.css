@@ -3936,3 +3936,74 @@ body:has(.dt-alarm-bar) .dt-alarms-toolbar {
     }
 }
 
+/* 设备报警页 · 第二轮：行严重度、接手强调、归档折叠 */
+.dt-alarms-summary-chip {
+    cursor: pointer;
+}
+
+.dt-alarms-summary-chip:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 2px;
+}
+
+.dt-alarms-table--action .dt-alarms-col-take,
+.dt-alarms-table--action td.dt-alarms-col-take {
+    white-space: nowrap;
+}
+
+.dt-alarm-take {
+    min-width: 5.5rem;
+    font-weight: 700;
+}
+
+.dt-alarm-take:focus-visible {
+    outline: 2px solid var(--mud-palette-primary);
+    outline-offset: 2px;
+}
+
+.dt-alarm-row--urgent td:first-child {
+    box-shadow: inset 3px 0 0 var(--mud-palette-error);
+}
+
+.dt-alarm-row--high td:first-child {
+    box-shadow: inset 3px 0 0 var(--mud-palette-warning);
+}
+
+.dt-alarm-incident {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.dt-alarm-kind {
+    font-size: 0.75rem;
+    color: var(--mud-palette-text-secondary);
+}
+
+.dt-alarms-archive-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.dt-alarms-table {
+    font-size: 0.9rem;
+}
+
+.dt-alarms-table .mud-table-cell {
+    padding-top: 6px;
+    padding-bottom: 6px;
+}
+
+@media (max-width: 600px) {
+    .dt-alarm-take {
+        width: 100%;
+    }
+
+    .dt-alarms-col-take {
+        display: block;
+    }
+}
