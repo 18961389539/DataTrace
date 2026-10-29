@@ -202,6 +202,7 @@ public sealed partial class DatabaseSeeder
 
         // 演示型号必须在点位落库拿到主键之后才能建（限值覆盖行要引用 TagId）。
         await SeedDemoRecipeAsync(cancellationToken).ConfigureAwait(false);
+        await EnsureDemoStationAlarmsAsync(cancellationToken).ConfigureAwait(false);
         if (!await _db.ConfigurationRevisions.AnyAsync(cancellationToken).ConfigureAwait(false))
         {
             await _configuration.InTransactionAsync(async token =>
