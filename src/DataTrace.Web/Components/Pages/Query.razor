@@ -174,6 +174,19 @@ else
 </div>
 </div>
 
+@* 快捷筛选放在更多条件外面：现场最常要的「仅 NG / 仅流程异常」不必再展开下拉。 *@
+<div class="dt-filter-chips mb-3" aria-label="快捷筛选">
+    <MudText Typo="Typo.caption" Class="dt-muted">快捷筛选</MudText>
+    <MudChip T="string" Size="Size.Small"
+             Variant="@(_resultCode == ResultCodes.ProcessAbnormal ? Variant.Filled : Variant.Outlined)"
+             Color="Color.Error" Disabled="_exporting"
+             OnClick="ApplyProcessAbnormalQuick">仅流程异常</MudChip>
+    <MudChip T="string" Size="Size.Small"
+             Variant="@(_judgement == Judgement.Ng ? Variant.Filled : Variant.Outlined)"
+             Color="Color.Error" Disabled="_exporting"
+             OnClick="ApplyNgQuick">仅 NG</MudChip>
+</div>
+
 @* 「变更即查询」之后，六个条件散在各个控件里，筛完只剩一个命中数，回头看不出自己是按什么在筛。
    这里把生效条件摊开，并且能只摘掉其中一个 —— 与日志页同一套 chips 写法。
    区间只在不是默认值（今天）时列出：否则默认进页面就挂着一个删掉也没变化的 chip。 *@
@@ -272,17 +285,27 @@ else
             </MudTooltip>
         </MudTd>
         <MudTd DataLabel="耗时" Class="dt-num dt-nowrap">@DurationFormat.Text(context.Record.DurationMs)</MudTd>
-        <MudTd DataLabel="操作" Class="dt-right">
-            @* 复制放在操作列而不是托盘码单元格里：整行可点进明细时，
+                <MudTd DataLabel="操作" Class="dt-right">
+            @* 复制/追溯放在操作列而不是单元格里：整行可点进明细时，
                行中间的任何小控件都会抢走"点行"这一下，尤其在小屏上。
                外面这层 span 负责掐断冒泡 —— 行点击绑在 tr 上，
                不拦的话点复制会同时跳进明细。 *@
             <span @onclick:stopPropagation="true">
+                <MudTooltip Text="复制流水号">
+                    <MudIconButton Icon="@Icons.Material.Filled.Tag" Size="Size.Small"
+                                   aria-label="复制流水号"
+                                   Disabled="@(string.IsNullOrWhiteSpace(context.Record.SerialNo))"
+                                   OnClick="@(() => CopyText(context.Record.SerialNo, "流水号"))" />
+                </MudTooltip>
                 <MudTooltip Text="复制托盘码">
                     <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small"
                                    aria-label="复制托盘码"
-                                   OnClick="@(() => CopyPallet(context.Record.PalletCode))" />
+                                   OnClick="@(() => CopyText(context.Record.PalletCode, "托盘码"))" />
                 </MudTooltip>
+                <MudButton Size="Size.Small" Variant="Variant.Text"
+                           StartIcon="@Icons.Material.Filled.AccountTree"
+                           Disabled="@(_loading || _exporting || _displayedVersion != _queryVersion || string.IsNullOrWhiteSpace(context.Record.SerialNo))"
+                           Href="@TraceUrl(context)">追溯</MudButton>
                 <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
                            Disabled="@(_loading || _exporting || _displayedVersion != _queryVersion)"
                            Href="@DetailUrl(context)">明细</MudButton>
@@ -1159,24 +1182,59 @@ else
 
     public void Dispose() => _debounceCts?.Dispose();
 
-    private async Task CopyPallet(string palletCode)
+    private async Task CopyText(string? value, string label)
     {
-        if (string.IsNullOrWhiteSpace(palletCode))
+        if (string.IsNullOrWhiteSpace(value))
         {
             return;
         }
 
         try
         {
-            var copied = await Js.InvokeAsync<bool>("dtCopy", palletCode);
+            var copied = await Js.InvokeAsync<bool>("dtCopy", value);
             // 浏览器拒绝剪贴板时不能照样报"已复制"：操作工拿着这条提示去贴单，结果是空码上机。
-            Toast.Add(copied ? $"已复制 {palletCode}" : "复制失败：浏览器不允许写入剪贴板，请手动选中复制",
+            Toast.Add(copied ? $"已复制{label} {value}" : "复制失败：浏览器不允许写入剪贴板，请手动选中复制",
                 copied ? Severity.Success : Severity.Warning);
         }
         catch (Exception ex)
         {
             Toast.Add($"复制失败：{ex.Message}", Severity.Error);
         }
+    }
+
+    private string TraceUrl(CollectRecordListItem item)
+    {
+        var serial = item.Record.SerialNo?.Trim() ?? "";
+        if (serial.Length == 0)
+        {
+            return "query?view=trace";
+        }
+
+        var url = $"query?view=trace&trace={Uri.EscapeDataString(serial)}";
+        if (item.Record.PalletSessionId > 0)
+        {
+            url += $"&sessionMonth={Uri.EscapeDataString(item.MonthKey)}&sessionId={item.Record.PalletSessionId}";
+        }
+
+        return url;
+    }
+
+    /// <summary>快捷「仅流程异常」：结果码=流程异常。再次点同一 chip 则取消该条件。</summary>
+    private async Task ApplyProcessAbnormalQuick()
+    {
+        if (_exporting) return;
+        _resultCode = _resultCode == ResultCodes.ProcessAbnormal ? null : ResultCodes.ProcessAbnormal;
+        _advancedFiltersExpanded = true;
+        await Search();
+    }
+
+    /// <summary>快捷「仅 NG」：判定=NG。再次点同一 chip 则取消该条件。</summary>
+    private async Task ApplyNgQuick()
+    {
+        if (_exporting) return;
+        _judgement = _judgement == Judgement.Ng ? null : Judgement.Ng;
+        _advancedFiltersExpanded = true;
+        await Search();
     }
 
 

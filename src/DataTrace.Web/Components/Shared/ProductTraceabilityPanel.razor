@@ -1,13 +1,20 @@
+@using System.Text
 @using DataTrace.Application.Configuration
 @using DataTrace.Application.Runtime
 @using DataTrace.Application.Reporting
 @using DataTrace.Domain.Constants
 @using DataTrace.Domain.Entities
 @using DataTrace.Domain.Enums
+@using DataTrace.Shared
 @using DataTrace.Web.Services
+@using Microsoft.AspNetCore.Components.Authorization
 @inject IRuntimeStore Store
 @inject IConfigRepository Config
+@inject IAuditLogger Audit
+@inject AuthenticationStateProvider Auth
 @inject NavigationManager Nav
+@inject IJSRuntime Js
+@inject DtToast Toast
 
 <MudPaper Class="dt-filter-card mb-3">
     <form @onsubmit="SubmitSearchAsync" @onsubmit:preventDefault="true">
@@ -114,6 +121,16 @@ else if (_traces.Count > 0 && SelectedTrace is { } trace)
             <MudText Typo="Typo.caption" Class="dt-muted">
                 @StationCoverageText(trace)
             </MudText>
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Print"
+                       Class="dt-print-hide" Disabled="_loading" OnClick="PrintAsync">打印履历</MudButton>
+            @if (_canExport)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="dt-print-hide"
+                           StartIcon="@(_exporting ? Icons.Material.Filled.Sync : Icons.Material.Filled.FileDownload)"
+                           Disabled="@(_loading || _exporting)" OnClick="@(() => ExportTraceAsync(trace))">
+                    @(_exporting ? "导出中…" : "导出履历")
+                </MudButton>
+            }
         </MudStack>
         <MudStack Row="true" Spacing="3" Class="flex-wrap dt-trace-summary">
             <MudText Typo="Typo.caption"><span class="dt-muted">型号</span> @RecipeLabel(trace)</MudText>
@@ -325,6 +342,8 @@ else
     /// <summary>当前会话的 MES 出站记录；null 表示没有记录（未启用 MES，或还没入队）。</summary>
     private MesSessionOutbox? _mesOutbox;
     private bool _mesLoaded;
+    private bool _canExport;
+    private bool _exporting;
 
     private CollectSessionTrace? SelectedTrace
         => _traces.FirstOrDefault(x => TraceKey(x) == _selectedTraceKey);
@@ -357,6 +376,8 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        var auth = await Auth.GetAuthenticationStateAsync();
+        _canExport = auth.User.IsInRole(AppRoles.Administrator) || auth.User.IsInRole(AppRoles.Engineer);
         var snapshot = await Config.GetSnapshotAsync();
         _stations = snapshot.Stations
             .Where(s => s.Enabled)
@@ -830,5 +851,111 @@ else
             MesOutboxStatus.Failed => $"推送失败{attempts}{lastAttempt}{(string.IsNullOrWhiteSpace(outbox.LastError) ? "" : $"：{outbox.LastError}")}",
             _ => $"排队等待推送{attempts}{lastAttempt}"
         };
+    }
+
+    private async Task PrintAsync()
+    {
+        try
+        {
+            if (!await Js.InvokeAsync<bool>("dtPrint"))
+            {
+                Toast.Add("浏览器没有打开打印对话框，请用 Ctrl+P 重试", Severity.Warning);
+            }
+        }
+        catch (JSException)
+        {
+            Toast.Add("打印不可用，请用 Ctrl+P 重试", Severity.Warning);
+        }
+    }
+
+    private async Task ExportTraceAsync(CollectSessionTrace trace)
+    {
+        if (_exporting || !_canExport) return;
+        _exporting = true;
+        try
+        {
+            var serial = trace.Records[0].SerialNo;
+            var sb = new StringBuilder();
+            sb.Append(CsvExporter.BuildRow(new[] { "字段", "值" }));
+            void AddSummary(string key, string? value)
+            {
+                sb.Append('\n');
+                sb.Append(CsvExporter.BuildRow(new[] { key, value ?? "" }));
+            }
+            AddSummary("流水号", serial);
+            AddSummary("托盘码", trace.Records[0].PalletCode);
+            AddSummary("会话", TraceKey(trace));
+            AddSummary("状态", TraceStatusText(trace));
+            AddSummary("型号", RecipeLabel(trace));
+            AddSummary("起止", TraceTimeRange(trace));
+            AddSummary("最终判定", FinalJudgement(trace));
+            AddSummary("判定覆盖", JudgementCoverageText(trace));
+            AddSummary("首因", FirstNg(trace));
+            AddSummary("会话结束", SessionEndText(trace));
+            AddSummary("MES 推送", MesText());
+
+            sb.Append('\n');
+            sb.Append(CsvExporter.BuildRow(new[] { "工站", "名称", "触发时间", "判定", "结果码", "耗时(ms)", "超限项", "错误信息" }));
+            var stationCount = 0;
+            foreach (var row in Timeline(trace))
+            {
+                stationCount++;
+                var step = row.Step;
+                sb.Append('\n');
+                if (step.Record is { } record)
+                {
+                    sb.Append(CsvExporter.BuildRow(new[]
+                    {
+                        step.Code,
+                        step.Name,
+                        record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                        DisplayLabels.JudgementText(record.Judgement),
+                        ResultCodes.Describe(record.ResultCode),
+                        record.DurationMs.ToString(),
+                        record.TagValues.Count(v => v.IsOutOfLimit).ToString(),
+                        record.ErrorMessage ?? ""
+                    }));
+                }
+                else
+                {
+                    sb.Append(CsvExporter.BuildRow(new[]
+                    {
+                        step.Code,
+                        step.Name,
+                        "",
+                        StepStatus(step, trace),
+                        "",
+                        "",
+                        "",
+                        ""
+                    }));
+                }
+            }
+
+            var name = CsvExporter.FileName($"datatrace_trace_{serial}");
+            await Js.InvokeVoidAsync("dtDownload", name, CsvExporter.ToBase64(sb.ToString()));
+
+            try
+            {
+                var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "?";
+                await Audit.WriteAsync(user, "Export", "Query",
+                    $"trace/{trace.MonthKey}/{trace.SessionId?.ToString() ?? serial}",
+                    null,
+                    $"serial={serial};stations={stationCount};status={TraceStatusText(trace)};mes={MesText()}");
+                Toast.Add("已导出产品履历", Severity.Success);
+            }
+            catch (Exception ex)
+            {
+                Toast.Add($"已导出产品履历，但审计记录写入失败：{ex.Message}", Severity.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"导出失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _exporting = false;
+        }
     }
 }

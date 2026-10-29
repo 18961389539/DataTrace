@@ -695,6 +695,46 @@ public class QueryPageTests : WebTestBase
         Assert.Contains("缺数据", cut.Markup);
     }
 
+    [Fact]
+    public async Task Quick_chips_apply_process_abnormal_and_ng_filters()
+    {
+        var cut = Render();
+        Assert.Contains("快捷筛选", cut.Markup);
+        Assert.Contains("仅流程异常", cut.Markup);
+        Assert.Contains("仅 NG", cut.Markup);
+
+        await cut.InvokeAsync(() => cut.FindAll("div[aria-label='快捷筛选'] .mud-chip")
+            .Single(chip => chip.TextContent.Contains("仅流程异常"))
+            .Click());
+        _store.Verify(store => store.QueryAsync(It.Is<CollectQueryRequest>(request =>
+            request.ResultCode == ResultCodes.ProcessAbnormal), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+
+        await cut.InvokeAsync(() => cut.FindAll("div[aria-label='快捷筛选'] .mud-chip")
+            .Single(chip => chip.TextContent.Contains("仅 NG"))
+            .Click());
+        _store.Verify(store => store.QueryAsync(It.Is<CollectQueryRequest>(request =>
+            request.Judgement == Judgement.Ng), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public void List_row_exposes_serial_copy_and_trace_entry()
+    {
+        var cut = Render();
+        Assert.NotNull(cut.Find("[aria-label='复制流水号']"));
+        Assert.NotNull(cut.Find("[aria-label='复制托盘码']"));
+        var trace = cut.FindAll("a").Single(a => a.TextContent.Contains("追溯") && (a.GetAttribute("href") ?? "").Contains("view=trace"));
+        Assert.Contains("view=trace", trace.GetAttribute("href") ?? "");
+        Assert.Contains("trace=", trace.GetAttribute("href") ?? "");
+    }
+
+    [Fact]
+    public void Trace_panel_offers_print_and_export_for_a_loaded_session()
+    {
+        var cut = RenderTrace(Trace("20260919-000001", Judgement.Ng), "20260919-000001");
+        Assert.Contains("打印履历", cut.Markup);
+        Assert.Contains("导出履历", cut.Markup);
+    }
+
     private IRenderedComponent<ProductTraceabilityPanel> RenderTrace(CollectSessionTrace trace, string serial)
     {
         _store.Setup(store => store.FindSessionTracesBySerialNoAsync(serial, It.IsAny<CancellationToken>()))

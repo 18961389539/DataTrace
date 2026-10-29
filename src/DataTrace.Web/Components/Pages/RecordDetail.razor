@@ -77,6 +77,8 @@ else
             </MudTooltip>
             <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.History"
                        Href="@PalletHistoryUrl()">同托盘近 30 天</MudButton>
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.AccountTree"
+                       Href="@ProductTraceUrl()">产品履历</MudButton>
             <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Print"
                        Class="dt-print-hide" OnClick="PrintAsync">打印</MudButton>
             @if (_canCreateQualityIncident)
@@ -167,7 +169,39 @@ else
         </MudPaper>
     }
 
-    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mt-4 mb-1">
+        @if (_productRows.Count > 0)
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Class="mt-4 mb-1">
+            <MudText Typo="Typo.h6">腔位</MudText>
+            <MudText Typo="Typo.caption" Class="dt-muted">
+                共 @_productRows.Count 个位置 · 多腔位工站按 Position 拆开展示判定与 NG 原因
+            </MudText>
+        </MudStack>
+        <MudTable Items="_productRows" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm">
+            <HeaderContent>
+                <MudTh>位置</MudTh>
+                <MudTh>有料</MudTh>
+                <MudTh>判定</MudTh>
+                <MudTh>NG 原因</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="位置" Class="dt-nowrap">@context.PositionIndex</MudTd>
+                <MudTd DataLabel="有料">@(context.Occupied ? "有料" : "空位")</MudTd>
+                <MudTd DataLabel="判定">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                             Color="@(context.Judgement == Judgement.Ng ? Color.Error : context.Judgement == Judgement.Ok ? Color.Success : Color.Default)">
+                        @DisplayLabels.JudgementText(context.Judgement)
+                    </MudChip>
+                </MudTd>
+                <MudTd DataLabel="NG 原因">@(string.IsNullOrWhiteSpace(context.NgReason) ? "—" : context.NgReason)</MudTd>
+            </RowTemplate>
+            <NoRecordsContent>
+                <MudText Typo="Typo.body2" Class="dt-muted py-3">该记录没有腔位数据。</MudText>
+            </NoRecordsContent>
+        </MudTable>
+    }
+
+<MudStack Row="true" AlignItems="AlignItems.Center" Class="mt-4 mb-1">
         <MudText Typo="Typo.h6">点位</MudText>
         @if (_outOfLimitCount > 0)
         {
@@ -343,6 +377,7 @@ else
     /// <summary>读不出来的曲线：曲线 Id → 界面提示。损坏与缺失的说明不同。</summary>
     private readonly Dictionary<long, string> _curveErrors = [];
     private List<TagValue> _tagRows = [];
+    private List<ProductRecord> _productRows = [];
     private int _outOfLimitCount;
     private int _warningCount;
     /// <summary>归档原文：默认收着，点了才读 —— 明细页大多数查看并不需要这份原始 JSON。</summary>
@@ -378,6 +413,7 @@ else
         {
             _record = null;
             _tagRows = [];
+            _productRows = [];
             _outOfLimitCount = 0;
             _warningCount = 0;
             _loadError = $"记录读取失败：{ex.Message}";
@@ -388,6 +424,7 @@ else
         if (_record is null)
         {
             _tagRows = [];
+            _productRows = [];
             _outOfLimitCount = 0;
             _warningCount = 0;
             _loaded = true;
@@ -399,6 +436,10 @@ else
             .OrderByDescending(v => v.IsOutOfLimit)
             .ThenByDescending(v => v.IsWarning)
             .ThenBy(v => v.TagName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        _productRows = _record.Products
+            .OrderBy(p => p.PositionIndex)
+            .ThenBy(p => p.Id)
             .ToList();
         _outOfLimitCount = _tagRows.Count(v => v.IsOutOfLimit);
         _warningCount = _tagRows.Count(v => v.IsWarning);
@@ -466,6 +507,23 @@ else
     {
         var pallet = _record?.PalletCode ?? "";
         return $"/query?pallet={Uri.EscapeDataString(pallet)}&days=30";
+    }
+
+    private string ProductTraceUrl()
+    {
+        var serial = _record?.SerialNo?.Trim() ?? "";
+        if (serial.Length == 0)
+        {
+            return "query?view=trace";
+        }
+
+        var url = $"query?view=trace&trace={Uri.EscapeDataString(serial)}";
+        if (_record is { PalletSessionId: > 0 })
+        {
+            url += $"&sessionMonth={Uri.EscapeDataString(MonthKey)}&sessionId={_record.PalletSessionId}";
+        }
+
+        return url;
     }
 
     private string QualityIncidentUrl()
