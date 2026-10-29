@@ -98,7 +98,7 @@ public static class HelpTexts
     public static readonly HelpTopic ExportLimit = new(
         "导出上限",
         $"一次最多导出前 {SystemDefaults.ExportRowLimit:N0} 条（按当前筛选与排序取）。",
-        $"命中更多时会提示「共命中 N 条，已导出前 {SystemDefaults.ExportRowLimit:N0} 条」，请缩小区间分次导。");
+        $"命中更多时请用「按月分包导出」，或缩小区间分次导。宽表 CSV 会把点位值展开成列；查询方案保存在服务器，按登录账号共用。");
 
     public static readonly HelpTopic ResultCode = new(
         "结果码",

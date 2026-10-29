@@ -8,8 +8,28 @@
         <MudTh Class="dt-num">占比</MudTh>
     </HeaderContent>
     <RowTemplate>
-        <MudTd DataLabel="项目">@context.Name</MudTd>
-        <MudTd DataLabel="次数" Class="dt-num">@context.Count</MudTd>
+        <MudTd DataLabel="项目">
+            @if (ItemHref?.Invoke(context) is { Length: > 0 } href)
+            {
+                <MudLink Href="@href" Underline="Underline.Hover" Color="Color.Default"
+                         aria-label="@($"在数据查询中查看 {context.Name}")">@context.Name</MudLink>
+            }
+            else
+            {
+                @context.Name
+            }
+        </MudTd>
+        <MudTd DataLabel="次数" Class="dt-num">
+            @if (ItemHref?.Invoke(context) is { Length: > 0 } countHref)
+            {
+                <MudLink Href="@countHref" Underline="Underline.Hover" Color="Color.Error"
+                         aria-label="@($"查询 {context.Name} 相关采集记录")"><strong>@context.Count</strong></MudLink>
+            }
+            else
+            {
+                @context.Count
+            }
+        </MudTd>
         <MudTd DataLabel="占比" Class="dt-num">
             @* 百分比之外给一根条：两行之间差 3 个百分点，光看数字要逐行读，
                条形让"哪几个是大头"在第一眼就分出来。条是装饰，读屏靠后面的百分数。 *@
@@ -35,6 +55,9 @@
     [Parameter] public Func<int, double> Share { get; set; } = _ => 0;
 
     [Parameter] public string EmptyText { get; set; } = "";
+
+    /// <summary>点击项目/次数时跳到数据查询的地址；null 表示不可点。</summary>
+    [Parameter] public Func<IssueTopItem, string?>? ItemHref { get; set; }
 
     /// <summary>
     /// 条形填充色的附加类：不良用默认（红），预警传 "warn"（黄）。

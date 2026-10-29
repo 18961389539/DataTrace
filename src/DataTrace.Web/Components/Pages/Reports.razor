@@ -305,6 +305,7 @@
                 <MudPaper Class="pa-4 dt-fill">
                     <MudText Typo="Typo.h6" Class="mb-2">不良 Top N <InfoHint Topic="HelpTexts.IssueShare" /></MudText>
                     <IssueTopTable Items="_defects.Items" Loading="_loading" Share="DefectShare"
+                                   ItemHref="DefectQueryUrl"
                                    EmptyText="区间内没有不良记录，工站状态良好。" />
                     @if (_defects.Items.Count > 0)
                     {
@@ -318,6 +319,7 @@
                     {
                         <MudText Typo="Typo.subtitle2" Class="mt-4 mb-1">没读到数 <InfoHint Topic="HelpTexts.MissingPoint" /></MudText>
                         <IssueTopTable Items="_defects.MissingItems" Loading="_loading" Share="MissingShare"
+                                       ItemHref="DefectQueryUrl"
                                        EmptyText="区间内没有没读到数的点。" />
                         <MudText Typo="Typo.caption" Class="dt-muted mt-2">
                             区间共 @_defects.MissingTotal 次没读到数。这些次数不在上面的超规格榜里。
@@ -395,6 +397,7 @@
                         </MudText>
                     </MudStack>
                     <IssueTopTable Items="_warnings.Items" Loading="_loading" Share="WarningShare" BarClass="warn"
+                                   ItemHref="WarningQueryUrl"
                                    EmptyText="区间内没有任何点位进入预警带。若这里长期为空，也可能说明预警限还没配。" />
                     @if (_warnings.Items.Count > 0)
                     {
@@ -999,6 +1002,58 @@ private async Task OnStationChanged(int? stationId)
         }
 
         return $"query?{string.Join("&", parts)}";
+    }
+
+    /// <summary>不良 Top N → 数据查询：同区间/工站/型号 + 超限点位名。</summary>
+    private string? DefectQueryUrl(IssueTopItem item)
+        => string.IsNullOrWhiteSpace(item.Name) ? null : IssueQueryUrl(item.Name, warning: false);
+
+    /// <summary>预警 Top N → 数据查询：同区间/工站/型号 + 预警点位名。</summary>
+    private string? WarningQueryUrl(IssueTopItem item)
+        => string.IsNullOrWhiteSpace(item.Name) ? null : IssueQueryUrl(item.Name, warning: true);
+
+    private string IssueQueryUrl(string tagName, bool warning)
+    {
+        var parts = new List<string>
+        {
+            $"from={DateRangeFilter.UrlValue(DateRangeFilter.QueryStart(_from))}",
+            $"to={DateRangeFilter.UrlValue(_to ?? DateTime.Today)}"
+        };
+
+        if (_stationId is { } stationId)
+        {
+            parts.Add($"station={stationId}");
+        }
+
+        AppendRecipeQueryParts(parts);
+
+        if (warning)
+        {
+            parts.Add($"warnTag={Uri.EscapeDataString(tagName)}");
+        }
+        else
+        {
+            parts.Add($"oolTag={Uri.EscapeDataString(tagName)}");
+        }
+
+        return $"query?{string.Join("&", parts)}";
+    }
+
+    private void AppendRecipeQueryParts(List<string> parts)
+    {
+        if (_recipeFilter is { Length: > 0 } recipeCode)
+        {
+            var recipe = CurveRecipeScope.FindByAnyCode(_knownRecipes, recipeCode);
+            var codes = recipe is null
+                ? [recipeCode]
+                : CurveRecipeScope.AllowedCodes(recipe.Code, recipe.PreviousCodes);
+            parts.Add($"recipe={Uri.EscapeDataString(codes[0])}");
+            parts.AddRange(codes.Skip(1).Select(code => $"alias={Uri.EscapeDataString(code)}"));
+        }
+        else if (_recipeFilter is not null)
+        {
+            parts.Add("norecipe=1");
+        }
     }
 
     private async Task Load()

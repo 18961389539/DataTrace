@@ -101,6 +101,15 @@ public sealed class CollectQueryRequest
     /// <summary>按超限点位名称精确匹配；非空时隐含 OnlyOutOfLimit。</summary>
     public string? OutOfLimitTagName { get; init; }
 
+    /// <summary>仅含预警点位的记录：至少有一个 TagValue.IsWarning。</summary>
+    public bool OnlyWarning { get; init; }
+
+    /// <summary>按预警点位名称精确匹配；非空时隐含 OnlyWarning。</summary>
+    public string? WarningTagName { get; init; }
+
+    /// <summary>导出宽表时带上 TagValues；列表翻页默认 false，避免拖慢分页。</summary>
+    public bool IncludeTagValues { get; init; }
+
     /// <summary>
     /// 结果码过滤，与「判定」是两件事：判定说的是超没超限，结果码说的是这次采集成没成。
     /// 排查「PLC 读取失败」这类问题时只有它能筛出来。

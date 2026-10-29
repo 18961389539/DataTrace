@@ -3,6 +3,8 @@
 @using DataTrace.Application.Configuration
 @using DataTrace.Application.Runtime
 @using DataTrace.Domain.Constants
+@using DataTrace.Domain.Entities
+@using DataTrace.Domain.Evaluation
 @using Microsoft.AspNetCore.Components.Authorization
 @inject IRuntimeStore Store
 @inject IConfigRepository Config
@@ -293,6 +295,20 @@ else
                     </MudItem>
 
                     <MudItem xs="12" sm="6" md="4" lg="3">
+                        <MudSelect T="int?" Value="_workOrderId" ValueChanged="OnWorkOrderChanged"
+                                   Label="工单（型号+时间窗）" Clearable="true" Dense="true" Disabled="_exporting"
+                                   HelperText="采集未绑定工单号；按工单型号与生产时间窗估算">
+                            @foreach (var order in _workOrders)
+                            {
+                                <MudSelectItem T="int?" Value="@((int?)order.Id)">
+                                    @(order.IsCurrent ? "★ " : "")@order.Code
+                                    @(string.IsNullOrWhiteSpace(order.Model) ? "" : $" · {order.Model}")
+                                </MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+
+                    <MudItem xs="12" sm="6" md="4" lg="3">
                         <MudNumericField T="int?" Value="_durationMinMs" ValueChanged="OnDurationMinChanged"
                                          Label="耗时 ≥ (ms)" Clearable="true" Min="0" Disabled="_exporting" />
                     </MudItem>
@@ -313,18 +329,32 @@ else
                                StartIcon="@Icons.Material.Filled.RestartAlt">
                         重置
                     </MudButton>
-                    @if (_canExport)
+                                                            @if (_canExport)
                     {
-                        @* 按钮禁用时浏览器不派发 hover，tooltip 挂在外层也收不到 —— 见 app.css 里
-                           .mud-tooltip .mud-button:disabled 那条：让按钮不接指针事件，hover 落到包裹层。 *@
+                        @* 主按钮仍是「导出 CSV」：现场最常用标准表；宽表/按月挂在旁边下拉。 *@
                         <MudTooltip Arrow="true" Text="@ExportTooltipText">
                             <ChildContent>
-                                <MudButton Variant="Variant.Outlined" OnClick="ExportCsv" Disabled="@(_loading || _exporting || _total == 0)"
+                                <MudButton Variant="Variant.Outlined" OnClick="@(() => ExportCsv(wide: false))"
+                                           Disabled="@(_loading || _exporting || _total == 0)"
                                            StartIcon="@Icons.Material.Filled.FileDownload">
                                     @(_exporting ? "导出中…" : "导出 CSV")
                                 </MudButton>
                             </ChildContent>
                         </MudTooltip>
+                        <MudMenu AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft"
+                                 Disabled="@(_loading || _exporting || _total == 0)">
+                            <ActivatorContent>
+                                <MudIconButton Icon="@Icons.Material.Filled.ArrowDropDown" Disabled="@(_loading || _exporting || _total == 0)"
+                                               aria-label="更多导出选项" />
+                            </ActivatorContent>
+                            <ChildContent>
+                                <MudMenuItem OnClick="@(async _ => await ExportCsv(wide: true))" Disabled="_exporting">宽表 CSV（含点位值）</MudMenuItem>
+                                <MudMenuItem OnClick="@(async _ => await ExportByMonthAsync(wide: false))" Disabled="_exporting">
+                                    @(_total > SystemDefaults.ExportRowLimit ? "按月分包（标准，完整）" : "按月分包（标准）")
+                                </MudMenuItem>
+                                <MudMenuItem OnClick="@(async _ => await ExportByMonthAsync(wide: true))" Disabled="_exporting">按月分包（宽表）</MudMenuItem>
+                            </ChildContent>
+                        </MudMenu>
                         <InfoHint Topic="HelpTexts.ExportLimit" Extra="@ExportHintExtra" />
                         <MudText Typo="Typo.caption" Class="dt-muted align-self-center" role="status">
                             导出范围 @DateRangeFilter.Format(_from, _to) · 命中 @_total.ToString("N0") 条 · 单次上限 @SystemDefaults.ExportRowLimit.ToString("N0") 条
@@ -616,6 +646,10 @@ else
     /// <summary>型号筛选：null/缺省=全部型号；<c>""</c>=未选型号；其它为精确匹配。</summary>
     private string? _recipeFilter;
     private IReadOnlyList<string> _recipeAliases = [];
+    private int? _workOrderId;
+    private IReadOnlyList<WorkOrder> _workOrders = [];
+    private bool _onlyWarning;
+    private string? _warningTag;
     private IReadOnlyList<Station> _stations = [];
     private SystemSettings _shiftSettings = new();
     private IReadOnlyList<CollectRecordListItem> _items = [];
@@ -649,7 +683,7 @@ else
     /// 而不是等导出完才在提示里看到"已导出前 N 条"。
     /// </summary>
     private string ExportHintExtra => _total > SystemDefaults.ExportRowLimit
-        ? $"当前命中 {_total:N0} 条，已超过单次上限。"
+        ? $"当前命中 {_total:N0} 条，已超过单次上限；请用「按月分包导出」或缩小区间。"
         : $"当前命中 {_total:N0} 条。";
 
     /// <summary>支持 /query?pallet=XXX&days=30 直达，便于从明细页或工单跳转。</summary>
@@ -700,6 +734,15 @@ else
 
     [SupplyParameterFromQuery(Name = "oolTag")]
     public string? OolTagQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "warn")]
+    public int? WarnQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "warnTag")]
+    public string? WarnTagQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "wo")]
+    public int? WorkOrderQuery { get; set; }
 
     [SupplyParameterFromQuery(Name = "sessionStatus")]
     public string? SessionStatusQuery { get; set; }
@@ -793,6 +836,9 @@ else
         if (DurationMaxQuery is >= 0) _durationMaxMs = DurationMaxQuery;
         if (OolQuery == 1) _onlyOutOfLimit = true;
         if (!string.IsNullOrWhiteSpace(OolTagQuery)) _outOfLimitTag = OolTagQuery.Trim();
+        if (WarnQuery == 1) _onlyWarning = true;
+        if (!string.IsNullOrWhiteSpace(WarnTagQuery)) _warningTag = WarnTagQuery.Trim();
+        if (WorkOrderQuery is > 0) _workOrderId = WorkOrderQuery;
         if (Enum.TryParse<SessionStatus>(SessionStatusQuery, true, out var sessionStatus))
         {
             _sessionStatus = sessionStatus;
@@ -845,6 +891,26 @@ else
         var snapshot = await Config.GetSnapshotAsync();
         _stations = snapshot.Stations;
         _shiftSettings = snapshot.Settings;
+        try
+        {
+            _workOrders = (await Config.GetWorkOrdersAsync())
+                .OrderByDescending(o => o.IsCurrent)
+                .ThenByDescending(o => o.CreatedAt)
+                .ToList();
+            if (_workOrderId is { } woId && _workOrders.All(o => o.Id != woId))
+            {
+                _workOrderId = null;
+            }
+            else if (_workOrderId is { } selected)
+            {
+                ApplyWorkOrderFilters(selected, toast: false);
+            }
+        }
+        catch
+        {
+            _workOrders = [];
+        }
+
         if (_viewMode != QueryViewMode.Trace)
         {
             await Load();
@@ -896,14 +962,20 @@ else
         return Task.CompletedTask;
     }
 
-    private CollectQueryRequest BuildRequest(int skip, int take, string? afterCursor = null)
+    private CollectQueryRequest BuildRequest(
+        int skip,
+        int take,
+        string? afterCursor = null,
+        DateTime? from = null,
+        DateTime? to = null,
+        bool includeTagValues = false)
     {
         var stationIds = _stationIds.Count > 1 ? _stationIds.OrderBy(x => x).ToArray() : null;
         var stationId = _stationIds.Count == 1 ? _stationIds.First() : (int?)null;
         return new()
         {
-            From = DateRangeFilter.QueryStart(_from),
-            To = DateRangeFilter.QueryEnd(_to),
+            From = DateRangeFilter.QueryStart(from ?? _from),
+            To = DateRangeFilter.QueryEnd(to ?? _to),
             PalletCode = string.IsNullOrWhiteSpace(_pallet) ? null : _pallet.Trim(),
             SerialNo = string.IsNullOrWhiteSpace(_serialNo) ? null : _serialNo.Trim(),
             StationId = stationId,
@@ -914,6 +986,9 @@ else
             DurationMaxMs = _durationMaxMs,
             OnlyOutOfLimit = _onlyOutOfLimit || !string.IsNullOrWhiteSpace(_outOfLimitTag),
             OutOfLimitTagName = string.IsNullOrWhiteSpace(_outOfLimitTag) ? null : _outOfLimitTag.Trim(),
+            OnlyWarning = _onlyWarning || !string.IsNullOrWhiteSpace(_warningTag),
+            WarningTagName = string.IsNullOrWhiteSpace(_warningTag) ? null : _warningTag.Trim(),
+            IncludeTagValues = includeTagValues,
             RecipeCodes = _recipeAliases.Count > 0
                 ? new[] { _recipeFilter! }.Concat(_recipeAliases).Distinct(StringComparer.Ordinal).ToArray()
                 : null,
@@ -1279,6 +1354,20 @@ else
             parts.Add("ool=1");
         }
 
+        if (!string.IsNullOrWhiteSpace(_warningTag))
+        {
+            parts.Add($"warnTag={Uri.EscapeDataString(_warningTag.Trim())}");
+        }
+        else if (_onlyWarning)
+        {
+            parts.Add("warn=1");
+        }
+
+        if (_workOrderId is { } workOrderId)
+        {
+            parts.Add($"wo={workOrderId}");
+        }
+
         if (_recipeFilter is { Length: > 0 } recipe)
         {
             parts.Add($"recipe={Uri.EscapeDataString(recipe.Trim())}");
@@ -1335,6 +1424,9 @@ else
         _durationMaxMs = request.DurationMaxMs;
         _onlyOutOfLimit = request.OnlyOutOfLimit && string.IsNullOrWhiteSpace(request.OutOfLimitTagName);
         _outOfLimitTag = request.OutOfLimitTagName;
+        _onlyWarning = request.OnlyWarning && string.IsNullOrWhiteSpace(request.WarningTagName);
+        _warningTag = request.WarningTagName;
+        _workOrderId = int.TryParse(query.GetValueOrDefault("wo"), out var wo) && wo > 0 ? wo : null;
         _recipeFilter = request.RecipeCodes?.FirstOrDefault() ?? request.RecipeCode;
         _recipeAliases = request.RecipeCodes?.Skip(1).ToArray() ?? [];
         _sortBy = request.SortBy;
@@ -1365,6 +1457,9 @@ else
         _durationMaxMs = null;
         _onlyOutOfLimit = false;
         _outOfLimitTag = null;
+        _onlyWarning = false;
+        _warningTag = null;
+        _workOrderId = null;
         _sessionStatus = null;
         _from = DateTime.Today;
         _to = DateTime.Today;
@@ -1451,6 +1546,22 @@ else
                 list.Add(new("仅超限", () => _onlyOutOfLimit = false));
             }
 
+            if (!string.IsNullOrWhiteSpace(_warningTag))
+            {
+                var tag = _warningTag!.Trim();
+                list.Add(new($"预警点位 {tag}", () => { _warningTag = null; _onlyWarning = false; }));
+            }
+            else if (_onlyWarning)
+            {
+                list.Add(new("仅预警", () => _onlyWarning = false));
+            }
+
+            if (_workOrderId is { } woId)
+            {
+                var code = _workOrders.FirstOrDefault(o => o.Id == woId)?.Code ?? woId.ToString();
+                list.Add(new($"工单 {code}", () => _workOrderId = null));
+            }
+
             if (_viewMode == QueryViewMode.Sessions && _sessionStatus is { } status)
             {
                 list.Add(new($"会话 {DisplayLabels.SessionStatusText(status)}", () => _sessionStatus = null));
@@ -1491,8 +1602,8 @@ else
     private string ExportTooltipText => _total == 0
         ? "当前没有命中记录，没有可导出的内容"
         : _total > SystemDefaults.ExportRowLimit
-            ? $"当前命中 {_total:N0} 条，单次最多导出前 {SystemDefaults.ExportRowLimit:N0} 条"
-            : $"导出当前命中的 {_total:N0} 条";
+            ? $"当前命中 {_total:N0} 条，单次最多导出前 {SystemDefaults.ExportRowLimit:N0} 条；可用「按月分包导出」拿全量"
+            : $"导出当前命中的 {_total:N0} 条（标准或宽表）";
 
     private string DetailUrl(CollectRecordListItem item)
         => RecordListNavigation.DetailUrl(item, CurrentListUrl(), (_page - 1) * _pageSize + _items.ToList().IndexOf(item));
@@ -1758,7 +1869,9 @@ else
     private static string RecipeLabel(string? code)
         => string.IsNullOrEmpty(code) ? "未选型号" : code;
 
-    private async Task ExportCsv()
+        private Task ExportCsv() => ExportCsv(wide: false);
+
+    private async Task ExportCsv(bool wide)
     {
         if (_loading || _exporting)
         {
@@ -1771,9 +1884,9 @@ else
             return;
         }
 
-        var request = BuildRequest(0, SystemDefaults.ExportRowLimit);
+        var request = BuildRequest(0, SystemDefaults.ExportRowLimit, includeTagValues: wide);
         var auditKey = $"{request.From:yyyy-MM-dd HH:mm:ss.fffffff}~{request.To:yyyy-MM-dd HH:mm:ss.fffffff}";
-        var auditFilters = ExportFilterSummary();
+        var auditFilters = ExportFilterSummary() + $";wide={(wide ? "是" : "否")}";
         _exporting = true;
         try
         {
@@ -1784,52 +1897,20 @@ else
                 return;
             }
 
-            if (result.Total > result.Items.Count
-                && await DialogService.ConfirmDangerAsync("确认截断导出",
+            if (result.Total > result.Items.Count)
+            {
+                var choice = await DialogService.ConfirmDangerAsync(
+                    "确认截断导出",
                     $"区间：{auditKey}\n工站：{StationFilterAuditLabel()}\n" +
-                    $"{auditFilters}\n命中 {result.Total:N0} 条，本次只导出按当前排序的前 {result.Items.Count:N0} 条；其余记录不会包含在文件中。",
-                    acknowledge: "我了解此文件不是全部查询结果", yesText: "导出前述记录", cancelText: "取消导出") != true) return;
-
-            var exportedAt = DateTime.Now;
-            var context = $"区间（含起止）={auditKey};工站={StationFilterAuditLabel()};" +
-                          $"{auditFilters};导出时间={exportedAt:yyyy-MM-dd HH:mm:ss};命中={result.Total};" +
-                          $"导出={result.Items.Count};截断={(result.Total > result.Items.Count ? "是" : "否")}";
-
-            @* 列与表格对齐：表格有耗时列，导出却没有 —— 刚修完 DurationMs 落库，
-               导出是唯一一个把节拍带不出去的出口。表头带单位，因为 CSV 里给的是毫秒整数。 *@
-            var csv = CsvExporter.Build(
-                ["触发时间", "流水号", "托盘码", "工站", "型号", "判定", "结果码", "结果说明", "耗时(ms)", "查询上下文"],
-                result.Items.Select(item => new[]
-                {
-                    item.Record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss"),
-                    item.Record.SerialNo ?? "",
-                    item.Record.PalletCode ?? "",
-                    item.Record.StationCode ?? "",
-                    RecipeLabel(item.Record.RecipeCode),
-                    DisplayLabels.JudgementTextLong(item.Record.Judgement),
-                    item.Record.ResultCode.ToString(),
-                    ResultCodes.Describe(item.Record.ResultCode),
-                    DurationMsText(item.Record.DurationMs),
-                    context
-                })
-            );
-
-            var stationName = StationFilterFileLabel();
-            var safeStation = new string(stationName.Where(character => char.IsLetterOrDigit(character) || character is '-' or '_').Take(40).ToArray());
-            await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName($"datatrace_query_{safeStation}_{request.From:yyyyMMddHHmmss}-{request.To:yyyyMMddHHmmss}"), CsvExporter.ToBase64(csv));
-            var message = result.Total > result.Items.Count
-                ? $"共命中 {result.Total} 条，已导出前 {result.Items.Count} 条"
-                : $"已导出 {result.Items.Count} 条";
-            try
-            {
-                await WriteExportAuditAsync(result.Items.Count, result.Total, auditKey, auditFilters);
-                Toast.Add(message, result.Total > result.Items.Count ? Severity.Warning : Severity.Success);
+                    $"{auditFilters}\n命中 {result.Total:N0} 条，本次只导出按当前排序的前 {result.Items.Count:N0} 条；其余记录不会包含在文件中。\n\n" +
+                    "需要完整结果请取消后选「按月分包导出」。",
+                    acknowledge: "我了解此文件不是全部查询结果",
+                    yesText: "导出前述记录",
+                    cancelText: "取消导出");
+                if (choice != true) return;
             }
-            catch (Exception ex)
-            {
-                // 文件已经下载完了：审计写库失败不能报成"导出失败"，现场会以为没导出去而重导。
-                Toast.Add($"{message}，但审计记录写入失败：{ex.Message}", Severity.Warning);
-            }
+
+            await DownloadCsvAsync(result.Items, result.Total, request.From, request.To, wide, auditKey, auditFilters);
         }
         catch (Exception ex)
         {
@@ -1845,6 +1926,289 @@ else
             }
         }
     }
+
+        private async Task ExportByMonthAsync(bool wide)
+    {
+        if (_loading || _exporting || _total == 0) return;
+        if (!_canExport)
+        {
+            Toast.Add("当前角色无权导出查询结果（需要管理员或工程师）", Severity.Warning);
+            return;
+        }
+
+        var from = DateRangeFilter.QueryStart(_from);
+        var to = DateRangeFilter.QueryEnd(_to);
+        var slices = MonthSlices(from, to).ToList();
+        if (slices.Count == 0)
+        {
+            Toast.Add("没有可导出的月份区间", Severity.Warning);
+            return;
+        }
+
+        if (await DialogService.ConfirmDangerAsync(
+                "按月分包导出",
+                $"将按 {slices.Count} 个月分别下载{(wide ? "宽表" : "标准")} CSV。\n区间 {DateRangeFilter.Format(_from, _to)}，命中约 {_total:N0} 条。浏览器可能会连续弹出多个下载。",
+                acknowledge: "我将收到多个下载文件",
+                yesText: "开始按月导出",
+                cancelText: "取消") != true)
+        {
+            return;
+        }
+
+        _exporting = true;
+        var exportedFiles = 0;
+        var exportedRows = 0;
+        var truncatedMonths = 0;
+        try
+        {
+            foreach (var (sliceFrom, sliceTo, label) in slices)
+            {
+                var request = BuildRequest(0, SystemDefaults.ExportRowLimit, from: sliceFrom, to: sliceTo, includeTagValues: wide);
+                var result = await Store.QueryAsync(request);
+                if (result.Items.Count == 0) continue;
+                if (result.Total > result.Items.Count) truncatedMonths++;
+
+                var auditKey = $"{sliceFrom:yyyy-MM-dd HH:mm:ss.fffffff}~{sliceTo:yyyy-MM-dd HH:mm:ss.fffffff}";
+                var auditFilters = ExportFilterSummary() + $";month={label};wide={(wide ? "是" : "否")};pack=monthly";
+                await DownloadCsvAsync(result.Items, result.Total, sliceFrom, sliceTo, wide, auditKey, auditFilters, fileSuffix: label);
+                exportedFiles++;
+                exportedRows += result.Items.Count;
+                await Task.Delay(250);
+            }
+
+            if (exportedFiles == 0)
+            {
+                Toast.Add("各月均无命中记录", Severity.Warning);
+            }
+            else
+            {
+                var msg = $"已按月导出 {exportedFiles} 个文件，共 {exportedRows:N0} 条";
+                if (truncatedMonths > 0)
+                    msg += $"（其中 {truncatedMonths} 个月仍超过单月上限 {SystemDefaults.ExportRowLimit:N0}，已截断）";
+                Toast.Add(msg, truncatedMonths > 0 ? Severity.Warning : Severity.Success);
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"按月导出失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _exporting = false;
+            if (_loadPending)
+            {
+                _loadPending = false;
+                await Load();
+            }
+        }
+    }
+
+    private async Task DownloadCsvAsync(
+        IReadOnlyList<CollectRecordListItem> items,
+        int total,
+        DateTime from,
+        DateTime to,
+        bool wide,
+        string auditKey,
+        string auditFilters,
+        string? fileSuffix = null)
+    {
+        var exportedAt = DateTime.Now;
+        var context = $"区间（含起止）={auditKey};工站={StationFilterAuditLabel()};" +
+                      $"{auditFilters};导出时间={exportedAt:yyyy-MM-dd HH:mm:ss};命中={total};" +
+                      $"导出={items.Count};截断={(total > items.Count ? "是" : "否")}";
+
+        string csv;
+        if (wide)
+        {
+            var tagColumns = items
+                .SelectMany(item => item.Record.TagValues ?? Array.Empty<TagValue>())
+                .Select(TagColumnName)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(x => x, StringComparer.Ordinal)
+                .ToList();
+            var headers = new List<string> { "触发时间", "流水号", "托盘码", "工站", "型号", "判定", "结果码", "结果说明", "耗时(ms)" };
+            headers.AddRange(tagColumns);
+            headers.Add("查询上下文");
+            csv = CsvExporter.Build(
+                headers,
+                items.Select(item =>
+                {
+                    var map = (item.Record.TagValues ?? Array.Empty<TagValue>())
+                        .GroupBy(TagColumnName, StringComparer.Ordinal)
+                        .ToDictionary(g => g.Key, g => FormatTagExportValue(g.First()), StringComparer.Ordinal);
+                    var row = new List<string?>
+                    {
+                        item.Record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                        item.Record.SerialNo ?? "",
+                        item.Record.PalletCode ?? "",
+                        item.Record.StationCode ?? "",
+                        RecipeLabel(item.Record.RecipeCode),
+                        DisplayLabels.JudgementTextLong(item.Record.Judgement),
+                        item.Record.ResultCode.ToString(),
+                        ResultCodes.Describe(item.Record.ResultCode),
+                        DurationMsText(item.Record.DurationMs)
+                    };
+                    foreach (var col in tagColumns)
+                    {
+                        row.Add(map.TryGetValue(col, out var value) ? value : "");
+                    }
+
+                    row.Add(context);
+                    return row;
+                }));
+        }
+        else
+        {
+            csv = CsvExporter.Build(
+                ["触发时间", "流水号", "托盘码", "工站", "型号", "判定", "结果码", "结果说明", "耗时(ms)", "查询上下文"],
+                items.Select(item => new[]
+                {
+                    item.Record.TriggerTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                    item.Record.SerialNo ?? "",
+                    item.Record.PalletCode ?? "",
+                    item.Record.StationCode ?? "",
+                    RecipeLabel(item.Record.RecipeCode),
+                    DisplayLabels.JudgementTextLong(item.Record.Judgement),
+                    item.Record.ResultCode.ToString(),
+                    ResultCodes.Describe(item.Record.ResultCode),
+                    DurationMsText(item.Record.DurationMs),
+                    context
+                }));
+        }
+
+        var stationName = StationFilterFileLabel();
+        var safeStation = new string(stationName.Where(character => char.IsLetterOrDigit(character) || character is '-' or '_').Take(40).ToArray());
+        var prefix = wide ? "datatrace_query_wide" : "datatrace_query";
+        if (!string.IsNullOrWhiteSpace(fileSuffix))
+        {
+            prefix += $"_{fileSuffix}";
+        }
+
+        await Js.InvokeVoidAsync(
+            "dtDownload",
+            CsvExporter.FileName($"{prefix}_{safeStation}_{from:yyyyMMddHHmmss}-{to:yyyyMMddHHmmss}"),
+            CsvExporter.ToBase64(csv));
+
+        var message = total > items.Count
+            ? $"共命中 {total} 条，已导出前 {items.Count} 条"
+            : $"已导出 {items.Count} 条";
+        try
+        {
+            await WriteExportAuditAsync(items.Count, total, auditKey, auditFilters);
+            if (fileSuffix is null)
+            {
+                Toast.Add(message, total > items.Count ? Severity.Warning : Severity.Success);
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"{message}，但审计记录写入失败：{ex.Message}", Severity.Warning);
+        }
+    }
+
+    private static IEnumerable<(DateTime From, DateTime To, string Label)> MonthSlices(DateTime from, DateTime to)
+    {
+        if (to < from) yield break;
+        var cursor = new DateTime(from.Year, from.Month, 1);
+        while (cursor <= to)
+        {
+            var monthEnd = cursor.AddMonths(1).AddTicks(-1);
+            var sliceFrom = cursor < from ? from : cursor;
+            var sliceTo = monthEnd > to ? to : monthEnd;
+            yield return (sliceFrom, sliceTo, cursor.ToString("yyyyMM"));
+            cursor = cursor.AddMonths(1);
+        }
+    }
+
+    private static string TagColumnName(TagValue tag)
+        => tag.PositionIndex <= 0 ? tag.TagName : $"{tag.TagName}#{tag.PositionIndex}";
+
+    private static string FormatTagExportValue(TagValue tag)
+    {
+        if (tag.NumericValue is { } number)
+        {
+            return CsvExporter.Number(number);
+        }
+
+        return tag.TextValue ?? "";
+    }
+
+    private async Task OnWorkOrderChanged(int? workOrderId)
+    {
+        if (_exporting) return;
+        _workOrderId = workOrderId;
+        if (workOrderId is not { } id)
+        {
+            await Search();
+            return;
+        }
+
+        if (!ApplyWorkOrderFilters(id, toast: true))
+        {
+            await Search();
+            return;
+        }
+
+        await Search();
+    }
+
+    /// <summary>
+    /// 采集记录没有工单外键：用型号 + 生产时间窗对齐看板估算口径。
+    /// </summary>
+    private bool ApplyWorkOrderFilters(int workOrderId, bool toast)
+    {
+        var order = _workOrders.FirstOrDefault(o => o.Id == workOrderId);
+        if (order is null) return false;
+
+        if (order.Recipe is { Code.Length: > 0 } recipe)
+        {
+            _recipeFilter = recipe.Code;
+            _recipeAliases = CurveRecipeScope.AllowedCodes(recipe.Code, recipe.PreviousCodes)
+                .Where(code => !string.Equals(code, recipe.Code, StringComparison.Ordinal))
+                .ToArray();
+        }
+        else if (!string.IsNullOrWhiteSpace(order.Model))
+        {
+            var matched = _recipeOptions.FirstOrDefault(opt =>
+                string.Equals(opt.Label, order.Model, StringComparison.OrdinalIgnoreCase)
+                || opt.Label.Contains(order.Model!, StringComparison.OrdinalIgnoreCase));
+            if (matched is not null)
+            {
+                _recipeFilter = matched.Code;
+                _recipeAliases = [];
+            }
+        }
+
+        var start = order.CurrentSince ?? order.StartDate?.Date;
+        var end = order.EndDate?.Date;
+        if (start is { } s)
+        {
+            _from = s.Date;
+        }
+
+        if (end is { } e)
+        {
+            _to = e.Date > DateTime.Today ? DateTime.Today : e.Date;
+        }
+        else if (start is not null)
+        {
+            _to = DateTime.Today;
+        }
+
+        if (_to < _from)
+        {
+            _to = _from;
+        }
+
+        if (toast)
+        {
+            Toast.Add($"已按工单 {order.Code} 套用型号与时间窗（估算，非精确绑定）", Severity.Info);
+        }
+
+        return true;
+    }
+
 
     /// <summary>
     /// 导出里的耗时：给毫秒整数而不是表格里的 "412 ms"，进 Excel 才能直接求和、求均值、做透视。
@@ -1864,6 +2228,7 @@ else
         return $"pallet={_pallet?.Trim() ?? ""};serial={_serialNo?.Trim() ?? ""};" +
                $"station={string.Join(",", _stationIds.OrderBy(x => x))};judge={_judgement?.ToString() ?? ""};" +
                $"result={_resultCode?.ToString() ?? ""};recipe={recipe};aliases={string.Join(",", _recipeAliases)};" +
+               $"warnTag={_warningTag ?? ""};onlyWarn={_onlyWarning};wo={_workOrderId?.ToString() ?? ""};" +
                $"sort={SortKeyOf(_sortBy)};dir={(_sortDesc ? "desc" : "asc")}";
     }
 

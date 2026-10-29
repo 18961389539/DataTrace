@@ -134,6 +134,7 @@ builder.Services.AddMudServices(config =>
 });
 builder.Services.AddTransient<MudLocalizer, DataTraceMudLocalizer>();
 builder.Services.AddScoped<DataTrace.Web.Services.DtToast>();
+builder.Services.AddSingleton<DataTrace.Web.Services.IQueryPresetStore, DataTrace.Web.Services.FileQueryPresetStore>();
 builder.Services.AddSingleton<IJsonFileDialog, WindowsJsonFileDialog>();
 // /healthz 的判据（配置库、数据盘可写、采集器心跳）。只依赖单例服务。
 builder.Services.AddSingleton<HealthProbe>();

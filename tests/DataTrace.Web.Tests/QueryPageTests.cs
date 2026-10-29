@@ -179,25 +179,25 @@ public class QueryPageTests : WebTestBase
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Scheme_save_reports_storage_result_and_uses_account_key(bool success)
+    [Fact]
+    public async Task Scheme_save_persists_to_account_store_and_mirrors_browser_cache()
     {
-        Context.JSInterop.Setup<bool>("dtQueryPresets.set", _ => true).SetResult(success);
+        Context.JSInterop.Setup<bool>("dtQueryPresets.set", _ => true).SetResult(true);
         var cut = Render();
         Assert.Equal("admin", Assert.Single(Context.JSInterop.Invocations["dtQueryPresets.get"]).Arguments[0]);
         ClickButton(cut, "保存查询方案");
         await cut.InvokeAsync(() => cut.FindComponents<MudTextField<string>>().Single(field => field.Instance.Label == "方案名称")
             .Instance.ValueChanged.InvokeAsync("每日 NG"));
         ClickButton(cut, "保存方案");
-        var save = Assert.Single(Context.JSInterop.Invocations["dtQueryPresets.set"]);
-        Assert.Equal("admin", save.Arguments[0]);
-        var preset = Assert.Single((List<QueryPreset>)save.Arguments[1]!);
+
+        var stored = await Context.Services.GetRequiredService<IQueryPresetStore>().ListAsync("admin");
+        var preset = Assert.Single(stored);
         Assert.Equal("每日 NG", preset.Name);
         Assert.Equal("today", preset.Range);
-        Assert.Equal(success, Toast.Messages.Any(message => message.Contains("查询方案已保存")));
-        if (!success) Assert.Contains("原有方案未改变", cut.Markup);
+        Assert.Contains(Toast.Messages, message => message.Contains("查询方案已保存"));
+
+        // 服务器保存成功后会顺带镜像到本机，方便旧逻辑/离线兜底。
+        Assert.Contains(Context.JSInterop.Invocations, invocation => invocation.Identifier == "dtQueryPresets.set");
     }
 
     [Fact]
@@ -205,14 +205,22 @@ public class QueryPageTests : WebTestBase
     {
         Context.JSInterop.Setup<QueryPreset[]?>("dtQueryPresets.get", _ => true)
             .SetResult([new QueryPreset("每日 NG", "query?judge=Ng", "today")]);
+        Context.JSInterop.Setup<bool>("dtQueryPresets.set", _ => true).SetResult(true);
         Dialogs.MessageBoxResult = false;
         var cut = Render();
+        // 首次加载会把本机方案迁到服务器，可能已经写过一次；之后取消覆盖不应再写。
+        var setsBefore = Context.JSInterop.Invocations.Count(invocation => invocation.Identifier == "dtQueryPresets.set");
+        var store = Context.Services.GetRequiredService<IQueryPresetStore>();
+        var before = await store.ListAsync("admin");
         ClickButton(cut, "保存查询方案");
         await cut.InvokeAsync(() => cut.FindComponents<MudTextField<string>>().Single(field => field.Instance.Label == "方案名称")
             .Instance.ValueChanged.InvokeAsync("每日 NG"));
         ClickButton(cut, "保存方案");
         Assert.Single(Dialogs.MessageBoxes);
-        Assert.DoesNotContain(Context.JSInterop.Invocations, invocation => invocation.Identifier == "dtQueryPresets.set");
+        Assert.Equal(setsBefore, Context.JSInterop.Invocations.Count(invocation => invocation.Identifier == "dtQueryPresets.set"));
+        var after = await store.ListAsync("admin");
+        Assert.Equal(before.Count, after.Count);
+        Assert.Equal(before.Single().Url, after.Single().Url);
     }
 
     [Theory]
@@ -1008,7 +1016,8 @@ public class QueryPageTests : WebTestBase
         var summary = reader.GetField("查询上下文");
         Assert.Contains("2026-10-09 20:00:00.0000000", summary);
         Assert.Contains("2026-10-10 07:59:59.9999999", summary);
-        Assert.Contains("pallet=P;serial=S;station=23;judge=Ng;result=11;recipe=NEW;aliases=OLD,OLDER;sort=duration;dir=asc", summary);
+        Assert.Contains("pallet=P;serial=S;station=23;judge=Ng;result=11;recipe=NEW;aliases=OLD,OLDER;", summary);
+        Assert.Contains("sort=duration;dir=asc", summary);
         Assert.Contains("导出=1;截断=否", summary);
         Assert.False(reader.Read());
     }

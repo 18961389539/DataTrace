@@ -109,6 +109,7 @@ public abstract class WebTestBase : IAsyncLifetime
         Context.Services.AddAuthorizationCore();
         // DtToast 只做"按严重度分档 + 同文案去重"，这里用真身，顺带把它对 ISnackbar 的用法一起测了。
         Context.Services.AddSingleton<DtToast>();
+        Context.Services.AddSingleton<IQueryPresetStore, MemoryQueryPresetStore>();
     }
 
     /// <summary>只有环境名与内容根会被品牌存储读到，其余成员用不到。</summary>
@@ -236,4 +237,20 @@ public abstract class WebTestBase : IAsyncLifetime
     public Task InitializeAsync() => Task.CompletedTask;
 
     public virtual async Task DisposeAsync() => await Context.DisposeAsync();
+
+/// <summary>测试用内存查询方案存储。</summary>
+internal sealed class MemoryQueryPresetStore : IQueryPresetStore
+{
+    private readonly Dictionary<string, IReadOnlyList<QueryPreset>> _store = new(StringComparer.Ordinal);
+
+    public Task<IReadOnlyList<QueryPreset>> ListAsync(string account, CancellationToken cancellationToken = default)
+        => Task.FromResult(_store.TryGetValue(account, out var list) ? list : Array.Empty<QueryPreset>());
+
+    public Task SaveAllAsync(string account, IReadOnlyList<QueryPreset> presets, CancellationToken cancellationToken = default)
+    {
+        _store[account] = presets.ToList();
+        return Task.CompletedTask;
+    }
+}
+
 }

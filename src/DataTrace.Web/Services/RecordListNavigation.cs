@@ -46,6 +46,8 @@ public static class RecordListNavigation
             DurationMaxMs = int.TryParse(Value("durMax"), out var durMax) && durMax >= 0 ? durMax : null,
             OnlyOutOfLimit = Value("ool") == "1" || !string.IsNullOrWhiteSpace(Value("oolTag")),
             OutOfLimitTagName = string.IsNullOrWhiteSpace(Value("oolTag")) ? null : Value("oolTag")!.Trim(),
+            OnlyWarning = Value("warn") == "1" || !string.IsNullOrWhiteSpace(Value("warnTag")),
+            WarningTagName = string.IsNullOrWhiteSpace(Value("warnTag")) ? null : Value("warnTag")!.Trim(),
             RecipeCode = recipes is null ? recipe : null, RecipeCodes = recipes,
             SortBy = ParseSortField(Value("sort")), SortDescending = Value("dir") != "asc",
             Skip = skip, Take = take

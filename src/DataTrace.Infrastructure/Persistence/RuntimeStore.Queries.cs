@@ -141,7 +141,13 @@ partial class RuntimeStore
         QueryCursor? cursor = null)
     {
         await using var db = _factory.Open(month);
-        var filtered = Filter(db.CollectRecords.AsNoTracking(), request);
+        IQueryable<CollectRecord> source = db.CollectRecords.AsNoTracking();
+        if (request.IncludeTagValues)
+        {
+            source = source.Include(x => x.TagValues);
+        }
+
+        var filtered = Filter(source, request);
         if (cursor is not null) filtered = ApplyCursor(filtered, request, cursor, month);
         var page = await ApplySort(filtered, request)
             .Take(perMonthTake)
@@ -307,6 +313,8 @@ partial class RuntimeStore
             r.DurationMaxMs,
             r.OnlyOutOfLimit,
             OutTag = string.IsNullOrWhiteSpace(r.OutOfLimitTagName) ? null : r.OutOfLimitTagName.Trim(),
+            r.OnlyWarning,
+            WarnTag = string.IsNullOrWhiteSpace(r.WarningTagName) ? null : r.WarningTagName.Trim(),
             Recipes = r.RecipeCodes is { Count: > 0 } codes
                 ? codes.OrderBy(x => x, StringComparer.Ordinal).ToArray()
                 : null,
@@ -670,6 +678,16 @@ partial class RuntimeStore
         else if (request.OnlyOutOfLimit)
         {
             query = query.Where(x => x.TagValues.Any(t => t.IsOutOfLimit));
+        }
+
+        var warnTag = string.IsNullOrWhiteSpace(request.WarningTagName) ? null : request.WarningTagName.Trim();
+        if (warnTag is not null)
+        {
+            query = query.Where(x => x.TagValues.Any(t => t.IsWarning && t.TagName == warnTag));
+        }
+        else if (request.OnlyWarning)
+        {
+            query = query.Where(x => x.TagValues.Any(t => t.IsWarning));
         }
 
         if (request.RecipeCodes is { Count: > 0 } recipeCodes)

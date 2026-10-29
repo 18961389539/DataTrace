@@ -4,6 +4,7 @@
 @inject IJSRuntime Js
 @inject IDialogService Dialogs
 @inject DtToast Toast
+@inject IQueryPresetStore PresetStore
 
 <div class="mb-3" aria-label="常用查询方案">
     <MudStack Row="true" Spacing="1" Class="flex-wrap align-center">
@@ -18,7 +19,7 @@
             </MudTooltip>
             </div>
         }
-        <MudTooltip Text="仅保存在当前浏览器，按登录账号分开">
+        <MudTooltip Text="保存在服务器（按登录账号），换浏览器也能用">
             <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.BookmarkAdd"
                        Disabled="@(Disabled || _busy || !_ready)" OnClick="OpenSave">保存查询方案</MudButton>
         </MudTooltip>
@@ -75,13 +76,30 @@
         if (string.IsNullOrEmpty(_account)) return;
         try
         {
-            var stored = await Js.InvokeAsync<QueryPreset[]?>("dtQueryPresets.get", _account);
-            _presets = (stored ?? []).Where(preset => preset is not null && !string.IsNullOrWhiteSpace(preset.Name)
-                && RecordListNavigation.IsListUrl(preset.Url) && QueryPreset.Ranges.Any(range => range.Key == preset.Range))
-                .DistinctBy(preset => preset.Name).Take(30).ToList();
+            var stored = await PresetStore.ListAsync(_account);
+            _presets = stored.ToList();
+            // 本机还有旧方案、服务器还是空：一次性迁上去，避免换浏览器后「方案全没了」。
+            if (_presets.Count == 0)
+            {
+                try
+                {
+                    var local = await Js.InvokeAsync<QueryPreset[]?>("dtQueryPresets.get", _account);
+                    var migrated = (local ?? []).Where(preset => preset is not null && !string.IsNullOrWhiteSpace(preset.Name)
+                        && RecordListNavigation.IsListUrl(preset.Url) && QueryPreset.Ranges.Any(range => range.Key == preset.Range))
+                        .DistinctBy(preset => preset.Name).Take(30).ToList();
+                    if (migrated.Count > 0)
+                    {
+                        await PresetStore.SaveAllAsync(_account, migrated);
+                        _presets = migrated;
+                        try { await Js.InvokeAsync<bool>("dtQueryPresets.set", _account, Array.Empty<QueryPreset>()); } catch (JSException) { }
+                        Toast.Add($"已把本机 {migrated.Count} 个查询方案迁到服务器", Severity.Info);
+                    }
+                }
+                catch (JSException) { /* 本机不可读就跳过迁移 */ }
+            }
             _ready = true;
         }
-        catch (JSException) { _error = "无法读取本机查询方案，请检查浏览器存储权限后刷新。"; }
+        catch (Exception ex) { _error = $"无法读取账号查询方案：{ex.Message}"; }
         StateHasChanged();
     }
 
@@ -128,7 +146,7 @@
         try
         {
             if (await Dialogs.ConfirmDangerAsync("删除查询方案", $"删除「{preset.Name}」？采集记录不会被删除。",
-                acknowledge: "我了解该方案将从本机删除", yesText: "删除方案") == true)
+                acknowledge: "我了解该方案将从账号中删除", yesText: "删除方案") == true)
                 await PersistAsync(_presets.Where(item => item != preset).ToList());
         }
         finally { _busy = false; }
@@ -138,14 +156,16 @@
     {
         try
         {
-            if (!await Js.InvokeAsync<bool>("dtQueryPresets.set", _account, next)) throw new JSException("storage unavailable");
+            await PresetStore.SaveAllAsync(_account!, next);
             _presets = next;
             _error = null;
+            // 同步清掉本机缓存，避免旧本机方案在空账号场景再次迁回。
+            try { await Js.InvokeAsync<bool>("dtQueryPresets.set", _account, next); } catch (JSException) { }
             return true;
         }
-        catch (JSException)
+        catch (Exception ex)
         {
-            _error = "查询方案未保存：浏览器存储不可用，原有方案未改变。";
+            _error = $"查询方案未保存：{ex.Message}；原有方案未改变。";
             return false;
         }
     }
