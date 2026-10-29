@@ -65,6 +65,58 @@ public class DiagnosticsPageTests : WebTestBase
         Assert.DoesNotContain("当前没有需要处置的异常", cut.Markup);
     }
 
+
+    [Fact]
+    public void Sticky_ops_bar_exposes_short_pause_and_copy_without_duplicating_header_verbs()
+    {
+        var (cut, _, _) = Render(new FakeSpool());
+
+        Assert.Contains("dt-diag-ops", cut.Markup);
+        Assert.Contains(">暂停<", cut.Markup);
+        Assert.Contains(">复制<", cut.Markup);
+        // 页头仍保留完整文案，供原有用例 Single() 定位。
+        Assert.Equal(1, cut.FindAll("button").Count(button => button.TextContent.Contains("暂停刷新")));
+        Assert.Equal(1, cut.FindAll("button").Count(button => button.TextContent.Contains("复制诊断摘要")));
+    }
+
+    [Fact]
+    public void Section_nav_shows_attention_counts()
+    {
+        var spool = new FakeSpool();
+        spool.Entries.Add(Entry("stuck.spool.json", "P900", attempts: 1, error: "disk full"));
+        var (cut, _, _) = Render(spool);
+
+        Assert.Contains("补传 1", cut.Markup);
+        Assert.Contains("dt-diag-nav-btn", cut.Markup);
+    }
+
+    [Fact]
+    public void Healthy_plc_stays_collapsed_unless_expand_toggle_is_on()
+    {
+        var (cut, _, _) = Render(new FakeSpool(), seed: diag =>
+        {
+            diag.PublishPlcTraffic(new PlcTrafficView(
+                1, "健康PLC", TotalCount: 10, FailureCount: 0, LastDurationMs: 5, MaxDurationMs: 12,
+                LastSuccessAt: DateTime.Now.AddSeconds(-1),
+                [new PlcExchangeView(DateTime.Now, false, "D1", 1, 5, true, null, [1])],
+                []));
+            diag.PublishPlcTraffic(new PlcTrafficView(
+                2, "故障PLC", TotalCount: 4, FailureCount: 2, LastDurationMs: 40, MaxDurationMs: 400,
+                LastSuccessAt: null,
+                [new PlcExchangeView(DateTime.Now, false, "D2", 1, 40, false, "链接已断开", [])],
+                [new PlcExchangeView(DateTime.Now, false, "D2", 1, 40, false, "链接已断开", [])]));
+        }, onlyIssues: false);
+
+        var panels = cut.FindComponents<MudExpansionPanel>();
+        Assert.Equal(2, panels.Count);
+        var healthy = panels.Single(panel => panel.Markup.Contains("健康PLC"));
+        var broken = panels.Single(panel => panel.Markup.Contains("故障PLC"));
+        Assert.False(healthy.Instance.Expanded);
+        Assert.True(broken.Instance.Expanded);
+        Assert.Contains("展开健康连接", cut.Markup);
+        Assert.Contains("P95 ≥ 500", cut.Markup);
+    }
+
     [Fact]
     public void Manual_confirmation_blocker_requires_explicit_physical_review()
     {
@@ -863,6 +915,8 @@ public class DiagnosticsPageTests : WebTestBase
         // 默认「只看异常」；测试里显式给定，避免 Loose JS 把 bool 默认成 false。
         Context.JSInterop.Setup<bool>("dtDiagOnlyIssues.get").SetResult(onlyIssues);
         Context.JSInterop.SetupVoid("dtDiagOnlyIssues.set", _ => true);
+        Context.JSInterop.Setup<bool>("dtDiagExpandHealthy.get").SetResult(false);
+        Context.JSInterop.SetupVoid("dtDiagExpandHealthy.set", _ => true);
 
         if (stationId is not null)
         {

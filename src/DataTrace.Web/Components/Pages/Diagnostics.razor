@@ -132,16 +132,34 @@ else if (_onlyIssues && _loadError is null)
 
 <div class="dt-diag-toolbar" aria-label="诊断导航与偏好">
     <div class="dt-diag-section-nav" role="navigation" aria-label="分区跳转">
-        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => JumpAsync("diag-health"))">健康</MudButton>
-        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => JumpAsync("diag-loop"))">循环</MudButton>
-        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => JumpAsync("diag-plc"))">PLC</MudButton>
-        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => JumpAsync("diag-latency"))">耗时</MudButton>
-        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => JumpAsync("diag-manual"))">核对</MudButton>
-        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => JumpAsync("diag-spool"))">补传</MudButton>
-        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => JumpAsync("diag-mes"))">MES</MudButton>
+        <MudButton Size="Size.Small" Variant="@NavVariant("health")" Color="@NavColor(UnhealthyCount > 0)" Class="@NavClass("health")"
+                   OnClick="@(() => JumpAsync("diag-health"))">健康@(UnhealthyCount > 0 ? $" {UnhealthyCount}" : "")</MudButton>
+        <MudButton Size="Size.Small" Variant="@NavVariant("loop")" Color="@NavColor(LoopStale || _loop.OverrunCount > 0)" Class="@NavClass("loop")"
+                   OnClick="@(() => JumpAsync("diag-loop"))">循环@(LoopStale ? "!" : _loop.OverrunCount > 0 ? $" {_loop.OverrunCount}" : "")</MudButton>
+        <MudButton Size="Size.Small" Variant="@NavVariant("plc")" Color="@NavColor(DisconnectedPlcCount > 0)" Class="@NavClass("plc")"
+                   OnClick="@(() => JumpAsync("diag-plc"))">PLC@(DisconnectedPlcCount > 0 ? $" {DisconnectedPlcCount}" : "")</MudButton>
+        <MudButton Size="Size.Small" Variant="@NavVariant("latency")" Color="@NavColor(HotLatencyCount > 0)" Class="@NavClass("latency")"
+                   OnClick="@(() => JumpAsync("diag-latency"))">耗时@(HotLatencyCount > 0 ? $" {HotLatencyCount}" : "")</MudButton>
+        <MudButton Size="Size.Small" Variant="@NavVariant("manual")" Color="@NavColor(_manualReviewPending.Count > 0)" Class="@NavClass("manual")"
+                   OnClick="@(() => JumpAsync("diag-manual"))">核对@(_manualReviewPending.Count > 0 ? $" {_manualReviewPending.Count}" : "")</MudButton>
+        <MudButton Size="Size.Small" Variant="@NavVariant("spool")" Color="@NavColor(_spoolCount > 0)" Class="@NavClass("spool")"
+                   OnClick="@(() => JumpAsync("diag-spool"))">补传@(_spoolCount > 0 ? $" {_spoolCount}" : "")</MudButton>
+        <MudButton Size="Size.Small" Variant="@NavVariant("mes")" Color="@NavColor((_mesOutbox?.PendingCount ?? 0) > 0)" Class="@NavClass("mes")"
+                   OnClick="@(() => JumpAsync("diag-mes"))">MES@((_mesOutbox?.PendingCount ?? 0) > 0 ? $" {_mesOutbox!.PendingCount}" : "")</MudButton>
     </div>
     <MudCheckBox T="bool" @bind-Value="_onlyIssues" @bind-Value:after="PersistOnlyIssuesAsync" Label="只看异常" Dense="true" Color="Color.Primary" />
-    <MudText Typo="Typo.caption" Class="dt-muted dt-diag-ops">@RefreshCaption</MudText>
+    <div class="dt-diag-ops">
+        <MudText Typo="Typo.caption" Class="dt-muted">@RefreshCaption</MudText>
+        <MudButton Size="Size.Small" Variant="Variant.Text" Class="dt-diag-ops-btn"
+                   StartIcon="@(_paused ? Icons.Material.Filled.PlayArrow : Icons.Material.Filled.Pause)"
+                   title="@(_paused ? "继续自动刷新" : "暂停自动刷新")"
+                   aria-label="@(_paused ? "继续自动刷新" : "暂停自动刷新")"
+                   OnClick="TogglePauseAsync">@(_paused ? "继续" : "暂停")</MudButton>
+        <MudButton Size="Size.Small" Variant="Variant.Text" Class="dt-diag-ops-btn"
+                   StartIcon="@Icons.Material.Filled.ContentCopy"
+                   title="复制诊断摘要到剪贴板" aria-label="复制诊断摘要到剪贴板"
+                   OnClick="CopyDigestAsync">复制</MudButton>
+    </div>
 </div>
 
 @if (_focusedStation is { } focused)
@@ -149,6 +167,8 @@ else if (_onlyIssues && _loadError is null)
     <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap dt-diag-focus">
         <MudChip T="string" Color="Color.Primary" Variant="Variant.Outlined">工站 @focused.Code @focused.Name</MudChip>
         <MudText Typo="Typo.caption" Class="dt-muted">已按工站过滤 PLC / 耗时 / 补传 / 核对</MudText>
+        <MudButton Size="Size.Small" Variant="Variant.Text" Href="@($"/alarms?station={focused.Id}")">此站报警</MudButton>
+        <MudButton Size="Size.Small" Variant="Variant.Text" Href="/config/stations">工站配置</MudButton>
         <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Clear" Href="/diagnostics">清除工站筛选</MudButton>
     </MudStack>
 }
@@ -297,6 +317,13 @@ else
         <MudText Typo="Typo.subtitle1" Class="mb-0">
             PLC 通信 <InfoHint Topic="HelpTexts.PlcTraffic" />
         </MudText>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@FocusedTraffic.Count 台</MudChip>
+        @if (DisconnectedPlcCount > 0)
+        {
+            <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled">异常 @DisconnectedPlcCount</MudChip>
+        }
+        <MudCheckBox T="bool" @bind-Value="_expandHealthyPlc" @bind-Value:after="PersistExpandHealthyAsync"
+                     Label="展开健康连接" Dense="true" Disabled="_onlyIssues" />
         <MudButton Size="Size.Small" Variant="Variant.Text" Href="/config/plc">PLC 配置</MudButton>
         <MudButton Size="Size.Small" Variant="Variant.Text" Href="/alarms">设备报警</MudButton>
     </div>
@@ -395,7 +422,7 @@ else
                                 <MudTd DataLabel="地址" Class="dt-nowrap">@context.Address</MudTd>
                                 <MudTd DataLabel="字数" Class="dt-num">@context.WordCount</MudTd>
                                 <MudTd DataLabel="耗时" Class="dt-num dt-nowrap">
-                                    <span class="@(context.DurationMs >= 200 ? "dt-diag-duration--hot" : null)">@context.DurationMs ms</span>
+                                    <span class="@(context.DurationMs >= HotPlcDurationMs ? "dt-diag-duration--hot" : null)">@context.DurationMs ms</span>
                                 </MudTd>
                                 <MudTd DataLabel="结果">
                                     @if (context.Ok)
@@ -428,22 +455,23 @@ else
             站级采集耗时 <InfoHint Topic="HelpTexts.CollectorLoop" />
         </MudText>
         <MudButton Size="Size.Small" Variant="Variant.Text" Href="/">看板</MudButton>
+        <MudText Typo="Typo.caption" Class="dt-muted">偏高阈值：P95 ≥ @HotLatencyP95Ms ms / P99 ≥ @HotLatencyP99Ms ms；PLC 单次 ≥ @HotPlcDurationMs ms</MudText>
     </div>
 @if (FilteredLatencies.Count == 0)
 {
     <MudText Typo="Typo.body2" Class="dt-muted mb-2">尚无近期端到端采集样本；分位数取最近 15 分钟、每站最多 512 个样本。</MudText>
 }
-else if (!_onlyIssues || FilteredLatencies.Any(x => x.P95Ms >= 500))
+else if (!_onlyIssues || FilteredLatencies.Any(IsHotLatency))
 {
-    <MudTable Items="@(_onlyIssues ? FilteredLatencies.Where(x => x.P95Ms >= 500).ToList() : FilteredLatencies)" Dense="true" Hover="true" Class="dt-list-table mb-2">
+    <MudTable Items="@(_onlyIssues ? FilteredLatencies.Where(IsHotLatency).ToList() : FilteredLatencies)" Dense="true" Hover="true" Class="dt-list-table mb-2">
         <HeaderContent><MudTh>工站</MudTh><MudTh>样本</MudTh><MudTh>P95</MudTh><MudTh>P99</MudTh><MudTh>最后样本</MudTh></HeaderContent>
         <RowTemplate>
             <MudTd>
                 <MudLink Href="@($"/diagnostics?station={StationIdByCode(context.StationCode)}")">@context.StationCode</MudLink>
             </MudTd>
             <MudTd>@context.SampleCount</MudTd>
-            <MudTd Class="@(context.P95Ms >= 500 ? "dt-diag-duration--hot" : null)">@context.P95Ms.ToString("F0") ms</MudTd>
-            <MudTd Class="@(context.P99Ms >= 800 ? "dt-diag-duration--hot" : null)">@context.P99Ms.ToString("F0") ms</MudTd>
+            <MudTd Class="@(IsHotLatency(context) ? "dt-diag-duration--hot" : null)">@context.P95Ms.ToString("F0") ms</MudTd>
+            <MudTd Class="@(context.P99Ms >= HotLatencyP99Ms ? "dt-diag-duration--hot" : null)">@context.P99Ms.ToString("F0") ms</MudTd>
             <MudTd title="@context.LastSampleAt.ToString("yyyy-MM-dd HH:mm:ss")">@SinceText(AgeReference - context.LastSampleAt)</MudTd>
         </RowTemplate>
     </MudTable>
@@ -469,6 +497,7 @@ else
                 @if (_overdueCollections.Any(x => x.StationCode == context.StationCode))
                 {
                     <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled">超限</MudChip>
+                    <MudLink Href="/alarms" Class="ml-1">报警</MudLink>
                 }
                 else
                 {
@@ -714,6 +743,15 @@ else
     /// <summary>诊断摘要里每台 PLC 带上的最新失败条数：够对方看出"最近在报什么错"即可。</summary>
     private const int DigestFailureLines = 3;
 
+    /// <summary>PLC 单次通信耗时偏高阈值（ms）。</summary>
+    private const int HotPlcDurationMs = 200;
+
+    /// <summary>站级采集 P95 偏高阈值（ms）。</summary>
+    private const int HotLatencyP95Ms = 500;
+
+    /// <summary>站级采集 P99 偏高阈值（ms）。</summary>
+    private const int HotLatencyP99Ms = 800;
+
     /// <summary>
     /// 补传明细（尝试次数、上次失败原因）的重读节拍。
     /// </summary>
@@ -744,6 +782,7 @@ else
 
     // ---- UI 迭代：摘要 chips / 只看异常 / 分区跳转 / 工站深链扩围 ----
     private bool _onlyIssues = true;
+    private bool _expandHealthyPlc;
     private bool _prefsLoaded;
     private string? _jumpTarget;
     private readonly Dictionary<int, bool> _plcExpanded = new();
@@ -752,6 +791,10 @@ else
     private int UnhealthyCount => _health?.Checks.Count(check => !check.Healthy) ?? 0;
 
     private int DisconnectedPlcCount => FocusedTraffic.Count(PlcHasIssue);
+
+    private int HotLatencyCount => FilteredLatencies.Count(IsHotLatency);
+
+    private static bool IsHotLatency(StationLatencyView item) => item.P95Ms >= HotLatencyP95Ms;
 
     private bool HasActionableItems
         => _manualReviewPending.Count > 0
@@ -824,7 +867,8 @@ else
             return _focusExpanded;
         }
 
-        return _onlyIssues ? issue : false;
+        // 异常连接默认展开；健康连接默认折叠，除非用户打开「展开健康连接」。
+        return issue || _expandHealthyPlc;
     }
 
     private void SetPlcExpanded(int plcId, bool expanded)
@@ -847,6 +891,14 @@ else
         // 全部正常时仍列出各项，避免页头「全部正常」却看不到检查清单。
         return unhealthy.Count > 0 ? unhealthy : health.Checks;
     }
+
+    private Variant NavVariant(string target)
+        => string.Equals(_jumpTarget, target, StringComparison.Ordinal) ? Variant.Filled : Variant.Text;
+
+    private static Color NavColor(bool attention) => attention ? Color.Warning : Color.Default;
+
+    private string NavClass(string target)
+        => "dt-diag-nav-btn" + (string.Equals(_jumpTarget, target, StringComparison.Ordinal) ? " dt-diag-nav-btn--on" : "");
 
     private string SummaryChipClass(string target)
         => "dt-diag-summary-chip" + (string.Equals(_jumpTarget, target, StringComparison.Ordinal) ? " dt-diag-summary-chip--on" : "");
@@ -911,6 +963,17 @@ else
         }
     }
 
+    private async Task PersistExpandHealthyAsync()
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("dtDiagExpandHealthy.set", _expandHealthyPlc);
+        }
+        catch (JSException)
+        {
+        }
+    }
+
     private async Task LoadUiPrefsAsync()
     {
         if (_prefsLoaded)
@@ -926,6 +989,15 @@ else
         catch (JSException)
         {
             _onlyIssues = true;
+        }
+
+        try
+        {
+            _expandHealthyPlc = await Js.InvokeAsync<bool>("dtDiagExpandHealthy.get");
+        }
+        catch (JSException)
+        {
+            _expandHealthyPlc = false;
         }
     }
 
@@ -1431,7 +1503,7 @@ else
             text.AppendLine($"工站筛选：{focused.Code} {focused.Name}");
         }
 
-        text.AppendLine($"只看异常：{(_onlyIssues ? "开" : "关")}");
+        text.AppendLine($"只看异常：{(_onlyIssues ? "开" : "关")}；展开健康连接：{(_expandHealthyPlc ? "开" : "关")}");
 
         return text.ToString();
     }

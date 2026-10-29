@@ -4339,3 +4339,39 @@ body:has(.dt-alarm-bar) .dt-diag-toolbar {
     color: var(--mud-palette-warning);
     border: 1px solid color-mix(in srgb, var(--mud-palette-warning) 45%, transparent);
 }
+
+
+.dt-diag-nav-btn--on {
+    font-weight: 600;
+}
+
+.dt-diag-ops-btn {
+    min-width: auto;
+}
+
+.dt-diag-section {
+    padding: 8px 12px 6px;
+    margin: 0 0 10px;
+}
+
+.dt-diag-section-title {
+    gap: 6px 8px;
+    margin-bottom: 6px;
+}
+
+.dt-diag-group-label {
+    margin: 10px 0 6px;
+}
+
+.dt-diag-health-grid {
+    gap: 4px 12px;
+}
+
+.dt-diag-plc-title {
+    gap: 4px 6px;
+}
+
+.dt-diag-toolbar {
+    padding: 6px 10px;
+    gap: 6px 10px;
+}
