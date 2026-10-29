@@ -1,4 +1,5 @@
 using DataTrace.Application.Configuration;
+using DataTrace.Application.Runtime;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
@@ -149,28 +150,74 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
             }
 
             var pool = Math.Max(1, snapshot.Settings.SimulatorPalletPool);
-            var firstStation = stations.FirstOrDefault(station => station.IsFirstStation) ?? stations[0];
-            var code = string.IsNullOrWhiteSpace(palletCode)
-                ? firstStation.PalletCodeDataType == PlcDataType.String
-                    ? $"P{(_palletSeq++ % pool) + 1:0000}"
-                    : ((_palletSeq++ % pool) + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)
-                : palletCode.Trim();
+            var firstStation = stations.FirstOrDefault(station => station.IsFirstStation);
+            if (firstStation is null)
+            {
+                const string message = "启用的模拟工站里没有首站，无法按产线拓扑仿真";
+                Status.LastMessage = message;
+                Changed?.Invoke();
+                return new LineRunResult(false, null, false, message);
+            }
+
+            var beforeFirst = stations.Where(station => station.Sequence < firstStation.Sequence).ToList();
+            if (beforeFirst.Count > 0)
+            {
+                _logger.LogWarning(
+                    "仿真跳过首站 {First} 之前的启用工站：{Codes}",
+                    firstStation.Code,
+                    string.Join(", ", beforeFirst.Select(station => station.Code)));
+            }
+
+            var lastStation = stations.LastOrDefault(station => station.IsLastStation);
+            var runStations = stations
+                .Where(station => station.Sequence >= firstStation.Sequence
+                                 && (lastStation is null || station.Sequence <= lastStation.Sequence))
+                .ToList();
+            if (runStations.Count == 0)
+            {
+                const string message = "首站到末站之间没有可仿真的启用工站";
+                Status.LastMessage = message;
+                Changed?.Invoke();
+                return new LineRunResult(false, null, false, message);
+            }
+
+            // 避免复用仍在制的托盘号，否则首站会再次触发会话抢占。
+            var busyPallets = (await scope.ServiceProvider.GetRequiredService<IActiveSessionStore>()
+                    .ListAsync(cancellationToken).ConfigureAwait(false))
+                .Select(session => session.PalletCode)
+                .Where(code => !string.IsNullOrWhiteSpace(code))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            string code;
+            if (!string.IsNullOrWhiteSpace(palletCode))
+            {
+                code = palletCode.Trim();
+            }
+            else
+            {
+                code = AllocatePalletCode(firstStation, runStations, pool, busyPallets);
+            }
+
             if (firstStation.PalletCodeDataType != PlcDataType.String)
             {
                 code = SimulatorScenario.NormalizePalletCode(firstStation, code);
             }
 
             var injectNg = _random.Next(100) < Math.Clamp(snapshot.Settings.SimulatorNgPercent, 0, 100);
-            var ngStationId = injectNg ? stations[_random.Next(stations.Count)].Id : -1;
+            var ngStationId = injectNg ? runStations[_random.Next(runStations.Count)].Id : -1;
 
             Status.CurrentPallet = code;
-            Status.LastMessage = injectNg ? $"托盘 {code} 本轮将注入 NG" : $"托盘 {code} 上线";
+            Status.LastMessage = injectNg
+                ? $"托盘 {code} 本轮将注入 NG"
+                : beforeFirst.Count > 0
+                    ? $"托盘 {code} 上线（已跳过首站前 {beforeFirst.Count} 站）"
+                    : $"托盘 {code} 上线";
             Changed?.Invoke();
 
             var completedAll = true;
             string? stalledAt = null;
             var timedOut = false;
-            foreach (var station in stations)
+            foreach (var station in runStations)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var plcConfig = plcById[station.PlcConnectionId];
@@ -233,6 +280,34 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
         }
     }
 
+    private string AllocatePalletCode(
+        Station firstStation,
+        IReadOnlyList<Station> runStations,
+        int pool,
+        HashSet<string> busyPallets)
+    {
+        // 产线混用 String / Int16 托盘地址时，若首站发 P0001、后站被 Normalize 成 1，
+        // 会在 ActiveSessions 里拆成两套身份，末站关不掉首站会话，池一复用就会话抢占。
+        // 只要本趟有任一非 String 托盘站，就统一发纯数字号，各站都能读成同一身份。
+        var useNumeric = runStations.Any(station => station.PalletCodeDataType != PlcDataType.String)
+                         || firstStation.PalletCodeDataType != PlcDataType.String;
+
+        for (var attempt = 0; attempt < Math.Max(pool, 1) * 2; attempt++)
+        {
+            var candidate = useNumeric
+                ? ((_palletSeq++ % pool) + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : $"P{(_palletSeq++ % pool) + 1:0000}";
+            if (!busyPallets.Contains(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        // 池内全忙时退回下一个序号，仍可能抢占，但比原地复用好。
+        return useNumeric
+            ? ((_palletSeq++ % pool) + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : $"P{(_palletSeq++ % pool) + 1:0000}";
+    }
     private static async Task<short?> WaitHandshakeAsync(InMemoryPlcDriver plc, Station station, CancellationToken cancellationToken)
     {
         var deadline = DateTime.Now.AddSeconds(8);

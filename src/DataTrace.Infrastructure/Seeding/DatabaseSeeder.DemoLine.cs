@@ -335,6 +335,24 @@ partial class DatabaseSeeder
             existingCodes.Remove("ST040");
             changed = true;
         }
+        // OP10 壳体上料顺序在 OP130 之前：启用后应作为真正首站，否则仿真会先在 OP10 建孤儿会话，
+        // 再到 OP130（旧首站）触发「还没走完末站又从首站进入」的会话抢占洪流。
+        var op10 = demoPlc.Stations.FirstOrDefault(s => s.Code == "OP10");
+        if (op10 is { Enabled: true })
+        {
+            if (!op10.IsFirstStation)
+            {
+                op10.IsFirstStation = true;
+                changed = true;
+            }
+
+            foreach (var formerFirst in demoPlc.Stations.Where(s => s.Code != "OP10" && s.IsFirstStation))
+            {
+                formerFirst.IsFirstStation = false;
+                changed = true;
+            }
+        }
+
         // OP90 是成品下料，启用后应作为末站；放在补齐 OP40/50/70 之后，避免后加的 OP70 又把末站抢回去。
         var op90 = demoPlc.Stations.FirstOrDefault(s => s.Code == "OP90");
         if (op90 is { Enabled: true })
@@ -364,7 +382,7 @@ partial class DatabaseSeeder
     private static Station[] CreateAdditionalDemoStations() =>
     [
         CreateStation(
-            "OP10", "壳体上料", 5, first: false, last: false,
+            "OP10", "壳体上料", 5, first: true, last: false,
             trigger: "D2100", pallet: "D2110",
             press: "D2200", temp: "D2210",
             y: "D14800", x: "D15200"),
@@ -553,7 +571,7 @@ partial class DatabaseSeeder
         station.Code = "OP130";
         station.Name = "点胶外观检测";
         station.Sequence = 10;
-        station.IsFirstStation = true;
+        station.IsFirstStation = false;
         station.IsLastStation = false;
         station.TriggerAddress = "MW3002";
         station.TriggerValue = 1;

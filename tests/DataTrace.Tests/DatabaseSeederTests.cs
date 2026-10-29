@@ -58,7 +58,7 @@ public class DatabaseSeederTests
             .SingleAsync(item => item.Code == "OP130");
 
         Assert.Equal("点胶外观检测", station.Name);
-        Assert.True(station.IsFirstStation);
+        Assert.False(station.IsFirstStation);
         Assert.Equal("MW3002", station.TriggerAddress);
         Assert.Equal("MW3001", station.PalletCodeAddress);
         Assert.Equal(PlcDataType.Int16, station.PalletCodeDataType);
@@ -706,6 +706,8 @@ public class DatabaseSeederTests
             Assert.False(stations.Single(station => station.Code == "OP40").IsLastStation);
             Assert.False(stations.Single(station => station.Code == "OP50").IsLastStation);
             Assert.False(stations.Single(station => station.Code == "OP70").IsLastStation);
+            Assert.True(stations.Single(station => station.Code == "OP10").IsFirstStation);
+            Assert.False(stations.Single(station => station.Code == "OP130").IsFirstStation);
             Assert.True(stations.Single(station => station.Code == "OP90").IsLastStation);
             versionAfterUpgrade = await db.ConfigVersions.Select(version => version.Version).SingleAsync();
         }

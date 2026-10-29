@@ -614,6 +614,19 @@ public sealed class CollectionHostedService : BackgroundService, IPlcQueueAccess
                 "配置里没有任何启用的末站：托盘会话永远不会关闭，在制托盘只会增不会减，MES 也不会收到上报");
         }
 
+        var firstStations = enabled.Where(x => x.IsFirstStation).ToList();
+        if (firstStations.Count == 1)
+        {
+            var first = firstStations[0];
+            var beforeFirst = enabled.Where(x => x.Sequence < first.Sequence).ToList();
+            if (beforeFirst.Count > 0)
+            {
+                WarnSkipped("line_before_first",
+                    $"启用工站 {string.Join("、", beforeFirst.Select(x => x.Code))} 的顺序在首站 {first.Code} 之前：" +
+                    "仿真若从顺序最小站开跑，会先建孤儿会话，再到首站触发会话抢占；请把首站改到最前，或禁用这些站");
+            }
+        }
+
         foreach (var group in enabled.GroupBy(x => x.Sequence).Where(g => g.Count() > 1))
         {
             WarnSkipped($"line_seq_{group.Key}",
