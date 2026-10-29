@@ -4194,98 +4194,7 @@ body:has(.dt-alarm-bar) .dt-alarms-toolbar {
 /* .dt-nav-group 已合并到文件前部导航区 */
 
 @media (max-width: 600px) {
-    
-/* 设备报警主导区 vs 系统规则次级区 */
-.dt-alarms-region {
-    border-radius: var(--dt-radius, 8px);
-    padding: 12px 14px 10px;
-    margin-bottom: 12px;
-}
-
-.dt-alarms-region--device {
-    border: 2px solid color-mix(in srgb, var(--mud-palette-error) 55%, transparent);
-    background: color-mix(in srgb, var(--mud-palette-error) 6%, var(--mud-palette-surface));
-    box-shadow: 0 1px 0 color-mix(in srgb, var(--mud-palette-error) 18%, transparent);
-}
-
-.dt-alarms-region--system {
-    border: 1px solid color-mix(in srgb, var(--mud-palette-lines-default) 80%, transparent);
-    background: color-mix(in srgb, var(--mud-palette-background) 55%, var(--mud-palette-surface));
-    opacity: 0.96;
-}
-
-.dt-alarms-region-head {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 8px 12px;
-    margin-bottom: 10px;
-}
-
-.dt-alarms-region-title {
-    font-weight: 700;
-    letter-spacing: 0.01em;
-}
-
-.dt-alarms-region--device .dt-alarms-region-title {
-    color: var(--mud-palette-error);
-    font-size: 1.15rem;
-}
-
-.dt-alarms-region-sub {
-    display: block;
-    margin-top: 2px;
-}
-
-.dt-alarms-region-chips {
-    display: inline-flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px;
-}
-
-.dt-alarms-action-callout--device {
-    border-left: 4px solid var(--mud-palette-error);
-    background: color-mix(in srgb, var(--mud-palette-error) 12%, var(--mud-palette-surface));
-    font-weight: 600;
-}
-
-.dt-alarms-group--device {
-    border-left: 3px solid var(--mud-palette-error);
-    padding-left: 8px;
-}
-
-.dt-alarm-kind--device {
-    color: var(--mud-palette-error);
-    font-weight: 700;
-}
-
-.dt-alarm-row--device td:first-child {
-    box-shadow: inset 4px 0 0 var(--mud-palette-error);
-}
-
-.dt-alarm-take--device {
-    min-width: 5.5rem;
-    font-weight: 700;
-}
-
-.dt-alarms-table--device {
-    background: color-mix(in srgb, var(--mud-palette-error) 3%, var(--mud-palette-surface));
-}
-
-.dt-alarms-archive-sub {
-    font-weight: 600;
-}
-
-@media (max-width: 600px) {
-    .dt-alarms-region {
-        padding: 10px 10px 8px;
-    }
-}
-
-
-.dt-page-toolbar {
+    .dt-page-toolbar {
         position: static;
     }
 }
@@ -4477,4 +4386,94 @@ body:has(.dt-alarm-bar) .dt-diag-toolbar {
 
 .dt-diag-ops .mud-button-root {
     white-space: nowrap;
+}
+
+/* ===== alarms device/system regions ===== */
+/* 设备报警主导区 vs 系统规则次级区 */
+.dt-alarms-region {
+    border-radius: var(--dt-radius, 8px);
+    padding: 12px 14px 10px;
+    margin-bottom: 12px;
+}
+
+.dt-alarms-region--device {
+    border: 2px solid color-mix(in srgb, var(--mud-palette-error) 55%, transparent);
+    background: color-mix(in srgb, var(--mud-palette-error) 6%, var(--mud-palette-surface));
+    box-shadow: 0 1px 0 color-mix(in srgb, var(--mud-palette-error) 18%, transparent);
+}
+
+.dt-alarms-region--system {
+    border: 1px solid color-mix(in srgb, var(--mud-palette-lines-default) 80%, transparent);
+    background: color-mix(in srgb, var(--mud-palette-background) 55%, var(--mud-palette-surface));
+    opacity: 0.96;
+}
+
+.dt-alarms-region-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px 12px;
+    margin-bottom: 10px;
+}
+
+.dt-alarms-region-title {
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+
+.dt-alarms-region--device .dt-alarms-region-title {
+    color: var(--mud-palette-error);
+    font-size: 1.15rem;
+}
+
+.dt-alarms-region-sub {
+    display: block;
+    margin-top: 2px;
+}
+
+.dt-alarms-region-chips {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.dt-alarms-action-callout--device {
+    border-left: 4px solid var(--mud-palette-error);
+    background: color-mix(in srgb, var(--mud-palette-error) 12%, var(--mud-palette-surface));
+    font-weight: 600;
+}
+
+.dt-alarms-group--device {
+    border-left: 3px solid var(--mud-palette-error);
+    padding-left: 8px;
+}
+
+.dt-alarm-kind--device {
+    color: var(--mud-palette-error);
+    font-weight: 700;
+}
+
+.dt-alarm-row--device td:first-child {
+    box-shadow: inset 4px 0 0 var(--mud-palette-error);
+}
+
+.dt-alarm-take--device {
+    min-width: 5.5rem;
+    font-weight: 700;
+}
+
+.dt-alarms-table--device {
+    background: color-mix(in srgb, var(--mud-palette-error) 3%, var(--mud-palette-surface));
+}
+
+.dt-alarms-archive-sub {
+    font-weight: 600;
+}
+
+@media (max-width: 600px) {
+    .dt-alarms-region {
+        padding: 10px 10px 8px;
+    }
 }
