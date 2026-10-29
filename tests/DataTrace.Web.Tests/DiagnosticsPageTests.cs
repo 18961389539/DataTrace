@@ -118,6 +118,40 @@ public class DiagnosticsPageTests : WebTestBase
     }
 
     [Fact]
+    public void Next_attention_and_section_chips_surface_backlog()
+    {
+        var spool = new FakeSpool();
+        spool.Entries.Add(Entry("stuck.spool.json", "P900", attempts: 1, error: "disk full"));
+        var (cut, _, _) = Render(spool);
+
+        Assert.Contains("下一项", cut.Markup);
+        Assert.Contains("立即刷新诊断数据", cut.Markup);
+        Assert.Contains("1 件", cut.Markup);
+        Assert.Contains("按优先级：核对", cut.Markup);
+        Assert.Contains("全部折叠", cut.Markup);
+    }
+
+    [Fact]
+    public async Task Collapse_all_plc_closes_expanded_issue_panels()
+    {
+        var (cut, _, _) = Render(new FakeSpool(), seed: diag =>
+        {
+            diag.PublishPlcTraffic(new PlcTrafficView(
+                2, "故障PLC", TotalCount: 4, FailureCount: 2, LastDurationMs: 40, MaxDurationMs: 400,
+                LastSuccessAt: null,
+                [new PlcExchangeView(DateTime.Now, false, "D2", 1, 40, false, "链接已断开", [])],
+                [new PlcExchangeView(DateTime.Now, false, "D2", 1, 40, false, "链接已断开", [])]));
+        }, onlyIssues: false);
+
+        var panel = Assert.Single(cut.FindComponents<MudExpansionPanel>());
+        Assert.True(panel.Instance.Expanded);
+
+        await cut.FindAll("button").Single(button => button.TextContent.Contains("全部折叠")).ClickAsync(new());
+        Assert.False(panel.Instance.Expanded);
+    }
+
+
+    [Fact]
     public void Manual_confirmation_blocker_requires_explicit_physical_review()
     {
         _confirmationRecovery.Pending.Add(new PendingWriteBack

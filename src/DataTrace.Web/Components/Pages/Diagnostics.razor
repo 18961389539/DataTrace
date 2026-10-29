@@ -97,7 +97,8 @@
 @if (HasActionableItems)
 {
     <div class="dt-diag-action-callout" role="status">
-        <MudText Typo="Typo.subtitle2" Class="mb-0">需要处置</MudText>
+        <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Filled">需要处置</MudChip>
+        <MudText Typo="Typo.caption" Class="dt-muted">按优先级：核对 → 补传 → MES</MudText>
         @if (_manualReviewPending.Count > 0)
         {
             <span>待人工核对 @_manualReviewPending.Count</span>
@@ -150,6 +151,15 @@ else if (_onlyIssues && _loadError is null)
     <MudCheckBox T="bool" @bind-Value="_onlyIssues" @bind-Value:after="PersistOnlyIssuesAsync" Label="只看异常" Dense="true" Color="Color.Primary" />
     <div class="dt-diag-ops">
         <MudText Typo="Typo.caption" Class="dt-muted">@RefreshCaption</MudText>
+        <MudButton Size="Size.Small" Variant="Variant.Outlined" Class="dt-diag-ops-btn"
+                   StartIcon="@Icons.Material.Filled.NextPlan"
+                   Disabled="@(!HasJumpableAttention)"
+                   title="跳到下一处需要关注的分区" aria-label="跳到下一处需要关注的分区"
+                   OnClick="JumpNextAttentionAsync">下一项</MudButton>
+        <MudButton Size="Size.Small" Variant="Variant.Text" Class="dt-diag-ops-btn"
+                   StartIcon="@Icons.Material.Filled.Refresh"
+                   title="立即刷新诊断数据" aria-label="立即刷新诊断数据"
+                   OnClick="@(() => RefreshAsync(showBusy: true))">刷新</MudButton>
         <MudButton Size="Size.Small" Variant="Variant.Text" Class="dt-diag-ops-btn"
                    StartIcon="@(_paused ? Icons.Material.Filled.PlayArrow : Icons.Material.Filled.Pause)"
                    title="@(_paused ? "继续自动刷新" : "暂停自动刷新")"
@@ -198,7 +208,7 @@ else if (_onlyIssues && _loadError is null)
             <div class="dt-diag-health-grid">
                 @foreach (var check in VisibleHealthChecks(health))
                 {
-                    <div class="dt-diag-health-item">
+                    <div class="dt-diag-health-item @(check.Healthy ? null : "dt-diag-health-item--bad")">
                         <span class="@(check.Healthy ? "dt-diag-health-ok" : "dt-diag-health-bad")">
                             @(check.Healthy ? "正常" : "异常")
                         </span>
@@ -236,6 +246,18 @@ else if (_onlyIssues && _loadError is null)
         <MudText Typo="Typo.subtitle1" Class="mb-0">
             采集循环 <InfoHint Topic="HelpTexts.CollectorLoop" />
         </MudText>
+        @if (_loop.Ticks.Count > 0)
+        {
+            <MudChip T="string" Size="Size.Small" Color="@(LoopStale ? Color.Error : Color.Default)"
+                     Variant="@(LoopStale ? Variant.Filled : Variant.Outlined)">
+                @(LoopStale ? "已停滞" : $"最近 {SinceText(SinceLastTick)}")
+            </MudChip>
+            @if (_loop.OverrunCount > 0)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Filled">超时 @_loop.OverrunCount</MudChip>
+            }
+        }
+        <MudButton Size="Size.Small" Variant="Variant.Text" Href="/config/settings#sec-collect">采集设置</MudButton>
     </div>
 @if (_loop.Ticks.Count == 0)
 {
@@ -261,7 +283,6 @@ else if (!_onlyIssues || LoopStale || _loop.OverrunCount > 0)
                  Variant="@(_loop.OverrunCount > 0 ? Variant.Filled : Variant.Outlined)">
             超时 @_loop.OverrunCount 轮
         </MudChip>
-        <MudButton Size="Size.Small" Variant="Variant.Text" Href="/config/settings#sec-collect">采集设置</MudButton>
     </MudStack>
     @if (LoopStale)
     {
@@ -324,6 +345,10 @@ else
         }
         <MudCheckBox T="bool" @bind-Value="_expandHealthyPlc" @bind-Value:after="PersistExpandHealthyAsync"
                      Label="展开健康连接" Dense="true" Disabled="_onlyIssues" />
+        <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@(FocusedTraffic.Count == 0)"
+                   OnClick="CollapseAllPlc">全部折叠</MudButton>
+        <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@(DisconnectedPlcCount == 0)"
+                   OnClick="ExpandIssuePlc">展开异常</MudButton>
         <MudButton Size="Size.Small" Variant="Variant.Text" Href="/config/plc">PLC 配置</MudButton>
         <MudButton Size="Size.Small" Variant="Variant.Text" Href="/alarms">设备报警</MudButton>
     </div>
@@ -518,6 +543,11 @@ else
 <section id="diag-manual" class="@ManualSectionClass" aria-label="待人工核对的 PLC 回写">
     <div class="dt-diag-section-title">
         <MudText Typo="Typo.subtitle1" Class="mb-0">待人工核对的 PLC 回写</MudText>
+        <MudChip T="string" Size="Size.Small"
+                 Color="@(FilteredManualReview.Count > 0 ? Color.Warning : Color.Default)"
+                 Variant="@(FilteredManualReview.Count > 0 ? Variant.Filled : Variant.Outlined)">
+            @FilteredManualReview.Count 条
+        </MudChip>
         <MudButton Size="Size.Small" Variant="Variant.Text" Href="/alarms">设备报警</MudButton>
     </div>
 @if (_manualReviewError is not null)
@@ -593,6 +623,11 @@ else
         <MudText Typo="Typo.subtitle1" Class="mb-0">
             补传队列 <InfoHint Topic="HelpTexts.SpoolQueue" />
         </MudText>
+        <MudChip T="string" Size="Size.Small"
+                 Color="@(_spoolCount > 0 ? Color.Warning : Color.Default)"
+                 Variant="@(_spoolCount > 0 ? Variant.Filled : Variant.Outlined)">
+            @_spoolCount 件
+        </MudChip>
         <MudButton Size="Size.Small" Variant="Variant.Text" Href="/alarms">设备报警</MudButton>
         <MudButton Size="Size.Small" Variant="Variant.Text" Href="/query">数据查询</MudButton>
     </div>
@@ -702,6 +737,11 @@ else
 <section id="diag-mes" class="@MesSectionClass" aria-label="MES 出站">
     <div class="dt-diag-section-title">
         <MudText Typo="Typo.subtitle1" Class="mb-0">MES 出站</MudText>
+        <MudChip T="string" Size="Size.Small"
+                 Color="@((_mesOutbox?.PendingCount ?? 0) > 0 ? Color.Warning : Color.Success)"
+                 Variant="Variant.Outlined">
+            @(_mesOutbox is null ? "未读到" : _mesOutbox.PendingCount == 0 ? "队列空" : $"待推 {_mesOutbox.PendingCount}")
+        </MudChip>
         <MudButton Size="Size.Small" Variant="Variant.Text" Href="/config/settings#sec-mes">MES 设置</MudButton>
         <MudButton Size="Size.Small" Variant="Variant.Text" Href="/alarms">设备报警</MudButton>
     </div>
@@ -800,6 +840,71 @@ else
         => _manualReviewPending.Count > 0
            || _spoolCount > 0
            || (_mesOutbox?.PendingCount ?? 0) > 0;
+
+    private bool HasJumpableAttention
+        => UnhealthyCount > 0 || LoopStale || _loop.OverrunCount > 0 || DisconnectedPlcCount > 0
+           || HotLatencyCount > 0 || _manualReviewPending.Count > 0 || _spoolCount > 0
+           || (_mesOutbox?.PendingCount ?? 0) > 0;
+
+    private static readonly string[] AttentionOrder =
+    [
+        "diag-manual", "diag-spool", "diag-mes", "diag-health", "diag-loop", "diag-plc", "diag-latency"
+    ];
+
+    private bool SectionNeedsAttention(string sectionId) => sectionId switch
+    {
+        "diag-manual" => _manualReviewPending.Count > 0,
+        "diag-spool" => _spoolCount > 0,
+        "diag-mes" => (_mesOutbox?.PendingCount ?? 0) > 0,
+        "diag-health" => UnhealthyCount > 0 || _healthError is not null,
+        "diag-loop" => LoopStale || _loop.OverrunCount > 0,
+        "diag-plc" => DisconnectedPlcCount > 0,
+        "diag-latency" => HotLatencyCount > 0,
+        _ => false
+    };
+
+    private async Task JumpNextAttentionAsync()
+    {
+        var current = _jumpTarget switch
+        {
+            "manual" => "diag-manual",
+            "spool" => "diag-spool",
+            "mes" => "diag-mes",
+            "health" => "diag-health",
+            "loop" => "diag-loop",
+            "plc" => "diag-plc",
+            "latency" => "diag-latency",
+            _ => null
+        };
+        var start = current is null ? -1 : Array.IndexOf(AttentionOrder, current);
+        for (var offset = 1; offset <= AttentionOrder.Length; offset++)
+        {
+            var idx = (start + offset + AttentionOrder.Length) % AttentionOrder.Length;
+            var candidate = AttentionOrder[idx];
+            if (SectionNeedsAttention(candidate))
+            {
+                await JumpAsync(candidate);
+                return;
+            }
+        }
+    }
+
+    private void CollapseAllPlc()
+    {
+        foreach (var plc in FocusedTraffic)
+        {
+            _plcExpanded[plc.PlcConnectionId] = false;
+        }
+        _focusExpanded = false;
+    }
+
+    private void ExpandIssuePlc()
+    {
+        foreach (var plc in FocusedTraffic)
+        {
+            _plcExpanded[plc.PlcConnectionId] = PlcHasIssue(plc);
+        }
+    }
 
     private bool ShowHealthSection => true;
 
@@ -941,6 +1046,7 @@ else
             "diag-spool" => "spool",
             "diag-manual" => "manual",
             "diag-mes" => "mes",
+            "diag-latency" => "latency",
             _ => sectionId
         };
         try

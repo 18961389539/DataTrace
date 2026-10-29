@@ -4375,3 +4375,15 @@ body:has(.dt-alarm-bar) .dt-diag-toolbar {
     padding: 6px 10px;
     gap: 6px 10px;
 }
+
+
+.dt-diag-health-item--bad {
+    padding: 4px 8px;
+    border-radius: var(--dt-radius, 4px);
+    border-left: 3px solid var(--mud-palette-error);
+    background: color-mix(in srgb, var(--mud-palette-error) 7%, var(--mud-palette-surface));
+}
+
+.dt-diag-ops .mud-button-root {
+    white-space: nowrap;
+}
