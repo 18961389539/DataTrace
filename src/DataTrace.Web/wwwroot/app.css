@@ -497,6 +497,17 @@ html.dt-theme-dark .mud-navmenu .mud-nav-link.active:hover {
     order: 3;
 }
 
+.dt-query-secondary-buttons {
+    align-items: center;
+}
+
+.dt-query-secondary-meta {
+    align-items: center;
+    width: 100%;
+    column-gap: 8px;
+    row-gap: 4px;
+}
+
 .dt-query-results-heading {
     margin-top: 8px;
 }

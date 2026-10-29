@@ -334,44 +334,52 @@ else
                     </MudItem>
                 </MudGrid>
 
-                <MudStack Row="true" Spacing="2" Class="mt-1 mb-2 flex-wrap dt-query-secondary-actions">
-                    <MudButton Variant="Variant.Outlined" OnClick="Reset" Disabled="_exporting"
-                               StartIcon="@Icons.Material.Filled.RestartAlt">
-                        重置
-                    </MudButton>
-                                                            @if (_canExport)
-                    {
-                        @* 主按钮仍是「导出 CSV」：现场最常用标准表；宽表/按月挂在旁边下拉。 *@
-                        <MudTooltip Arrow="true" Text="@ExportTooltipText">
-                            <ChildContent>
-                                <MudButton Variant="Variant.Outlined" OnClick="@(() => ExportCsv(wide: false))"
-                                           Disabled="@(_loading || _exporting || _total == 0)"
-                                           StartIcon="@Icons.Material.Filled.FileDownload">
-                                    @(_exporting ? "导出中…" : "导出 CSV")
-                                </MudButton>
-                            </ChildContent>
-                        </MudTooltip>
-                        <MudMenu AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft"
-                                 Disabled="@(_loading || _exporting || _total == 0)">
-                            <ActivatorContent>
-                                <MudIconButton Icon="@Icons.Material.Filled.ArrowDropDown" Disabled="@(_loading || _exporting || _total == 0)"
-                                               aria-label="更多导出选项" />
-                            </ActivatorContent>
-                            <ChildContent>
-                                <MudMenuItem OnClick="@(async _ => await ExportCsv(wide: true))" Disabled="_exporting">宽表 CSV（含点位值）</MudMenuItem>
-                                <MudMenuItem OnClick="@(async _ => await ExportByMonthAsync(wide: false))" Disabled="_exporting">
-                                    @(_total > SystemDefaults.ExportRowLimit ? "按月分包（标准，完整）" : "按月分包（标准）")
-                                </MudMenuItem>
-                                <MudMenuItem OnClick="@(async _ => await ExportByMonthAsync(wide: true))" Disabled="_exporting">按月分包（宽表）</MudMenuItem>
-                            </ChildContent>
-                        </MudMenu>
-                        <InfoHint Topic="HelpTexts.ExportLimit" Extra="@ExportHintExtra" />
-                        <MudText Typo="Typo.caption" Class="dt-muted align-self-center" role="status">
-                            导出范围 @DateRangeFilter.Format(_from, _to) · 命中 @_total.ToString("N0") 条 · 单次上限 @SystemDefaults.ExportRowLimit.ToString("N0") 条
-                        </MudText>
-                    }
-                    <MudText Typo="Typo.caption" Class="dt-muted align-self-center">改任一条件即自动重查，也可点「查询」立刻执行</MudText>
-                    <InfoHint Topic="HelpTexts.MatchMode" />
+                @* 操作按钮与状态/说明分两行：避免「重置 / 导出」和长灰字挤在同一行高低不齐。 *@
+                <MudStack Spacing="1" Class="mt-1 mb-2 dt-query-secondary-actions">
+                    <MudStack Row="true" Spacing="2" Class="flex-wrap align-center dt-query-secondary-buttons">
+                        <MudButton Variant="Variant.Outlined" OnClick="Reset" Disabled="_exporting"
+                                   StartIcon="@Icons.Material.Filled.RestartAlt">
+                            重置
+                        </MudButton>
+                        @if (_canExport)
+                        {
+                            @* 主按钮仍是「导出 CSV」：现场最常用标准表；宽表/按月挂在旁边下拉。 *@
+                            <MudTooltip Arrow="true" Text="@ExportTooltipText">
+                                <ChildContent>
+                                    <MudButton Variant="Variant.Outlined" OnClick="@(() => ExportCsv(wide: false))"
+                                               Disabled="@(_loading || _exporting || _total == 0)"
+                                               StartIcon="@Icons.Material.Filled.FileDownload">
+                                        @(_exporting ? "导出中…" : "导出 CSV")
+                                    </MudButton>
+                                </ChildContent>
+                            </MudTooltip>
+                            <MudMenu AnchorOrigin="Origin.BottomLeft" TransformOrigin="Origin.TopLeft"
+                                     Disabled="@(_loading || _exporting || _total == 0)">
+                                <ActivatorContent>
+                                    <MudIconButton Icon="@Icons.Material.Filled.ArrowDropDown" Disabled="@(_loading || _exporting || _total == 0)"
+                                                   aria-label="更多导出选项" />
+                                </ActivatorContent>
+                                <ChildContent>
+                                    <MudMenuItem OnClick="@(async _ => await ExportCsv(wide: true))" Disabled="_exporting">宽表 CSV（含点位值）</MudMenuItem>
+                                    <MudMenuItem OnClick="@(async _ => await ExportByMonthAsync(wide: false))" Disabled="_exporting">
+                                        @(_total > SystemDefaults.ExportRowLimit ? "按月分包（标准，完整）" : "按月分包（标准）")
+                                    </MudMenuItem>
+                                    <MudMenuItem OnClick="@(async _ => await ExportByMonthAsync(wide: true))" Disabled="_exporting">按月分包（宽表）</MudMenuItem>
+                                </ChildContent>
+                            </MudMenu>
+                        }
+                    </MudStack>
+                    <MudStack Row="true" Spacing="2" Class="flex-wrap align-center dt-query-secondary-meta">
+                        @if (_canExport)
+                        {
+                            <InfoHint Topic="HelpTexts.ExportLimit" Extra="@ExportHintExtra" />
+                            <MudText Typo="Typo.caption" Class="dt-muted align-self-center" role="status">
+                                导出范围 @DateRangeFilter.Format(_from, _to) · 命中 @_total.ToString("N0") 条 · 单次上限 @SystemDefaults.ExportRowLimit.ToString("N0") 条
+                            </MudText>
+                        }
+                        <MudText Typo="Typo.caption" Class="dt-muted align-self-center">改任一条件即自动重查，也可点「查询」立刻执行</MudText>
+                        <InfoHint Topic="HelpTexts.MatchMode" />
+                    </MudStack>
                 </MudStack>
             </div>
         </form>
