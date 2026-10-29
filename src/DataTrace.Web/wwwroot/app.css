@@ -4198,3 +4198,144 @@ body:has(.dt-alarm-bar) .dt-alarms-toolbar {
         position: static;
     }
 }
+
+/* ---------- 运行诊断页 ---------- */
+.dt-diag-toolbar {
+    position: sticky;
+    top: calc(var(--mud-appbar-height) + 4px);
+    z-index: 14;
+    margin: 0 0 12px;
+    padding: 8px 12px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: var(--dt-radius, 4px);
+    background: var(--mud-palette-surface);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+}
+
+body:has(.dt-alarm-bar) .dt-diag-toolbar {
+    top: calc(var(--mud-appbar-height) + 44px);
+}
+
+.dt-diag-section-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    flex: 1 1 auto;
+}
+
+.dt-diag-ops {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+}
+
+.dt-diag-summary-chip {
+    cursor: pointer;
+}
+
+.dt-diag-summary-chip--on {
+    outline: 2px solid color-mix(in srgb, var(--mud-palette-primary) 55%, transparent);
+    outline-offset: 1px;
+}
+
+.dt-diag-action-callout {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+    margin: 0 0 12px;
+    padding: 10px 14px;
+    border-radius: var(--dt-radius, 4px);
+    border: 1px solid color-mix(in srgb, var(--mud-palette-warning) 45%, var(--mud-palette-lines-default));
+    background: color-mix(in srgb, var(--mud-palette-warning) 10%, var(--mud-palette-surface));
+}
+
+.dt-diag-action-callout-age {
+    color: var(--mud-palette-warning);
+    font-weight: 600;
+}
+
+.dt-diag-group-label {
+    margin: 16px 0 8px;
+    font-size: 0.75rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--mud-palette-text-secondary);
+}
+
+.dt-diag-section {
+    margin: 0 0 16px;
+    padding: 12px 14px 8px;
+    border: 1px solid var(--mud-palette-lines-default);
+    border-left-width: 4px;
+    border-radius: var(--dt-radius, 4px);
+    background: var(--mud-palette-surface);
+    scroll-margin-top: calc(var(--mud-appbar-height) + 64px);
+}
+
+.dt-diag-section--observe {
+    border-left-color: color-mix(in srgb, var(--mud-palette-info) 70%, var(--mud-palette-lines-default));
+}
+
+.dt-diag-section--act {
+    border-left-color: color-mix(in srgb, var(--mud-palette-warning) 75%, var(--mud-palette-lines-default));
+}
+
+.dt-diag-section--alert {
+    border-left-color: var(--mud-palette-error);
+}
+
+.dt-diag-section--ok {
+    border-left-color: var(--mud-palette-success);
+}
+
+.dt-diag-section-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.dt-diag-health-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px 10px;
+}
+
+.dt-diag-health-actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.dt-diag-focus {
+    margin-bottom: 8px;
+}
+
+.dt-diag-duration--hot {
+    color: var(--mud-palette-warning);
+    font-weight: 600;
+}
+
+.dt-diag-clean {
+    margin: 0 0 16px;
+}
+
+@media (max-width: 600px) {
+    .dt-diag-toolbar {
+        position: static;
+    }
+}
+
+.dt-nav-badge--diag {
+    background: color-mix(in srgb, var(--mud-palette-warning) 18%, var(--mud-palette-surface));
+    color: var(--mud-palette-warning);
+    border: 1px solid color-mix(in srgb, var(--mud-palette-warning) 45%, transparent);
+}

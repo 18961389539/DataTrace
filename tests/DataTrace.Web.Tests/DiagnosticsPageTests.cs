@@ -37,6 +37,32 @@ public class DiagnosticsPageTests : WebTestBase
         Assert.Contains("还没有采集循环记录", cut.Markup);
         Assert.Contains("还没有 PLC 通信记录", cut.Markup);
         Assert.Contains("补传队列是空的", cut.Markup);
+        Assert.Contains("只看异常", cut.Markup);
+        Assert.Contains("当前没有需要处置的异常", cut.Markup);
+        Assert.Contains("diag-mes", cut.Markup);
+    }
+
+    [Fact]
+    public void Summary_chips_and_action_callout_surface_backlog()
+    {
+        var spool = new FakeSpool();
+        spool.Entries.Add(Entry("stuck.spool.json", "P900", attempts: 3, error: "database is locked"));
+        var (cut, _, _) = Render(spool);
+
+        Assert.Contains("补传积压", cut.Markup);
+        Assert.Contains("需要处置", cut.Markup);
+        Assert.Contains("去补传", cut.Markup);
+        Assert.Contains("dt-diag-action-callout", cut.Markup);
+        Assert.Contains("diag-spool", cut.Markup);
+    }
+
+    [Fact]
+    public void Turning_off_only_issues_shows_healthy_spool_success()
+    {
+        var (cut, _, _) = Render(new FakeSpool(), onlyIssues: false);
+
+        Assert.Contains("补传队列是空的：没有写库失败等待补传的件", cut.Markup);
+        Assert.DoesNotContain("当前没有需要处置的异常", cut.Markup);
     }
 
     [Fact]
@@ -438,13 +464,14 @@ public class DiagnosticsPageTests : WebTestBase
     [Fact]
     public void Loop_trend_chart_draws_work_and_interval_lines()
     {
+        // 折线属于观测细节：关掉「只看异常」才展开健康循环的图与表。
         var (cut, _, _) = Render(new FakeSpool(), seed: diag =>
         {
             diag.PublishLoopTick(new CollectorLoopTick(
                 DateTime.Now, ConfiguredIntervalMs: 200,
                 WorkMs: 5, ScanMs: 3, HeartbeatMs: 1,
                 PlcCount: 1, TriggeredCount: 0, CoolingDownPlcCount: 0, SkippedStationCount: 0));
-        });
+        }, onlyIssues: false);
 
         Assert.Contains("每轮耗时", cut.Markup);
         Assert.Contains("扫描间隔", cut.Markup);
@@ -811,7 +838,8 @@ public class DiagnosticsPageTests : WebTestBase
     private (IRenderedComponent<Diagnostics> Cut, FakeSpool Spool, CollectorDiagnostics Diag) Render(
         FakeSpool spool,
         Action<CollectorDiagnostics>? seed = null,
-        int? stationId = null)
+        int? stationId = null,
+        bool onlyIssues = true)
     {
         var diag = new CollectorDiagnostics();
         seed?.Invoke(diag);
@@ -831,6 +859,10 @@ public class DiagnosticsPageTests : WebTestBase
         // 页面里有 MudChip / MudTooltip / MudExpansionPanels，浮层宿主必须先渲染出来。
         // 顺序不能反：渲染宿主会初始化服务提供者，之后再注册服务会被 bUnit 直接拒绝。
         RenderPopoverHost();
+
+        // 默认「只看异常」；测试里显式给定，避免 Loose JS 把 bool 默认成 false。
+        Context.JSInterop.Setup<bool>("dtDiagOnlyIssues.get").SetResult(onlyIssues);
+        Context.JSInterop.SetupVoid("dtDiagOnlyIssues.set", _ => true);
 
         if (stationId is not null)
         {

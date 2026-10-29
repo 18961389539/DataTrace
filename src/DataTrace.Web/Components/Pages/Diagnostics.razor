@@ -23,16 +23,49 @@
 @inject AuthenticationStateProvider Auth
 @inject IConfirmationRecoveryService ConfirmationRecovery
 
-@* 这一页的职责是回答"为什么变慢了、为什么没采上"，不是"这一件为什么判废"。
+@* 这一页的职责是回答"为什么变慢了、为什么没采上"，不是"这一件为什么判 NG"。
    所以三块内容都只读、只活在内存里，不参与看板的实时推送 —— 观测手段不该反过来成为负担。 *@
 <PageHeader Title="运行诊断" HelpRoute="diagnostics" Busy="@_busy"
             Description="看采集进程这一会儿在干什么：扫描慢在哪、PLC 在发什么、写库失败的件还堵在哪。数据只在内存里，重启即清空。">
+    <ChildContent>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="@SummaryChipClass("health")"
+                 Color="@(UnhealthyCount > 0 ? Color.Error : Color.Default)"
+                 OnClick="@(() => JumpAsync("diag-health"))" title="跳到系统健康">
+            健康异常 @UnhealthyCount
+        </MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="@SummaryChipClass("loop")"
+                 Color="@(LoopStale || _loop.OverrunCount > 0 ? Color.Error : Color.Default)"
+                 OnClick="@(() => JumpAsync("diag-loop"))" title="跳到采集循环">
+            @(LoopStale ? "循环停滞" : $"超时 {_loop.OverrunCount}")
+        </MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="@SummaryChipClass("plc")"
+                 Color="@(DisconnectedPlcCount > 0 ? Color.Error : Color.Default)"
+                 OnClick="@(() => JumpAsync("diag-plc"))" title="跳到 PLC 通信">
+            PLC 断连 @DisconnectedPlcCount
+        </MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="@SummaryChipClass("spool")"
+                 Color="@(_spoolCount > 0 ? Color.Warning : Color.Default)"
+                 OnClick="@(() => JumpAsync("diag-spool"))" title="跳到补传队列">
+            补传积压 @_spoolCount
+        </MudChip>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="@SummaryChipClass("manual")"
+                 Color="@(_manualReviewPending.Count > 0 ? Color.Warning : Color.Default)"
+                 OnClick="@(() => JumpAsync("diag-manual"))" title="跳到人工核对">
+            待核对 @_manualReviewPending.Count
+        </MudChip>
+        @if ((_mesOutbox?.PendingCount ?? 0) > 0)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="@SummaryChipClass("mes")"
+                     Color="Color.Warning" OnClick="@(() => JumpAsync("diag-mes"))" title="跳到 MES 出站">
+                MES @_mesOutbox!.PendingCount
+            </MudChip>
+        }
+    </ChildContent>
     <Actions>
         <MudText Typo="Typo.caption" Class="dt-muted">@RefreshCaption</MudText>
         <MudButton Size="Size.Small" Variant="Variant.Text"
                    StartIcon="@(_paused ? Icons.Material.Filled.PlayArrow : Icons.Material.Filled.Pause)"
                    OnClick="TogglePauseAsync">@(_paused ? "继续刷新" : "暂停刷新")</MudButton>
-        @* 现场排障的最后一公里是"把看到的东西带出去"：截图不能检索、也不能粘贴。 *@
         <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ContentCopy"
                    OnClick="CopyDigestAsync">复制诊断摘要</MudButton>
         <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.History"
@@ -61,61 +94,139 @@
     </MudAlert>
 }
 
-@* 与 /healthz 同一份判据：这一页要回答"现在还能不能干活"，
-   而其中一半（配置库、数据盘、磁盘余量、采集服务心跳）原本要另开一个标签页才看得到。 *@
-@if (_health is { } health)
+@if (HasActionableItems)
 {
-    <MudPaper Class="pa-2 mb-3 dt-diag-health dt-list-card" Elevation="0">
-        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap">
-            <MudText Typo="Typo.subtitle2">系统健康</MudText>
-            <MudChip T="string" Size="Size.Small"
-                     Color="@(_healthError is not null ? Color.Warning : health.Status == "healthy" ? Color.Success : Color.Error)"
-                     Variant="Variant.Filled">
-                @(_healthError is not null ? "检查失败 · 显示上次结果" : health.Status == "healthy" ? "全部正常" : "有异常项")
-            </MudChip>
-            <MudText Typo="Typo.caption" Class="dt-muted">
-                与 /healthz 同一份判据 · 最近检查 @(_healthAt?.ToString("HH:mm:ss") ?? "—") · @HealthCadenceText · 版本 @health.Version · 已运行 @UptimeText(health.UptimeSeconds)
-            </MudText>
-        </MudStack>
-        <div class="dt-diag-health-grid">
-            @foreach (var check in health.Checks)
-            {
-                <div class="dt-diag-health-item">
-                    <span class="@(check.Healthy ? "dt-diag-health-ok" : "dt-diag-health-bad")">
-                        @(check.Healthy ? "正常" : "异常")
-                    </span>
-                    <span>@HealthName(check.Name)</span>
-                    @if (AdvancedHealthIdentifier(check) is { } identifier)
-                    {
-                        <span class="dt-muted">@identifier</span>
-                    }
-                    @if (HealthDetail(check) is { } detail)
-                    {
-                        <span class="dt-muted">@detail</span>
-                    }
-                </div>
-            }
-        </div>
-        @if (_healthError is { } healthError)
+    <div class="dt-diag-action-callout" role="status">
+        <MudText Typo="Typo.subtitle2" Class="mb-0">需要处置</MudText>
+        @if (_manualReviewPending.Count > 0)
         {
-            <MudText Typo="Typo.caption" Color="Color.Warning" Class="mt-1">@healthError</MudText>
+            <span>待人工核对 @_manualReviewPending.Count</span>
+            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Warning"
+                       OnClick="@(() => JumpAsync("diag-manual"))">去核对</MudButton>
         }
-    </MudPaper>
+        @if (_spoolCount > 0)
+        {
+            <span>
+                补传积压 @_spoolCount
+                @if (_spoolOldest is { } oldest)
+                {
+                    <span class="dt-diag-action-callout-age">· 最早已等 @WaitText(AgeReference - oldest)</span>
+                }
+            </span>
+            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                       OnClick="@(() => JumpAsync("diag-spool"))">去补传</MudButton>
+        }
+        @if ((_mesOutbox?.PendingCount ?? 0) > 0)
+        {
+            <span>MES 待推送 @_mesOutbox!.PendingCount</span>
+            <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => JumpAsync("diag-mes"))">查看</MudButton>
+        }
+    </div>
+}
+else if (_onlyIssues && _loadError is null)
+{
+    <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true" Class="dt-diag-clean mb-3">
+        当前没有需要处置的异常。关闭「只看异常」可查看全部观测数据。
+    </MudAlert>
 }
 
-<MudText Typo="Typo.subtitle1" Class="mb-2">
-    采集循环 <InfoHint Topic="HelpTexts.CollectorLoop" />
-</MudText>
+<div class="dt-diag-toolbar" aria-label="诊断导航与偏好">
+    <div class="dt-diag-section-nav" role="navigation" aria-label="分区跳转">
+        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => JumpAsync("diag-health"))">健康</MudButton>
+        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => JumpAsync("diag-loop"))">循环</MudButton>
+        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => JumpAsync("diag-plc"))">PLC</MudButton>
+        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => JumpAsync("diag-latency"))">耗时</MudButton>
+        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => JumpAsync("diag-manual"))">核对</MudButton>
+        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => JumpAsync("diag-spool"))">补传</MudButton>
+        <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => JumpAsync("diag-mes"))">MES</MudButton>
+    </div>
+    <MudCheckBox T="bool" @bind-Value="_onlyIssues" @bind-Value:after="PersistOnlyIssuesAsync" Label="只看异常" Dense="true" Color="Color.Primary" />
+    <MudText Typo="Typo.caption" Class="dt-muted dt-diag-ops">@RefreshCaption</MudText>
+</div>
+
+@if (_focusedStation is { } focused)
+{
+    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap dt-diag-focus">
+        <MudChip T="string" Color="Color.Primary" Variant="Variant.Outlined">工站 @focused.Code @focused.Name</MudChip>
+        <MudText Typo="Typo.caption" Class="dt-muted">已按工站过滤 PLC / 耗时 / 补传 / 核对</MudText>
+        <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Clear" Href="/diagnostics">清除工站筛选</MudButton>
+    </MudStack>
+}
+
+<div class="dt-diag-group-label">观测</div>
+@* 与 /healthz 同一份判据：这一页要回答"现在还能不能干活"，
+   而其中一半（配置库、数据盘、磁盘余量、采集服务心跳）原本要另开一个标签页才看得到。 *@
+@if (ShowHealthSection)
+{
+    <section id="diag-health" class="@HealthSectionClass" aria-label="系统健康">
+        <div class="dt-diag-section-title">
+            <MudText Typo="Typo.subtitle1" Class="mb-0">系统健康</MudText>
+            @if (_health is { } healthHead)
+            {
+                <MudChip T="string" Size="Size.Small"
+                         Color="@(_healthError is not null ? Color.Warning : healthHead.Status == "healthy" ? Color.Success : Color.Error)"
+                         Variant="Variant.Filled">
+                    @(_healthError is not null ? "检查失败 · 显示上次结果" : healthHead.Status == "healthy" ? "全部正常" : "有异常项")
+                </MudChip>
+                <MudText Typo="Typo.caption" Class="dt-muted">
+                    与 /healthz 同一份判据 · 最近检查 @RelativeOrDash(_healthAt) · @HealthCadenceText · 版本 @healthHead.Version · 已运行 @UptimeText(healthHead.UptimeSeconds)
+                </MudText>
+            }
+        </div>
+        @if (_health is { } health)
+        {
+            <div class="dt-diag-health-grid">
+                @foreach (var check in VisibleHealthChecks(health))
+                {
+                    <div class="dt-diag-health-item">
+                        <span class="@(check.Healthy ? "dt-diag-health-ok" : "dt-diag-health-bad")">
+                            @(check.Healthy ? "正常" : "异常")
+                        </span>
+                        <span>@HealthName(check.Name)</span>
+                        @if (AdvancedHealthIdentifier(check) is { } identifier)
+                        {
+                            <span class="dt-muted">@identifier</span>
+                        }
+                        @if (HealthDetail(check) is { } detail)
+                        {
+                            <span class="dt-muted">@detail</span>
+                        }
+                        @if (!check.Healthy && HealthNextStep(check) is { } next)
+                        {
+                            <span class="dt-diag-health-actions">
+                                @foreach (var link in next)
+                                {
+                                    <MudButton Size="Size.Small" Variant="Variant.Text" Href="@link.Href">@link.Label</MudButton>
+                                }
+                            </span>
+                        }
+                    </div>
+                }
+            </div>
+            @if (_healthError is { } healthError)
+            {
+                <MudText Typo="Typo.caption" Color="Color.Warning" Class="mt-1">@healthError</MudText>
+            }
+        }
+    </section>
+}
+
+<section id="diag-loop" class="@LoopSectionClass" aria-label="采集循环">
+    <div class="dt-diag-section-title">
+        <MudText Typo="Typo.subtitle1" Class="mb-0">
+            采集循环 <InfoHint Topic="HelpTexts.CollectorLoop" />
+        </MudText>
+    </div>
 @if (_loop.Ticks.Count == 0)
 {
-    <MudText Typo="Typo.body2" Class="dt-muted mb-4">
+    <MudText Typo="Typo.body2" Class="dt-muted mb-2">
         还没有采集循环记录。采集关闭时不会有记录（这时上方「采集服务心跳」仍显示正常，那是服务在打点，不是在扫描）；刚启动则需要等下一轮扫描。
     </MudText>
 }
-else
+else if (!_onlyIssues || LoopStale || _loop.OverrunCount > 0)
 {
     <MudStack Row="true" Spacing="2" Class="mb-2 flex-wrap">
-        @* 判活要放在第一位：循环一旦停住，Ticks 就不再更新，后面的平均值/最长/超时数
+        @* 判活要放在第一位：循环一旦停住，Ticks 就不再更新，后面的平均 / 最长 / 超时数
            会一直停在最后一轮的样子，比"一切正常"还像正常。 *@
         <MudChip T="string" Size="Size.Small"
                  Color="@(LoopStale ? Color.Error : Color.Default)"
@@ -130,6 +241,7 @@ else
                  Variant="@(_loop.OverrunCount > 0 ? Variant.Filled : Variant.Outlined)">
             超时 @_loop.OverrunCount 轮
         </MudChip>
+        <MudButton Size="Size.Small" Variant="Variant.Text" Href="/config/settings#sec-collect">采集设置</MudButton>
     </MudStack>
     @if (LoopStale)
     {
@@ -145,7 +257,7 @@ else
                    EmptyText="还没有采集循环记录" />
     </div>
     <MudTable Items="_loop.Ticks" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm"
-              FixedHeader="true" Height="320px" Class="mb-4">
+              FixedHeader="true" Height="320px" Class="dt-list-table">
         <HeaderContent>
             <MudTh>时间</MudTh>
             <MudTh Class="dt-num">总耗时</MudTh>
@@ -157,7 +269,7 @@ else
             <MudTh Class="dt-num">工站跳过</MudTh>
         </HeaderContent>
         <RowTemplate>
-            <MudTd DataLabel="时间">@context.At.ToString("HH:mm:ss")</MudTd>
+            <MudTd DataLabel="时间" title="@context.At.ToString("yyyy-MM-dd HH:mm:ss")">@SinceText(AgeReference - context.At)</MudTd>
             <MudTd DataLabel="总耗时" Class="dt-num dt-nowrap">
                 <span class="@(context.Overran ? "dt-diag-overrun" : null)">@context.WorkMs ms</span>
                 @if (context.Overran)
@@ -174,20 +286,23 @@ else
         </RowTemplate>
     </MudTable>
 }
-
-<MudText Typo="Typo.subtitle1" Class="mb-2">
-    PLC 通信 <InfoHint Topic="HelpTexts.PlcTraffic" />
-</MudText>
-@if (_focusedStation is { } focusedStation)
+else
 {
-    <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-2 flex-wrap dt-diag-focus">
-        <MudChip T="string" Color="Color.Primary" Variant="Variant.Outlined">工站 @focusedStation.Code @focusedStation.Name</MudChip>
-        <MudButton Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Clear" Href="/diagnostics">查看全部 PLC</MudButton>
-    </MudStack>
+    <MudText Typo="Typo.body2" Class="dt-muted">采集循环正常（最后扫描 @SinceText(SinceLastTick)，无超时）。</MudText>
 }
+</section>
+
+<section id="diag-plc" class="@PlcSectionClass" aria-label="PLC 通信">
+    <div class="dt-diag-section-title">
+        <MudText Typo="Typo.subtitle1" Class="mb-0">
+            PLC 通信 <InfoHint Topic="HelpTexts.PlcTraffic" />
+        </MudText>
+        <MudButton Size="Size.Small" Variant="Variant.Text" Href="/config/plc">PLC 配置</MudButton>
+        <MudButton Size="Size.Small" Variant="Variant.Text" Href="/alarms">设备报警</MudButton>
+    </div>
 @if (FocusedTraffic.Count == 0)
 {
-    <MudText Typo="Typo.body2" Class="dt-muted mb-4">还没有 PLC 通信记录。没有启用的 PLC 连接时这里会是空的。</MudText>
+    <MudText Typo="Typo.body2" Class="dt-muted">还没有 PLC 通信记录。没有启用的 PLC 连接时这里会是空的。</MudText>
 }
 else
 {
@@ -196,12 +311,22 @@ else
     <MudText Typo="Typo.caption" Class="dt-muted mb-1">
         标题里的请求数、失败数与最长耗时是采集服务启动以来的累计值（进程重启即清零）；
         展开后流水只留最近 @SystemDefaults.PlcTrafficCapacity 条，失败明细只留 @SystemDefaults.PlcTrafficFailureCapacity 条。
+        @if (_onlyIssues)
+        {
+            <span>「只看异常」下默认展开异常 PLC，正常连接保持折叠。</span>
+        }
     </MudText>
-    <MudExpansionPanels Class="mb-4" Elevation="1" Dense="true">
+    <MudExpansionPanels Elevation="1" Dense="true">
         @foreach (var plc in FocusedTraffic)
         {
-            <MudExpansionPanel Class="dt-diag-plc" Expanded="@(_focusedStation is not null && _focusExpanded)"
-                               ExpandedChanged="@(expanded => _focusExpanded = expanded)">
+            var plcIssue = PlcHasIssue(plc);
+            if (_onlyIssues && !plcIssue && _focusedStation is null)
+            {
+                continue;
+            }
+            <MudExpansionPanel Class="dt-diag-plc"
+                               Expanded="@PlcExpanded(plc, plcIssue)"
+                               ExpandedChanged="@(expanded => SetPlcExpanded(plc.PlcConnectionId, expanded))">
                 <TitleContent>
                     <div class="dt-diag-plc-title">
                         <MudText Typo="Typo.subtitle2" Class="mb-0">@plc.Name</MudText>
@@ -241,7 +366,7 @@ else
                                 @foreach (var failure in hidden)
                                 {
                                     <div class="dt-diag-failure">
-                                        <span>@failure.At.ToString("HH:mm:ss.fff")</span>
+                                        <span title="@failure.At.ToString("yyyy-MM-dd HH:mm:ss.fff")">@SinceText(AgeReference - failure.At)</span>
                                         <span class="dt-diag-failure-addr">@failure.Address</span>
                                         <span class="dt-diag-failure-error">@failure.Error</span>
                                     </div>
@@ -249,7 +374,7 @@ else
                             </div>
                         }
                         <MudTable Items="plc.Recent" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm"
-                                  Class="dt-diag-traffic">
+                                  Class="dt-diag-traffic dt-list-table">
                             <HeaderContent>
                                 <MudTh>时间</MudTh>
                                 <MudTh>方向</MudTh>
@@ -260,18 +385,26 @@ else
                                 <MudTh>值</MudTh>
                             </HeaderContent>
                             <RowTemplate>
-                                <MudTd DataLabel="时间">@context.At.ToString("HH:mm:ss.fff")</MudTd>
-                                <MudTd DataLabel="方向">@(context.IsWrite ? "写" : "读")</MudTd>
+                                <MudTd DataLabel="时间" title="@context.At.ToString("yyyy-MM-dd HH:mm:ss.fff")">@SinceText(AgeReference - context.At)</MudTd>
+                                <MudTd DataLabel="方向">
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                             Color="@(context.IsWrite ? Color.Info : Color.Default)">
+                                        @(context.IsWrite ? "写" : "读")
+                                    </MudChip>
+                                </MudTd>
                                 <MudTd DataLabel="地址" Class="dt-nowrap">@context.Address</MudTd>
                                 <MudTd DataLabel="字数" Class="dt-num">@context.WordCount</MudTd>
-                                <MudTd DataLabel="耗时" Class="dt-num dt-nowrap">@context.DurationMs ms</MudTd>
+                                <MudTd DataLabel="耗时" Class="dt-num dt-nowrap">
+                                    <span class="@(context.DurationMs >= 200 ? "dt-diag-duration--hot" : null)">@context.DurationMs ms</span>
+                                </MudTd>
                                 <MudTd DataLabel="结果">
                                     @if (context.Ok)
                                     {
-                                        <span>成功</span>
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">成功</MudChip>
                                     }
                                     else
                                     {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled" title="@context.Error">失败</MudChip>
                                         <MudText Typo="Typo.caption" Color="Color.Error">@context.Error</MudText>
                                     }
                                 </MudTd>
@@ -283,30 +416,107 @@ else
             </MudExpansionPanel>
         }
     </MudExpansionPanels>
+    @if (_onlyIssues && FocusedTraffic.All(plc => !PlcHasIssue(plc)) && _focusedStation is null)
+    {
+        <MudText Typo="Typo.body2" Class="dt-muted mt-2">当前没有异常 PLC 连接。</MudText>
+    }
+}
+</section>
+<section id="diag-latency" class="dt-diag-section dt-diag-section--observe" aria-label="站级采集耗时">
+    <div class="dt-diag-section-title">
+        <MudText Typo="Typo.subtitle1" Class="mb-0">
+            站级采集耗时 <InfoHint Topic="HelpTexts.CollectorLoop" />
+        </MudText>
+        <MudButton Size="Size.Small" Variant="Variant.Text" Href="/">看板</MudButton>
+    </div>
+@if (FilteredLatencies.Count == 0)
+{
+    <MudText Typo="Typo.body2" Class="dt-muted mb-2">尚无近期端到端采集样本；分位数取最近 15 分钟、每站最多 512 个样本。</MudText>
+}
+else if (!_onlyIssues || FilteredLatencies.Any(x => x.P95Ms >= 500))
+{
+    <MudTable Items="@(_onlyIssues ? FilteredLatencies.Where(x => x.P95Ms >= 500).ToList() : FilteredLatencies)" Dense="true" Hover="true" Class="dt-list-table mb-2">
+        <HeaderContent><MudTh>工站</MudTh><MudTh>样本</MudTh><MudTh>P95</MudTh><MudTh>P99</MudTh><MudTh>最后样本</MudTh></HeaderContent>
+        <RowTemplate>
+            <MudTd>
+                <MudLink Href="@($"/diagnostics?station={StationIdByCode(context.StationCode)}")">@context.StationCode</MudLink>
+            </MudTd>
+            <MudTd>@context.SampleCount</MudTd>
+            <MudTd Class="@(context.P95Ms >= 500 ? "dt-diag-duration--hot" : null)">@context.P95Ms.ToString("F0") ms</MudTd>
+            <MudTd Class="@(context.P99Ms >= 800 ? "dt-diag-duration--hot" : null)">@context.P99Ms.ToString("F0") ms</MudTd>
+            <MudTd title="@context.LastSampleAt.ToString("yyyy-MM-dd HH:mm:ss")">@SinceText(AgeReference - context.LastSampleAt)</MudTd>
+        </RowTemplate>
+    </MudTable>
+}
+else
+{
+    <MudText Typo="Typo.body2" Class="dt-muted">近期耗时均在阈值内。</MudText>
 }
 
-<MudText Typo="Typo.subtitle1" Class="mb-2">
-    待人工核对的 PLC 回写
-</MudText>
+@if (FilteredActiveCollections.Count > 0)
+{
+    <MudText Typo="Typo.subtitle2" Class="mt-2 mb-1">正在采集</MudText>
+    <MudTable Items="FilteredActiveCollections" Dense="true" Hover="true" Class="dt-list-table mb-1">
+        <HeaderContent>
+            <MudTh>工站</MudTh>
+            <MudTh>已持续</MudTh>
+            <MudTh>状态</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>@context.StationCode</MudTd>
+            <MudTd>@WaitText(TimeSpan.FromMilliseconds(context.ElapsedMs))</MudTd>
+            <MudTd>
+                @if (_overdueCollections.Any(x => x.StationCode == context.StationCode))
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled">超限</MudChip>
+                }
+                else
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">进行中</MudChip>
+                }
+            </MudTd>
+        </RowTemplate>
+    </MudTable>
+    <MudAlert Severity="@(FilteredOverdueCollections.Count > 0 ? Severity.Error : Severity.Info)" Dense="true" Class="mb-1">
+        正在采集：@string.Join("、", FilteredActiveCollections.Select(x => $"{x.StationCode} {WaitText(TimeSpan.FromMilliseconds(x.ElapsedMs))}"))。
+        @(_collectionAgeLimitSeconds > 0 ? $"最长采集时间 {_collectionAgeLimitSeconds} 秒；超限 {string.Join("、", FilteredOverdueCollections.Select(x => x.StationCode))}。" : "最长采集时间未配置，超时告警已禁用。")
+    </MudAlert>
+}
+</section>
+
+<div class="dt-diag-group-label">处置</div>
+
+<section id="diag-manual" class="@ManualSectionClass" aria-label="待人工核对的 PLC 回写">
+    <div class="dt-diag-section-title">
+        <MudText Typo="Typo.subtitle1" Class="mb-0">待人工核对的 PLC 回写</MudText>
+        <MudButton Size="Size.Small" Variant="Variant.Text" Href="/alarms">设备报警</MudButton>
+    </div>
 @if (_manualReviewError is not null)
 {
     <MudAlert Severity="Severity.Error" Variant="Variant.Outlined" Dense="true" Class="mb-2">
         人工核对清单读取失败：@_manualReviewError
     </MudAlert>
 }
-@if (_manualReviewPending.Count == 0)
+@if (FilteredManualReview.Count == 0)
 {
-    <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true" Class="mb-4">
-        没有因设备事件身份不明而阻塞的回写。
-    </MudAlert>
+    @if (!_onlyIssues)
+    {
+        <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true">
+            没有因设备事件身份不明而阻塞的回写。
+        </MudAlert>
+    }
+    else
+    {
+        <MudText Typo="Typo.body2" Class="dt-muted">没有待核对项。</MudText>
+    }
 }
 else
 {
     <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mb-2">
         这些留证会阻塞对应工站继续采集。请先现场核对设备和旧事件，再选择处置方式；本页不会自动清除未知事件。
     </MudAlert>
-    <MudExpansionPanels MultiExpansion="true" Class="mb-4">
-        @foreach (var pending in _manualReviewPending)
+    <MudExpansionPanels MultiExpansion="true">
+        @foreach (var pending in FilteredManualReview)
         {
             var form = ManualFormFor(pending);
             <MudExpansionPanel>
@@ -314,7 +524,10 @@ else
                     <div class="d-flex flex-wrap gap-2 align-center">
                         <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Filled">待人工核对</MudChip>
                         <MudText>@pending.StationCode · @pending.PalletCode · @pending.SerialNo</MudText>
-                        <MudText Typo="Typo.caption" Class="dt-muted">@pending.MonthKey · 留证 @pending.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</MudText>
+                        <MudText Typo="Typo.caption" Class="dt-muted" title="@pending.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")">
+                            @pending.MonthKey · 留证 @SinceText(AgeReference - pending.CreatedAt)
+                        </MudText>
+                        <MudLink Href="@($"/diagnostics?station={StationIdByCode(pending.StationCode)}")">只看此站</MudLink>
                     </div>
                 </TitleContent>
                 <ChildContent>
@@ -344,41 +557,28 @@ else
         }
     </MudExpansionPanels>
 }
+</section>
 
-<MudText Typo="Typo.subtitle1" Class="mb-2">
-    站级采集耗时 <InfoHint Topic="HelpTexts.CollectorLoop" />
-</MudText>
-@if (_latencies.Count == 0)
-{
-    <MudText Typo="Typo.body2" Class="dt-muted mb-2">尚无近期端到端采集样本；分位数取最近 15 分钟、每站最多 512 个样本。</MudText>
-}
-else
-{
-    <MudTable Items="_latencies" Dense="true" Hover="true" Class="mb-3">
-        <HeaderContent><MudTh>工站</MudTh><MudTh>样本</MudTh><MudTh>P95</MudTh><MudTh>P99</MudTh><MudTh>最后样本</MudTh></HeaderContent>
-        <RowTemplate>
-            <MudTd>@context.StationCode</MudTd><MudTd>@context.SampleCount</MudTd>
-            <MudTd>@context.P95Ms.ToString("F0") ms</MudTd><MudTd>@context.P99Ms.ToString("F0") ms</MudTd>
-            <MudTd>@context.LastSampleAt.ToString("HH:mm:ss")</MudTd>
-        </RowTemplate>
-    </MudTable>
-}
-@if (_activeCollections.Count > 0)
-{
-    <MudAlert Severity="@(_overdueCollections.Count > 0 ? Severity.Error : Severity.Info)" Dense="true" Class="mb-3">
-        正在采集：@string.Join("、", _activeCollections.Select(x => $"{x.StationCode} {WaitText(TimeSpan.FromMilliseconds(x.ElapsedMs))}"))。
-        @(_collectionAgeLimitSeconds > 0 ? $"最长采集时间 {_collectionAgeLimitSeconds} 秒；超限 {string.Join("、", _overdueCollections.Select(x => x.StationCode))}。" : "最长采集时间未配置，超时告警已禁用。")
-    </MudAlert>
-}
-
-<MudText Typo="Typo.subtitle1" Class="mb-2">
-    补传队列 <InfoHint Topic="HelpTexts.SpoolQueue" />
-</MudText>
+<section id="diag-spool" class="@SpoolSectionClass" aria-label="补传队列">
+    <div class="dt-diag-section-title">
+        <MudText Typo="Typo.subtitle1" Class="mb-0">
+            补传队列 <InfoHint Topic="HelpTexts.SpoolQueue" />
+        </MudText>
+        <MudButton Size="Size.Small" Variant="Variant.Text" Href="/alarms">设备报警</MudButton>
+        <MudButton Size="Size.Small" Variant="Variant.Text" Href="/query">数据查询</MudButton>
+    </div>
 @if (_spoolCount == 0)
 {
-    <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true" Class="mb-4">
-        补传队列是空的：没有写库失败等待补传的件。
-    </MudAlert>
+    @if (!_onlyIssues)
+    {
+        <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true">
+            补传队列是空的：没有写库失败等待补传的件。
+        </MudAlert>
+    }
+    else
+    {
+        <MudText Typo="Typo.body2" Class="dt-muted">补传队列是空的。</MudText>
+    }
 }
 else
 {
@@ -415,7 +615,7 @@ else
         <MudText Typo="Typo.caption" Class="dt-muted mb-1">
             明细读取于 @(_entriesAt is { } readAt ? readAt.ToString("HH:mm:ss") : "—")：@DetailCadenceText。
         </MudText>
-        <MudTable Items="_entries" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="mb-4">
+        <MudTable Items="FilteredSpoolEntries" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Class="dt-list-table">
             <HeaderContent>
                 <MudTh>入队时间</MudTh>
                 <MudTh>工站</MudTh>
@@ -427,8 +627,10 @@ else
                 <MudTh>操作</MudTh>
             </HeaderContent>
             <RowTemplate>
-                <MudTd DataLabel="入队时间" Class="dt-nowrap">@context.CreatedAt.ToString("MM-dd HH:mm:ss")</MudTd>
-                <MudTd DataLabel="工站">@context.StationCode</MudTd>
+                <MudTd DataLabel="入队时间" Class="dt-nowrap" title="@context.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")">@SinceText(AgeReference - context.CreatedAt)</MudTd>
+                <MudTd DataLabel="工站">
+                    <MudLink Href="@($"/diagnostics?station={StationIdByCode(context.StationCode)}")">@context.StationCode</MudLink>
+                </MudTd>
                 <MudTd DataLabel="托盘码">@context.PalletCode</MudTd>
                 <MudTd DataLabel="流水号">@context.SerialNo</MudTd>
                 <MudTd DataLabel="月份">@context.MonthKey</MudTd>
@@ -436,7 +638,7 @@ else
                     @context.Attempts
                     @if (context.LastAttemptAt is { } lastAt)
                     {
-                        <MudText Typo="Typo.caption" Class="dt-muted">@lastAt.ToString("HH:mm:ss")</MudText>
+                        <MudText Typo="Typo.caption" Class="dt-muted" title="@lastAt.ToString("yyyy-MM-dd HH:mm:ss")">@SinceText(AgeReference - lastAt)</MudText>
                     }
                 </MudTd>
                 <MudTd DataLabel="上次失败">
@@ -466,13 +668,41 @@ else
         </MudTable>
     }
 }
+</section>
 
-@if (_mesOutbox?.PendingCount > 0)
+<section id="diag-mes" class="@MesSectionClass" aria-label="MES 出站">
+    <div class="dt-diag-section-title">
+        <MudText Typo="Typo.subtitle1" Class="mb-0">MES 出站</MudText>
+        <MudButton Size="Size.Small" Variant="Variant.Text" Href="/config/settings#sec-mes">MES 设置</MudButton>
+        <MudButton Size="Size.Small" Variant="Variant.Text" Href="/alarms">设备报警</MudButton>
+    </div>
+@if (_mesOutbox is null)
 {
-    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true" Class="mb-3">
-        MES 待推送 @_mesOutbox.PendingCount 条@(_mesOutbox.OldestPendingAt is { } mesOldest ? $"，最老一条 {mesOldest:MM-dd HH:mm:ss}（已等待 {WaitText(DateTime.Now - mesOldest)}）" : "")。
+    <MudText Typo="Typo.body2" Class="dt-muted">MES 出站状态尚未读到。</MudText>
+}
+else if (_mesOutbox.PendingCount == 0)
+{
+    <MudAlert Severity="Severity.Success" Variant="Variant.Outlined" Dense="true">
+        MES 待推送队列是空的。
+        @if (_mesOutbox.LastAttemptAt is { } lastAttempt)
+        {
+            <span class="dt-muted">最近尝试 @SinceText(AgeReference - lastAttempt)
+                @(_mesOutbox.LastAttemptSucceeded is true ? "· 成功" : _mesOutbox.LastAttemptSucceeded is false ? "· 失败" : "")</span>
+        }
     </MudAlert>
 }
+else
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Dense="true">
+        MES 待推送 @_mesOutbox.PendingCount 条@(_mesOutbox.OldestPendingAt is { } mesOldest ? $"，最老一条 {mesOldest:MM-dd HH:mm:ss}（已等待 {WaitText(AgeReference - mesOldest)}）" : "")。
+        @if (_mesOutbox.LastAttemptAt is { } lastAttempt)
+        {
+            <span>最近尝试 @SinceText(AgeReference - lastAttempt)
+                @(_mesOutbox.LastAttemptSucceeded is true ? "· 成功" : _mesOutbox.LastAttemptSucceeded is false ? "· 失败" : "")。</span>
+        }
+    </MudAlert>
+}
+</section>
 
 @code {
     /// <summary>页面自己的刷新节拍。这一页是拉模式，不订阅任何推送。</summary>
@@ -511,6 +741,194 @@ else
     private DateTime? _healthAt;
     private string? _healthError;
     private bool _showAdvancedHealthDetails;
+
+    // ---- UI 迭代：摘要 chips / 只看异常 / 分区跳转 / 工站深链扩围 ----
+    private bool _onlyIssues = true;
+    private bool _prefsLoaded;
+    private string? _jumpTarget;
+    private readonly Dictionary<int, bool> _plcExpanded = new();
+    private Dictionary<string, int> _stationIdsByCode = new(StringComparer.OrdinalIgnoreCase);
+
+    private int UnhealthyCount => _health?.Checks.Count(check => !check.Healthy) ?? 0;
+
+    private int DisconnectedPlcCount => FocusedTraffic.Count(PlcHasIssue);
+
+    private bool HasActionableItems
+        => _manualReviewPending.Count > 0
+           || _spoolCount > 0
+           || (_mesOutbox?.PendingCount ?? 0) > 0;
+
+    private bool ShowHealthSection => true;
+
+    private string HealthSectionClass
+        => "dt-diag-section dt-diag-section--observe"
+           + (UnhealthyCount > 0 || _healthError is not null ? " dt-diag-section--alert" : " dt-diag-section--ok");
+
+    private string LoopSectionClass
+        => "dt-diag-section dt-diag-section--observe"
+           + (LoopStale ? " dt-diag-section--alert" : _loop.OverrunCount > 0 ? " dt-diag-section--act" : "");
+
+    private string PlcSectionClass
+        => "dt-diag-section dt-diag-section--observe"
+           + (DisconnectedPlcCount > 0 ? " dt-diag-section--alert" : "");
+
+    private string ManualSectionClass
+        => "dt-diag-section dt-diag-section--act"
+           + (_manualReviewPending.Count > 0 ? " dt-diag-section--alert" : "");
+
+    private string SpoolSectionClass
+        => "dt-diag-section dt-diag-section--act"
+           + (_spoolCount > 0 ? " dt-diag-section--alert" : "");
+
+    private string MesSectionClass
+        => "dt-diag-section dt-diag-section--act"
+           + ((_mesOutbox?.PendingCount ?? 0) > 0 ? " dt-diag-section--alert" : " dt-diag-section--ok");
+
+    private IReadOnlyList<StationLatencyView> FilteredLatencies
+        => _focusedStation is null
+            ? _latencies
+            : _latencies.Where(item => string.Equals(item.StationCode, _focusedStation.Code, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    private IReadOnlyList<ActiveCollectionView> FilteredActiveCollections
+        => _focusedStation is null
+            ? _activeCollections
+            : _activeCollections.Where(item => string.Equals(item.StationCode, _focusedStation.Code, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    private IReadOnlyList<ActiveCollectionView> FilteredOverdueCollections
+        => _focusedStation is null
+            ? _overdueCollections
+            : _overdueCollections.Where(item => string.Equals(item.StationCode, _focusedStation.Code, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    private IReadOnlyList<PendingWriteBack> FilteredManualReview
+        => _focusedStation is null
+            ? _manualReviewPending
+            : _manualReviewPending.Where(item => string.Equals(item.StationCode, _focusedStation.Code, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    private IReadOnlyList<SpoolEntry> FilteredSpoolEntries
+        => _focusedStation is null
+            ? _entries
+            : _entries.Where(item => string.Equals(item.StationCode, _focusedStation.Code, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    private static bool PlcHasIssue(PlcTrafficView plc)
+        => plc.FailureCount > 0 || NeverSucceeded(plc);
+
+    private bool PlcExpanded(PlcTrafficView plc, bool issue)
+    {
+        if (_plcExpanded.TryGetValue(plc.PlcConnectionId, out var explicitValue))
+        {
+            return explicitValue;
+        }
+
+        if (_focusedStation is not null && plc.PlcConnectionId == _focusedStation.PlcConnectionId)
+        {
+            return _focusExpanded;
+        }
+
+        return _onlyIssues ? issue : false;
+    }
+
+    private void SetPlcExpanded(int plcId, bool expanded)
+    {
+        _plcExpanded[plcId] = expanded;
+        if (_focusedStation is not null && plcId == _focusedStation.PlcConnectionId)
+        {
+            _focusExpanded = expanded;
+        }
+    }
+
+    private IEnumerable<HealthCheck> VisibleHealthChecks(HealthReport health)
+    {
+        if (!_onlyIssues)
+        {
+            return health.Checks;
+        }
+
+        var unhealthy = health.Checks.Where(check => !check.Healthy).ToList();
+        // 全部正常时仍列出各项，避免页头「全部正常」却看不到检查清单。
+        return unhealthy.Count > 0 ? unhealthy : health.Checks;
+    }
+
+    private string SummaryChipClass(string target)
+        => "dt-diag-summary-chip" + (string.Equals(_jumpTarget, target, StringComparison.Ordinal) ? " dt-diag-summary-chip--on" : "");
+
+    private string RelativeOrDash(DateTime? at)
+        => at is { } value ? SinceText(AgeReference - value) : "—";
+
+    private int StationIdByCode(string? code)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            return 0;
+        }
+
+        return _stationIdsByCode.TryGetValue(code, out var id) ? id : 0;
+    }
+
+    private sealed record HealthLink(string Label, string Href);
+
+    private static IReadOnlyList<HealthLink>? HealthNextStep(HealthCheck check)
+        => check.Name switch
+        {
+            "config-db" => [new HealthLink("设置", "/config/settings"), new HealthLink("审计", "/logs")],
+            "data-root" or "runtime-dir" or "disk-free"
+                => [new HealthLink("设置", "/config/settings#sec-data"), new HealthLink("审计", "/logs")],
+            "collector" => [new HealthLink("采集设置", "/config/settings#sec-collect"), new HealthLink("审计", "/logs")],
+            "collection-readiness" => [new HealthLink("看板", "/"), new HealthLink("审计", "/logs")],
+            "collection-stations" => [new HealthLink("看板", "/"), new HealthLink("设备报警", "/alarms")],
+            "collection-task-age" => [new HealthLink("本页循环", "/diagnostics#diag-loop"), new HealthLink("工站配置", "/config/stations")],
+            _ => [new HealthLink("设备报警", "/alarms"), new HealthLink("设置", "/config/settings")]
+        };
+
+    private async Task JumpAsync(string sectionId)
+    {
+        _jumpTarget = sectionId switch
+        {
+            "diag-health" => "health",
+            "diag-loop" => "loop",
+            "diag-plc" => "plc",
+            "diag-spool" => "spool",
+            "diag-manual" => "manual",
+            "diag-mes" => "mes",
+            _ => sectionId
+        };
+        try
+        {
+            await Js.InvokeVoidAsync("dtScrollIntoView", sectionId);
+        }
+        catch (JSException)
+        {
+        }
+    }
+
+    private async Task PersistOnlyIssuesAsync()
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("dtDiagOnlyIssues.set", _onlyIssues);
+        }
+        catch (JSException)
+        {
+        }
+    }
+
+    private async Task LoadUiPrefsAsync()
+    {
+        if (_prefsLoaded)
+        {
+            return;
+        }
+
+        _prefsLoaded = true;
+        try
+        {
+            _onlyIssues = await Js.InvokeAsync<bool>("dtDiagOnlyIssues.get");
+        }
+        catch (JSException)
+        {
+            _onlyIssues = true;
+        }
+    }
+
 
     private CollectorLoopView _loop = CollectorLoopView.Empty(CollectorDiagnostics.LoopCapacity);
     private IReadOnlyList<PlcTrafficView> _traffic = [];
@@ -675,6 +1093,9 @@ else
             // 浏览器多半还拿着旧版 datatrace.js（没有这个模块）。为省 2 秒轮询不该把整页电路搭进去：
             // 退化成"不挂起"、照常轮询即可；ref 仍由 DisposeAsync 统一收尾。
         }
+
+        await LoadUiPrefsAsync();
+        StateHasChanged();
     }
 
     /// <summary>
@@ -971,6 +1392,46 @@ else
                 text.AppendLine($"  最近一条补传失败：{lastError}");
             }
         }
+
+        text.AppendLine(_manualReviewPending.Count == 0
+            ? "待人工核对：无"
+            : $"待人工核对：{_manualReviewPending.Count} 条");
+        foreach (var pending in _manualReviewPending.Take(5))
+        {
+            text.AppendLine($"  {pending.StationCode} {pending.SerialNo}：{pending.ManualReviewReason ?? "需要现场核对"}");
+        }
+
+        if (_mesOutbox is { } mes)
+        {
+            text.AppendLine(mes.PendingCount == 0
+                ? "MES 出站：空"
+                : $"MES 出站：待推送 {mes.PendingCount}"
+                    + (mes.OldestPendingAt is { } mesOldest
+                        ? $"，最早 {mesOldest:MM-dd HH:mm:ss}（已等待 {WaitText(AgeReference - mesOldest)}）"
+                        : ""));
+        }
+
+        if (_activeCollections.Count > 0)
+        {
+            text.AppendLine("正在采集：" + string.Join("、", _activeCollections.Select(x => $"{x.StationCode} {WaitText(TimeSpan.FromMilliseconds(x.ElapsedMs))}")));
+            if (_overdueCollections.Count > 0)
+            {
+                text.AppendLine("采集超限：" + string.Join("、", _overdueCollections.Select(x => x.StationCode)));
+            }
+        }
+
+        if (_latencies.Count > 0)
+        {
+            var hot = _latencies.OrderByDescending(x => x.P95Ms).Take(3).ToList();
+            text.AppendLine("耗时偏高：" + string.Join("、", hot.Select(x => $"{x.StationCode} P95 {x.P95Ms:F0} ms")));
+        }
+
+        if (_focusedStation is { } focused)
+        {
+            text.AppendLine($"工站筛选：{focused.Code} {focused.Name}");
+        }
+
+        text.AppendLine($"只看异常：{(_onlyIssues ? "开" : "关")}");
 
         return text.ToString();
     }

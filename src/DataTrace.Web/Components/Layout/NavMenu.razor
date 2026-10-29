@@ -55,7 +55,16 @@
             </AuthorizeView>
 
             <MudText Typo="Typo.overline" Class="dt-nav-group" role="presentation">运维工具</MudText>
-            <MudNavLink Href="/diagnostics" Icon="@Icons.Material.Filled.MonitorHeart" OnClick="OnNavClick">运行诊断</MudNavLink>
+            <MudNavLink Href="/diagnostics" Icon="@Icons.Material.Filled.MonitorHeart" OnClick="OnNavClick">
+                <span class="dt-nav-item">
+                    <span>运行诊断</span>
+                    @if (DiagBadge is { } diag)
+                    {
+                        <span class="dt-nav-badge dt-nav-badge--diag" title="@($"需关注 {diag}")"
+                              aria-label="@($"运行诊断需关注 {diag}")">@diag</span>
+                    }
+                </span>
+            </MudNavLink>
             <MudNavLink Href="/simulate" Icon="@Icons.Material.Filled.Science" OnClick="OnNavClick">PLC 仿真</MudNavLink>
             <MudNavLink Href="/logs" Icon="@Icons.Material.Filled.History" OnClick="OnNavClick">审计日志</MudNavLink>
         </Authorized>
@@ -78,6 +87,7 @@
     private int _alarmCount;
     private bool _alarmUrgent;
     private int _qualityCount;
+    private int _diagCount;
     private bool _canWork;
     private bool _isViewer;
     private bool _isEngineerOrAdmin;
@@ -93,6 +103,9 @@
         : "dt-nav-badge dt-nav-badge--alarm";
 
     private string? QualityBadge => _canWork && _qualityCount > 0 ? Format(_qualityCount) : null;
+
+    /// <summary>运维角标：补传/MES/采集逾期/心跳等已在报警板内存里，不另开查询。</summary>
+    private string? DiagBadge => _isEngineerOrAdmin && _diagCount > 0 ? Format(_diagCount) : null;
 
     private string FooterTip => _isEngineerOrAdmin
         ? "配置改动即时下发给采集器"
@@ -143,9 +156,15 @@
         var alarms = AlarmBoard.Current.Alarms;
         _alarmCount = alarms.Count;
         _alarmUrgent = alarms.Any(IsUrgent);
+        _diagCount = alarms.Count(IsDiagAttention);
     }
 
     /// <summary>与报警页 PriorityRank &gt;= 3 对齐：心跳/故障/磁盘/自定义/采集逾期。</summary>
+    private static bool IsDiagAttention(LineAlarm alarm) => alarm.Kind is
+        LineAlarmKind.SpoolBacklog or LineAlarmKind.MesBacklog
+        or LineAlarmKind.CollectionOverdue or LineAlarmKind.HeartbeatStale
+        or LineAlarmKind.DiskLow;
+
     private static bool IsUrgent(LineAlarm alarm) => alarm.Kind is
         LineAlarmKind.HeartbeatStale or LineAlarmKind.StationFault or LineAlarmKind.DiskLow
         or LineAlarmKind.CustomDevice or LineAlarmKind.CollectionOverdue;

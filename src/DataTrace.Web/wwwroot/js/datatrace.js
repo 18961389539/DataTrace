@@ -284,6 +284,22 @@ window.dtDrawer = {
         try { return window.matchMedia(this.narrowMq).matches; } catch (e) { return false; }
     }
 };
+
+window.dtDiagOnlyIssues = {
+    key: 'dt-diag-only-issues',
+    // 默认开：扫一眼先看异常；用户关掉后记住。
+    get: function () {
+        try {
+            var stored = localStorage.getItem(this.key);
+            if (stored === null) { return true; }
+            return stored === '1';
+        } catch (e) { return true; }
+    },
+    set: function (on) {
+        try { localStorage.setItem(this.key, on ? '1' : '0'); } catch (e) { }
+        return !!on;
+    }
+};
 window.dtShopFloor = {
     key: 'dt-shopfloor',
     get: function () {
