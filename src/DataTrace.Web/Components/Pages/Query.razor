@@ -105,21 +105,49 @@ else if (_viewMode == QueryViewMode.Sessions)
                                  IncludeShifts="true" ShiftStartHour="_shiftSettings.ShiftStartHour"
                                  ShiftLengthHours="_shiftSettings.ShiftLengthHours" Disabled="_exporting" />
             </div>
-            <MudStack Row="true" Spacing="2" Class="mt-2 mb-1 flex-wrap">
-                <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
-                           StartIcon="@Icons.Material.Filled.Search" Disabled="_exporting">
-                    @(_loading ? "查询中…" : "查询")
-                </MudButton>
-                <MudButton Variant="Variant.Outlined" OnClick="Reset" Disabled="_exporting"
-                           StartIcon="@Icons.Material.Filled.RestartAlt">重置</MudButton>
-                <MudChip T="string" Size="Size.Small"
-                         Variant="@(_sessionStatus == SessionStatus.Open ? Variant.Filled : Variant.Outlined)"
-                         Color="Color.Info" Disabled="_exporting"
-                         OnClick="ApplyOpenSessionsQuick">仅进行中</MudChip>
-                <MudChip T="string" Size="Size.Small"
-                         Variant="@(_sessionStatus == SessionStatus.Abnormal ? Variant.Filled : Variant.Outlined)"
-                         Color="Color.Error" Disabled="_exporting"
-                         OnClick="ApplyAbnormalSessionsQuick">仅异常中断</MudChip>
+            <MudStack Spacing="1" Class="mt-2 mb-1 dt-query-session-actions">
+                @if (_canExport && _sessionTotal > SystemDefaults.ExportRowLimit)
+                {
+                    <MudAlert Severity="Severity.Warning" Variant="Variant.Filled" Dense="true"
+                              Class="dt-query-export-overlimit" role="alert">
+                        当前命中 @_sessionTotal.ToString("N0") 件会话，已超过单次导出上限 @SystemDefaults.ExportRowLimit.ToString("N0") 件。
+                        「导出会话 CSV」只会带前 @SystemDefaults.ExportRowLimit.ToString("N0") 件；请缩小区间或条件后再导。
+                    </MudAlert>
+                }
+                <MudStack Row="true" Spacing="2" Class="flex-wrap align-center">
+                    <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@Icons.Material.Filled.Search" Disabled="_exporting">
+                        @(_loading ? "查询中…" : "查询")
+                    </MudButton>
+                    <MudButton Variant="Variant.Outlined" OnClick="Reset" Disabled="_exporting"
+                               StartIcon="@Icons.Material.Filled.RestartAlt">重置</MudButton>
+                    @if (_canExport)
+                    {
+                        <MudTooltip Arrow="true" Text="@SessionExportTooltipText">
+                            <ChildContent>
+                                <MudButton Variant="Variant.Outlined" OnClick="ExportSessionsCsvAsync"
+                                           Disabled="@(_loading || _exporting || _sessionTotal == 0)"
+                                           StartIcon="@Icons.Material.Filled.FileDownload">
+                                    @(_exporting ? "导出中…" : "导出会话 CSV")
+                                </MudButton>
+                            </ChildContent>
+                        </MudTooltip>
+                    }
+                    <MudChip T="string" Size="Size.Small"
+                             Variant="@(_sessionStatus == SessionStatus.Open ? Variant.Filled : Variant.Outlined)"
+                             Color="Color.Info" Disabled="_exporting"
+                             OnClick="ApplyOpenSessionsQuick">仅进行中</MudChip>
+                    <MudChip T="string" Size="Size.Small"
+                             Variant="@(_sessionStatus == SessionStatus.Abnormal ? Variant.Filled : Variant.Outlined)"
+                             Color="Color.Error" Disabled="_exporting"
+                             OnClick="ApplyAbnormalSessionsQuick">仅异常中断</MudChip>
+                </MudStack>
+                @if (_canExport)
+                {
+                    <MudText Typo="Typo.caption" Class="dt-muted" role="status">
+                        导出会话范围 @DateRangeFilter.Format(_from, _to) · 命中 @_sessionTotal.ToString("N0") 件 · 单次上限 @SystemDefaults.ExportRowLimit.ToString("N0") 件
+                    </MudText>
+                }
             </MudStack>
         </form>
     </MudPaper>
@@ -336,6 +364,14 @@ else
 
                 @* 操作按钮与状态/说明分两行：避免「重置 / 导出」和长灰字挤在同一行高低不齐。 *@
                 <MudStack Spacing="1" Class="mt-1 mb-2 dt-query-secondary-actions">
+                    @if (_canExport && _total > SystemDefaults.ExportRowLimit)
+                    {
+                        <MudAlert Severity="Severity.Warning" Variant="Variant.Filled" Dense="true"
+                                  Class="dt-query-export-overlimit" role="alert">
+                            当前命中 @_total.ToString("N0") 条，已超过单次导出上限 @SystemDefaults.ExportRowLimit.ToString("N0") 条。
+                            点「导出 CSV」只会带前 @SystemDefaults.ExportRowLimit.ToString("N0") 条；要全量请用旁边的「按月分包」。
+                        </MudAlert>
+                    }
                     <MudStack Row="true" Spacing="2" Class="flex-wrap align-center dt-query-secondary-buttons">
                         <MudButton Variant="Variant.Outlined" OnClick="Reset" Disabled="_exporting"
                                    StartIcon="@Icons.Material.Filled.RestartAlt">
@@ -373,9 +409,12 @@ else
                         @if (_canExport)
                         {
                             <InfoHint Topic="HelpTexts.ExportLimit" Extra="@ExportHintExtra" />
-                            <MudText Typo="Typo.caption" Class="dt-muted align-self-center" role="status">
-                                导出范围 @DateRangeFilter.Format(_from, _to) · 命中 @_total.ToString("N0") 条 · 单次上限 @SystemDefaults.ExportRowLimit.ToString("N0") 条
-                            </MudText>
+                            @if (_total <= SystemDefaults.ExportRowLimit)
+                            {
+                                <MudText Typo="Typo.caption" Class="dt-muted align-self-center" role="status">
+                                    导出范围 @DateRangeFilter.Format(_from, _to) · 命中 @_total.ToString("N0") 条 · 单次上限 @SystemDefaults.ExportRowLimit.ToString("N0") 条
+                                </MudText>
+                            }
                         }
                         <MudText Typo="Typo.caption" Class="dt-muted align-self-center">改任一条件即自动重查，也可点「查询」立刻执行</MudText>
                         <InfoHint Topic="HelpTexts.MatchMode" />
@@ -711,6 +750,12 @@ else
     private string ExportHintExtra => _total > SystemDefaults.ExportRowLimit
         ? $"当前命中 {_total:N0} 条，已超过单次上限；请用「按月分包导出」或缩小区间。"
         : $"当前命中 {_total:N0} 条。";
+
+    private string SessionExportTooltipText => _sessionTotal == 0
+        ? "当前没有命中会话，没有可导出的内容"
+        : _sessionTotal > SystemDefaults.ExportRowLimit
+            ? $"当前命中 {_sessionTotal:N0} 件，单次最多导出前 {SystemDefaults.ExportRowLimit:N0} 件；请缩小区间后再导"
+            : $"导出当前命中的 {_sessionTotal:N0} 件会话";
 
     /// <summary>支持 /query?pallet=XXX&days=30 直达，便于从明细页或工单跳转。</summary>
     [SupplyParameterFromQuery(Name = "pallet")]
@@ -1950,7 +1995,127 @@ else
     private static string RecipeLabel(string? code)
         => string.IsNullOrEmpty(code) ? "未选型号" : code;
 
-        private Task ExportCsv() => ExportCsv(wide: false);
+    private Task ExportCsv() => ExportCsv(wide: false);
+
+    /// <summary>
+    /// 会话视图专用导出：按当前会话筛选取前 ExportRowLimit 件，列是会话维度（不是采集记录行）。
+    /// </summary>
+    private async Task ExportSessionsCsvAsync()
+    {
+        if (_loading || _exporting)
+        {
+            return;
+        }
+
+        if (!_canExport)
+        {
+            Toast.Add("当前角色无权导出查询结果（需要管理员或工程师）", Severity.Warning);
+            return;
+        }
+
+        if (_sessionTotal == 0)
+        {
+            Toast.Add("没有可导出的会话", Severity.Warning);
+            return;
+        }
+
+        var request = BuildSessionRequest(0, SystemDefaults.ExportRowLimit);
+        var auditKey = $"{request.From:yyyy-MM-dd HH:mm:ss.fffffff}~{request.To:yyyy-MM-dd HH:mm:ss.fffffff}";
+        var auditFilters = SessionExportFilterSummary();
+        _exporting = true;
+        try
+        {
+            var result = await Store.QuerySessionsAsync(request);
+            if (result.Items.Count == 0)
+            {
+                Toast.Add("没有可导出的会话", Severity.Warning);
+                return;
+            }
+
+            if (result.Total > result.Items.Count)
+            {
+                var choice = await DialogService.ConfirmDangerAsync(
+                    "确认截断导出",
+                    $"区间：{auditKey}\n{auditFilters}\n命中 {result.Total:N0} 件会话，本次只导出按开始时间倒序的前 {result.Items.Count:N0} 件；其余不会包含在文件中。\n\n" +
+                    "需要完整结果请取消后缩小区间或条件。",
+                    acknowledge: "我了解此文件不是全部查询结果",
+                    yesText: "导出前述会话",
+                    cancelText: "取消导出");
+                if (choice != true) return;
+            }
+
+            await DownloadSessionsCsvAsync(result.Items, result.Total, request.From, request.To, auditKey, auditFilters);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"导出会话失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _exporting = false;
+            if (_loadPending)
+            {
+                _loadPending = false;
+                await Load();
+            }
+        }
+    }
+
+    private async Task DownloadSessionsCsvAsync(
+        IReadOnlyList<SessionListItem> items,
+        int total,
+        DateTime from,
+        DateTime to,
+        string auditKey,
+        string auditFilters)
+    {
+        var exportedAt = DateTime.Now;
+        var context = $"区间（含起止）{auditKey};{auditFilters};导出时间={exportedAt:yyyy-MM-dd HH:mm:ss};命中={total};" +
+                      $"导出={items.Count};截断={(total > items.Count ? "是" : "否")}";
+
+        var csv = CsvExporter.Build(
+            ["开始时间", "结束时间", "流水号", "托盘码", "型号", "状态", "判定", "站数", "首因工站", "首因时刻", "首因原因", "月分片", "查询上下文"],
+            items.Select(item => new[]
+            {
+                item.Session.StartTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                item.Session.EndTime?.ToString("yyyy-MM-dd HH:mm:ss") ?? "",
+                item.Session.SerialNo ?? "",
+                item.Session.PalletCode ?? "",
+                RecipeLabel(item.RecipeCode),
+                DisplayLabels.SessionStatusText(item.Session.Status),
+                DisplayLabels.JudgementTextLong(item.Session.Judgement),
+                item.RecordCount.ToString(),
+                item.Session.FirstNgStationCode ?? "",
+                item.Session.FirstNgAt?.ToString("yyyy-MM-dd HH:mm:ss") ?? "",
+                item.Session.FirstNgReason ?? "",
+                item.MonthKey,
+                context
+            }));
+
+        await Js.InvokeVoidAsync(
+            "dtDownload",
+            CsvExporter.FileName($"datatrace_sessions_{from:yyyyMMddHHmmss}-{to:yyyyMMddHHmmss}"),
+            CsvExporter.ToBase64(csv));
+
+        var message = total > items.Count
+            ? $"共命中 {total} 件会话，已导出前 {items.Count} 件"
+            : $"已导出 {items.Count} 件会话";
+        try
+        {
+            await WriteExportAuditAsync(items.Count, total, auditKey, auditFilters);
+            Toast.Add(message, total > items.Count ? Severity.Warning : Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"{message}，但审计记录写入失败：{ex.Message}", Severity.Warning);
+        }
+    }
+
+    private string SessionExportFilterSummary()
+        => $"view=sessions;pallet={_pallet?.Trim() ?? ""};serial={_serialNo?.Trim() ?? ""};" +
+           $"sessionStatus={_sessionStatus?.ToString() ?? ""};judge={_judgement?.ToString() ?? ""};" +
+           $"recipe={(_recipeFilter switch { null => "全部", "" => "未选型号", var code => code.Trim() })};" +
+           $"aliases={string.Join(",", _recipeAliases)}";
 
     private async Task ExportCsv(bool wide)
     {

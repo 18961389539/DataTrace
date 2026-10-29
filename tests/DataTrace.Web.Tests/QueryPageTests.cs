@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using DataTrace.Application.Configuration;
+using DataTrace.Application.Quality;
 using DataTrace.Application.Runtime;
 using DataTrace.Domain.Constants;
 using DataTrace.Domain;
@@ -24,6 +25,7 @@ public class QueryPageTests : WebTestBase
 {
     private readonly Mock<IRuntimeStore> _store = new();
     private readonly Mock<IAuditLogger> _audit = new();
+    private readonly Mock<IQualityIncidentService> _quality = new();
     private string _role = AppRoles.Administrator;
 
     public QueryPageTests()
@@ -56,12 +58,20 @@ public class QueryPageTests : WebTestBase
                     }
                 ]
             });
+
+        _quality
+            .Setup(s => s.FindLinksByRecordKeysAsync(It.IsAny<IReadOnlyList<(string MonthKey, long RecordId)>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, QualityIncidentLinkRef>());
+        _quality
+            .Setup(s => s.FindLinksBySerialNosAsync(It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, QualityIncidentLinkRef>());
     }
 
     private IRenderedComponent<Query> Render(string? initialUri = null)
     {
         Context.Services.AddSingleton(_store.Object);
         Context.Services.AddSingleton(_audit.Object);
+        Context.Services.AddSingleton<IQualityIncidentService>(_quality.Object);
         Context.Services.AddSingleton<AuthenticationStateProvider>(new StubAuthenticationStateProvider(_role));
         if (initialUri is not null)
             Context.Services.GetRequiredService<NavigationManager>().NavigateTo(initialUri);
@@ -1020,6 +1030,132 @@ public class QueryPageTests : WebTestBase
         Assert.Contains("sort=duration;dir=asc", summary);
         Assert.Contains("导出=1;截断=否", summary);
         Assert.False(reader.Read());
+    }
+
+
+    [Fact]
+    public void Session_view_offers_dedicated_session_csv_export_for_engineers()
+    {
+        _store
+            .Setup(s => s.QuerySessionsAsync(It.IsAny<SessionQueryRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SessionQueryResult
+            {
+                Total = 1,
+                Items =
+                [
+                    new SessionListItem
+                    {
+                        MonthKey = "202610",
+                        RecordCount = 3,
+                        RecipeCode = "R1",
+                        Session = new PalletSession
+                        {
+                            Id = 9,
+                            SerialNo = "20261029-000001",
+                            PalletCode = "P11",
+                            StartTime = new DateTime(2026, 10, 29, 8, 0, 0),
+                            EndTime = new DateTime(2026, 10, 29, 8, 5, 0),
+                            Status = SessionStatus.Closed,
+                            Judgement = Judgement.Ok
+                        }
+                    }
+                ]
+            });
+
+        var cut = Render("/query?view=sessions");
+
+        Assert.Contains(cut.FindAll("button"), b => b.TextContent.Contains("导出会话 CSV"));
+        Assert.DoesNotContain(cut.FindAll("button"), b => b.TextContent.Trim() == "导出 CSV");
+        ClickButton(cut, "导出会话 CSV");
+
+        var download = Assert.Single(Context.JSInterop.Invocations["dtDownload"]);
+        Assert.Contains("datatrace_sessions_", (string)download.Arguments[0]!);
+        var csv = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String((string)download.Arguments[1]!)).TrimStart('\uFEFF');
+        using var reader = new CsvHelper.CsvReader(new StringReader(csv), System.Globalization.CultureInfo.InvariantCulture);
+        Assert.True(reader.Read());
+        reader.ReadHeader();
+        Assert.Equal(
+            new[] { "开始时间", "结束时间", "流水号", "托盘码", "型号", "状态", "判定", "站数", "首因工站", "首因时刻", "首因原因", "月分片", "查询上下文" },
+            reader.HeaderRecord);
+        Assert.True(reader.Read());
+        Assert.Equal("20261029-000001", reader.GetField("流水号"));
+        Assert.Equal("P11", reader.GetField("托盘码"));
+        Assert.Contains("view=sessions", reader.GetField("查询上下文"));
+        _audit.Verify(
+            a => a.WriteAsync("admin", "Export", "Query", It.IsAny<string>(), null, It.Is<string>(d => d.Contains("view=sessions")),
+                default, "Success", "Blazor Server UI", null, null),
+            Times.Once);
+        Assert.Equal("已导出 1 件会话", Toast.LastMessage);
+    }
+
+    [Fact]
+    public void Records_view_shows_prominent_overlimit_alert_when_hits_exceed_export_cap()
+    {
+        _store
+            .Setup(s => s.QueryAsync(It.IsAny<CollectQueryRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CollectQueryResult
+            {
+                Total = SystemDefaults.ExportRowLimit + 4980,
+                Items =
+                [
+                    new CollectRecordListItem
+                    {
+                        MonthKey = "202610",
+                        Record = new CollectRecord
+                        {
+                            Id = 1,
+                            SerialNo = "20261029-000001",
+                            PalletCode = "P0001",
+                            StationCode = "ST010",
+                            TriggerTime = new DateTime(2026, 10, 29, 8, 0, 0),
+                            Judgement = Judgement.Ok
+                        }
+                    }
+                ]
+            });
+
+        var cut = Render();
+
+        var alert = cut.Find(".dt-query-export-overlimit");
+        Assert.Contains("已超过单次导出上限", alert.TextContent);
+        Assert.Contains(SystemDefaults.ExportRowLimit.ToString("N0"), alert.TextContent);
+        Assert.Contains((SystemDefaults.ExportRowLimit + 4980).ToString("N0"), alert.TextContent);
+        Assert.Equal("alert", alert.GetAttribute("role"));
+    }
+
+    [Fact]
+    public void Session_view_shows_prominent_overlimit_alert_when_hits_exceed_export_cap()
+    {
+        _store
+            .Setup(s => s.QuerySessionsAsync(It.IsAny<SessionQueryRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SessionQueryResult
+            {
+                Total = SystemDefaults.ExportRowLimit + 12,
+                Items =
+                [
+                    new SessionListItem
+                    {
+                        MonthKey = "202610",
+                        RecordCount = 1,
+                        RecipeCode = "",
+                        Session = new PalletSession
+                        {
+                            Id = 1,
+                            SerialNo = "S1",
+                            PalletCode = "P1",
+                            StartTime = new DateTime(2026, 10, 29, 8, 0, 0),
+                            Status = SessionStatus.Open
+                        }
+                    }
+                ]
+            });
+
+        var cut = Render("/query?view=sessions");
+
+        var alert = cut.Find(".dt-query-export-overlimit");
+        Assert.Contains("已超过单次导出上限", alert.TextContent);
+        Assert.Contains("件会话", alert.TextContent);
+        Assert.Equal("alert", alert.GetAttribute("role"));
     }
 
     private sealed class StubAuthenticationStateProvider(string role) : AuthenticationStateProvider
