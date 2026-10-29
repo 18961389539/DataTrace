@@ -23,4 +23,7 @@ public interface IAlarmIncidents
 
     /// <summary>记下是谁接手。已经接手的不再写第二次。</summary>
     Task<AlarmAckResult> AcknowledgeAsync(long id, string userName, CancellationToken cancellationToken = default);
+
+    /// <summary>按给出的 id 列表批量接手。已接手的跳过；写入一条批量审计。</summary>
+    Task<AlarmBatchAckResult> AcknowledgeManyAsync(IReadOnlyList<long> ids, string userName, CancellationToken cancellationToken = default);
 }

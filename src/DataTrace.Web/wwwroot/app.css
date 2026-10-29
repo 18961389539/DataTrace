@@ -4477,3 +4477,18 @@ body:has(.dt-alarm-bar) .dt-diag-toolbar {
         padding: 10px 10px 8px;
     }
 }
+
+
+.dt-alarm-take-batch {
+    min-width: 9.5rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.dt-alarm-take-batch--device {
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--mud-palette-error) 40%, transparent);
+}
+
+.dt-alarms-action-callout .dt-alarm-take-batch.ms-auto {
+    margin-left: auto;
+}

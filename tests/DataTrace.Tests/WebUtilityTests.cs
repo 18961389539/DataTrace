@@ -417,6 +417,7 @@ public class ChartUtilTests
     [InlineData("Backup", false)]
     [InlineData("DeleteRuntimeMonth", false)]
     [InlineData("ArchiveAndPurge", false)]
+    [InlineData("AcknowledgeBatch", false)]
     public void IsChangeAction_separates_edits_from_events(string action, bool expected)
         => Assert.Equal(expected, DisplayLabels.IsChangeAction(action));
 
@@ -426,6 +427,7 @@ public class ChartUtilTests
     [InlineData("Unlock", "解除锁定")]
     [InlineData("DeleteRuntimeMonth", "清理运行数据")]
     [InlineData("ArchiveAndPurge", "归档并清理审计")]
+    [InlineData("AcknowledgeBatch", "批量接手")]
     public void AuditAction_names_the_user_management_actions(string action, string expected)
         => Assert.Equal(expected, DisplayLabels.AuditAction(action));
 

@@ -413,6 +413,119 @@ public class AlarmsPageTests : WebTestBase
         });
     }
 
+    [Fact]
+    public void Batch_take_device_section_acknowledges_only_custom_device_alarms()
+    {
+        var incidents = new FakeAlarmIncidents
+        {
+            Attention =
+            [
+                new AlarmIncidentDraft
+                {
+                    Id = 11, Key = "custom:23:1", Kind = LineAlarmKind.CustomDevice,
+                    Message = "设备限值 A", RaisedAt = new DateTime(2026, 9, 28, 16, 0, 0)
+                },
+                new AlarmIncidentDraft
+                {
+                    Id = 12, Key = "custom:23:2", Kind = LineAlarmKind.CustomDevice,
+                    Message = "设备限值 B", RaisedAt = new DateTime(2026, 9, 28, 16, 1, 0)
+                },
+                new AlarmIncidentDraft
+                {
+                    Id = 13, Key = "fault:23", Kind = LineAlarmKind.StationFault,
+                    Message = "系统故障条目", RaisedAt = new DateTime(2026, 9, 28, 16, 2, 0)
+                }
+            ]
+        };
+        Context.Services.AddSingleton<IAlarmIncidents>(incidents);
+        Context.Services.AddSingleton<ILineAlarmBoard>(new LineAlarmBoard());
+
+        var cut = RenderAlarms();
+        cut.WaitForAssertion(() => Assert.Contains("批量接手本区 2 条", cut.Markup));
+
+        cut.FindAll("button").First(button => button.GetAttribute("aria-label") == "批量接手本区设备报警").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains(incidents.Acknowledged, id => id == 11);
+            Assert.Contains(incidents.Acknowledged, id => id == 12);
+            Assert.DoesNotContain(13, incidents.Acknowledged);
+        });
+        Assert.Equal("admin", incidents.AcknowledgedBy);
+        Assert.Contains(Toast.Messages, message => message.Contains("已批量接手 2 条设备报警"));
+        Assert.Contains(Dialogs.MessageBoxes, box => box.Title.Contains("批量接手设备报警"));
+    }
+
+    [Fact]
+    public void Batch_take_system_section_acknowledges_filtered_system_alarms()
+    {
+        var incidents = new FakeAlarmIncidents
+        {
+            Attention =
+            [
+                new AlarmIncidentDraft
+                {
+                    Id = 21, Key = "fault:23", Kind = LineAlarmKind.StationFault,
+                    Message = "系统故障 A", RaisedAt = new DateTime(2026, 9, 28, 16, 0, 0)
+                },
+                new AlarmIncidentDraft
+                {
+                    Id = 22, Key = "mes", Kind = LineAlarmKind.MesBacklog,
+                    Message = "系统积压 B", RaisedAt = new DateTime(2026, 9, 28, 16, 1, 0)
+                },
+                new AlarmIncidentDraft
+                {
+                    Id = 23, Key = "custom:23:9", Kind = LineAlarmKind.CustomDevice,
+                    Message = "设备限值不应被系统批量接手", RaisedAt = new DateTime(2026, 9, 28, 16, 2, 0)
+                }
+            ]
+        };
+        Context.Services.AddSingleton<IAlarmIncidents>(incidents);
+        Context.Services.AddSingleton<ILineAlarmBoard>(new LineAlarmBoard());
+
+        var cut = RenderAlarms();
+        // 有设备待接手时系统区默认折叠；先展开再批量接手系统区。
+        cut.WaitForAssertion(() => Assert.Contains("已折叠系统规则区", cut.Markup));
+        cut.Find(".dt-alarms-region--system button.dt-alarms-region-toggle").Click();
+        cut.WaitForAssertion(() => Assert.Contains("批量接手本区 2 条", cut.Markup));
+
+        cut.FindAll("button").First(button => button.GetAttribute("aria-label") == "批量接手本区系统规则报警").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains(incidents.Acknowledged, id => id == 21);
+            Assert.Contains(incidents.Acknowledged, id => id == 22);
+            Assert.DoesNotContain(23, incidents.Acknowledged);
+        });
+        Assert.Contains(Toast.Messages, message => message.Contains("已批量接手 2 条系统规则报警"));
+    }
+
+    [Fact]
+    public void Batch_take_cancelled_does_not_acknowledge()
+    {
+        Dialogs.MessageBoxResult = false;
+        var incidents = new FakeAlarmIncidents
+        {
+            Attention =
+            [
+                new AlarmIncidentDraft
+                {
+                    Id = 31, Key = "custom:23:1", Kind = LineAlarmKind.CustomDevice,
+                    Message = "设备限值取消测试", RaisedAt = new DateTime(2026, 9, 28, 16, 0, 0)
+                }
+            ]
+        };
+        Context.Services.AddSingleton<IAlarmIncidents>(incidents);
+        Context.Services.AddSingleton<ILineAlarmBoard>(new LineAlarmBoard());
+
+        var cut = RenderAlarms();
+        cut.WaitForAssertion(() => Assert.Contains("批量接手本区 1 条", cut.Markup));
+        cut.FindAll("button").First(button => button.GetAttribute("aria-label") == "批量接手本区设备报警").Click();
+
+        Assert.Empty(incidents.Acknowledged);
+        Assert.DoesNotContain(Toast.Messages, message => message.Contains("已批量接手"));
+    }
+
         private sealed class FakeAlarmIncidents : IAlarmIncidents
     {
         public List<AlarmIncidentDraft> Attention { get; set; } = [];
@@ -448,6 +561,49 @@ public class AlarmsPageTests : WebTestBase
                     : item)
                 .ToList();
             return Task.FromResult(new AlarmAckResult { Found = true });
+        }
+
+        public Task<AlarmBatchAckResult> AcknowledgeManyAsync(
+            IReadOnlyList<long> ids,
+            string userName,
+            CancellationToken cancellationToken = default)
+        {
+            var unique = ids.Distinct().ToList();
+            var taken = 0;
+            var already = 0;
+            var missing = 0;
+            var stamp = new DateTime(2026, 9, 28, 16, 5, 0);
+            foreach (var id in unique)
+            {
+                var item = Attention.FirstOrDefault(row => row.Id == id);
+                if (item is null)
+                {
+                    missing++;
+                    continue;
+                }
+
+                if (!item.NeedsOwner)
+                {
+                    already++;
+                    continue;
+                }
+
+                Acknowledged.Add(id);
+                taken++;
+                Attention = Attention
+                    .Select(row => row.Id == id
+                        ? row with { AcknowledgedAt = stamp, AcknowledgedBy = userName }
+                        : row)
+                    .ToList();
+            }
+
+            AcknowledgedBy = userName;
+            return Task.FromResult(new AlarmBatchAckResult
+            {
+                Taken = taken,
+                AlreadyTaken = already,
+                Missing = missing
+            });
         }
     }
 }

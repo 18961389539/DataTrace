@@ -11,6 +11,7 @@
 @inject DtToast Toast
 @inject IConfigRepository Config
 @inject NavigationManager Nav
+@inject IDialogService Dialogs
 
 <PageHeader Title="设备报警" HelpRoute="alarms" Busy="@_refreshing"
             Description="工站配置的设备报警置顶优先处置；系统规则报警在下方。还没人接手的会一直留着并在顶部响铃。静音只关本机声音。">
@@ -186,11 +187,19 @@ else
                 @if (_canTake)
                 {
                     <div class="dt-alarms-action-callout dt-alarms-action-callout--device mb-2" role="status">
-                        <span>有 <strong>@DeviceNeedsOwner.Count</strong> 条设备报警等人接手，点右侧「接手」确认。</span>
+                        <span>有 <strong>@DeviceNeedsOwner.Count</strong> 条设备报警等人接手；可单条接手，或批量接手本区当前筛选结果。</span>
                         @if (OldestDeviceNeedsAgeText is { } age)
                         {
                             <span class="dt-alarms-action-callout-age">最早一条已持续 @age</span>
                         }
+                        <MudButton Variant="Variant.Filled" Color="Color.Error" Size="Size.Small"
+                                   Class="dt-alarm-take-batch dt-alarm-take-batch--device ms-auto"
+                                   Disabled="_working"
+                                   StartIcon="@(_workingBatch == "device" ? Icons.Material.Filled.Sync : Icons.Material.Filled.DoneAll)"
+                                   OnClick="@(() => TakeMany(device: true))"
+                                   aria-label="批量接手本区设备报警">
+                            @(_workingBatch == "device" ? "批量接手中…" : $"批量接手本区 {DeviceNeedsOwner.Count} 条")
+                        </MudButton>
                     </div>
                 }
                 @if (!_canTake)
@@ -374,11 +383,19 @@ else
                 @if (_canTake && SystemNeedsOwner.Count > 0)
                 {
                     <div class="dt-alarms-action-callout mb-2" role="status">
-                        <span>有 <strong>@SystemNeedsOwner.Count</strong> 条系统规则报警等人接手，点右侧「接手」确认。</span>
+                        <span>有 <strong>@SystemNeedsOwner.Count</strong> 条系统规则报警等人接手；可单条接手，或批量接手本区当前筛选结果。</span>
                         @if (OldestSystemNeedsAgeText is { } age)
                         {
                             <span class="dt-alarms-action-callout-age">最早一条已持续 @age</span>
                         }
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small"
+                                   Class="dt-alarm-take-batch ms-auto"
+                                   Disabled="_working"
+                                   StartIcon="@(_workingBatch == "system" ? Icons.Material.Filled.Sync : Icons.Material.Filled.DoneAll)"
+                                   OnClick="@(() => TakeMany(device: false))"
+                                   aria-label="批量接手本区系统规则报警">
+                            @(_workingBatch == "system" ? "批量接手中…" : $"批量接手本区 {SystemNeedsOwner.Count} 条")
+                        </MudButton>
                     </div>
                 }
                 @if (!_canTake)
@@ -961,6 +978,8 @@ else
     private bool _working;
     /// <summary>正在接手的那一条：进度显示在它自己的按钮上，而不是整表一起灰。</summary>
     private long? _workingId;
+    /// <summary>正在批量接手的分区：device / system；单条接手时为 null。</summary>
+    private string? _workingBatch;
     private bool _refreshing;
 
     protected override async Task OnInitializedAsync()
@@ -1046,6 +1065,75 @@ else
         {
             _working = false;
             _workingId = null;
+        }
+    }
+
+    private async Task TakeMany(bool device)
+    {
+        if (_working)
+        {
+            return;
+        }
+
+        var items = device ? DeviceNeedsOwner : SystemNeedsOwner;
+        if (items.Count == 0)
+        {
+            return;
+        }
+
+        var label = device ? "设备报警" : "系统规则报警";
+        var confirmed = await Dialogs.ConfirmDangerAsync(
+            $"批量接手{label}",
+            $"将接手当前筛选下本区的 {items.Count} 条{label}。已有人接手的会跳过；接手后仍未解除的会留在「已接手，尚未解除」。",
+            acknowledge: $"我确认接手这 {items.Count} 条{label}",
+            yesText: "批量接手",
+            cancelText: "取消");
+        if (!confirmed)
+        {
+            return;
+        }
+
+        _working = true;
+        _workingBatch = device ? "device" : "system";
+        try
+        {
+            var actor = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            var result = await Incidents.AcknowledgeManyAsync(items.Select(item => item.Id).ToList(), actor);
+            if (result.Taken > 0)
+            {
+                Toast.Add($"已批量接手 {result.Taken} 条{label}", Severity.Success);
+            }
+
+            if (result.AlreadyTaken > 0)
+            {
+                Toast.Add($"其中 {result.AlreadyTaken} 条已被他人接手，已跳过", Severity.Info);
+            }
+
+            if (result.Missing > 0)
+            {
+                Toast.Add($"其中 {result.Missing} 条已不在，已跳过", Severity.Warning);
+            }
+
+            if (result.Taken == 0 && result.AlreadyTaken == 0 && result.Missing == 0)
+            {
+                Toast.Add("没有可接手的报警", Severity.Info);
+            }
+
+            if (result.AuditError is { } auditError)
+            {
+                Toast.Add($"操作已完成，但审计记录失败：{auditError}", Severity.Warning);
+            }
+
+            await Reload(pushBoard: true);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"批量接手失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _working = false;
+            _workingBatch = null;
         }
     }
 

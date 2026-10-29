@@ -180,6 +180,87 @@ public sealed class AlarmIncidentStore : IAlarmIncidents
         }
     }
 
+    public async Task<AlarmBatchAckResult> AcknowledgeManyAsync(
+        IReadOnlyList<long> ids,
+        string userName,
+        CancellationToken cancellationToken = default)
+    {
+        if (ids is null || ids.Count == 0)
+        {
+            return new AlarmBatchAckResult();
+        }
+
+        var unique = ids.Distinct().ToList();
+        await Gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var rows = await db.AlarmIncidents
+                .Where(item => unique.Contains(item.Id))
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+            var found = rows.Select(item => item.Id).ToHashSet();
+            var missing = unique.Count(id => !found.Contains(id));
+            var already = 0;
+            var taken = new List<AlarmIncident>();
+            var who = string.IsNullOrWhiteSpace(userName) ? "（未知）" : userName.Trim();
+            var now = DateTime.Now;
+
+            foreach (var row in rows)
+            {
+                if (row.AcknowledgedAt is not null)
+                {
+                    already++;
+                    continue;
+                }
+
+                row.AcknowledgedAt = now;
+                row.AcknowledgedBy = who;
+                taken.Add(row);
+            }
+
+            if (taken.Count > 0)
+            {
+                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            string? auditError = null;
+            if (taken.Count > 0)
+            {
+                try
+                {
+                    var sample = string.Join("；", taken.Take(5).Select(item => item.Key));
+                    var more = taken.Count > 5 ? $" 等共 {taken.Count} 条" : $"（{taken.Count} 条）";
+                    await _audit.WriteAsync(
+                            who,
+                            "AcknowledgeBatch",
+                            "Alarm",
+                            "batch",
+                            null,
+                            $"批量接手{more}：{sample}",
+                            cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    auditError = ex.Message;
+                }
+            }
+
+            return new AlarmBatchAckResult
+            {
+                Taken = taken.Count,
+                AlreadyTaken = already,
+                Missing = missing,
+                AuditError = auditError
+            };
+        }
+        finally
+        {
+            Gate.Release();
+        }
+    }
+
     private static async Task<IReadOnlyList<AlarmIncidentDraft>> Attention(ConfigDbContext db, CancellationToken cancellationToken)
     {
         var rows = await db.AlarmIncidents.AsNoTracking()

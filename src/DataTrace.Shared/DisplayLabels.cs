@@ -74,7 +74,7 @@ public static class DisplayLabels
     [
         "Create", "Update", "Save", "Delete", "Login", "LoginFailed", "Logout", "Toggle", "Switch", "Export",
         "Activate", "Deactivate", "Enable", "Disable", "Copy", "Recode", "SaveLimits",
-        "ResetPassword", "Unlock", "Backup", "DeleteRuntimeMonth", "ArchiveAndPurge", "Acknowledge", "Trial"
+        "ResetPassword", "Unlock", "Backup", "DeleteRuntimeMonth", "ArchiveAndPurge", "Acknowledge", "AcknowledgeBatch", "Trial"
     ];
 
     /// <summary>审计对象类型码全集。</summary>
@@ -145,7 +145,7 @@ public static class DisplayLabels
     public static bool IsChangeAction(string? action)
         => action is not (
             "Login" or "LoginFailed" or "Logout" or "Unlock" or "Export"
-            or "Backup" or "DeleteRuntimeMonth" or "ArchiveAndPurge" or "Acknowledge" or "Trial");
+            or "Backup" or "DeleteRuntimeMonth" or "ArchiveAndPurge" or "Acknowledge" or "AcknowledgeBatch" or "Trial");
 
     /// <summary>关键字若匹配某动作的中文标签，返回这些动作码，供服务端 OR 查询。</summary>
     public static IReadOnlyList<string> ActionsMatchingKeyword(string? keyword)

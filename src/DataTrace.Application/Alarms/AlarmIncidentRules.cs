@@ -36,6 +36,18 @@ public sealed class AlarmAckResult
     public string? AuditError { get; init; }
 }
 
+
+/// <summary>批量接手结果：已接手条数、跳过条数与审计失败分开带回。</summary>
+public sealed class AlarmBatchAckResult
+{
+    public int Taken { get; init; }
+
+    public int AlreadyTaken { get; init; }
+
+    public int Missing { get; init; }
+
+    public string? AuditError { get; init; }
+}
 /// <summary>
 /// 把这一轮仍在发生的异常并进尚未结束的记录。
 /// 同一条 Key 只留一条：条件还在就更新说法；条件消失就记下解除时间，但仍等人接手。
