@@ -302,13 +302,15 @@ public class AlarmsPageTests : WebTestBase
         Assert.Contains("已接手／已解除 (3)", cut.Markup);
         Assert.Contains("当前模式：显示全部待处理记录，以及最近 30 条已解除记录", cut.Markup);
 
-        var attentionRows = cut.FindAll(".dt-needs-owner-alarms table").SelectMany(table => table.QuerySelectorAll("tbody tr")).ToList();
+        var attentionRows = cut.FindAll(".dt-needs-owner-alarms--system table").SelectMany(table => table.QuerySelectorAll("tbody tr")).ToList();
         Assert.Equal(25, attentionRows.Count);
         Assert.Contains("恢复告警 000", cut.Markup);
         Assert.Contains("每页 25 条", cut.Markup);
+        Assert.Contains("系统规则报警", cut.Markup);
+        Assert.Contains("设备报警", cut.Markup);
 
         await cut.InvokeAsync(() => cut.FindComponents<MudPagination>()[0].Instance.SelectedChanged.InvokeAsync(2));
-        attentionRows = cut.FindAll(".dt-needs-owner-alarms table").SelectMany(table => table.QuerySelectorAll("tbody tr")).ToList();
+        attentionRows = cut.FindAll(".dt-needs-owner-alarms--system table").SelectMany(table => table.QuerySelectorAll("tbody tr")).ToList();
         Assert.Equal(25, attentionRows.Count);
         Assert.Contains("恢复告警 024", cut.Markup);
 
@@ -324,7 +326,94 @@ public class AlarmsPageTests : WebTestBase
         Assert.DoesNotContain("恢复告警 000", cut.Markup);
     }
 
-    private sealed class FakeAlarmIncidents : IAlarmIncidents
+
+    [Fact]
+    public void Custom_device_alarms_render_in_the_primary_device_region_above_system_rules()
+    {
+        var incidents = new FakeAlarmIncidents
+        {
+            Attention =
+            [
+                new AlarmIncidentDraft
+                {
+                    Id = 1,
+                    Key = "custom:23:9",
+                    Kind = LineAlarmKind.CustomDevice,
+                    Message = "工站 OP10 压力过高：当前 12，限值 10（高于）",
+                    RaisedAt = new DateTime(2026, 9, 28, 16, 0, 0)
+                },
+                new AlarmIncidentDraft
+                {
+                    Id = 2,
+                    Key = "abandon:88",
+                    Kind = LineAlarmKind.SessionSuperseded,
+                    Message = "会话被抢占",
+                    RaisedAt = new DateTime(2026, 9, 28, 16, 1, 0)
+                }
+            ]
+        };
+        Context.Services.AddSingleton<IAlarmIncidents>(incidents);
+        Context.Services.AddSingleton<ILineAlarmBoard>(new LineAlarmBoard());
+
+        var cut = RenderAlarms();
+
+        cut.WaitForAssertion(() => Assert.Contains("工站 OP10 压力过高", cut.Markup));
+        Assert.Contains("dt-alarms-region--device", cut.Markup);
+        Assert.Contains("dt-alarms-region--system", cut.Markup);
+        Assert.Contains("设备 1", cut.Markup);
+        Assert.Contains("系统规则报警", cut.Markup);
+
+        var devicePos = cut.Markup.IndexOf("dt-alarms-region--device", StringComparison.Ordinal);
+        var systemPos = cut.Markup.IndexOf("dt-alarms-region--system", StringComparison.Ordinal);
+        Assert.True(devicePos >= 0 && systemPos > devicePos, "设备报警区应排在系统规则区之前");
+
+        Assert.Contains("dt-needs-owner-alarms--device", cut.Markup);
+        Assert.Contains("打开工站配置", cut.Markup);
+        // 有待接手设备报警时系统区默认折叠，避免淹没设备处置。
+        Assert.Contains("已折叠系统规则区", cut.Markup);
+        Assert.DoesNotContain("会话被抢占", cut.Markup);
+
+        var toggle = cut.FindAll("button")
+            .First(button => button.ClassList.Contains("dt-alarms-region-toggle"));
+        toggle.Click();
+        cut.WaitForAssertion(() => Assert.Contains("会话被抢占", cut.Markup));
+    }
+
+    [Fact]
+    public void Device_summary_chip_filters_to_custom_device_kind()
+    {
+        var incidents = new FakeAlarmIncidents
+        {
+            Attention =
+            [
+                new AlarmIncidentDraft
+                {
+                    Id = 1, Key = "custom:23:1", Kind = LineAlarmKind.CustomDevice,
+                    Message = "设备限值触发", RaisedAt = DateTime.Now
+                },
+                new AlarmIncidentDraft
+                {
+                    Id = 2, Key = "fault:23", Kind = LineAlarmKind.StationFault,
+                    Message = "工站故障条目", RaisedAt = DateTime.Now
+                }
+            ]
+        };
+        Context.Services.AddSingleton<IAlarmIncidents>(incidents);
+        Context.Services.AddSingleton<ILineAlarmBoard>(new LineAlarmBoard());
+        var cut = RenderAlarms();
+        cut.WaitForAssertion(() => Assert.Contains("设备限值触发", cut.Markup));
+
+        // 设备区内「只看设备」把类型筛到 CustomDevice，系统区随之隐藏。
+        cut.FindAll("button").First(button => button.TextContent.Contains("只看设备")).Click();
+        cut.WaitForAssertion(() =>
+        {
+            Assert.Contains("设备限值触发", cut.Markup);
+            Assert.DoesNotContain("dt-alarms-region--system", cut.Markup);
+            Assert.DoesNotContain("工站故障条目", cut.Markup);
+        });
+    }
+
+        private sealed class FakeAlarmIncidents : IAlarmIncidents
     {
         public List<AlarmIncidentDraft> Attention { get; set; } = [];
 
