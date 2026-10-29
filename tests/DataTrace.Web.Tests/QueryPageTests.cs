@@ -32,6 +32,9 @@ public class QueryPageTests : WebTestBase
             .Setup(s => s.ListRecipeCodesAsync(It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<string>());
         _store
+            .Setup(s => s.QuerySessionsAsync(It.IsAny<SessionQueryRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SessionQueryResult { Total = 0, Items = Array.Empty<SessionListItem>() });
+        _store
             .Setup(s => s.QueryAsync(It.IsAny<CollectQueryRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CollectQueryResult
             {
@@ -231,6 +234,9 @@ public class QueryPageTests : WebTestBase
     {
         var query = new TaskCompletionSource<CollectQueryResult>();
         _store
+            .Setup(s => s.QuerySessionsAsync(It.IsAny<SessionQueryRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SessionQueryResult { Total = 0, Items = Array.Empty<SessionListItem>() });
+        _store
             .Setup(s => s.QueryAsync(It.IsAny<CollectQueryRequest>(), It.IsAny<CancellationToken>()))
             .Returns(query.Task);
 
@@ -340,7 +346,7 @@ public class QueryPageTests : WebTestBase
         var paging = cut.InvokeAsync(() => cut.FindComponent<MudPagination>().Instance.SelectedChanged.InvokeAsync(3));
         cut.WaitForAssertion(() => _store.Verify(store => store.QueryAsync(
             It.IsAny<CollectQueryRequest>(), It.IsAny<CancellationToken>()), Times.Exactly(3)));
-        await cut.InvokeAsync(() => cut.FindComponent<MudSelect<int?>>().Instance.ValueChanged.InvokeAsync(23));
+        await cut.InvokeAsync(() => cut.FindComponents<MudSelect<int>>().First(s => s.Instance.MultiSelection).Instance.SelectedValuesChanged.InvokeAsync(new HashSet<int> { 23 }));
 
         if (fails)
             await cut.InvokeAsync(() => correction.SetException(new InvalidOperationException("old correction")));
@@ -827,6 +833,9 @@ public class QueryPageTests : WebTestBase
     public async Task Clicking_a_column_header_sorts_on_the_server_and_returns_to_page_one()
     {
         // 造出不止一页：翻页控件得有第 2 页可点。
+        _store
+            .Setup(s => s.QuerySessionsAsync(It.IsAny<SessionQueryRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new SessionQueryResult { Total = 0, Items = Array.Empty<SessionListItem>() });
         _store
             .Setup(s => s.QueryAsync(It.IsAny<CollectQueryRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new CollectQueryResult { Total = 60, Items = [] });

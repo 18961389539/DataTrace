@@ -417,6 +417,9 @@ internal class FakeRuntimeStore : IRuntimeStore
         return Task.FromResult(new CollectQueryResult { Total = items.Count, Items = items });
     }
 
+    public Task<SessionQueryResult> QuerySessionsAsync(SessionQueryRequest request, CancellationToken cancellationToken = default)
+        => Task.FromResult(new SessionQueryResult { Total = 0, Items = [] });
+
     public Task<DataTrace.Domain.Entities.CollectRecord?> GetRecordAsync(string monthKey, long recordId, CancellationToken cancellationToken = default)
         => Task.FromResult<DataTrace.Domain.Entities.CollectRecord?>(
             Records.FirstOrDefault(x => x.MonthKey == monthKey && x.Record.Id == recordId).Record);

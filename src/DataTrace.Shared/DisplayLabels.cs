@@ -236,7 +236,15 @@ public static class DisplayLabels
         _ => status.ToString()
     };
 
-    public static string JudgementText(Judgement judgement) => judgement switch
+    public static string SessionStatusText(SessionStatus status) => status switch
+    {
+        SessionStatus.Open => "进行中",
+        SessionStatus.Closed => "已闭环",
+        SessionStatus.Abnormal => "异常中断",
+        _ => status.ToString()
+    };
+
+        public static string JudgementText(Judgement judgement) => judgement switch
     {
         Judgement.Ok => "OK",
         Judgement.Ng => "NG",

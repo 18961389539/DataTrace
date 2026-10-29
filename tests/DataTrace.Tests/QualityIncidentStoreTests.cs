@@ -200,6 +200,9 @@ public class QualityIncidentStoreTests
             return Task.FromResult(QueryResult);
         }
 
+        public Task<SessionQueryResult> QuerySessionsAsync(SessionQueryRequest request, CancellationToken cancellationToken = default)
+            => Task.FromResult(new SessionQueryResult { Total = 0, Items = [] });
+
         public Task<CollectRecord?> GetRecordAsync(string monthKey, long recordId, CancellationToken cancellationToken = default)
             => Task.FromResult(Records.GetValueOrDefault((monthKey, recordId)));
 

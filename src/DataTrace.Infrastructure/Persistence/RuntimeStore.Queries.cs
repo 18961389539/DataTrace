@@ -298,9 +298,15 @@ partial class RuntimeStore
             To = r.To.Ticks,
             Pallet = r.PalletCode?.Trim(),
             Serial = r.SerialNo?.Trim(),
-            r.StationId,
+            Stations = r.StationIds is { Count: > 0 } ids
+                ? ids.OrderBy(x => x).ToArray()
+                : r.StationId is { } one ? new[] { one } : null,
             r.Judgement,
             r.ResultCode,
+            r.DurationMinMs,
+            r.DurationMaxMs,
+            r.OnlyOutOfLimit,
+            OutTag = string.IsNullOrWhiteSpace(r.OutOfLimitTagName) ? null : r.OutOfLimitTagName.Trim(),
             Recipes = r.RecipeCodes is { Count: > 0 } codes
                 ? codes.OrderBy(x => x, StringComparer.Ordinal).ToArray()
                 : null,
@@ -518,6 +524,102 @@ partial class RuntimeStore
             .ToList();
     }
 
+    
+    public async Task<SessionQueryResult> QuerySessionsAsync(SessionQueryRequest request, CancellationToken cancellationToken = default)
+    {
+        var take = Math.Max(0, request.Take);
+        var skip = Math.Max(0, request.Skip);
+        var months = ExistingMonthKeys();
+        var candidates = new List<SessionListItem>();
+        var total = 0;
+        var perMonthTake = take == 0 ? 0 : skip + take;
+
+        foreach (var month in months)
+        {
+            await using var db = _factory.Open(month);
+            var filtered = FilterSessions(db.PalletSessions.AsNoTracking(), request);
+            var count = await filtered.CountAsync(cancellationToken).ConfigureAwait(false);
+            if (count == 0) continue;
+            total += count;
+            if (take == 0) continue;
+
+            // 列表需要站数与型号：按会话聚合记录，避免把整份 Records 导航物化进来。
+            var page = await filtered
+                .OrderByDescending(x => x.StartTime)
+                .ThenByDescending(x => x.Id)
+                .Take(Math.Max(perMonthTake, 1))
+                .Select(x => new
+                {
+                    Session = x,
+                    RecordCount = x.Records.Count(),
+                    RecipeCode = x.Records
+                        .OrderBy(r => r.TriggerTime)
+                        .Select(r => r.RecipeCode)
+                        .FirstOrDefault() ?? ""
+                })
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            foreach (var row in page)
+            {
+                candidates.Add(new SessionListItem
+                {
+                    MonthKey = month,
+                    Session = row.Session,
+                    RecordCount = row.RecordCount,
+                    RecipeCode = row.RecipeCode
+                });
+            }
+        }
+
+        var items = candidates
+            .OrderByDescending(x => x.Session.StartTime)
+            .ThenByDescending(x => x.Session.Id)
+            .ThenBy(x => x.MonthKey, StringComparer.Ordinal)
+            .Skip(skip)
+            .Take(take)
+            .ToList();
+
+        return new SessionQueryResult { Total = total, Items = items };
+    }
+
+    private static IQueryable<PalletSession> FilterSessions(IQueryable<PalletSession> query, SessionQueryRequest request)
+    {
+        // 按开始时刻落在区间内：进行中的 Open 会话没有结束时刻，不能用 EndTime 筛。
+        query = query.Where(x => x.StartTime >= request.From && x.StartTime <= request.To);
+        if (!string.IsNullOrWhiteSpace(request.PalletCode))
+        {
+            query = query.Where(x => x.PalletCode.Contains(request.PalletCode));
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.SerialNo))
+        {
+            query = query.Where(x => x.SerialNo.Contains(request.SerialNo));
+        }
+
+        if (request.Status is { } status)
+        {
+            query = query.Where(x => x.Status == status);
+        }
+
+        if (request.Judgement is { } judgement)
+        {
+            query = query.Where(x => x.Judgement == judgement);
+        }
+
+        if (request.RecipeCodes is { Count: > 0 } recipeCodes)
+        {
+            return query.Where(x => x.Records.Any(r => recipeCodes.Contains(r.RecipeCode)));
+        }
+
+        if (request.RecipeCode is not null)
+        {
+            return query.Where(x => x.Records.Any(r => r.RecipeCode == request.RecipeCode));
+        }
+
+        return query;
+    }
+
     private static IQueryable<CollectRecord> Filter(IQueryable<CollectRecord> query, CollectQueryRequest request)
     {
         query = query.Where(x => x.TriggerTime >= request.From && x.TriggerTime <= request.To);
@@ -531,7 +633,11 @@ partial class RuntimeStore
             query = query.Where(x => x.SerialNo.Contains(request.SerialNo));
         }
 
-        if (request.StationId is { } stationId)
+        if (request.StationIds is { Count: > 0 } stationIds)
+        {
+            query = query.Where(x => stationIds.Contains(x.StationId));
+        }
+        else if (request.StationId is { } stationId)
         {
             query = query.Where(x => x.StationId == stationId);
         }
@@ -544,6 +650,26 @@ partial class RuntimeStore
         if (request.ResultCode is { } resultCode)
         {
             query = query.Where(x => x.ResultCode == resultCode);
+        }
+
+        if (request.DurationMinMs is { } durationMin)
+        {
+            query = query.Where(x => x.DurationMs >= durationMin);
+        }
+
+        if (request.DurationMaxMs is { } durationMax)
+        {
+            query = query.Where(x => x.DurationMs <= durationMax);
+        }
+
+        var outTag = string.IsNullOrWhiteSpace(request.OutOfLimitTagName) ? null : request.OutOfLimitTagName.Trim();
+        if (outTag is not null)
+        {
+            query = query.Where(x => x.TagValues.Any(t => t.IsOutOfLimit && t.TagName == outTag));
+        }
+        else if (request.OnlyOutOfLimit)
+        {
+            query = query.Where(x => x.TagValues.Any(t => t.IsOutOfLimit));
         }
 
         if (request.RecipeCodes is { Count: > 0 } recipeCodes)

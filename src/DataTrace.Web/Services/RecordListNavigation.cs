@@ -32,17 +32,37 @@ public static class RecordListNavigation
             ? values.Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!.Trim()).ToArray() : [];
         var recipes = !string.IsNullOrEmpty(recipe) && aliases.Length > 0
             ? new[] { recipe }.Concat(aliases).Distinct(StringComparer.Ordinal).ToArray() : null;
+
+        var stationIds = ParseStationIds(query);
         return new CollectQueryRequest
         {
             From = from, To = DateRangeFilter.QueryEnd(to),
             PalletCode = Value("pallet")?.Trim(), SerialNo = Value("serial")?.Trim(),
-            StationId = int.TryParse(Value("station"), out var station) && station > 0 ? station : null,
+            StationIds = stationIds is { Count: > 1 } ? stationIds : null,
+            StationId = stationIds is { Count: 1 } ? stationIds[0] : null,
             Judgement = Enum.TryParse<Judgement>(Value("judge"), true, out var judge) ? judge : null,
             ResultCode = short.TryParse(Value("result"), out var result) && result > 0 ? result : null,
+            DurationMinMs = int.TryParse(Value("durMin"), out var durMin) && durMin >= 0 ? durMin : null,
+            DurationMaxMs = int.TryParse(Value("durMax"), out var durMax) && durMax >= 0 ? durMax : null,
+            OnlyOutOfLimit = Value("ool") == "1" || !string.IsNullOrWhiteSpace(Value("oolTag")),
+            OutOfLimitTagName = string.IsNullOrWhiteSpace(Value("oolTag")) ? null : Value("oolTag")!.Trim(),
             RecipeCode = recipes is null ? recipe : null, RecipeCodes = recipes,
             SortBy = ParseSortField(Value("sort")), SortDescending = Value("dir") != "asc",
             Skip = skip, Take = take
         };
+    }
+
+
+    private static IReadOnlyList<int>? ParseStationIds(Dictionary<string, Microsoft.Extensions.Primitives.StringValues> query)
+    {
+        if (!query.TryGetValue("station", out var values)) return null;
+        var ids = values
+            .SelectMany(v => (v ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .Select(v => int.TryParse(v, out var id) && id > 0 ? id : 0)
+            .Where(id => id > 0)
+            .Distinct()
+            .ToArray();
+        return ids.Length == 0 ? null : ids;
     }
 
     public static CollectSortField ParseSortField(string? key)

@@ -16,9 +16,16 @@
 
 <PageHeader Title="数据查询" HelpRoute="query" Busy="_loading">
     <Actions>
-        @if (_traceMode)
+        @if (_viewMode == QueryViewMode.Trace)
         {
             <MudText Typo="Typo.caption" Class="dt-muted">按完整流水号跨月追溯</MudText>
+        }
+        else if (_viewMode == QueryViewMode.Sessions)
+        {
+            <MudText Typo="Typo.caption" Class="dt-muted">
+                区间 @DateRangeFilter.Format(_from, _to)　共 @_sessionTotal 件会话
+            </MudText>
+            <InfoHint Topic="HelpTexts.RangeScope" />
         }
         else
         {
@@ -31,26 +38,168 @@
 </PageHeader>
 
 <MudStack Row="true" Spacing="1" Class="mb-3 dt-view-toggle" role="group" aria-label="查询模式">
-    <MudButton Size="Size.Small" Variant="@(_traceMode ? Variant.Outlined : Variant.Filled)"
+    <MudButton Size="Size.Small" Variant="@(_viewMode == QueryViewMode.Records ? Variant.Filled : Variant.Outlined)"
                Color="Color.Primary" StartIcon="@Icons.Material.Filled.TableRows"
-               aria-pressed="@(_traceMode ? "false" : "true")"
+               aria-pressed="@(_viewMode == QueryViewMode.Records ? "true" : "false")"
                OnClick="ShowRecords">
         记录查询
     </MudButton>
-    <MudButton Size="Size.Small" Variant="@(_traceMode ? Variant.Filled : Variant.Outlined)"
+    <MudButton Size="Size.Small" Variant="@(_viewMode == QueryViewMode.Sessions ? Variant.Filled : Variant.Outlined)"
+               Color="Color.Primary" StartIcon="@Icons.Material.Filled.ViewTimeline"
+               aria-pressed="@(_viewMode == QueryViewMode.Sessions ? "true" : "false")"
+               OnClick="ShowSessions">
+        会话查询
+    </MudButton>
+    <MudButton Size="Size.Small" Variant="@(_viewMode == QueryViewMode.Trace ? Variant.Filled : Variant.Outlined)"
                Color="Color.Primary" StartIcon="@Icons.Material.Filled.AccountTree"
-               aria-pressed="@(_traceMode ? "true" : "false")"
+               aria-pressed="@(_viewMode == QueryViewMode.Trace ? "true" : "false")"
                OnClick="ShowTraceability">
         产品追溯
     </MudButton>
 </MudStack>
 
-@if (_traceMode)
+@if (_viewMode == QueryViewMode.Trace)
 {
     <ProductTraceabilityPanel InitialSerialNo="@TraceQuery"
                               InitialMonthKey="@TraceMonthQuery"
                               InitialSessionId="@TraceSessionQuery"
                               OnSearchCompleted="OnTraceSearchCompleted" />
+}
+else if (_viewMode == QueryViewMode.Sessions)
+{
+<div class="dt-query-workspace">
+    <MudPaper Class="dt-filter-card mb-3" Elevation="0" Outlined="true">
+        <form class="dt-query-form" @onsubmit="OnSubmit" @onsubmit:preventDefault="true">
+            <MudGrid>
+                <MudItem xs="12" sm="6" md="3">
+                    <MudTextField T="string" Value="_serialNo" ValueChanged="OnSerialChanged" Label="流水号"
+                                  Immediate="true" Disabled="_exporting" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="3">
+                    <MudTextField T="string" Value="_pallet" ValueChanged="OnPalletChanged" Label="托盘码"
+                                  Immediate="true" Disabled="_exporting" />
+                </MudItem>
+                <MudItem xs="12" sm="6" md="3">
+                    <MudSelect T="SessionStatus?" Value="_sessionStatus" ValueChanged="OnSessionStatusChanged"
+                               Label="会话状态" Clearable="true" Disabled="_exporting">
+                        <MudSelectItem T="SessionStatus?" Value="SessionStatus.Open">进行中</MudSelectItem>
+                        <MudSelectItem T="SessionStatus?" Value="SessionStatus.Closed">已闭环</MudSelectItem>
+                        <MudSelectItem T="SessionStatus?" Value="SessionStatus.Abnormal">异常中断</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+                <MudItem xs="12" sm="6" md="3">
+                    <MudSelect T="Judgement?" Value="_judgement" ValueChanged="OnJudgementChanged"
+                               Label="会话判定" Clearable="true" Disabled="_exporting">
+                        <MudSelectItem T="Judgement?" Value="Judgement.Ok">OK（合格）</MudSelectItem>
+                        <MudSelectItem T="Judgement?" Value="Judgement.Ng">NG（不合格）</MudSelectItem>
+                        <MudSelectItem T="Judgement?" Value="Judgement.None">未判定</MudSelectItem>
+                    </MudSelect>
+                </MudItem>
+            </MudGrid>
+            <div class="dt-query-date-range mt-2">
+                <DateRangeFilter @bind-From="_from" @bind-To="_to" OnRangeChanged="Search"
+                                 IncludeShifts="true" ShiftStartHour="_shiftSettings.ShiftStartHour"
+                                 ShiftLengthHours="_shiftSettings.ShiftLengthHours" Disabled="_exporting" />
+            </div>
+            <MudStack Row="true" Spacing="2" Class="mt-2 mb-1 flex-wrap">
+                <MudButton ButtonType="ButtonType.Submit" Variant="Variant.Filled" Color="Color.Primary"
+                           StartIcon="@Icons.Material.Filled.Search" Disabled="_exporting">
+                    @(_loading ? "查询中…" : "查询")
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" OnClick="Reset" Disabled="_exporting"
+                           StartIcon="@Icons.Material.Filled.RestartAlt">重置</MudButton>
+                <MudChip T="string" Size="Size.Small"
+                         Variant="@(_sessionStatus == SessionStatus.Open ? Variant.Filled : Variant.Outlined)"
+                         Color="Color.Info" Disabled="_exporting"
+                         OnClick="ApplyOpenSessionsQuick">仅进行中</MudChip>
+                <MudChip T="string" Size="Size.Small"
+                         Variant="@(_sessionStatus == SessionStatus.Abnormal ? Variant.Filled : Variant.Outlined)"
+                         Color="Color.Error" Disabled="_exporting"
+                         OnClick="ApplyAbnormalSessionsQuick">仅异常中断</MudChip>
+            </MudStack>
+        </form>
+    </MudPaper>
+
+    @if (ActiveFilters.Count > 0)
+    {
+        <div class="dt-filter-chips mb-3">
+            <MudText Typo="Typo.caption" Class="dt-muted">当前条件</MudText>
+            @foreach (var filter in ActiveFilters)
+            {
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Primary">
+                    @filter.Label
+                    <MudIconButton Size="Size.Small" Class="ml-1" Icon="@Icons.Material.Filled.Close"
+                                   aria-label="@($"移除筛选条件：{filter.Label}")"
+                                   Disabled="_exporting"
+                                   OnClick="@(() => ClearOneAsync(filter.Clear))" />
+                </MudChip>
+            }
+            <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="_exporting"
+                   OnClick="ClearAllFiltersAsync">清空全部</MudButton>
+        </div>
+    }
+
+    <h2 class="dt-query-results-heading">会话结果</h2>
+    <MudTable Items="_sessionItems" Hover="true" Dense="true" Breakpoint="Breakpoint.Sm"
+              Loading="@(_loading || _exporting)" LoadingProgressColor="Color.Info"
+              FixedHeader="true" Height="var(--dt-grid-height)"
+              Class="dt-clickable dt-query-results"
+              OnRowClick="@((TableRowClickEventArgs<SessionListItem> args) => OnSessionRowClicked(args))">
+        <HeaderContent>
+            <MudTh>开始时间</MudTh>
+            <MudTh>结束时间</MudTh>
+            <MudTh>流水号</MudTh>
+            <MudTh>托盘码</MudTh>
+            <MudTh>型号</MudTh>
+            <MudTh>状态</MudTh>
+            <MudTh>判定</MudTh>
+            <MudTh Class="dt-right">站数</MudTh>
+            <MudTh>首因工站</MudTh>
+            <MudTh></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="开始时间" Class="dt-nowrap">@context.Session.StartTime.ToString("yyyy-MM-dd HH:mm:ss")</MudTd>
+            <MudTd DataLabel="结束时间" Class="dt-nowrap">@(context.Session.EndTime?.ToString("yyyy-MM-dd HH:mm:ss") ?? "—")</MudTd>
+            <MudTd DataLabel="流水号">@context.Session.SerialNo</MudTd>
+            <MudTd DataLabel="托盘码">@context.Session.PalletCode</MudTd>
+            <MudTd DataLabel="型号">@RecipeLabel(context.RecipeCode)</MudTd>
+            <MudTd DataLabel="状态">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                         Color="@(context.Session.Status == SessionStatus.Abnormal ? Color.Error : context.Session.Status == SessionStatus.Open ? Color.Info : Color.Success)">
+                    @DisplayLabels.SessionStatusText(context.Session.Status)
+                </MudChip>
+            </MudTd>
+            <MudTd DataLabel="判定">
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                         Color="@(context.Session.Judgement == Judgement.Ng ? Color.Error : context.Session.Judgement == Judgement.Ok ? Color.Success : Color.Default)">
+                    @DisplayLabels.JudgementText(context.Session.Judgement)
+                </MudChip>
+            </MudTd>
+            <MudTd DataLabel="站数" Class="dt-num">@context.RecordCount</MudTd>
+            <MudTd DataLabel="首因工站">@(context.Session.FirstNgStationCode ?? "—")</MudTd>
+            <MudTd>
+                <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
+                           OnClick="@(() => OpenSessionTrace(context))">履历</MudButton>
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText Typo="Typo.body2" Class="dt-muted py-4">当前条件下没有会话。</MudText>
+        </NoRecordsContent>
+    </MudTable>
+
+    <MudStack Row="true" Justify="Justify.SpaceBetween" AlignItems="AlignItems.Center" Class="mt-2 flex-wrap">
+        <MudText Typo="Typo.caption" Class="dt-muted">共 @_sessionTotal.ToString("N0") 件 · 第 @_page / @_pages 页</MudText>
+        <MudStack Row="true" Spacing="1" AlignItems="AlignItems.Center">
+            <MudSelect T="int" Value="_pageSize" ValueChanged="OnPageSizeChanged" Dense="true" Style="width: 6.5rem" Disabled="_loading || _exporting">
+                @foreach (var size in PageSizes)
+                {
+                    <MudSelectItem T="int" Value="@size">@size 条/页</MudSelectItem>
+                }
+            </MudSelect>
+            <MudPagination Count="_pages" Selected="_page" SelectedChanged="OnPage" Disabled="_loading || _exporting" BoundaryCount="1" MiddleCount="3" />
+        </MudStack>
+    </MudStack>
+</div>
 }
 else
 {
@@ -102,11 +251,12 @@ else
 
                 <MudGrid Class="dt-filters dt-query-secondary-filters">
                     <MudItem xs="12" sm="6" md="4" lg="3">
-                        <MudSelect T="int?" Value="_stationId" ValueChanged="OnStationChanged" Label="工站" Clearable="true"
-                                   Disabled="_exporting">
-                            @foreach (var s in _stations)
+                        <MudSelect T="int" MultiSelection="true" SelectedValues="_stationIds" SelectedValuesChanged="OnStationsChanged"
+                                   Label="工站（可多选）" Clearable="true" Dense="true" Disabled="_exporting"
+                                  >
+                            @foreach (var st in _stations)
                             {
-                                <MudSelectItem T="int?" Value="@s.Id">@s.Code @s.Name</MudSelectItem>
+                                <MudSelectItem T="int" Value="@st.Id">@st.Code @st.Name</MudSelectItem>
                             }
                         </MudSelect>
                     </MudItem>
@@ -140,6 +290,21 @@ else
                                 <MudSelectItem T="RecipeFilterValue" Value="@ToOptionValue(opt.Code)">@opt.Label</MudSelectItem>
                             }
                         </MudSelect>
+                    </MudItem>
+
+                    <MudItem xs="12" sm="6" md="4" lg="3">
+                        <MudNumericField T="int?" Value="_durationMinMs" ValueChanged="OnDurationMinChanged"
+                                         Label="耗时 ≥ (ms)" Clearable="true" Min="0" Disabled="_exporting" />
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="4" lg="3">
+                        <MudNumericField T="int?" Value="_durationMaxMs" ValueChanged="OnDurationMaxChanged"
+                                         Label="耗时 ≤ (ms)" Clearable="true" Min="0" Disabled="_exporting" />
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="4" lg="3">
+                        <MudTextField T="string" Value="_outOfLimitTag" ValueChanged="OnOutOfLimitTagChanged"
+                                      Label="超限点位名" Placeholder="精确匹配点位名" Immediate="true"
+                                      Disabled="_exporting" Clearable="true"
+                                      Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.WarningAmber" />
                     </MudItem>
                 </MudGrid>
 
@@ -185,6 +350,10 @@ else
              Variant="@(_judgement == Judgement.Ng ? Variant.Filled : Variant.Outlined)"
              Color="Color.Error" Disabled="_exporting"
              OnClick="ApplyNgQuick">仅 NG</MudChip>
+    <MudChip T="string" Size="Size.Small"
+             Variant="@(_onlyOutOfLimit || !string.IsNullOrWhiteSpace(_outOfLimitTag) ? Variant.Filled : Variant.Outlined)"
+             Color="Color.Warning" Disabled="_exporting"
+             OnClick="ApplyOutOfLimitQuick">仅超限</MudChip>
 </div>
 
 @* 「变更即查询」之后，六个条件散在各个控件里，筛完只剩一个命中数，回头看不出自己是按什么在筛。
@@ -432,8 +601,16 @@ else
     private DateTime? _to = DateTime.Today;
     private string? _pallet;
     private string? _serialNo;
-    private int? _stationId;
+    private HashSet<int> _stationIds = new();
     private Judgement? _judgement;
+    private int? _durationMinMs;
+    private int? _durationMaxMs;
+    private bool _onlyOutOfLimit;
+    private string? _outOfLimitTag;
+    private SessionStatus? _sessionStatus;
+    private IReadOnlyList<SessionListItem> _sessionItems = [];
+    private int _sessionTotal;
+    private QueryViewMode _viewMode = QueryViewMode.Records;
     /// <summary>结果码筛选；null = 不限。与「判定」是两个维度。</summary>
     private short? _resultCode;
     /// <summary>型号筛选：null/缺省=全部型号；<c>""</c>=未选型号；其它为精确匹配。</summary>
@@ -459,9 +636,7 @@ else
     private bool _loadFailed;
     private bool _exporting;
     private bool _canExport;
-    private bool _traceMode;
     private bool _advancedFiltersExpanded;
-    private bool _recordsLoaded;
     private bool _focusSerialAfterLoad;
     private CancellationTokenSource? _debounceCts;
 
@@ -511,6 +686,23 @@ else
 
     [SupplyParameterFromQuery(Name = "station")]
     public int? StationQuery { get; set; }
+    [SupplyParameterFromQuery(Name = "stations")]
+    public int[]? StationIdsQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "durMin")]
+    public int? DurationMinQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "durMax")]
+    public int? DurationMaxQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "ool")]
+    public int? OolQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "oolTag")]
+    public string? OolTagQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "sessionStatus")]
+    public string? SessionStatusQuery { get; set; }
 
     [SupplyParameterFromQuery(Name = "judge")]
     public string? JudgeQuery { get; set; }
@@ -553,7 +745,11 @@ else
     {
         // 地址栏的 scan 会被结果刷新时的 SyncUrl 去掉，先记下来。
         _focusSerialAfterLoad = ScanQuery == 1;
-        _traceMode = string.Equals(ViewQuery, "trace", StringComparison.OrdinalIgnoreCase);
+        _viewMode = string.Equals(ViewQuery, "trace", StringComparison.OrdinalIgnoreCase)
+            ? QueryViewMode.Trace
+            : string.Equals(ViewQuery, "sessions", StringComparison.OrdinalIgnoreCase)
+                ? QueryViewMode.Sessions
+                : QueryViewMode.Records;
         var auth = await Auth.GetAuthenticationStateAsync();
         _canExport = auth.User.IsInRole(AppRoles.Administrator) || auth.User.IsInRole(AppRoles.Engineer);
 
@@ -584,9 +780,22 @@ else
             _to = to;
         }
 
-        if (StationQuery is { } station && station > 0)
+        if (StationIdsQuery is { Length: > 0 } stations)
         {
-            _stationId = station;
+            _stationIds = stations.Where(id => id > 0).Distinct().ToHashSet();
+        }
+        else if (StationQuery is { } station && station > 0)
+        {
+            _stationIds = new HashSet<int> { station };
+        }
+
+        if (DurationMinQuery is >= 0) _durationMinMs = DurationMinQuery;
+        if (DurationMaxQuery is >= 0) _durationMaxMs = DurationMaxQuery;
+        if (OolQuery == 1) _onlyOutOfLimit = true;
+        if (!string.IsNullOrWhiteSpace(OolTagQuery)) _outOfLimitTag = OolTagQuery.Trim();
+        if (Enum.TryParse<SessionStatus>(SessionStatusQuery, true, out var sessionStatus))
+        {
+            _sessionStatus = sessionStatus;
         }
 
         if (Enum.TryParse<Judgement>(JudgeQuery, ignoreCase: true, out var judgement))
@@ -636,32 +845,35 @@ else
         var snapshot = await Config.GetSnapshotAsync();
         _stations = snapshot.Stations;
         _shiftSettings = snapshot.Settings;
-        if (!_traceMode)
+        if (_viewMode != QueryViewMode.Trace)
         {
             await Load();
-            _recordsLoaded = true;
         }
     }
 
     private void ShowTraceability()
     {
-        _traceMode = true;
+        _viewMode = QueryViewMode.Trace;
         TraceQuery = null;
         Nav.NavigateTo("query?view=trace", replace: true);
     }
 
     private void ToggleAdvancedFilters() => _advancedFiltersExpanded = !_advancedFiltersExpanded;
 
+    private async Task ShowSessions()
+    {
+        _viewMode = QueryViewMode.Sessions;
+        TraceQuery = null;
+        Nav.NavigateTo(CurrentSessionListUrl(), replace: true);
+        await Load();
+    }
+
     private async Task ShowRecords()
     {
-        _traceMode = false;
+        _viewMode = QueryViewMode.Records;
         TraceQuery = null;
         Nav.NavigateTo(CurrentListUrl(), replace: true);
-        if (!_recordsLoaded)
-        {
-            await Load();
-            _recordsLoaded = true;
-        }
+        await Load();
     }
 
     private Task OnTraceSearchCompleted(string? serialNo)
@@ -684,24 +896,50 @@ else
         return Task.CompletedTask;
     }
 
-    private CollectQueryRequest BuildRequest(int skip, int take, string? afterCursor = null) => new()
+    private CollectQueryRequest BuildRequest(int skip, int take, string? afterCursor = null)
+    {
+        var stationIds = _stationIds.Count > 1 ? _stationIds.OrderBy(x => x).ToArray() : null;
+        var stationId = _stationIds.Count == 1 ? _stationIds.First() : (int?)null;
+        return new()
+        {
+            From = DateRangeFilter.QueryStart(_from),
+            To = DateRangeFilter.QueryEnd(_to),
+            PalletCode = string.IsNullOrWhiteSpace(_pallet) ? null : _pallet.Trim(),
+            SerialNo = string.IsNullOrWhiteSpace(_serialNo) ? null : _serialNo.Trim(),
+            StationId = stationId,
+            StationIds = stationIds,
+            Judgement = _judgement,
+            ResultCode = _resultCode,
+            DurationMinMs = _durationMinMs,
+            DurationMaxMs = _durationMaxMs,
+            OnlyOutOfLimit = _onlyOutOfLimit || !string.IsNullOrWhiteSpace(_outOfLimitTag),
+            OutOfLimitTagName = string.IsNullOrWhiteSpace(_outOfLimitTag) ? null : _outOfLimitTag.Trim(),
+            RecipeCodes = _recipeAliases.Count > 0
+                ? new[] { _recipeFilter! }.Concat(_recipeAliases).Distinct(StringComparer.Ordinal).ToArray()
+                : null,
+            RecipeCode = _recipeAliases.Count > 0 ? null : ToRecipeQueryArg(),
+            Skip = skip,
+            Take = take,
+            AfterCursor = afterCursor,
+            SortBy = _sortBy,
+            SortDescending = _sortDesc
+        };
+    }
+
+    private SessionQueryRequest BuildSessionRequest(int skip, int take) => new()
     {
         From = DateRangeFilter.QueryStart(_from),
         To = DateRangeFilter.QueryEnd(_to),
         PalletCode = string.IsNullOrWhiteSpace(_pallet) ? null : _pallet.Trim(),
         SerialNo = string.IsNullOrWhiteSpace(_serialNo) ? null : _serialNo.Trim(),
-        StationId = _stationId,
+        Status = _sessionStatus,
         Judgement = _judgement,
-        ResultCode = _resultCode,
         RecipeCodes = _recipeAliases.Count > 0
             ? new[] { _recipeFilter! }.Concat(_recipeAliases).Distinct(StringComparer.Ordinal).ToArray()
             : null,
         RecipeCode = _recipeAliases.Count > 0 ? null : ToRecipeQueryArg(),
         Skip = skip,
-        Take = take,
-        AfterCursor = afterCursor,
-        SortBy = _sortBy,
-        SortDescending = _sortDesc
+        Take = take
     };
 
     private async Task OnSubmit()
@@ -726,10 +964,39 @@ else
         await DebouncedSearchAsync();
     }
 
-    private async Task OnStationChanged(int? value)
+    private async Task OnStationsChanged(IEnumerable<int> values)
     {
-        if (_stationId == value) return;
-        _stationId = value;
+        var next = values?.ToHashSet() ?? new HashSet<int>();
+        if (_stationIds.SetEquals(next)) return;
+        _stationIds = next;
+        await Search();
+    }
+
+    private async Task OnDurationMinChanged(int? value)
+    {
+        if (_durationMinMs == value) return;
+        _durationMinMs = value;
+        await Search();
+    }
+
+    private async Task OnDurationMaxChanged(int? value)
+    {
+        if (_durationMaxMs == value) return;
+        _durationMaxMs = value;
+        await Search();
+    }
+
+    private async Task OnOutOfLimitTagChanged(string? value)
+    {
+        _outOfLimitTag = value;
+        _queryVersion++;
+        await DebouncedSearchAsync();
+    }
+
+    private async Task OnSessionStatusChanged(SessionStatus? value)
+    {
+        if (_sessionStatus == value) return;
+        _sessionStatus = value;
         await Search();
     }
 
@@ -776,7 +1043,9 @@ else
         if (DateRangeFilter.IsReversed(_from, _to))
         {
             _items = [];
+            _sessionItems = [];
             _total = 0;
+            _sessionTotal = 0;
             _pages = 1;
             _loadFailed = false;
             Toast.Add(DateRangeFilter.ReversedRangeMessage, Severity.Warning);
@@ -844,24 +1113,67 @@ else
                 }
                 await RefreshRecipeOptionsAsync();
 
-                CollectQueryResult result;
                 try
                 {
-                    var cursor = _pageCursors.GetValueOrDefault(_page);
-                    var request = cursor is not null
-                        ? BuildRequest((_page - 1) * _pageSize, _pageSize, cursor)
-                        : BuildRequest((_page - 1) * _pageSize, _pageSize);
-                    result = await Store.QueryAsync(request);
-                    if (version != _queryVersion)
+                    if (_viewMode == QueryViewMode.Sessions)
                     {
-                        _loadPending = true;
-                        continue;
+                        var sessionResult = await Store.QuerySessionsAsync(BuildSessionRequest((_page - 1) * _pageSize, _pageSize));
+                        if (version != _queryVersion)
+                        {
+                            _loadPending = true;
+                            continue;
+                        }
+                        var sessionPages = Math.Max(1, (int)Math.Ceiling(sessionResult.Total / (double)_pageSize));
+                        if (_page > sessionPages)
+                        {
+                            _page = sessionPages;
+                            sessionResult = await Store.QuerySessionsAsync(BuildSessionRequest((_page - 1) * _pageSize, _pageSize));
+                        }
+                        if (version != _queryVersion)
+                        {
+                            _loadPending = true;
+                            continue;
+                        }
+                        _sessionItems = sessionResult.Items;
+                        _sessionTotal = sessionResult.Total;
+                        _items = [];
+                        _total = 0;
+                        _displayedVersion = version;
+                        _loadFailed = false;
+                        _pages = sessionPages;
                     }
-                    var pages = Math.Max(1, (int)Math.Ceiling(result.Total / (double)_pageSize));
-                    if (_page > pages)
+                    else
                     {
-                        _page = pages;
-                        result = await Store.QueryAsync(BuildRequest((_page - 1) * _pageSize, _pageSize));
+                        var cursor = _pageCursors.GetValueOrDefault(_page);
+                        var request = cursor is not null
+                            ? BuildRequest((_page - 1) * _pageSize, _pageSize, cursor)
+                            : BuildRequest((_page - 1) * _pageSize, _pageSize);
+                        var result = await Store.QueryAsync(request);
+                        if (version != _queryVersion)
+                        {
+                            _loadPending = true;
+                            continue;
+                        }
+                        var pages = Math.Max(1, (int)Math.Ceiling(result.Total / (double)_pageSize));
+                        if (_page > pages)
+                        {
+                            _page = pages;
+                            result = await Store.QueryAsync(BuildRequest((_page - 1) * _pageSize, _pageSize));
+                        }
+                        if (version != _queryVersion)
+                        {
+                            _loadPending = true;
+                            continue;
+                        }
+                        _items = result.Items;
+                        if (result.NextCursor is not null)
+                            _pageCursors[_page + 1] = result.NextCursor;
+                        _sessionItems = [];
+                        _sessionTotal = 0;
+                        _displayedVersion = version;
+                        _total = result.Total;
+                        _loadFailed = false;
+                        _pages = Math.Max(1, (int)Math.Ceiling(_total / (double)_pageSize));
                     }
                 }
                 catch (Exception) when (version != _queryVersion)
@@ -869,18 +1181,6 @@ else
                     _loadPending = true;
                     continue;
                 }
-                if (version != _queryVersion)
-                {
-                    _loadPending = true;
-                    continue;
-                }
-                _items = result.Items;
-                if (result.NextCursor is not null)
-                    _pageCursors[_page + 1] = result.NextCursor;
-                _displayedVersion = version;
-                _total = result.Total;
-                _loadFailed = false;
-                _pages = Math.Max(1, (int)Math.Ceiling(_total / (double)_pageSize));
             }
             while (_loadPending);
         }
@@ -888,7 +1188,9 @@ else
         {
             Toast.Add($"查询失败：{ex.Message}", Severity.Error);
             _items = [];
+            _sessionItems = [];
             _total = 0;
+            _sessionTotal = 0;
             _loadFailed = true;
         }
         finally
@@ -904,12 +1206,12 @@ else
     /// </summary>
     private void SyncUrl()
     {
-        if (_traceMode)
+        if (_viewMode == QueryViewMode.Trace)
         {
             return;
         }
 
-        var target = CurrentListUrl();
+        var target = _viewMode == QueryViewMode.Sessions ? CurrentSessionListUrl() : CurrentListUrl();
         if (Nav.ToBaseRelativePath(Nav.Uri) == target)
         {
             return;
@@ -943,7 +1245,7 @@ else
             parts.Add($"to={DateRangeFilter.UrlValue(to)}");
         }
 
-        if (_stationId is { } station)
+        foreach (var station in _stationIds.OrderBy(x => x))
         {
             parts.Add($"station={station}");
         }
@@ -956,6 +1258,25 @@ else
         if (_resultCode is { } resultCode)
         {
             parts.Add($"result={resultCode}");
+        }
+
+        if (_durationMinMs is { } durMin)
+        {
+            parts.Add($"durMin={durMin}");
+        }
+
+        if (_durationMaxMs is { } durMax)
+        {
+            parts.Add($"durMax={durMax}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(_outOfLimitTag))
+        {
+            parts.Add($"oolTag={Uri.EscapeDataString(_outOfLimitTag.Trim())}");
+        }
+        else if (_onlyOutOfLimit)
+        {
+            parts.Add("ool=1");
         }
 
         if (_recipeFilter is { Length: > 0 } recipe)
@@ -1005,9 +1326,15 @@ else
             System.Globalization.DateTimeStyles.None, out var to) ? to : DateTime.Today;
         _pallet = request.PalletCode;
         _serialNo = request.SerialNo;
-        _stationId = request.StationId;
+        _stationIds = request.StationIds is { Count: > 0 } multi
+            ? multi.ToHashSet()
+            : request.StationId is { } one ? new HashSet<int> { one } : new HashSet<int>();
         _judgement = request.Judgement;
         _resultCode = request.ResultCode;
+        _durationMinMs = request.DurationMinMs;
+        _durationMaxMs = request.DurationMaxMs;
+        _onlyOutOfLimit = request.OnlyOutOfLimit && string.IsNullOrWhiteSpace(request.OutOfLimitTagName);
+        _outOfLimitTag = request.OutOfLimitTagName;
         _recipeFilter = request.RecipeCodes?.FirstOrDefault() ?? request.RecipeCode;
         _recipeAliases = request.RecipeCodes?.Skip(1).ToArray() ?? [];
         _sortBy = request.SortBy;
@@ -1031,9 +1358,14 @@ else
         _recipeAliases = [];
         _pallet = null;
         _serialNo = null;
-        _stationId = null;
+        _stationIds = new();
         _judgement = null;
         _resultCode = null;
+        _durationMinMs = null;
+        _durationMaxMs = null;
+        _onlyOutOfLimit = false;
+        _outOfLimitTag = null;
+        _sessionStatus = null;
         _from = DateTime.Today;
         _to = DateTime.Today;
     }
@@ -1083,9 +1415,12 @@ else
                 list.Add(new($"流水号 {serial}", () => _serialNo = null));
             }
 
-            if (_stationId is { } stationId)
+            if (_stationIds.Count > 0)
             {
-                list.Add(new($"工站 {StationCode(stationId)}", () => _stationId = null));
+                var label = _stationIds.Count == 1
+                    ? $"工站 {StationCode(_stationIds.First())}"
+                    : $"工站 {_stationIds.Count} 个";
+                list.Add(new(label, () => _stationIds = new()));
             }
 
             if (_judgement is { } judgement)
@@ -1096,6 +1431,29 @@ else
             if (_resultCode is { } resultCode)
             {
                 list.Add(new($"结果码 {ResultCodes.Describe(resultCode)}", () => _resultCode = null));
+            }
+
+            if (_durationMinMs is { } dMin || _durationMaxMs is { } dMax)
+            {
+                var text = _durationMinMs is { } a && _durationMaxMs is { } b
+                    ? $"耗时 {a}–{b} ms"
+                    : _durationMinMs is { } minOnly ? $"耗时 ≥ {minOnly} ms" : $"耗时 ≤ {_durationMaxMs} ms";
+                list.Add(new(text, () => { _durationMinMs = null; _durationMaxMs = null; }));
+            }
+
+            if (!string.IsNullOrWhiteSpace(_outOfLimitTag))
+            {
+                var tag = _outOfLimitTag!.Trim();
+                list.Add(new($"超限点位 {tag}", () => { _outOfLimitTag = null; _onlyOutOfLimit = false; }));
+            }
+            else if (_onlyOutOfLimit)
+            {
+                list.Add(new("仅超限", () => _onlyOutOfLimit = false));
+            }
+
+            if (_viewMode == QueryViewMode.Sessions && _sessionStatus is { } status)
+            {
+                list.Add(new($"会话 {DisplayLabels.SessionStatusText(status)}", () => _sessionStatus = null));
             }
 
             if (_recipeFilter is { } recipe)
@@ -1171,7 +1529,7 @@ else
             }
         }
 
-        if (_loading || !_restoreScroll || _traceMode) return;
+        if (_loading || !_restoreScroll || _viewMode != QueryViewMode.Records) return;
         _restoreScroll = false;
         try
         {
@@ -1233,6 +1591,22 @@ else
     {
         if (_exporting) return;
         _judgement = _judgement == Judgement.Ng ? null : Judgement.Ng;
+        _advancedFiltersExpanded = true;
+        await Search();
+    }
+
+    private async Task ApplyOutOfLimitQuick()
+    {
+        if (_exporting) return;
+        if (_onlyOutOfLimit || !string.IsNullOrWhiteSpace(_outOfLimitTag))
+        {
+            _onlyOutOfLimit = false;
+            _outOfLimitTag = null;
+        }
+        else
+        {
+            _onlyOutOfLimit = true;
+        }
         _advancedFiltersExpanded = true;
         await Search();
     }
@@ -1412,12 +1786,12 @@ else
 
             if (result.Total > result.Items.Count
                 && await DialogService.ConfirmDangerAsync("确认截断导出",
-                    $"区间：{auditKey}\n工站：{(_stationId is { } stationId ? StationCode(stationId) : "全部工站")}\n" +
+                    $"区间：{auditKey}\n工站：{StationFilterAuditLabel()}\n" +
                     $"{auditFilters}\n命中 {result.Total:N0} 条，本次只导出按当前排序的前 {result.Items.Count:N0} 条；其余记录不会包含在文件中。",
                     acknowledge: "我了解此文件不是全部查询结果", yesText: "导出前述记录", cancelText: "取消导出") != true) return;
 
             var exportedAt = DateTime.Now;
-            var context = $"区间（含起止）={auditKey};工站={(_stationId is { } id ? StationCode(id) : "全部")};" +
+            var context = $"区间（含起止）={auditKey};工站={StationFilterAuditLabel()};" +
                           $"{auditFilters};导出时间={exportedAt:yyyy-MM-dd HH:mm:ss};命中={result.Total};" +
                           $"导出={result.Items.Count};截断={(result.Total > result.Items.Count ? "是" : "否")}";
 
@@ -1440,7 +1814,7 @@ else
                 })
             );
 
-            var stationName = _stationId is { } selectedStation ? StationCode(selectedStation) : "all-stations";
+            var stationName = StationFilterFileLabel();
             var safeStation = new string(stationName.Where(character => char.IsLetterOrDigit(character) || character is '-' or '_').Take(40).ToArray());
             await Js.InvokeVoidAsync("dtDownload", CsvExporter.FileName($"datatrace_query_{safeStation}_{request.From:yyyyMMddHHmmss}-{request.To:yyyyMMddHHmmss}"), CsvExporter.ToBase64(csv));
             var message = result.Total > result.Items.Count
@@ -1488,7 +1862,7 @@ else
             var code => code.Trim()
         };
         return $"pallet={_pallet?.Trim() ?? ""};serial={_serialNo?.Trim() ?? ""};" +
-               $"station={_stationId?.ToString() ?? ""};judge={_judgement?.ToString() ?? ""};" +
+               $"station={string.Join(",", _stationIds.OrderBy(x => x))};judge={_judgement?.ToString() ?? ""};" +
                $"result={_resultCode?.ToString() ?? ""};recipe={recipe};aliases={string.Join(",", _recipeAliases)};" +
                $"sort={SortKeyOf(_sortBy)};dir={(_sortDesc ? "desc" : "asc")}";
     }
@@ -1501,4 +1875,87 @@ else
         // 日志页的"键"列不该塞进一长串条件。审计日志的键/明细字段唯一语义见 Logs.razor。
         await Audit.WriteAsync(user, "Export", "Query", key, null, $"{filters};exported={exported};total={total}");
     }
+
+    private string StationMultiLabel(List<string> selectedValues)
+    {
+        if (selectedValues is null || selectedValues.Count == 0) return "全部工站";
+        if (selectedValues.Count == 1 && int.TryParse(selectedValues[0], out var one))
+            return StationCode(one);
+        return $"已选 {selectedValues.Count} 个工站";
+    }
+
+    private string StationFilterAuditLabel()
+        => _stationIds.Count == 0 ? "全部工站"
+            : _stationIds.Count == 1 ? StationCode(_stationIds.First())
+            : string.Join(",", _stationIds.OrderBy(x => x).Select(StationCode));
+
+    private string StationFilterFileLabel()
+        => _stationIds.Count == 0 ? "all-stations"
+            : _stationIds.Count == 1 ? StationCode(_stationIds.First())
+            : $"stations-{_stationIds.Count}";
+
+    private string CurrentSessionListUrl()
+    {
+        var parts = new List<string> { "view=sessions" };
+        if (!string.IsNullOrWhiteSpace(_pallet))
+            parts.Add($"pallet={Uri.EscapeDataString(_pallet.Trim())}");
+        if (!string.IsNullOrWhiteSpace(_serialNo))
+            parts.Add($"serial={Uri.EscapeDataString(_serialNo.Trim())}");
+        if (_from is { } from && from != DateTime.Today)
+            parts.Add($"from={DateRangeFilter.UrlValue(from)}");
+        if (_to is { } to && to != DateTime.Today)
+            parts.Add($"to={DateRangeFilter.UrlValue(to)}");
+        if (_sessionStatus is { } status)
+            parts.Add($"sessionStatus={status}");
+        if (_judgement is { } judgement)
+            parts.Add($"judge={judgement}");
+        if (_recipeFilter is { Length: > 0 } recipe)
+        {
+            parts.Add($"recipe={Uri.EscapeDataString(recipe.Trim())}");
+            parts.AddRange(_recipeAliases.Select(alias => $"alias={Uri.EscapeDataString(alias)}"));
+        }
+        else if (_recipeFilter is not null)
+        {
+            parts.Add("norecipe=1");
+        }
+        if (_pageSize != 20) parts.Add($"size={_pageSize}");
+        if (_page > 1) parts.Add($"page={_page}");
+        return $"query?{string.Join("&", parts)}";
+    }
+
+
+    private async Task ApplyOpenSessionsQuick()
+    {
+        if (_exporting) return;
+        _sessionStatus = _sessionStatus == SessionStatus.Open ? null : SessionStatus.Open;
+        await Search();
+    }
+
+    private async Task ApplyAbnormalSessionsQuick()
+    {
+        if (_exporting) return;
+        _sessionStatus = _sessionStatus == SessionStatus.Abnormal ? null : SessionStatus.Abnormal;
+        await Search();
+    }
+
+    private void OnSessionRowClicked(TableRowClickEventArgs<SessionListItem> args)
+    {
+        if (args.Item is null) return;
+        OpenSessionTrace(args.Item);
+    }
+
+    private void OpenSessionTrace(SessionListItem item)
+    {
+        var url = $"query?view=trace&trace={Uri.EscapeDataString(item.Session.SerialNo)}"
+                  + $"&sessionMonth={Uri.EscapeDataString(item.MonthKey)}&sessionId={item.Session.Id}";
+        Nav.NavigateTo(url);
+    }
+
+    private enum QueryViewMode
+    {
+        Records,
+        Sessions,
+        Trace
+    }
+
 }

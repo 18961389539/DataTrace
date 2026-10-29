@@ -83,7 +83,23 @@ public sealed class CollectQueryRequest
     public string? PalletCode { get; init; }
     public string? SerialNo { get; init; }
     public int? StationId { get; init; }
+
+    /// <summary>工站多选；非空时覆盖 <see cref="StationId"/>。</summary>
+    public IReadOnlyList<int>? StationIds { get; init; }
+
     public Judgement? Judgement { get; init; }
+
+    /// <summary>耗时下限（毫秒，含）；null = 不限。</summary>
+    public int? DurationMinMs { get; init; }
+
+    /// <summary>耗时上限（毫秒，含）；null = 不限。</summary>
+    public int? DurationMaxMs { get; init; }
+
+    /// <summary>仅含超限点位的记录：至少有一个 TagValue.IsOutOfLimit。</summary>
+    public bool OnlyOutOfLimit { get; init; }
+
+    /// <summary>按超限点位名称精确匹配；非空时隐含 OnlyOutOfLimit。</summary>
+    public string? OutOfLimitTagName { get; init; }
 
     /// <summary>
     /// 结果码过滤，与「判定」是两件事：判定说的是超没超限，结果码说的是这次采集成没成。
@@ -142,6 +158,44 @@ public sealed class CollectSessionTrace
     public long? SessionId { get; init; }
     public PalletSession? Session { get; init; }
     public required IReadOnlyList<CollectRecord> Records { get; init; }
+}
+
+
+/// <summary>会话维度查询：按托盘会话 Open / Closed / Abnormal 浏览，而不是单站采集行。</summary>
+public sealed class SessionQueryRequest
+{
+    public DateTime From { get; init; }
+    public DateTime To { get; init; }
+    public string? PalletCode { get; init; }
+    public string? SerialNo { get; init; }
+    public SessionStatus? Status { get; init; }
+    public Judgement? Judgement { get; init; }
+
+    /// <summary>型号过滤：null = 全部；"" = 仅「未选型号」；其它 = 精确匹配 RecipeCode（会话侧取首条记录快照或空）。</summary>
+    public string? RecipeCode { get; init; }
+
+    /// <summary>跨改码追溯同一型号时使用；非空时按列表精确匹配并覆盖 <see cref="RecipeCode"/>。</summary>
+    public IReadOnlyList<string>? RecipeCodes { get; init; }
+    public int Skip { get; init; }
+    public int Take { get; init; } = 50;
+}
+
+public sealed class SessionListItem
+{
+    public required string MonthKey { get; init; }
+    public required PalletSession Session { get; init; }
+
+    /// <summary>会话内采集站数；列表一眼看出走了几站。</summary>
+    public int RecordCount { get; init; }
+
+    /// <summary>会话关联的型号编码（取会话内任意一条记录的 RecipeCode；无记录时为空）。</summary>
+    public string RecipeCode { get; init; } = "";
+}
+
+public sealed class SessionQueryResult
+{
+    public required int Total { get; init; }
+    public required IReadOnlyList<SessionListItem> Items { get; init; }
 }
 
 public sealed class CollectQueryResult
@@ -248,7 +302,7 @@ public interface ICollectWriter
 public interface ICollectQuery
 {
     Task<CollectQueryResult> QueryAsync(CollectQueryRequest request, CancellationToken cancellationToken = default);
-    Task<CollectRecord?> GetRecordAsync(string monthKey, long recordId, CancellationToken cancellationToken = default);
+    Task<SessionQueryResult> QuerySessionsAsync(SessionQueryRequest request, CancellationToken cancellationToken = default);    Task<CollectRecord?> GetRecordAsync(string monthKey, long recordId, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// 某个月库里是否已有这个流水号。单个托盘会跨工站复用流水号，不能用它判断某次采集是否已入库。
