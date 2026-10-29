@@ -165,7 +165,7 @@ public class JourneyE2ETests : E2ETestBase
         var labels = await Page.Locator("button").Filter(new() { HasText = "触发" }).AllInnerTextsAsync();
 
         Assert.Equal(
-            new[] { "触发 OP130", "触发 OP140", "触发 OP150", "触发 OP20", "触发 OP30", "触发 OP40", "触发 OP50", "触发 OP70", "触发 ST040" },
+            new[] { "触发 OP10", "触发 OP130", "触发 OP140", "触发 OP150", "触发 OP20", "触发 OP30", "触发 OP40", "触发 OP50", "触发 OP60", "触发 OP70", "触发 OP80", "触发 OP90" },
             labels.Select(x => x.Trim()).OrderBy(x => x, StringComparer.Ordinal).ToArray());
     }
 

@@ -148,22 +148,6 @@ partial class DatabaseSeeder
             }
         }
 
-        // OP90 是成品下料，启用后应作为末站；原先 OP70 末站标记让出。
-        var op90 = demoPlc.Stations.FirstOrDefault(s => s.Code == "OP90");
-        if (op90 is { Enabled: true })
-        {
-            if (!op90.IsLastStation)
-            {
-                op90.IsLastStation = true;
-                changed = true;
-            }
-
-            foreach (var formerEnd in demoPlc.Stations.Where(s => s.Code != "OP90" && s.IsLastStation))
-            {
-                formerEnd.IsLastStation = false;
-                changed = true;
-            }
-        }
 
         var previousLastStation = demoPlc.Stations.FirstOrDefault(s => s.Code == "ST030");
         if (previousLastStation?.IsLastStation == true)
@@ -332,6 +316,41 @@ partial class DatabaseSeeder
             }
         }
 
+        // 长期下线演示站 ST040：清型号限值后删除整站（点位/曲线/报警随级联走），并不再种回。
+        var retiredAssemblyStation = demoPlc.Stations.FirstOrDefault(s => s.Code == "ST040");
+        if (retiredAssemblyStation is not null)
+        {
+            var retiredTagIds = retiredAssemblyStation.Tags.Select(tag => tag.Id).ToArray();
+            if (retiredTagIds.Length > 0)
+            {
+                var retiredLimits = await _db.RecipeLimits
+                    .Where(limit => retiredTagIds.Contains(limit.TagId))
+                    .ToListAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                _db.RecipeLimits.RemoveRange(retiredLimits);
+            }
+
+            demoPlc.Stations.Remove(retiredAssemblyStation);
+            _db.Stations.Remove(retiredAssemblyStation);
+            existingCodes.Remove("ST040");
+            changed = true;
+        }
+        // OP90 是成品下料，启用后应作为末站；放在补齐 OP40/50/70 之后，避免后加的 OP70 又把末站抢回去。
+        var op90 = demoPlc.Stations.FirstOrDefault(s => s.Code == "OP90");
+        if (op90 is { Enabled: true })
+        {
+            if (!op90.IsLastStation)
+            {
+                op90.IsLastStation = true;
+                changed = true;
+            }
+
+            foreach (var formerEnd in demoPlc.Stations.Where(s => s.Code != "OP90" && s.IsLastStation))
+            {
+                formerEnd.IsLastStation = false;
+                changed = true;
+            }
+        }
         if (changed)
         {
             var version = await _db.ConfigVersions.FirstOrDefaultAsync(cancellationToken).ConfigureAwait(false);
@@ -349,11 +368,6 @@ partial class DatabaseSeeder
             trigger: "D2100", pallet: "D2110",
             press: "D2200", temp: "D2210",
             y: "D14800", x: "D15200"),
-        CreateStation(
-            "ST040", "装配工站", 40, first: false, last: false,
-            trigger: "D1600", pallet: "D1610",
-            press: "D1700", temp: "D1710",
-            y: "D6800", x: "D7200"),
         CreateStation(
             "OP60", "点胶后检测", 95, first: false, last: false,
             trigger: "D2300", pallet: "D2310",

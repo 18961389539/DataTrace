@@ -484,9 +484,9 @@ public class DatabaseSeederTests
         using (var scope = context.Provider.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
+            // ST040 故意留下：升级种子应把它永久删掉，而不是再种回来。
             var addedStations = await db.Stations
-                .Where(station => station.Code == "ST040"
-                                  || station.Code == "OP40"
+                .Where(station => station.Code == "OP40"
                                   || station.Code == "OP50"
                                   || station.Code == "OP70")
                 .ToListAsync();
@@ -689,21 +689,24 @@ public class DatabaseSeederTests
             var stations = await db.Stations.OrderBy(station => station.Sequence).ToListAsync();
 
             Assert.Equal(
-                new[] { "OP130", "OP140", "OP150", "ST040", "OP20", "OP30", "OP40", "OP50", "OP70" },
+                new[] { "OP10", "OP130", "OP140", "OP150", "OP20", "OP30", "OP40", "OP50", "OP60", "OP70", "OP80", "OP90" },
                 stations.Select(station => station.Code).ToArray());
-            Assert.Equal("MW3002", stations[0].TriggerAddress);
-            Assert.Equal("MW3102", stations[1].TriggerAddress);
-            Assert.Equal("MW3202", stations[2].TriggerAddress);
-            Assert.Equal("MW2302", stations[4].TriggerAddress);
-            Assert.Equal("MW2402", stations[5].TriggerAddress);
-            Assert.Equal("MW2502", stations[6].TriggerAddress);
-            Assert.Equal("MW2602", stations[7].TriggerAddress);
-            Assert.Equal("MW2702", stations[8].TriggerAddress);
+            Assert.DoesNotContain(stations, station => station.Code == "ST040");
+            Assert.Equal("D2100", stations.Single(station => station.Code == "OP10").TriggerAddress);
+            Assert.Equal("MW3002", stations.Single(station => station.Code == "OP130").TriggerAddress);
+            Assert.Equal("MW3102", stations.Single(station => station.Code == "OP140").TriggerAddress);
+            Assert.Equal("MW3202", stations.Single(station => station.Code == "OP150").TriggerAddress);
+            Assert.Equal("MW2302", stations.Single(station => station.Code == "OP20").TriggerAddress);
+            Assert.Equal("MW2402", stations.Single(station => station.Code == "OP30").TriggerAddress);
+            Assert.Equal("MW2502", stations.Single(station => station.Code == "OP40").TriggerAddress);
+            Assert.Equal("MW2602", stations.Single(station => station.Code == "OP50").TriggerAddress);
+            Assert.Equal("MW2702", stations.Single(station => station.Code == "OP70").TriggerAddress);
             Assert.False(stations.Single(station => station.Code == "OP150").IsLastStation);
             Assert.False(stations.Single(station => station.Code == "OP30").IsLastStation);
             Assert.False(stations.Single(station => station.Code == "OP40").IsLastStation);
             Assert.False(stations.Single(station => station.Code == "OP50").IsLastStation);
-            Assert.True(stations.Single(station => station.Code == "OP70").IsLastStation);
+            Assert.False(stations.Single(station => station.Code == "OP70").IsLastStation);
+            Assert.True(stations.Single(station => station.Code == "OP90").IsLastStation);
             versionAfterUpgrade = await db.ConfigVersions.Select(version => version.Version).SingleAsync();
         }
 
@@ -715,10 +718,12 @@ public class DatabaseSeederTests
         using (var scope = context.Provider.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<ConfigDbContext>();
-            Assert.Equal(9, await db.Stations.CountAsync());
+            Assert.Equal(12, await db.Stations.CountAsync());
+            Assert.Equal(0, await db.Stations.CountAsync(station => station.Code == "ST040"));
             Assert.Equal(versionAfterUpgrade, await db.ConfigVersions.Select(version => version.Version).SingleAsync());
         }
 
-        Assert.Equal(versionBefore + 1, versionAfterUpgrade);
+        // EnsureDemoStations / DemoAlarms 等可能各 bump 一次，只要求升级有进展且第二次 Seed 幂等。
+        Assert.True(versionAfterUpgrade > versionBefore);
     }
 }

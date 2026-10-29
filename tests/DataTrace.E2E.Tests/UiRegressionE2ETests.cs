@@ -443,10 +443,10 @@ public class UiRegressionE2ETests : E2ETestBase
         await OpenAsync("/query");
         await WaitForResultRowsAsync();
 
-        // OP130、OP140、OP150 都没有用户提供的判定限值；选择仍配置了压力规格的 ST040，
+        // OP130、OP140、OP150 都没有用户提供的判定限值；选择仍配置了压力规格的 OP10，
         // 确认详情展示的是该条记录实际使用的判定快照。
         var stationRow = Page.Locator("table tbody tr")
-            .Filter(new() { HasText = "ST040" })
+            .Filter(new() { HasText = "OP10" })
             .Filter(new() { HasText = "明细" })
             .First;
         var deadline = DateTime.UtcNow.AddSeconds(60);
@@ -456,7 +456,7 @@ public class UiRegressionE2ETests : E2ETestBase
             await Task.Delay(1000);
         }
 
-        Assert.True(await stationRow.CountAsync() > 0, "查询结果中没有 ST040 记录");
+        Assert.True(await stationRow.CountAsync() > 0, "查询结果中没有 OP10 记录");
         for (var attempt = 0; new Uri(Page.Url).PathAndQuery == "/query"; attempt++)
         {
             Assert.True(attempt < 10, "点了 10 次仍未打开记录明细");
@@ -814,7 +814,7 @@ public class UiRegressionE2ETests : E2ETestBase
         await OpenDialogAsync(Page.Locator("table tbody button", new() { HasText = "限值" }).First);
 
         var pressureRow = Page.Locator(".mud-dialog tbody tr")
-            .Filter(new() { HasText = "ST040" })
+            .Filter(new() { HasText = "OP10" })
             .Filter(new() { HasText = "压力" })
             .First;
         var target = pressureRow.Locator(".dt-limit-field input").Nth(4);

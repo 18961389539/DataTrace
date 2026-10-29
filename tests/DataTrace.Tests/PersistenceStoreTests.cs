@@ -876,7 +876,7 @@ public class ConfigRepositoryTests
         var disabled = new Station
         {
             PlcConnectionId = plc.Id,
-            Code = "ST040",
+            Code = "ST990",
             Name = "备用站",
             Sequence = 10,
             IsFirstStation = true,
