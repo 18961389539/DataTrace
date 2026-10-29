@@ -126,11 +126,41 @@ partial class DatabaseSeeder
             .ConfigureAwait(false))
             .ToHashSet(StringComparer.Ordinal);
         var changed = false;
-        foreach (var station in CreateAdditionalDemoStations())
+        foreach (var template in CreateAdditionalDemoStations())
         {
-            if (existingCodes.Add(station.Code))
+            var existing = demoPlc.Stations.FirstOrDefault(s => s.Code == template.Code);
+            if (existing is null)
             {
-                demoPlc.Stations.Add(station);
+                if (existingCodes.Add(template.Code))
+                {
+                    demoPlc.Stations.Add(template);
+                    changed = true;
+                }
+
+                continue;
+            }
+
+            // 占位工站曾共用 D3000/D3010 并被禁用：启用时改成模板里的独立地址与点位。
+            if (IsStubAdditionalDemoStation(existing))
+            {
+                RepairAdditionalDemoStation(existing, template);
+                changed = true;
+            }
+        }
+
+        // OP90 是成品下料，启用后应作为末站；原先 OP70 末站标记让出。
+        var op90 = demoPlc.Stations.FirstOrDefault(s => s.Code == "OP90");
+        if (op90 is { Enabled: true })
+        {
+            if (!op90.IsLastStation)
+            {
+                op90.IsLastStation = true;
+                changed = true;
+            }
+
+            foreach (var formerEnd in demoPlc.Stations.Where(s => s.Code != "OP90" && s.IsLastStation))
+            {
+                formerEnd.IsLastStation = false;
                 changed = true;
             }
         }
@@ -315,11 +345,103 @@ partial class DatabaseSeeder
     private static Station[] CreateAdditionalDemoStations() =>
     [
         CreateStation(
+            "OP10", "壳体上料", 5, first: false, last: false,
+            trigger: "D2100", pallet: "D2110",
+            press: "D2200", temp: "D2210",
+            y: "D14800", x: "D15200"),
+        CreateStation(
             "ST040", "装配工站", 40, first: false, last: false,
             trigger: "D1600", pallet: "D1610",
             press: "D1700", temp: "D1710",
             y: "D6800", x: "D7200"),
+        CreateStation(
+            "OP60", "点胶后检测", 95, first: false, last: false,
+            trigger: "D2300", pallet: "D2310",
+            press: "D2400", temp: "D2410",
+            y: "D15600", x: "D16000"),
+        CreateStation(
+            "OP80", "PIN针位置度检测", 105, first: false, last: false,
+            trigger: "D2500", pallet: "D2510",
+            press: "D2600", temp: "D2610",
+            y: "D16400", x: "D16800"),
+        CreateStation(
+            "OP90", "成品自动下料", 110, first: false, last: true,
+            trigger: "D2700", pallet: "D2710",
+            press: "D2800", temp: "D2810",
+            y: "D17200", x: "D17600"),
     ];
+
+    /// <summary>
+    /// 曾在界面上建出来的占位工站：触发/托盘都落在 D3000/D3010，且通常被禁用、没有点位。
+    /// </summary>
+    private static bool IsStubAdditionalDemoStation(Station station)
+        => (string.Equals(station.TriggerAddress, "D3000", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(station.PalletCodeAddress, "D3010", StringComparison.OrdinalIgnoreCase))
+           || (!station.Enabled && station.Tags.Count == 0);
+
+    private static void RepairAdditionalDemoStation(Station station, Station template)
+    {
+        station.Name = template.Name;
+        station.Sequence = template.Sequence;
+        station.IsFirstStation = template.IsFirstStation;
+        station.IsLastStation = template.IsLastStation;
+        station.TriggerAddress = template.TriggerAddress;
+        station.TriggerValue = template.TriggerValue;
+        station.PalletCodeAddress = template.PalletCodeAddress;
+        station.PalletCodeLength = template.PalletCodeLength;
+        station.PalletCodeDataType = template.PalletCodeDataType;
+        station.PositionCount = 1;
+        station.Enabled = true;
+
+        station.Tags.Clear();
+        foreach (var tag in template.Tags)
+        {
+            station.Tags.Add(new TagDefinition
+            {
+                Name = tag.Name,
+                Address = tag.Address,
+                DataType = tag.DataType,
+                Unit = tag.Unit,
+                LowerLimit = tag.LowerLimit,
+                UpperLimit = tag.UpperLimit,
+                WarningLowerLimit = tag.WarningLowerLimit,
+                WarningUpperLimit = tag.WarningUpperLimit,
+                TargetValue = tag.TargetValue,
+                PositionIndex = 1,
+                Enabled = true,
+                IsRequired = tag.IsRequired,
+                Purpose = tag.Purpose,
+                Source = tag.Source
+            });
+        }
+
+        station.Curves.Clear();
+        foreach (var curve in template.Curves)
+        {
+            var copy = new CurveDefinition
+            {
+                Code = curve.Code,
+                Name = curve.Name,
+                PointCount = curve.PointCount,
+                PositionIndex = 1,
+                Enabled = true
+            };
+            foreach (var series in curve.Series)
+            {
+                copy.Series.Add(new CurveSeries
+                {
+                    Name = series.Name,
+                    Role = series.Role,
+                    StartAddress = series.StartAddress,
+                    DataType = series.DataType,
+                    StrideWords = series.StrideWords,
+                    Unit = series.Unit
+                });
+            }
+
+            station.Curves.Add(copy);
+        }
+    }
 
     private static Station CreateOp130Station()
     {
