@@ -1,4 +1,5 @@
 @inherits LayoutComponentBase
+@implements IDisposable
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Http
 @using DataTrace.Application.Identity
@@ -89,8 +90,8 @@
         </AuthorizeView>
     </MudAppBar>
     <MudDrawer @bind-Open="_open" Variant="DrawerVariant.Responsive" Breakpoint="Breakpoint.Md"
-               ClipMode="DrawerClipMode.Always" Elevation="2">
-        <NavMenu />
+               ClipMode="DrawerClipMode.Always" Elevation="2" aria-label="侧边导航">
+        <NavMenu Navigated="OnNavNavigated" />
     </MudDrawer>
     <MudMainContent Class="dt-main">
         <main id="main-content" tabindex="-1">
@@ -170,6 +171,19 @@
         {
             // 读不到就按关闭处理；body class 仍由 datatrace.js 里的内联脚本负责。
         }
+
+        try
+        {
+            // 侧栏展开偏好：宽屏记住上次收起/展开；窄屏点菜单项后收起。
+            _open = await Js.InvokeAsync<bool>("dtDrawer.get");
+            StateHasChanged();
+        }
+        catch (JSException)
+        {
+            // 读不到保持默认展开。
+        }
+
+        Nav.LocationChanged += OnLocationChanged;
     }
 
     private async Task QuickLookupAsync()
@@ -248,7 +262,58 @@
         }
     }
 
-    private void Toggle() => _open = !_open;
+    private async Task Toggle()
+    {
+        _open = !_open;
+        await PersistDrawerAsync();
+    }
+
+    private async Task OnNavNavigated()
+    {
+        // 窄屏抽屉是遮罩式：点完一项就收起，避免挡住内容。
+        if (!await IsNarrowAsync())
+        {
+            return;
+        }
+
+        if (_open)
+        {
+            _open = false;
+            await PersistDrawerAsync();
+        }
+    }
+
+    private async Task PersistDrawerAsync()
+    {
+        try
+        {
+            await Js.InvokeVoidAsync("dtDrawer.set", _open);
+        }
+        catch (JSException)
+        {
+            // 记不住就本回合有效；下次刷新回到默认展开。
+        }
+    }
+
+    private async Task<bool> IsNarrowAsync()
+    {
+        try
+        {
+            return await Js.InvokeAsync<bool>("dtDrawer.isNarrow");
+        }
+        catch (JSException)
+        {
+            return false;
+        }
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs args)
+        => _ = InvokeAsync(OnNavNavigated);
+
+    public void Dispose()
+    {
+        Nav.LocationChanged -= OnLocationChanged;
+    }
 
     /// <summary>
     /// 车间大屏开关。由布局统一持有：顶栏按钮在每一页都能看到，看板再通过级联参数消费它。

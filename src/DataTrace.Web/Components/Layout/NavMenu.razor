@@ -6,95 +6,126 @@
 @inject IQualityIncidentService Incidents
 @inject IQualityIncidentActorProvider Actors
 
-<MudNavMenu Class="pb-6">
-    <MudText Typo="Typo.overline" Class="dt-nav-group">运行监控</MudText>
-    <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">实时看板</MudNavLink>
-    <MudNavLink Href="/alarms" Icon="@Icons.Material.Filled.NotificationImportant">
+<MudNavMenu Class="pb-6" aria-label="主导航">
+    <MudText Typo="Typo.overline" Class="dt-nav-group" role="presentation">运行监控</MudText>
+    <MudNavLink Href="/" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard"
+                OnClick="OnNavClick">实时看板</MudNavLink>
+    <MudNavLink Href="/alarms" Icon="@Icons.Material.Filled.NotificationImportant" OnClick="OnNavClick">
         <span class="dt-nav-item">
             <span>设备报警</span>
             @if (AlarmBadge is { } alarms)
             {
-                <span class="dt-nav-badge" aria-label="@($"{alarms} 条待处理设备报警")">@alarms</span>
+                <span class="@AlarmBadgeClass" title="@($"待接手 {alarms}")"
+                      aria-label="@($"待接手 {alarms}")">待接手 @alarms</span>
             }
         </span>
     </MudNavLink>
-    <AuthorizeView Roles="Administrator,Engineer">
-        <Authorized>
-            <MudNavLink Href="/logs" Icon="@Icons.Material.Filled.History">审计日志</MudNavLink>
-        </Authorized>
-    </AuthorizeView>
 
-    <MudText Typo="Typo.overline" Class="dt-nav-group">生产数据</MudText>
-    <MudNavLink Href="/query" Icon="@Icons.Material.Filled.Search">数据查询</MudNavLink>
-    <MudNavLink Href="/quality/incidents" Icon="@Icons.Material.Filled.Rule">
+    <MudText Typo="Typo.overline" Class="dt-nav-group" role="presentation">生产数据</MudText>
+    <MudNavLink Href="/query" Icon="@Icons.Material.Filled.Search" OnClick="OnNavClick">数据查询</MudNavLink>
+    <MudNavLink Href="/quality/incidents" Icon="@Icons.Material.Filled.Rule" OnClick="OnNavClick">
         <span class="dt-nav-item">
-            <span>异常处置台</span>
+            <span>异常处置</span>
             @if (QualityBadge is { } incidents)
             {
-                <span class="dt-nav-badge" aria-label="@($"{incidents} 张我的待办异常单")">@incidents</span>
+                <span class="dt-nav-badge dt-nav-badge--quality" title="@($"我的待办 {incidents}")"
+                      aria-label="@($"{incidents} 张我的待办异常单")">@incidents</span>
             }
         </span>
     </MudNavLink>
-    <MudNavLink Href="/reports" Icon="@Icons.Material.Filled.Assessment">报表</MudNavLink>
-    <MudNavLink Href="/curve-baseline" Icon="@Icons.Material.Filled.Timeline">波形基线</MudNavLink>
-
+    <MudNavLink Href="/reports" Icon="@Icons.Material.Filled.Assessment" OnClick="OnNavClick">报表</MudNavLink>
     <AuthorizeView Roles="Administrator,Engineer">
         <Authorized>
-            <MudText Typo="Typo.overline" Class="dt-nav-group">系统配置</MudText>
-            <MudNavLink Href="/config/plc" Icon="@Icons.Material.Filled.SettingsInputComponent">PLC 连接</MudNavLink>
-            <MudNavLink Href="/config/stations" Icon="@Icons.Material.Filled.PrecisionManufacturing">工站配置</MudNavLink>
-            <MudNavLink Href="/config/recipes" Icon="@Icons.Material.Filled.Category">产品型号</MudNavLink>
-            <MudNavLink Href="/config/workorders" Icon="@Icons.Material.Filled.Assignment">工单管理</MudNavLink>
-            <MudNavLink Href="/config/settings" Icon="@Icons.Material.Filled.Tune">系统设置</MudNavLink>
-            <MudNavLink Href="/simulate" Icon="@Icons.Material.Filled.Science">PLC 仿真</MudNavLink>
-            <MudNavLink Href="/diagnostics" Icon="@Icons.Material.Filled.MonitorHeart">运行诊断</MudNavLink>
+            <MudNavLink Href="/config/workorders" Icon="@Icons.Material.Filled.Assignment" OnClick="OnNavClick">工单管理</MudNavLink>
+            <MudNavLink Href="/curve-baseline" Icon="@Icons.Material.Filled.Timeline" OnClick="OnNavClick">波形基线</MudNavLink>
         </Authorized>
     </AuthorizeView>
 
-    <AuthorizeView Roles="Administrator">
+    <AuthorizeView Roles="Administrator,Engineer">
         <Authorized>
-            <MudText Typo="Typo.overline" Class="dt-nav-group">账户</MudText>
-            <MudNavLink Href="/users" Icon="@Icons.Material.Filled.People">用户</MudNavLink>
+            <MudText Typo="Typo.overline" Class="dt-nav-group" role="presentation">现场配置</MudText>
+            <MudNavLink Href="/config/plc" Icon="@Icons.Material.Filled.SettingsInputComponent" OnClick="OnNavClick">PLC 连接</MudNavLink>
+            <MudNavLink Href="/config/stations" Icon="@Icons.Material.Filled.PrecisionManufacturing" OnClick="OnNavClick">工站配置</MudNavLink>
+            <MudNavLink Href="/config/recipes" Icon="@Icons.Material.Filled.Category" OnClick="OnNavClick">产品型号</MudNavLink>
+            <MudNavLink Href="/config/settings" Icon="@Icons.Material.Filled.Tune" OnClick="OnNavClick">系统设置</MudNavLink>
+            <AuthorizeView Roles="Administrator" Context="adminCtx">
+                <Authorized>
+                    <MudNavLink Href="/users" Icon="@Icons.Material.Filled.People" OnClick="OnNavClick">用户</MudNavLink>
+                </Authorized>
+            </AuthorizeView>
+
+            <MudText Typo="Typo.overline" Class="dt-nav-group" role="presentation">运维工具</MudText>
+            <MudNavLink Href="/diagnostics" Icon="@Icons.Material.Filled.MonitorHeart" OnClick="OnNavClick">运行诊断</MudNavLink>
+            <MudNavLink Href="/simulate" Icon="@Icons.Material.Filled.Science" OnClick="OnNavClick">PLC 仿真</MudNavLink>
+            <MudNavLink Href="/logs" Icon="@Icons.Material.Filled.History" OnClick="OnNavClick">审计日志</MudNavLink>
         </Authorized>
     </AuthorizeView>
 
     <MudDivider Class="my-3" />
-    <MudText Typo="Typo.caption" Class="px-4 dt-muted">配置改动即时下发给采集器</MudText>
+    <MudText Typo="Typo.caption" Class="px-4 dt-muted">@FooterTip</MudText>
+    @if (_isViewer)
+    {
+        <MudText Typo="Typo.caption" Class="px-4 mt-1 dt-muted dt-nav-viewer-note">
+            访客可查看看板与查询，不能改配置或接手报警。
+        </MudText>
+    }
 </MudNavMenu>
 
 @code {
-    /// <summary>质量待办每 60 秒对一次；报警走现有 Board 推送，不额外轮询。</summary>
+    /// <summary>质量待办约 60 秒对一次；报警走现成 Board 推送，不额外轮询。</summary>
     private static readonly TimeSpan QualityRefreshInterval = TimeSpan.FromSeconds(60);
 
     private int _alarmCount;
+    private bool _alarmUrgent;
     private int _qualityCount;
     private bool _canWork;
+    private bool _isViewer;
+    private bool _isEngineerOrAdmin;
     private QualityIncidentActor? _actor;
     private Timer? _timer;
 
+    [Parameter] public EventCallback Navigated { get; set; }
+
     private string? AlarmBadge => _alarmCount > 0 ? Format(_alarmCount) : null;
+
+    private string AlarmBadgeClass => _alarmUrgent
+        ? "dt-nav-badge dt-nav-badge--alarm dt-nav-badge--urgent"
+        : "dt-nav-badge dt-nav-badge--alarm";
 
     private string? QualityBadge => _canWork && _qualityCount > 0 ? Format(_qualityCount) : null;
 
+    private string FooterTip => _isEngineerOrAdmin
+        ? "配置改动即时下发给采集器"
+        : _canWork
+            ? "有待接手报警或异常单时，角标会提醒"
+            : _isViewer
+                ? "当前为访客视图"
+                : "登录后可查看产线状态";
+
     private static string Format(int count) => count > 99 ? "99+" : count.ToString();
+
+    private Task OnNavClick() => Navigated.InvokeAsync();
 
     protected override async Task OnInitializedAsync()
     {
-        _alarmCount = AlarmBoard.Current.Alarms.Count;
+        RefreshAlarmBadge();
         AlarmBoard.Changed += OnAlarmChanged;
 
         try
         {
             _actor = await Actors.GetCurrentAsync();
-            _canWork = _actor.IsInRole(AppRoles.Administrator)
-                       || _actor.IsInRole(AppRoles.Engineer)
-                       || _actor.IsInRole(AppRoles.Operator);
+            _isEngineerOrAdmin = _actor.IsInRole(AppRoles.Administrator)
+                                 || _actor.IsInRole(AppRoles.Engineer);
+            _canWork = _isEngineerOrAdmin || _actor.IsInRole(AppRoles.Operator);
+            _isViewer = !_canWork && _actor.IsInRole(AppRoles.Viewer);
             await RefreshQualityAsync();
         }
         catch
         {
             // 角标是辅助信息；取不到就保持不显示，不挡住导航本身。
             _canWork = false;
+            _isViewer = false;
+            _isEngineerOrAdmin = false;
         }
 
         _timer = new Timer(_ => _ = InvokeAsync(RefreshQualityAsync), null,
@@ -103,9 +134,21 @@
 
     private void OnAlarmChanged() => _ = InvokeAsync(() =>
     {
-        _alarmCount = AlarmBoard.Current.Alarms.Count;
+        RefreshAlarmBadge();
         StateHasChanged();
     });
+
+    private void RefreshAlarmBadge()
+    {
+        var alarms = AlarmBoard.Current.Alarms;
+        _alarmCount = alarms.Count;
+        _alarmUrgent = alarms.Any(IsUrgent);
+    }
+
+    /// <summary>与报警页 PriorityRank &gt;= 3 对齐：心跳/故障/磁盘/自定义/采集逾期。</summary>
+    private static bool IsUrgent(LineAlarm alarm) => alarm.Kind is
+        LineAlarmKind.HeartbeatStale or LineAlarmKind.StationFault or LineAlarmKind.DiskLow
+        or LineAlarmKind.CustomDevice or LineAlarmKind.CollectionOverdue;
 
     private async Task RefreshQualityAsync()
     {

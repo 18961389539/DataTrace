@@ -265,6 +265,25 @@ document.addEventListener('click', function (event) {
     window.dtQueryScroll.save(table.getAttribute('data-dt-query-key'));
 });
 
+window.dtDrawer = {
+    key: 'dt-drawer-open',
+    // 与 MudDrawer Breakpoint.Md（960px）对齐。
+    narrowMq: '(max-width: 959.98px)',
+    get: function () {
+        try {
+            var stored = localStorage.getItem(this.key);
+            if (stored === null) { return true; }
+            return stored === '1';
+        } catch (e) { return true; }
+    },
+    set: function (open) {
+        try { localStorage.setItem(this.key, open ? '1' : '0'); } catch (e) { }
+        return !!open;
+    },
+    isNarrow: function () {
+        try { return window.matchMedia(this.narrowMq).matches; } catch (e) { return false; }
+    }
+};
 window.dtShopFloor = {
     key: 'dt-shopfloor',
     get: function () {

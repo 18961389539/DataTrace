@@ -1,5 +1,5 @@
 @page "/curve-baseline"
-@attribute [Authorize]
+@attribute [Authorize(Roles = "Administrator,Engineer")]
 @implements IAsyncDisposable
 @using System.Globalization
 @using DataTrace.Application.Configuration

@@ -358,11 +358,17 @@
     margin-left: 4px;
 }
 
-/* 导航分组标题 */
+/* 导航分组标题（合并原先两处 .dt-nav-group，避免后写覆盖前写） */
 .dt-nav-group {
+    margin-top: 12px;
     padding: 14px 16px 4px;
-    letter-spacing: .08em;
+    letter-spacing: .06em;
     color: var(--mud-palette-text-secondary);
+    opacity: .85;
+}
+
+.dt-nav-group:first-child {
+    margin-top: 0;
 }
 
 /* 导航待办角标：数字只做提醒，宽度不随位数跳动 */
@@ -380,13 +386,55 @@
     border-radius: 999px;
     background: var(--mud-palette-error);
     color: var(--mud-palette-error-text);
-    font-size: .75rem;
+    font-size: .7rem;
     font-weight: 600;
     line-height: 1.45;
     text-align: center;
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
 
+/* 设备报警：红色；有紧急时加脉冲 */
+.dt-nav-badge--alarm {
+    background: var(--mud-palette-error);
+    color: var(--mud-palette-error-text);
+}
+
+.dt-nav-badge--urgent {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--mud-palette-error) 55%, transparent);
+    animation: dt-nav-urgent-pulse 1.6s ease-out infinite;
+}
+
+@keyframes dt-nav-urgent-pulse {
+    0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--mud-palette-error) 55%, transparent); }
+    70% { box-shadow: 0 0 0 6px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* 异常处置：警告色，与报警红区分 */
+.dt-nav-badge--quality {
+    background: var(--mud-palette-warning);
+    color: var(--mud-palette-warning-text);
+}
+
+.dt-nav-viewer-note {
+    display: block;
+    line-height: 1.4;
+}
+
+/* 侧栏选中态：左边色条 + 加粗，扫一眼能对上当前页 */
+.mud-navmenu .mud-nav-link.active,
+.mud-navmenu .mud-nav-link.active:hover {
+    font-weight: 600;
+    border-left: 3px solid var(--mud-palette-primary);
+    background: color-mix(in srgb, var(--mud-palette-primary) 12%, var(--mud-palette-surface));
+    padding-left: calc(16px - 3px);
+}
+
+html.dt-theme-dark .mud-navmenu .mud-nav-link.active,
+html.dt-theme-dark .mud-navmenu .mud-nav-link.active:hover {
+    background: color-mix(in srgb, var(--mud-palette-primary) 18%, var(--mud-palette-drawer-background, var(--mud-palette-surface)));
+}
 /* 表单筛选区：让日期与输入框底部对齐 */
 .dt-filters .mud-input-control {
     margin-top: 0;
@@ -4143,11 +4191,7 @@ body:has(.dt-alarm-bar) .dt-alarms-toolbar {
     color: var(--mud-palette-text-secondary);
 }
 
-.dt-nav-group {
-    margin-top: 12px !important;
-    letter-spacing: 0.06em;
-    opacity: 0.85;
-}
+/* .dt-nav-group 已合并到文件前部导航区 */
 
 @media (max-width: 600px) {
     .dt-page-toolbar {
