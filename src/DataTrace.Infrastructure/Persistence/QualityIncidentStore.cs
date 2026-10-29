@@ -142,6 +142,250 @@ public sealed class QualityIncidentStore : IQualityIncidentService
         }, cancellationToken).ConfigureAwait(false);
     }
 
+public async Task<IReadOnlyDictionary<string, QualityIncidentLinkRef>> FindLinksByRecordKeysAsync(
+        IReadOnlyList<(string MonthKey, long RecordId)> keys,
+        CancellationToken cancellationToken = default)
+    {
+        if (keys.Count == 0)
+        {
+            return new Dictionary<string, QualityIncidentLinkRef>();
+        }
+
+        var wanted = keys
+            .Where(key => !string.IsNullOrWhiteSpace(key.MonthKey) && key.RecordId > 0)
+            .Select(key => (MonthKey: key.MonthKey.Trim(), key.RecordId))
+            .Distinct()
+            .ToList();
+        if (wanted.Count == 0)
+        {
+            return new Dictionary<string, QualityIncidentLinkRef>();
+        }
+
+        var monthKeys = wanted.Select(key => key.MonthKey).Distinct(StringComparer.Ordinal).ToList();
+        var recordIds = wanted.Select(key => key.RecordId).Distinct().ToList();
+        var wantedSet = wanted.Select(key => RecordKey(key.MonthKey, key.RecordId)).ToHashSet(StringComparer.Ordinal);
+
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var rows = await db.QualityIncidentEvidence.AsNoTracking()
+            .Where(item => monthKeys.Contains(item.MonthKey) && recordIds.Contains(item.RecordId))
+            .Select(item => new
+            {
+                item.MonthKey,
+                item.RecordId,
+                item.IncidentId,
+                item.Incident.IncidentNumber,
+                item.Incident.Title,
+                item.Incident.Status,
+                item.Incident.UpdatedAt
+            })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return rows
+            .Where(row => wantedSet.Contains(RecordKey(row.MonthKey, row.RecordId)))
+            .GroupBy(row => RecordKey(row.MonthKey, row.RecordId), StringComparer.Ordinal)
+            .ToDictionary(
+                group => group.Key,
+                group => group
+                    .OrderBy(row => row.Status == QualityIncidentStatus.Closed)
+                    .ThenByDescending(row => row.UpdatedAt)
+                    .ThenByDescending(row => row.IncidentId)
+                    .Select(row => new QualityIncidentLinkRef
+                    {
+                        Id = row.IncidentId,
+                        IncidentNumber = row.IncidentNumber,
+                        Title = row.Title,
+                        Status = row.Status
+                    })
+                    .First(),
+                StringComparer.Ordinal);
+    }
+
+    public async Task<IReadOnlyDictionary<string, QualityIncidentLinkRef>> FindLinksBySerialNosAsync(
+        IReadOnlyList<string> serialNos,
+        CancellationToken cancellationToken = default)
+    {
+        var wanted = serialNos
+            .Where(serial => !string.IsNullOrWhiteSpace(serial))
+            .Select(serial => serial.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (wanted.Count == 0)
+        {
+            return new Dictionary<string, QualityIncidentLinkRef>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var rows = await db.QualityIncidentEvidence.AsNoTracking()
+            .Where(item => wanted.Contains(item.SerialNo))
+            .Select(item => new
+            {
+                item.SerialNo,
+                item.IncidentId,
+                item.Incident.IncidentNumber,
+                item.Incident.Title,
+                item.Incident.Status,
+                item.Incident.UpdatedAt
+            })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return rows
+            .GroupBy(row => row.SerialNo, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group
+                    .OrderBy(row => row.Status == QualityIncidentStatus.Closed)
+                    .ThenByDescending(row => row.UpdatedAt)
+                    .ThenByDescending(row => row.IncidentId)
+                    .Select(row => new QualityIncidentLinkRef
+                    {
+                        Id = row.IncidentId,
+                        IncidentNumber = row.IncidentNumber,
+                        Title = row.Title,
+                        Status = row.Status
+                    })
+                    .First(),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    public async Task<QualityIncidentClosedReportResult> ListClosedReportAsync(
+        QualityIncidentClosedReportQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        if (query.Skip < 0 || query.Take is < 1 or > 200)
+        {
+            throw new ArgumentOutOfRangeException(nameof(query), "分页范围无效。");
+        }
+
+        if (query.ClosedFrom is { } from && query.ClosedTo is { } to && from > to)
+        {
+            throw new ArgumentOutOfRangeException(nameof(query), "结案开始时间不能晚于结束时间。");
+        }
+
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+        var closed = db.QualityIncidents.AsNoTracking()
+            .Where(item => item.Status == QualityIncidentStatus.Closed);
+
+        if (query.StationId is { } stationId)
+        {
+            closed = closed.Where(item => item.StationId == stationId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.Keyword))
+        {
+            var keyword = query.Keyword.Trim();
+            closed = closed.Where(item => item.IncidentNumber.Contains(keyword)
+                                          || item.Title.Contains(keyword)
+                                          || item.StationCode.Contains(keyword)
+                                          || item.RecipeCode.Contains(keyword)
+                                          || (item.Owner != null && item.Owner.Contains(keyword)));
+        }
+
+        var candidates = await closed
+            .OrderByDescending(item => item.UpdatedAt)
+            .ThenByDescending(item => item.Id)
+            .Select(item => new
+            {
+                item.Id,
+                item.IncidentNumber,
+                item.Title,
+                item.Severity,
+                item.StationCode,
+                item.RecipeCode,
+                item.Owner,
+                item.CreatedBy,
+                item.CreatedAt,
+                item.UpdatedAt,
+                EvidenceCount = item.Evidence.Count,
+                Source = item.Evidence
+                    .Where(evidence => evidence.Purpose == QualityEvidencePurpose.Source)
+                    .OrderBy(evidence => evidence.Id)
+                    .Select(evidence => new { evidence.SerialNo, evidence.PalletCode })
+                    .FirstOrDefault(),
+                Close = item.Activities
+                    .Where(activity => activity.Kind == QualityIncidentActivityKind.Closed)
+                    .OrderByDescending(activity => activity.CreatedAt)
+                    .ThenByDescending(activity => activity.Id)
+                    .Select(activity => new { activity.CreatedAt, activity.Actor, activity.Comment })
+                    .FirstOrDefault(),
+                Submission = item.Activities
+                    .Where(activity => activity.Kind == QualityIncidentActivityKind.SubmittedForReview)
+                    .OrderByDescending(activity => activity.CreatedAt)
+                    .ThenByDescending(activity => activity.Id)
+                    .Select(activity => new
+                    {
+                        activity.CauseCategory,
+                        activity.ActionTaken,
+                        activity.VerificationResult,
+                        activity.CreatedAt
+                    })
+                    .FirstOrDefault()
+            })
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var filtered = candidates
+            .Where(item => item.Close is not null)
+            .Select(item =>
+            {
+                var closedAt = item.Close!.CreatedAt;
+                var submission = item.Submission is not null && item.Submission.CreatedAt <= closedAt
+                    ? item.Submission
+                    : null;
+                return new QualityIncidentClosedReportItem
+                {
+                    Id = item.Id,
+                    IncidentNumber = item.IncidentNumber,
+                    Title = item.Title,
+                    Severity = item.Severity,
+                    StationCode = item.StationCode,
+                    RecipeCode = item.RecipeCode,
+                    Owner = item.Owner,
+                    CreatedBy = item.CreatedBy,
+                    CreatedAt = item.CreatedAt,
+                    ClosedAt = closedAt,
+                    ClosedBy = item.Close.Actor,
+                    CauseCategory = submission?.CauseCategory,
+                    ActionTaken = submission?.ActionTaken,
+                    VerificationResult = submission?.VerificationResult,
+                    ReviewComment = item.Close.Comment,
+                    SourceSerialNo = item.Source?.SerialNo,
+                    SourcePalletCode = item.Source?.PalletCode,
+                    EvidenceCount = item.EvidenceCount,
+                    DurationHours = Math.Round(Math.Max(0, (closedAt - item.CreatedAt).TotalHours), 2)
+                };
+            })
+            .Where(item =>
+                (query.ClosedFrom is null || item.ClosedAt >= query.ClosedFrom.Value)
+                && (query.ClosedTo is null || item.ClosedAt <= query.ClosedTo.Value))
+            .OrderByDescending(item => item.ClosedAt)
+            .ThenByDescending(item => item.Id)
+            .ToList();
+
+        var causeCounts = filtered
+            .GroupBy(item => string.IsNullOrWhiteSpace(item.CauseCategory) ? "(未填写)" : item.CauseCategory!)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+        var severityCounts = filtered
+            .GroupBy(item => item.Severity)
+            .ToDictionary(group => group.Key, group => group.Count());
+
+        return new QualityIncidentClosedReportResult
+        {
+            Total = filtered.Count,
+            Items = filtered.Skip(query.Skip).Take(query.Take).ToList(),
+            AverageDurationHours = filtered.Count == 0
+                ? 0
+                : Math.Round(filtered.Average(item => item.DurationHours), 2),
+            CauseCategoryCounts = causeCounts,
+            SeverityCounts = severityCounts
+        };
+    }
+
+    private static string RecordKey(string monthKey, long recordId) => $"{monthKey}:{recordId}";
+
     public async Task<long> CreateAsync(CreateQualityIncidentRequest request, QualityIncidentActor actor, CancellationToken cancellationToken = default)
     {
         QualityIncidentRules.RequireCanWork(actor);

@@ -4,10 +4,15 @@
 @using DataTrace.Application.Quality
 @using DataTrace.Domain.Constants
 @using DataTrace.Domain.Enums
+@using DataTrace.Shared
+@using Microsoft.AspNetCore.Components.Authorization
 @inject IQualityIncidentService Incidents
 @inject IQualityIncidentActorProvider Actors
 @inject IConfigRepository Config
+@inject IAuditLogger Audit
+@inject AuthenticationStateProvider Auth
 @inject DtToast Toast
+@inject IJSRuntime Js
 @inject NavigationManager Nav
 
 <PageHeader Title="异常处置台" Description="从异常证据到复核关闭的处置记录。" HelpRoute="quality/incidents">
@@ -15,6 +20,15 @@
         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">共 @_total 张</MudChip>
     </ChildContent>
     <Actions>
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Assessment"
+                   Href="/quality/incidents/closed-report">结案报表</MudButton>
+        @if (_canExport)
+        {
+            <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.FileDownload"
+                       Disabled="@(_loading || _exporting || _total == 0)" OnClick="ExportListAsync">
+                @(_exporting ? "导出中…" : "导出 CSV")
+            </MudButton>
+        }
         @if (_canWork)
         {
             <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
@@ -188,8 +202,10 @@ else
     private int _pageSize = 25;
     private int _total;
     private bool _loading;
+    private bool _exporting;
     private bool _canWork;
     private bool _canManage;
+    private bool _canExport;
     private bool _hasAnyIncidents;
     private string? _error;
     private string? _diagnosticDetails;
@@ -258,6 +274,7 @@ else
                    || _actor.IsInRole(AppRoles.Engineer)
                    || _actor.IsInRole(AppRoles.Operator);
         _canManage = _actor.IsInRole(AppRoles.Administrator) || _actor.IsInRole(AppRoles.Engineer);
+        _canExport = _canManage;
         _stations = await Config.GetStationsAsync();
         await LoadAsync();
     }
@@ -497,6 +514,98 @@ else
         } while (items.Count < total && fetched > 0);
 
         return items;
+    }
+
+    private async Task ExportListAsync()
+    {
+        if (_loading || _exporting || _total == 0)
+        {
+            return;
+        }
+
+        if (!_canExport)
+        {
+            Toast.Add("当前角色无权导出（需要管理员或工程师）", Severity.Warning);
+            return;
+        }
+
+        _exporting = true;
+        try
+        {
+            IReadOnlyList<QualityIncidentListItem> items;
+            if (_queue is "mine" or "unassigned")
+            {
+                _queueCache ??= await LoadQueueItemsAsync();
+                items = _queueCache;
+            }
+            else
+            {
+                var all = new List<QualityIncidentListItem>();
+                var skip = 0;
+                const int take = 100;
+                int total;
+                do
+                {
+                    var page = await Incidents.ListAsync(new QualityIncidentQuery
+                    {
+                        Status = _status,
+                        StationId = _stationId,
+                        Owner = _owner,
+                        Keyword = _keyword,
+                        Skip = skip,
+                        Take = take
+                    });
+                    all.AddRange(page.Items);
+                    total = page.Total;
+                    skip += page.Items.Count;
+                    if (page.Items.Count == 0)
+                    {
+                        break;
+                    }
+                } while (all.Count < total && all.Count < SystemDefaults.ExportRowLimit);
+                items = all;
+            }
+
+            if (items.Count == 0)
+            {
+                Toast.Add("没有可导出的异常单", Severity.Warning);
+                return;
+            }
+
+            var csv = CsvExporter.Build(
+                ["单号", "标题", "等级", "状态", "工站", "型号", "负责人", "证据数", "创建时间", "最近更新"],
+                items.Select(item => (IEnumerable<string?>)[
+                    item.IncidentNumber,
+                    item.Title,
+                    SeverityText(item.Severity),
+                    StatusText(item.Status),
+                    item.StationCode,
+                    item.RecipeCode,
+                    item.Owner,
+                    item.EvidenceCount.ToString(),
+                    item.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
+                    item.UpdatedAt.ToString("yyyy-MM-dd HH:mm:ss")
+                ]));
+
+            await Js.InvokeVoidAsync(
+                "dtDownload",
+                CsvExporter.FileName("quality_incidents"),
+                CsvExporter.ToBase64(csv));
+
+            var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "unknown";
+            var filters = $"queue={_queue};status={_status};station={_stationId};owner={_owner};q={_keyword}";
+            await Audit.WriteAsync(user, "Export", "QualityIncident", filters, null,
+                $"exported={items.Count};total={_total}");
+            Toast.Add($"已导出异常单 {items.Count} 张", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Toast.Add($"导出失败：{ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _exporting = false;
+        }
     }
 
     private Variant QueueVariant(string queue)

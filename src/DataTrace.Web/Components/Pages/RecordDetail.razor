@@ -1,4 +1,4 @@
-﻿@page "/query/{MonthKey}/{RecordId:long}"
+@page "/query/{MonthKey}/{RecordId:long}"
 @attribute [Authorize]
 @using System.Globalization
 @using System.Text
@@ -8,9 +8,11 @@
 @using DataTrace.Domain.Entities
 @using DataTrace.Domain.Evaluation
 @using Microsoft.AspNetCore.Components.Authorization
+@using DataTrace.Application.Quality
 @inject IRuntimeStore Store
 @inject ICurveFileStore Curves
 @inject ICollectArchiveStore Archives
+@inject IQualityIncidentService QualityIncidents
 @inject IAuditLogger Audit
 @inject AuthenticationStateProvider Auth
 @inject DtToast Toast
@@ -81,11 +83,19 @@ else
                        Href="@ProductTraceUrl()">产品履历</MudButton>
             <MudButton Size="Size.Small" Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.Print"
                        Class="dt-print-hide" OnClick="PrintAsync">打印</MudButton>
+            @if (_qualityLink is { } qualityLink)
+            {
+                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Warning"
+                           StartIcon="@Icons.Material.Filled.Assignment"
+                           Href="@($"/quality/incidents/{qualityLink.Id}")">
+                    异常单 @qualityLink.IncidentNumber
+                </MudButton>
+            }
             @if (_canCreateQualityIncident)
             {
                 <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning"
                            StartIcon="@Icons.Material.Filled.ReportProblem" Href="@QualityIncidentUrl()">
-                    创建质量异常
+                    @(_qualityLink is null ? "创建质量异常" : "再建一张")
                 </MudButton>
             }
             @if (_canExport)
@@ -373,6 +383,7 @@ else
     private string? _loadError;
     private bool _canExport;
     private bool _canCreateQualityIncident;
+    private QualityIncidentLinkRef? _qualityLink;
     private readonly Dictionary<long, CurvePayload> _curvePayloads = [];
     /// <summary>读不出来的曲线：曲线 Id → 界面提示。损坏与缺失的说明不同。</summary>
     private readonly Dictionary<long, string> _curveErrors = [];
@@ -401,6 +412,7 @@ else
         _previousUrl = null;
         _nextUrl = null;
         _navigationError = null;
+        _qualityLink = null;
         _curvePayloads.Clear();
         _curveErrors.Clear();
         _archiveText = null;
@@ -466,6 +478,7 @@ else
         }
 
         await LoadNavigationAsync();
+        await LoadQualityLinkAsync();
         _loaded = true;
     }
 
@@ -528,6 +541,24 @@ else
 
     private string QualityIncidentUrl()
         => $"/quality/incidents/new?month={Uri.EscapeDataString(MonthKey)}&recordId={RecordId}";
+
+    private async Task LoadQualityLinkAsync()
+    {
+        _qualityLink = null;
+        try
+        {
+            var links = await QualityIncidents.FindLinksByRecordKeysAsync([(MonthKey, RecordId)]);
+            if (links.TryGetValue($"{MonthKey}:{RecordId}", out var link))
+            {
+                _qualityLink = link;
+            }
+        }
+        catch
+        {
+            // 反链失败不阻断明细：现场仍可看采集内容，稍后重试或从处置台进入。
+            _qualityLink = null;
+        }
+    }
 
     private static string Display(TagValue value)
         => value.TextValue ?? value.NumericValue?.ToString("0.####", CultureInfo.InvariantCulture) ?? "-";

@@ -1,6 +1,7 @@
 @page "/query"
 @attribute [Authorize]
 @using DataTrace.Application.Configuration
+@using DataTrace.Application.Quality
 @using DataTrace.Application.Runtime
 @using DataTrace.Domain.Constants
 @using DataTrace.Domain.Entities
@@ -8,6 +9,7 @@
 @using Microsoft.AspNetCore.Components.Authorization
 @inject IRuntimeStore Store
 @inject IConfigRepository Config
+@inject IQualityIncidentService QualityIncidents
 @inject IAuditLogger Audit
 @inject AuthenticationStateProvider Auth
 @inject DtToast Toast
@@ -180,8 +182,16 @@ else if (_viewMode == QueryViewMode.Sessions)
             <MudTd DataLabel="站数" Class="dt-num">@context.RecordCount</MudTd>
             <MudTd DataLabel="首因工站">@(context.Session.FirstNgStationCode ?? "—")</MudTd>
             <MudTd>
-                <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
-                           OnClick="@(() => OpenSessionTrace(context))">履历</MudButton>
+                <span @onclick:stopPropagation="true">
+                    @if (SessionQualityLink(context) is { } sessionLink)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                                   StartIcon="@Icons.Material.Filled.Assignment"
+                                   Href="@($"/quality/incidents/{sessionLink.Id}")">异常单</MudButton>
+                    }
+                    <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
+                               OnClick="@(() => OpenSessionTrace(context))">履历</MudButton>
+                </span>
             </MudTd>
         </RowTemplate>
         <NoRecordsContent>
@@ -505,6 +515,12 @@ else
                            StartIcon="@Icons.Material.Filled.AccountTree"
                            Disabled="@(_loading || _exporting || _displayedVersion != _queryVersion || string.IsNullOrWhiteSpace(context.Record.SerialNo))"
                            Href="@TraceUrl(context)">追溯</MudButton>
+                @if (RecordQualityLink(context) is { } recordLink)
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                               StartIcon="@Icons.Material.Filled.Assignment"
+                               Href="@($"/quality/incidents/{recordLink.Id}")">异常单</MudButton>
+                }
                 <MudButton Size="Size.Small" Variant="Variant.Text" EndIcon="@Icons.Material.Filled.ChevronRight"
                            Disabled="@(_loading || _exporting || _displayedVersion != _queryVersion)"
                            Href="@DetailUrl(context)">明细</MudButton>
@@ -653,6 +669,8 @@ else
     private IReadOnlyList<Station> _stations = [];
     private SystemSettings _shiftSettings = new();
     private IReadOnlyList<CollectRecordListItem> _items = [];
+    private Dictionary<string, QualityIncidentLinkRef> _recordQualityLinks = new(StringComparer.Ordinal);
+    private Dictionary<string, QualityIncidentLinkRef> _serialQualityLinks = new(StringComparer.OrdinalIgnoreCase);
     private int _total;
     private int _page = 1;
     private int _pages = 1;
@@ -1213,6 +1231,12 @@ else
                         _sessionTotal = sessionResult.Total;
                         _items = [];
                         _total = 0;
+                        await RefreshQualityLinksAsync(version);
+                        if (version != _queryVersion)
+                        {
+                            _loadPending = true;
+                            continue;
+                        }
                         _displayedVersion = version;
                         _loadFailed = false;
                         _pages = sessionPages;
@@ -1245,6 +1269,12 @@ else
                             _pageCursors[_page + 1] = result.NextCursor;
                         _sessionItems = [];
                         _sessionTotal = 0;
+                        await RefreshQualityLinksAsync(version);
+                        if (version != _queryVersion)
+                        {
+                            _loadPending = true;
+                            continue;
+                        }
                         _displayedVersion = version;
                         _total = result.Total;
                         _loadFailed = false;
@@ -1264,6 +1294,8 @@ else
             Toast.Add($"查询失败：{ex.Message}", Severity.Error);
             _items = [];
             _sessionItems = [];
+            _recordQualityLinks = new(StringComparer.Ordinal);
+            _serialQualityLinks = new(StringComparer.OrdinalIgnoreCase);
             _total = 0;
             _sessionTotal = 0;
             _loadFailed = true;
@@ -1604,6 +1636,47 @@ else
         : _total > SystemDefaults.ExportRowLimit
             ? $"当前命中 {_total:N0} 条，单次最多导出前 {SystemDefaults.ExportRowLimit:N0} 条；可用「按月分包导出」拿全量"
             : $"导出当前命中的 {_total:N0} 条（标准或宽表）";
+
+    private QualityIncidentLinkRef? RecordQualityLink(CollectRecordListItem item)
+        => _recordQualityLinks.TryGetValue($"{item.MonthKey}:{item.Record.Id}", out var link) ? link : null;
+
+    private QualityIncidentLinkRef? SessionQualityLink(SessionListItem item)
+        => string.IsNullOrWhiteSpace(item.Session.SerialNo)
+            ? null
+            : (_serialQualityLinks.TryGetValue(item.Session.SerialNo, out var link) ? link : null);
+
+    private async Task RefreshQualityLinksAsync(int version)
+    {
+        _recordQualityLinks = new(StringComparer.Ordinal);
+        _serialQualityLinks = new(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            if (_items.Count > 0)
+            {
+                var keys = _items.Select(item => (item.MonthKey, item.Record.Id)).ToList();
+                var links = await QualityIncidents.FindLinksByRecordKeysAsync(keys);
+                if (version != _queryVersion) return;
+                _recordQualityLinks = new Dictionary<string, QualityIncidentLinkRef>(links, StringComparer.Ordinal);
+            }
+
+            if (_sessionItems.Count > 0)
+            {
+                var serials = _sessionItems
+                    .Select(item => item.Session.SerialNo)
+                    .Where(serial => !string.IsNullOrWhiteSpace(serial))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var links = await QualityIncidents.FindLinksBySerialNosAsync(serials);
+                if (version != _queryVersion) return;
+                _serialQualityLinks = new Dictionary<string, QualityIncidentLinkRef>(links, StringComparer.OrdinalIgnoreCase);
+            }
+        }
+        catch
+        {
+            // reverse-link failure must not block query results
+        }
+    }
+
 
     private string DetailUrl(CollectRecordListItem item)
         => RecordListNavigation.DetailUrl(item, CurrentListUrl(), (_page - 1) * _pageSize + _items.ToList().IndexOf(item));

@@ -159,6 +159,32 @@ public class QualityIncidentStoreTests
         Assert.Equal(0, (await store.ListAsync(new QualityIncidentQuery())).Total);
         Assert.Equal(1, (await store.ListAsync(new QualityIncidentQuery { Status = QualityIncidentStatus.Closed })).Total);
 
+        var byRecord = await store.FindLinksByRecordKeysAsync([("202610", source.Id), ("202610", affected.Id)]);
+        Assert.True(byRecord.ContainsKey($"202610:{source.Id}"));
+        Assert.Equal(id, byRecord[$"202610:{source.Id}"].Id);
+        Assert.Equal(QualityIncidentStatus.Closed, byRecord[$"202610:{source.Id}"].Status);
+        Assert.True(byRecord.ContainsKey($"202610:{affected.Id}"));
+
+        var bySerial = await store.FindLinksBySerialNosAsync([source.SerialNo, "missing-serial"]);
+        Assert.True(bySerial.ContainsKey(source.SerialNo));
+        Assert.Equal(id, bySerial[source.SerialNo].Id);
+        Assert.False(bySerial.ContainsKey("missing-serial"));
+
+        var report = await store.ListClosedReportAsync(new QualityIncidentClosedReportQuery
+        {
+            ClosedFrom = closed!.Incident.CreatedAt.Date.AddDays(-1),
+            ClosedTo = DateTime.Now.Date.AddDays(1).AddTicks(-1),
+            Skip = 0,
+            Take = 50
+        });
+        Assert.Equal(1, report.Total);
+        Assert.Single(report.Items);
+        Assert.Equal("设备故障", report.Items[0].CauseCategory);
+        Assert.Equal("验证充分，关闭", report.Items[0].ReviewComment);
+        Assert.Equal(source.SerialNo, report.Items[0].SourceSerialNo);
+        Assert.True(report.CauseCategoryCounts.ContainsKey("设备故障"));
+        Assert.True(report.AverageDurationHours >= 0);
+
         await Assert.ThrowsAsync<QualityIncidentConflictException>(() =>
             store.AddWorkNoteAsync(id, new QualityIncidentActionCommand { ActionTaken = "过期版本写入" }, 6, operatorActor));
     }
