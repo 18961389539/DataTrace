@@ -97,6 +97,7 @@ internal static class ConfigMigrationTestSupport
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"ActiveSessions\" DROP COLUMN \"RecipeSnapshot\"");
         await db.Database.ExecuteSqlRawAsync("DROP TABLE IF EXISTS \"ConfigurationRevisions\"");
         await db.Database.ExecuteSqlRawAsync("DROP TABLE IF EXISTS \"WorkOrders\"");
+        await db.Database.ExecuteSqlRawAsync("DROP TABLE IF EXISTS \"StationAlarms\"");
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"Recipes\" DROP COLUMN \"Model\"");
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE Stations DROP COLUMN EventIdAddress");
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE Stations DROP COLUMN ConfirmationRequestAddress");
