@@ -101,7 +101,22 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
                     continue;
                 }
 
-                await RunOnePalletAsync(null, stoppingToken).ConfigureAwait(false);
+                var result = await RunOnePalletAsync(null, stoppingToken).ConfigureAwait(false);
+                if (!result.Completed)
+                {
+                    // 超时/池满/留证阻塞时绝不再循环开新件：否则在制托盘池一满就会复用号并刷会话抢占报警。
+                    if (_running)
+                    {
+                        _logger.LogWarning("自动仿真已暂停：{Message}", result.Message);
+                        SetRunning(false);
+                        Status.LastMessage = $"自动仿真已暂停：{result.Message}";
+                        Changed?.Invoke();
+                    }
+
+                    await Task.Delay(1000, stoppingToken).ConfigureAwait(false);
+                    continue;
+                }
+
                 var interval = 2500;
                 await using (var scope = _scopeFactory.CreateAsyncScope())
                 {
@@ -181,6 +196,22 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
                 return new LineRunResult(false, null, false, message);
             }
 
+            // 人工留证阻塞的工站采集不会回写；仿真若继续触发只会 8 秒超时、堆在制会话，最终刷抢占报警。
+            var pendingStore = scope.ServiceProvider.GetRequiredService<IPendingWriteBackStore>();
+            foreach (var station in runStations)
+            {
+                var pending = await pendingStore.FindOldestUnconfirmedAsync(station.Id, cancellationToken)
+                    .ConfigureAwait(false);
+                if (pending is { ManualReviewRequired: true })
+                {
+                    var message =
+                        $"工站 {station.Code} 存在待人工核对的回写留证（{pending.SerialNo}），仿真已停止；请在诊断页解除留证后再开自动仿真";
+                    Status.LastMessage = message;
+                    Changed?.Invoke();
+                    return new LineRunResult(false, station.Code, false, message);
+                }
+            }
+
             // 避免复用仍在制的托盘号，否则首站会再次触发会话抢占。
             var busyPallets = (await scope.ServiceProvider.GetRequiredService<IActiveSessionStore>()
                     .ListAsync(cancellationToken).ConfigureAwait(false))
@@ -192,10 +223,27 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
             if (!string.IsNullOrWhiteSpace(palletCode))
             {
                 code = palletCode.Trim();
+                if (busyPallets.Contains(code))
+                {
+                    var message = $"托盘 {code} 仍在制，不能再次从首站进入；请等末站关闭会话或先处理在制件";
+                    Status.LastMessage = message;
+                    Changed?.Invoke();
+                    return new LineRunResult(false, null, false, message);
+                }
             }
             else
             {
-                code = AllocatePalletCode(firstStation, runStations, pool, busyPallets);
+                var allocated = TryAllocatePalletCode(firstStation, runStations, pool, busyPallets);
+                if (allocated is null)
+                {
+                    var message =
+                        $"托盘池（{pool}）内全部在制，拒绝复用以免会话抢占；请检查卡在中途的工站（常见：回写留证阻塞）并清理在制会话";
+                    Status.LastMessage = message;
+                    Changed?.Invoke();
+                    return new LineRunResult(false, null, false, message);
+                }
+
+                code = allocated;
             }
 
             if (firstStation.PalletCodeDataType != PlcDataType.String)
@@ -272,7 +320,9 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
                     false,
                     stalledAt,
                     timedOut,
-                    $"托盘 {code} 在 {stalledAt} 等待上位机回写超时，未走完；请确认采集已启用、该工站地址与扫描间隔是否正确");
+                    timedOut
+                        ? $"托盘 {code} 在 {stalledAt} 等待上位机回写超时，未走完；请确认采集已启用、该工站是否被回写留证阻塞、地址与扫描间隔是否正确"
+                        : $"托盘 {code} 在 {stalledAt} 未走完；请确认采集已启用、该工站地址与扫描间隔是否正确");
         }
         finally
         {
@@ -280,7 +330,7 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
         }
     }
 
-    private string AllocatePalletCode(
+    private string? TryAllocatePalletCode(
         Station firstStation,
         IReadOnlyList<Station> runStations,
         int pool,
@@ -303,11 +353,10 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
             }
         }
 
-        // 池内全忙时退回下一个序号，仍可能抢占，但比原地复用好。
-        return useNumeric
-            ? ((_palletSeq++ % pool) + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)
-            : $"P{(_palletSeq++ % pool) + 1:0000}";
+        // 池内全忙：宁可停仿真，也不复用在制号去刷「还没走完末站又从首站进入」。
+        return null;
     }
+
     private static async Task<short?> WaitHandshakeAsync(InMemoryPlcDriver plc, Station station, CancellationToken cancellationToken)
     {
         var deadline = DateTime.Now.AddSeconds(8);
