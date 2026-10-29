@@ -386,7 +386,14 @@
             ["Stations"] = _stations
         };
         var dialog = await DialogService.ShowAsync<RecipeLimitDialog>($"型号限值 · {recipe.Code}", parameters,
-            new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseOnEscapeKey = true });
+            new DialogOptions
+            {
+                MaxWidth = MaxWidth.ExtraLarge,
+                FullWidth = true,
+                // Esc/遮罩关闭改由对话框内 CancelAsync 拦截：有未保存改动时先确认。
+                CloseOnEscapeKey = false,
+                BackdropClick = false
+            });
         var result = await dialog.Result;
         if (result is null || result.Canceled || result.Data is not IReadOnlyList<RecipeLimit> limits)
             return;

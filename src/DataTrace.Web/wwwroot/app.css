@@ -169,6 +169,112 @@
     background: rgba(var(--dt-danger-rgb), .07);
 }
 
+/* 型号限值对话框：工具栏横排 + 矩阵粘表头 + 行状态底色 */
+.dt-recipe-limit-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 16px;
+    margin-bottom: 10px;
+}
+
+.dt-recipe-limit-search {
+    flex: 1 1 220px;
+    min-width: 180px;
+    max-width: 360px;
+}
+
+.dt-recipe-limit-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    font-size: 0.875rem;
+    color: var(--mud-palette-text-primary);
+    cursor: pointer;
+    user-select: none;
+}
+
+.dt-recipe-limit-count {
+    margin-inline-start: auto;
+    white-space: nowrap;
+}
+
+.dt-recipe-limit-tip {
+    border: 1px solid var(--mud-palette-lines-default);
+    border-radius: 6px;
+    padding: 8px 12px;
+    background: rgba(var(--dt-primary-rgb), .04);
+}
+
+.dt-recipe-limit-tip > summary {
+    cursor: pointer;
+    list-style: none;
+    font-size: 0.875rem;
+    color: var(--mud-palette-text-secondary);
+    user-select: none;
+}
+
+.dt-recipe-limit-tip > summary::-webkit-details-marker {
+    display: none;
+}
+
+.dt-recipe-limit-tip > summary::before {
+    content: "▸";
+    display: inline-block;
+    margin-inline-end: 6px;
+    color: var(--mud-palette-primary);
+}
+
+.dt-recipe-limit-tip[open] > summary::before {
+    content: "▾";
+}
+
+.dt-recipe-limit-error-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.dt-recipe-limit-row-chips {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 2px;
+}
+
+.dt-recipe-limit-row-anchor {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+}
+
+.dt-recipe-limit-matrix {
+    max-height: min(50vh, 480px);
+    overflow: auto;
+}
+
+.dt-recipe-limit-matrix .mud-table-root thead .mud-table-cell,
+.dt-recipe-limit-matrix table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--mud-palette-surface);
+    box-shadow: inset 0 -1px 0 var(--mud-palette-lines-default);
+}
+
+.dt-recipe-limit-row-overridden td {
+    background: rgba(var(--dt-primary-rgb), .045);
+}
+
+.dt-recipe-limit-row-edited td {
+    background: rgba(var(--dt-warning-rgb), .08);
+}
+
+
 /* 时间、编号、耗时这类短列一旦被折成两行，纵向就对不齐，扫一眼也读不断句 */
 .dt-nowrap {
     white-space: nowrap;
@@ -3203,6 +3309,19 @@ html.dt-theme-dark {
 html.dt-theme-dark .dt-row-error td {
     background: rgba(239, 83, 80, .14);
 }
+
+html.dt-theme-dark .dt-recipe-limit-row-overridden td {
+    background: rgba(var(--dt-primary-rgb), .1);
+}
+
+html.dt-theme-dark .dt-recipe-limit-row-edited td {
+    background: rgba(var(--dt-warning-rgb), .14);
+}
+
+html.dt-theme-dark .dt-recipe-limit-tip {
+    background: rgba(var(--dt-primary-rgb), .08);
+}
+
 
 html.dt-theme-dark .dt-src-badge {
     background: #202c36;

@@ -1,26 +1,33 @@
 @using DataTrace.Domain.Evaluation
+@inject IDialogService Dialogs
+@inject IJSRuntime Js
 <MudDialog>
     <TitleContent>
         <MudText Typo="Typo.h6">型号限值 · @Recipe.Code @Recipe.Name</MudText>
     </TitleContent>
     <DialogContent>
-    <div class="dt-dialog-scroll">
-    <MudAlert Severity="Severity.Info" Dense="true" Class="mb-2" Variant="Variant.Outlined">
-        「目标值」仅用于显示与工艺参考，<b>不参与 OK/NG 判定</b>；判定只看规格限与预警限。
-    </MudAlert>
-
-        <MudAlert Severity="Severity.Info" Dense="true" Variant="Variant.Outlined" Class="mb-3">
-            这里填的是<b>本型号的覆盖值</b>，留空的项沿用点位默认限值（不是「不判」）。
-            五个字段全部留空的点位等于没有覆盖，保存时会被丢弃。<InfoHint Topic="HelpTexts.CoverablePoints" />
-        </MudAlert>
-        <MudText Typo="Typo.caption" Class="dt-muted mb-3">
-            生效值预览按默认值与当前输入逐项合并；目标值仅供参考，不参与 OK/NG 判定。
-        </MudText>
+    <div class="dt-dialog-scroll" @onkeydown="OnDialogKeyDown">
+        <details class="dt-recipe-limit-tip mb-3">
+            <summary>限值说明（目标值不参与判定；空白项沿用点位默认）</summary>
+            <MudText Typo="Typo.body2" Class="dt-muted mt-2">
+                「目标值」仅用于显示与工艺参考，<b>不参与 OK/NG 判定</b>；判定只看规格限与预警限。
+                这里填的是<b>本型号的覆盖值</b>，留空的项沿用点位默认限值（不是「不判」）。
+                五个字段全部留空的点位等于没有覆盖，保存时会被丢弃。
+                生效值预览按默认值与当前输入逐项合并。<InfoHint Topic="HelpTexts.CoverablePoints" />
+                <InfoHint Topic="HelpTexts.LimitMergeRule" />
+            </MudText>
+        </details>
 
         @if (!string.IsNullOrEmpty(_error))
         {
             @* 报错放在最上方：这个表格可以拉到几十行，错误写在底部时用户点「保存」只会看到什么都没发生。 *@
-            <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3">@_error</MudAlert>
+            <MudAlert Severity="Severity.Warning" Dense="true" Class="mb-3 dt-recipe-limit-error-alert">
+                <div class="dt-recipe-limit-error-row">
+                    <span>@_error</span>
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"
+                               OnClick="JumpToFirstErrorAsync">跳到第一处</MudButton>
+                </div>
+            </MudAlert>
         }
 
         @if (_rows.Count == 0)
@@ -29,9 +36,6 @@
         }
         else
         {
-            <MudText Typo="Typo.caption" Class="dt-muted mb-2">
-                共 @_rows.Count 个点位，其中 @_rows.Count(r => r.IsOverridden) 个被本型号覆盖，本次已编辑 @_rows.Count(r => r.IsEdited) 个。限值单位取自点位配置，不在此处修改。<InfoHint Topic="HelpTexts.LimitMergeRule" />
-            </MudText>
             <div class="dt-recipe-limit-toolbar" role="group" aria-label="筛选型号限值点位">
                 <MudTextField T="string" Value="_searchText" ValueChanged="OnSearchChanged"
                               Label="搜索工站或点位" Placeholder="工站编号、名称或点位名称"
@@ -42,8 +46,8 @@
                     <input type="checkbox" @bind="_onlyOverriddenOrEdited" />
                     仅显示已覆盖或已编辑
                 </label>
-                <MudText Typo="Typo.caption" Class="dt-muted" role="status" aria-live="polite">
-                    显示 @VisibleRows.Count / @_rows.Count 个点位
+                <MudText Typo="Typo.caption" Class="dt-muted dt-recipe-limit-count" role="status" aria-live="polite">
+                    显示 @VisibleRows.Count / @_rows.Count · 已覆盖 @_rows.Count(r => r.IsOverridden) · 已编辑 @_rows.Count(r => r.IsEdited)
                 </MudText>
             </div>
             @if (_rows.Any(r => !r.Tag.Enabled))
@@ -57,7 +61,7 @@
             @* 限值矩阵刻意不折叠成卡片：五个字段并排才能横向比对；窄屏改为整表横向滚动。 *@
             <div class="dt-scroll-x dt-recipe-limit-matrix">
                 <MudTable Items="VisibleRows" Dense="true" Hover="true" Breakpoint="Breakpoint.None"
-                           RowClassFunc="@((row, _) => row.Error is null ? "" : "dt-row-error")">
+                           RowClassFunc="@RowClass">
                 <HeaderContent>
                     <MudTh>点位</MudTh>
                     <MudTh>点位默认限值</MudTh>
@@ -67,9 +71,11 @@
                     <MudTh>预警上限</MudTh>
                     <MudTh>目标值 <InfoHint Topic="HelpTexts.TargetValue" /></MudTh>
                     <MudTh>生效值预览</MudTh>
+                    <MudTh>操作</MudTh>
                 </HeaderContent>
                 <RowTemplate>
                     <MudTd Class="dt-nowrap">
+                        <span id="@RowAnchorId(context)" class="dt-recipe-limit-row-anchor" tabindex="-1"></span>
                         @context.StationCode · @context.Tag.Name
                         @if (!string.IsNullOrWhiteSpace(context.Tag.Unit))
                         {
@@ -79,6 +85,16 @@
                         {
                             <MudText Typo="Typo.caption" Class="dt-muted">（已停用）</MudText>
                         }
+                        <div class="dt-recipe-limit-row-chips">
+                            @if (context.IsEdited)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">已编辑</MudChip>
+                            }
+                            @if (context.IsOverridden)
+                            {
+                                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined">已覆盖</MudChip>
+                            }
+                        </div>
                         @if (context.Error is not null)
                         {
                             <MudText Typo="Typo.caption" Class="dt-text-error">@context.Error</MudText>
@@ -112,6 +128,13 @@
                         <MudText Typo="Typo.caption">预警 @DisplayLabels.LimitRange(effective.WarningLower, effective.WarningUpper)@UnitText(context)</MudText>
                         <MudText Typo="Typo.caption" Class="dt-muted">目标 @(effective.Target?.ToString("0.###") ?? "—")@UnitText(context)</MudText>
                     </MudTd>
+                    <MudTd DataLabel="操作" Class="dt-nowrap">
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Default"
+                                   Disabled="@context.IsBlank"
+                                   StartIcon="@Icons.Material.Filled.Backspace"
+                                   aria-label="@($"清除 {context.StationCode} {context.Tag.Name} 的覆盖")"
+                                   OnClick="@(() => ClearOverride(context))">清除覆盖</MudButton>
+                    </MudTd>
                 </RowTemplate>
                 <NoRecordsContent>
                     <MudText Typo="Typo.body2" Class="dt-muted pa-3">没有符合条件的点位；筛选只影响显示，不影响保存。</MudText>
@@ -122,9 +145,9 @@
     </div>
     </DialogContent>
     <DialogActions>
-        <MudButton OnClick="Cancel">取消</MudButton>
+        <MudButton OnClick="CancelAsync">取消</MudButton>
         <MudButton Color="Color.Primary" Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Save"
-                   OnClick="Submit">保存</MudButton>
+                   OnClick="SubmitAsync">保存</MudButton>
         <InfoHint Topic="HelpTexts.LimitEffect" />
     </DialogActions>
 </MudDialog>
@@ -140,6 +163,9 @@
     private string? _error;
     private string _searchText = "";
     private bool _onlyOverriddenOrEdited;
+    private int? _firstErrorTagId;
+
+    private bool IsDirty => _rows.Any(r => r.IsEdited);
 
     private List<Row> VisibleRows
     {
@@ -158,6 +184,15 @@
 
     protected override void OnInitialized()
     {
+        // 有未保存改动时不能让 Esc/点遮罩直接关；取消与 Esc 都走 CancelAsync 二次确认。
+        MudDialog?.SetOptions(new DialogOptions
+        {
+            MaxWidth = MaxWidth.ExtraLarge,
+            FullWidth = true,
+            CloseOnEscapeKey = false,
+            BackdropClick = false
+        });
+
         foreach (var station in Stations.OrderBy(s => s.Sequence))
         {
             // 可覆盖点位 = 数值型，含已停用的（见 RecipeLimitScope）：停用点位的覆盖值
@@ -198,15 +233,56 @@
             ? $"{row.StationCode} {row.Tag.Name} {field}"
             : $"{row.StationCode} {row.Tag.Name} 单位 {row.Tag.Unit} {field}";
 
-    private void Cancel() => MudDialog?.Cancel();
+    private static string RowAnchorId(Row row) => $"dt-recipe-limit-row-{row.Tag.Id}";
 
-    private void Submit()
+    private static string RowClass(Row row, int _)
+    {
+        if (row.Error is not null) return "dt-row-error";
+        if (row.IsEdited) return "dt-recipe-limit-row-edited";
+        if (row.IsOverridden) return "dt-recipe-limit-row-overridden";
+        return "";
+    }
+
+    private void ClearOverride(Row row)
+    {
+        row.Lower = null;
+        row.Upper = null;
+        row.WarningLower = null;
+        row.WarningUpper = null;
+        row.Target = null;
+        row.Error = null;
+    }
+
+    private async Task OnDialogKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+            await CancelAsync();
+    }
+
+    private async Task CancelAsync()
+    {
+        if (IsDirty)
+        {
+            var discard = await Dialogs.ShowMessageBox(
+                "未保存的改动",
+                "限值有未保存的改动，关闭将丢弃。确定关闭？",
+                yesText: "放弃并关闭",
+                cancelText: "继续编辑");
+            if (discard != true)
+                return;
+        }
+
+        MudDialog?.Cancel();
+    }
+
+    private async Task SubmitAsync()
     {
         var result = _rows.Where(r => !r.IsBlank).Select(r => r.ToLimit()).ToList();
 
         // 一次把所有行都判完并就地标红：表格可能拉到几十行，只报第一条的话
         // 用户看到顶部一句提示，根本不知道是哪一格拦住了保存。
         var bad = 0;
+        Row? firstBad = null;
         foreach (var row in _rows)
         {
             // 规则本身在 TagLimits.ConsistencyError()：工站配置页与这里必须共用一份。
@@ -218,17 +294,46 @@
             if (row.Error is not null)
             {
                 bad++;
+                firstBad ??= row;
             }
         }
 
         if (bad > 0)
         {
             _error = $"{bad} 个点位的限值互相矛盾，已在表中标红。";
+            _firstErrorTagId = firstBad?.Tag.Id;
+            // 筛选可能把出错行藏起来，先清空再跳过去。
+            _searchText = "";
+            _onlyOverriddenOrEdited = false;
+            await InvokeAsync(StateHasChanged);
+            await JumpToFirstErrorAsync();
             return;
         }
 
         _error = null;
+        _firstErrorTagId = null;
         MudDialog?.Close(DialogResult.Ok(result));
+    }
+
+    private async Task JumpToFirstErrorAsync()
+    {
+        var target = _firstErrorTagId is int id
+            ? _rows.FirstOrDefault(r => r.Tag.Id == id && r.Error is not null)
+            : _rows.FirstOrDefault(r => r.Error is not null);
+        if (target is null)
+            return;
+
+        _searchText = "";
+        _onlyOverriddenOrEdited = false;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            await Js.InvokeVoidAsync("dtScrollIntoView", RowAnchorId(target));
+        }
+        catch (Exception)
+        {
+            // 预渲染/测试宿主没有 JS 时静默：行已展开可见即可。
+        }
     }
 
     private sealed class Row

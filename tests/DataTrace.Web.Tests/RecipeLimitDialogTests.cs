@@ -196,7 +196,7 @@ public class RecipeLimitDialogTests : WebTestBase
         search.Input("ST020");
         var flowLower = provider.FindComponents<MudNumericField<double?>>()[0];
         await provider.InvokeAsync(() => flowLower.Instance.ValueChanged.InvokeAsync(9d));
-        Assert.Contains("本次已编辑 1 个", provider.Markup);
+        Assert.Contains("已编辑 1", provider.Markup);
         provider.Find("input[type=checkbox]").Change(true);
         Assert.Contains(provider.FindAll("tr"), row => row.TextContent.Contains("ST020_FLOW"));
         Assert.DoesNotContain(provider.FindAll("tr"), row => row.TextContent.Contains("ST010_TEMP"));
@@ -212,4 +212,94 @@ public class RecipeLimitDialogTests : WebTestBase
         Assert.Equal(45, saved.Single(limit => limit.TagId == 1).WarningUpperLimit);
         Assert.Equal(9, saved.Single(limit => limit.TagId == 3).LowerLimit);
     }
+    [Fact]
+    public async Task Toolbar_tip_and_clear_override_are_available()
+    {
+        var (recipe, stations) = Fixtures();
+
+        Context.Services.AddSingleton<IDialogService, DialogService>();
+        RenderPopoverHost();
+        var provider = Context.Render<MudDialogProvider>();
+        await Context.Services.GetRequiredService<IDialogService>().ShowAsync<RecipeLimitDialog>("型号限值", new DialogParameters
+        {
+            ["Recipe"] = recipe,
+            ["Stations"] = stations
+        });
+        provider.Render();
+
+        Assert.Contains("dt-recipe-limit-toolbar", provider.Markup);
+        Assert.Contains("dt-recipe-limit-tip", provider.Markup);
+        Assert.Contains("限值说明（目标值不参与判定；空白项沿用点位默认）", provider.Markup);
+
+        var overridden = provider.FindAll("tr").Single(r => r.TextContent.Contains("ST010_TEMP"));
+        Assert.Contains("已覆盖", overridden.TextContent);
+        overridden.QuerySelectorAll("button").Single(b => b.TextContent.Contains("清除覆盖")).Click();
+        provider.Render();
+        Assert.Contains("已编辑 1", provider.Markup);
+        Assert.DoesNotContain("已覆盖", provider.FindAll("tr").Single(r => r.TextContent.Contains("ST010_TEMP")).TextContent);
+    }
+
+    [Fact]
+    public async Task Cancel_with_dirty_rows_asks_before_closing()
+    {
+        var (recipe, stations) = Fixtures();
+
+        Context.Services.AddSingleton<IDialogService, DialogService>();
+        RenderPopoverHost();
+        var provider = Context.Render<MudDialogProvider>();
+        var reference = await Context.Services.GetRequiredService<IDialogService>().ShowAsync<RecipeLimitDialog>(
+            "型号限值", new DialogParameters
+            {
+                ["Recipe"] = recipe,
+                ["Stations"] = stations
+            });
+        provider.Render();
+
+        var search = provider.Find("input[aria-label='按工站或点位搜索']");
+        search.Input("ST020");
+        var flowLower = provider.FindComponents<MudNumericField<double?>>()[0];
+        await provider.InvokeAsync(() => flowLower.Instance.ValueChanged.InvokeAsync(9d));
+        Assert.Contains("已编辑 1", provider.Markup);
+
+        provider.FindAll("button").Single(button => button.TextContent.Trim() == "取消").Click();
+        provider.Render();
+        Assert.Contains("未保存的改动", provider.Markup);
+        Assert.Contains("放弃并关闭", provider.Markup);
+
+        provider.FindAll("button").Single(button => button.TextContent.Contains("继续编辑")).Click();
+        provider.Render();
+        Assert.Contains("ST020_FLOW", provider.Markup);
+        Assert.False(reference.Result.IsCompleted); // 继续编辑后限值对话框仍未关闭
+    }
+
+    [Fact]
+    public async Task Save_with_inconsistent_limits_marks_error_and_offers_jump()
+    {
+        var (recipe, stations) = Fixtures();
+
+        Context.Services.AddSingleton<IDialogService, DialogService>();
+        RenderPopoverHost();
+        var provider = Context.Render<MudDialogProvider>();
+        var reference = await Context.Services.GetRequiredService<IDialogService>().ShowAsync<RecipeLimitDialog>(
+            "型号限值", new DialogParameters
+            {
+                ["Recipe"] = recipe,
+                ["Stations"] = stations
+            });
+        provider.Render();
+
+        var search = provider.Find("input[aria-label='按工站或点位搜索']");
+        search.Input("ST020");
+        var fields = provider.FindComponents<MudNumericField<double?>>();
+        await provider.InvokeAsync(() => fields[0].Instance.ValueChanged.InvokeAsync(20d));
+        await provider.InvokeAsync(() => fields[1].Instance.ValueChanged.InvokeAsync(10d));
+        provider.FindAll("button").Single(button => button.TextContent.Contains("保存")).Click();
+        provider.Render();
+
+        Assert.Contains("限值互相矛盾", provider.Markup);
+        Assert.Contains("跳到第一处", provider.Markup);
+        Assert.Contains("dt-row-error", provider.Markup);
+        Assert.False(reference.Result.IsCompleted);
+    }
+
 }
