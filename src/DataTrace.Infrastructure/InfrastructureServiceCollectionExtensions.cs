@@ -111,6 +111,7 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddSingleton<ICurveBaselineCache, CurveBaselineCache>();
 
         services.AddScoped<IConfigRepository, ConfigRepository>();
+        services.AddScoped<IMcpTokenStore, McpTokenStore>();
         services.AddScoped<IConfigurationChanges, ConfigurationChangeService>();
         services.AddScoped<ISettingsSave, SettingsSaveService>();
         services.AddScoped<IUserAdministration, UserAdministration>();

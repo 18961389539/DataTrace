@@ -16,6 +16,7 @@
     <ProjectReference Include="..\..\src\DataTrace.Plc\DataTrace.Plc.csproj" />
     <ProjectReference Include="..\..\src\DataTrace.Collector\DataTrace.Collector.csproj" />
     <ProjectReference Include="..\..\src\DataTrace.Infrastructure\DataTrace.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\DataTrace.Mcp\DataTrace.Mcp.csproj" />
     <ProjectReference Include="..\..\src\DataTrace.Plc.Drivers.IoTClient\DataTrace.Plc.Drivers.IoTClient.csproj" />
     <!-- Web 层纯函数（CSV 导出、SVG 图表计算、概念文案）已下沉到 DataTrace.Shared：
          直接引用工程即可，不必再按文件路径 <Compile Include> 链接源码 -->

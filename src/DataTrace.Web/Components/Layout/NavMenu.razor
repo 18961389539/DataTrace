@@ -51,6 +51,7 @@
             <AuthorizeView Roles="Administrator" Context="adminCtx">
                 <Authorized>
                     <MudNavLink Href="/users" Icon="@Icons.Material.Filled.People" OnClick="OnNavClick">用户</MudNavLink>
+                    <MudNavLink Href="/config/mcp-tokens" Icon="@Icons.Material.Filled.Key" OnClick="OnNavClick">MCP 令牌</MudNavLink>
                 </Authorized>
             </AuthorizeView>
 

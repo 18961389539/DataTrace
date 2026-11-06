@@ -34,6 +34,7 @@ public sealed class ConfigDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Recipe> Recipes => Set<Recipe>();
     public DbSet<RecipeLimit> RecipeLimits => Set<RecipeLimit>();
     public DbSet<WorkOrder> WorkOrders => Set<WorkOrder>();
+    public DbSet<McpAccessToken> McpAccessTokens => Set<McpAccessToken>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -165,6 +166,17 @@ public sealed class ConfigDbContext : IdentityDbContext<ApplicationUser>
             e.Property(x => x.DiffJson).IsRequired();
         });
         builder.Entity<AlarmIncident>(e => e.HasIndex(x => x.RaisedAt));
+        builder.Entity<McpAccessToken>(e =>
+        {
+            e.Property(x => x.UserName).HasMaxLength(256).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Prefix).HasMaxLength(16).IsRequired();
+            e.Property(x => x.TokenHash).HasMaxLength(64).IsRequired();
+            e.Property(x => x.Scopes).HasMaxLength(64).IsRequired();
+            e.Property(x => x.CreatedBy).HasMaxLength(256).IsRequired();
+            e.Property(x => x.RevokedBy).HasMaxLength(256);
+            e.HasIndex(x => x.UserName);
+        });
         builder.Entity<MesOutboxItem>(e =>
         {
             e.HasIndex(x => new { x.Status, x.NextAttemptAt, x.CreatedAt });

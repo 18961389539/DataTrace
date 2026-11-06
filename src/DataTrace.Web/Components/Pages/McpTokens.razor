@@ -1,0 +1,259 @@
+@page "/config/mcp-tokens"
+@attribute [Authorize(Roles = "Administrator")]
+@using DataTrace.Application.Identity
+@inject IMcpTokenStore Tokens
+@inject IUserAdministration UsersAdmin
+@inject IDialogService DialogService
+@inject AuthenticationStateProvider Auth
+@inject IJSRuntime Js
+@inject DtToast Toast
+
+<PageHeader Title="MCP 令牌"
+            Description="为 AI 客户端签发访问令牌。令牌只在创建时显示一次，请立即复制并通过安全渠道保存；绑定用户的角色、锁定状态变化会立即生效。"
+            Busy="@_loading">
+    <ChildContent>
+        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_tokens.Count 个</MudChip>
+    </ChildContent>
+    <Actions>
+        <MudTooltip Text="重新读取令牌列表">
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh" aria-label="刷新令牌列表"
+                           Disabled="@(_loading || _working)" OnClick="Reload" />
+        </MudTooltip>
+    </Actions>
+</PageHeader>
+
+@if (_error is not null)
+{
+    <MudAlert Severity="Severity.Error" Dense="true" Variant="Variant.Outlined" Class="mb-3">
+        @_error
+        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error" Class="ml-2"
+                   Disabled="_loading" OnClick="Reload">重试</MudButton>
+    </MudAlert>
+}
+
+@if (_createdPlaintext is not null)
+{
+    <MudAlert Severity="Severity.Warning" Variant="Variant.Outlined" Class="mb-4" role="status">
+        <MudText Typo="Typo.subtitle2" Class="mb-2">令牌只显示这一次，请立即复制：</MudText>
+        <div class="d-flex align-center flex-wrap gap-2">
+            <MudTextField T="string" Value="_createdPlaintext" ReadOnly="true" Variant="Variant.Outlined"
+                          Margin="Margin.Dense" Class="flex-grow-1" aria-label="新建的 MCP 令牌" />
+            <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.ContentCopy" OnClick="CopyToken">复制</MudButton>
+            <MudButton Variant="Variant.Text" OnClick="@(() => _createdPlaintext = null)">我已保存</MudButton>
+        </div>
+    </MudAlert>
+}
+
+<MudPaper Outlined="true" Elevation="0" Class="pa-4 mb-4">
+    <MudText Typo="Typo.subtitle1" Class="mb-3">创建令牌</MudText>
+    <MudGrid Spacing="2">
+        <MudItem xs="12" md="4">
+            <MudTextField T="string" @bind-Value="_name" Label="用途" Placeholder="例如：夜班交接助手"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" MaxLength="100" />
+        </MudItem>
+        <MudItem xs="12" md="3">
+            <MudSelect T="string" @bind-Value="_userName" Label="绑定用户" Variant="Variant.Outlined"
+                       Margin="Margin.Dense" Dense="true">
+                @foreach (var user in _users)
+                {
+                    <MudSelectItem T="string" Value="@user.UserName">
+                        @($"{user.UserName}（{DisplayLabels.RoleText(user.Roles.FirstOrDefault() ?? "")}）")
+                    </MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="6" md="2">
+            <MudNumericField T="int" @bind-Value="_lifetimeDays" Label="有效天数" Min="1" Max="365"
+                             Variant="Variant.Outlined" Margin="Margin.Dense" />
+        </MudItem>
+        <MudItem xs="6" md="3" Class="d-flex align-center">
+            <MudCheckBox T="bool" @bind-Value="_allowWrite" Label="允许写入（二期，默认关闭）"
+                         Color="Color.Warning" Dense="true" />
+        </MudItem>
+    </MudGrid>
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-3 flex-wrap">
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@_working"
+                   StartIcon="@Icons.Material.Filled.Key" OnClick="Create">创建令牌</MudButton>
+        <MudText Typo="Typo.caption" Class="dt-muted">
+            读取权限始终包含；写入还需服务端 Mcp:AllowWrites=true。
+        </MudText>
+    </MudStack>
+</MudPaper>
+
+<MudPaper Outlined="true" Elevation="0" Class="pa-4">
+    <MudText Typo="Typo.subtitle1" Class="mb-3">已签发的令牌</MudText>
+    <MudTable Items="_tokens" Dense="true" Hover="true" Breakpoint="Breakpoint.Md"
+              Loading="_loading" LoadingProgressColor="Color.Info">
+        <HeaderContent>
+            <MudTh>用途</MudTh>
+            <MudTh>用户</MudTh>
+            <MudTh>前缀</MudTh>
+            <MudTh>范围</MudTh>
+            <MudTh>创建</MudTh>
+            <MudTh>过期</MudTh>
+            <MudTh>最近使用</MudTh>
+            <MudTh>状态</MudTh>
+            <MudTh Class="dt-right">操作</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="用途">@context.Name</MudTd>
+            <MudTd DataLabel="用户">@context.UserName</MudTd>
+            <MudTd DataLabel="前缀"><code>@context.Prefix…</code></MudTd>
+            <MudTd DataLabel="范围">@string.Join(" / ", context.Scopes)</MudTd>
+            <MudTd DataLabel="创建">@context.CreatedAt.ToString("yyyy-MM-dd HH:mm")</MudTd>
+            <MudTd DataLabel="过期">@context.ExpiresAt.ToString("yyyy-MM-dd HH:mm")</MudTd>
+            <MudTd DataLabel="最近使用">
+                @(context.LastUsedAt?.ToString("yyyy-MM-dd HH:mm") ?? "从未")
+            </MudTd>
+            <MudTd DataLabel="状态">
+                @if (context.RevokedAt is not null)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined">已撤销</MudChip>
+                }
+                else if (context.ExpiresAt <= DateTime.Now)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Warning" Variant="Variant.Outlined">已过期</MudChip>
+                }
+                else
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Outlined">有效</MudChip>
+                }
+            </MudTd>
+            <MudTd DataLabel="操作" Class="dt-right">
+                @if (context.RevokedAt is null && context.ExpiresAt > DateTime.Now)
+                {
+                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
+                               Disabled="@_working" OnClick="@(() => Revoke(context))">撤销</MudButton>
+                }
+            </MudTd>
+        </RowTemplate>
+        <NoRecordsContent>
+            <MudText Class="dt-muted py-4">还没有签发过令牌。</MudText>
+        </NoRecordsContent>
+    </MudTable>
+</MudPaper>
+
+@code {
+    private IReadOnlyList<McpTokenSummary> _tokens = [];
+    private IReadOnlyList<UserAccount> _users = [];
+    private string _name = "";
+    private string _userName = "";
+    private int _lifetimeDays = 90;
+    private bool _allowWrite;
+    private bool _loading;
+    private bool _working;
+    private string? _error;
+    private string? _createdPlaintext;
+    private string _actor = "admin";
+
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await Auth.GetAuthenticationStateAsync();
+        _actor = state.User.Identity?.Name ?? "admin";
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            _tokens = await Tokens.ListAsync();
+            _users = await UsersAdmin.ListAsync();
+            _userName = string.IsNullOrWhiteSpace(_userName)
+                ? _users.FirstOrDefault(u => u.Roles.Contains(AppRoles.Administrator))?.UserName
+                    ?? _users.FirstOrDefault()?.UserName
+                    ?? ""
+                : _userName;
+        }
+        catch (Exception ex)
+        {
+            _error = $"读取令牌失败：{ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task Create()
+    {
+        if (_working)
+        {
+            return;
+        }
+        _working = true;
+        _error = null;
+        try
+        {
+            var scopes = new List<string> { McpScopes.Read };
+            if (_allowWrite)
+            {
+                scopes.Add(McpScopes.Write);
+            }
+            var created = await Tokens.CreateAsync(_userName, _name, scopes, _lifetimeDays, _actor);
+            _createdPlaintext = created.Plaintext;
+            _name = "";
+            _allowWrite = false;
+            await Reload();
+            Toast.Add("令牌已创建，请立即复制保存。", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            _error = $"创建令牌失败：{ex.Message}";
+            Toast.Add(_error, Severity.Error);
+        }
+        finally
+        {
+            _working = false;
+        }
+    }
+
+    private async Task Revoke(McpTokenSummary token)
+    {
+        var confirmed = await DialogService.ShowMessageBox(
+            "撤销令牌",
+            $"确定撤销「{token.Name}」（{token.UserName}）？撤销后使用该令牌的 AI 客户端会立即失去访问权限。",
+            yesText: "撤销", cancelText: "取消");
+        if (confirmed != true || _working)
+        {
+            return;
+        }
+
+        _working = true;
+        try
+        {
+            await Tokens.RevokeAsync(token.Id, _actor);
+            await Reload();
+            Toast.Add($"令牌「{token.Name}」已撤销。", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            _error = $"撤销令牌失败：{ex.Message}";
+            Toast.Add(_error, Severity.Error);
+        }
+        finally
+        {
+            _working = false;
+        }
+    }
+
+    private async Task CopyToken()
+    {
+        if (_createdPlaintext is null)
+        {
+            return;
+        }
+        try
+        {
+            await Js.InvokeVoidAsync("navigator.clipboard.writeText", _createdPlaintext);
+            Toast.Add("令牌已复制到剪贴板。", Severity.Success);
+        }
+        catch (Exception)
+        {
+            Toast.Add("复制失败，请手动选中令牌文本。", Severity.Warning);
+        }
+    }
+}

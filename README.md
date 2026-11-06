@@ -156,6 +156,42 @@ sc start DataTrace
 set Kestrel__Endpoints__Http__Url=http://0.0.0.0:5100
 ```
 
+## MCP（AI 客户端接入）
+
+默认关闭。开启后应用在同一个进程内提供 MCP **Streamable HTTP** 端点 `/mcp`，供 Claude、Qoder、Cursor、MCP Inspector 等客户端查询产线数据。
+
+```bat
+set Mcp__Enabled=true
+rem 内网纯 HTTP 时才需要下面两项；生产建议配置 HTTPS 并保持 RequireHttps=true
+set Mcp__RequireHttps=false
+set Mcp__AllowInsecureHttp=true
+```
+
+1. 管理员登录后打开「MCP 令牌」页（`/config/mcp-tokens`），为绑定用户创建令牌。令牌只在创建时显示一次，请立即复制保存。
+2. 客户端使用 `Authorization: Bearer dtmcp_...` 访问 `http://<主机>:5080/mcp`。
+3. 令牌绑定现有账号：角色、锁定、删除立即影响权限；撤销令牌后客户端立刻失去访问。
+
+客户端配置示例（字段名随客户端不同，核心是 URL + 请求头）：
+
+```jsonc
+{
+  "mcpServers": {
+    "datatrace": {
+      "url": "http://192.168.1.10:5080/mcp",
+      "headers": { "Authorization": "Bearer dtmcp_1_xxxxxxxx" }
+    }
+  }
+}
+```
+
+一期提供 18 个只读工具：健康检查、实时状态、采集诊断、工站/点位、工单、配置摘要（工程师+）、MES 队列（工程师+）、采集明细、记录详情、会话履历、产量/直通率/停线/不良与预警 Top、趋势、过程能力、报警、质量异常、审计（管理员）。时间范围最多 31 天（审计 7 天），分页上限 100 条（审计 200 条）。
+
+同时提供 3 个资源（`datatrace://stations`、`datatrace://recipes`、`datatrace://alarms/open`）和 3 个提示模板（交接班摘要、质量异常根因排查、报表解读），客户端可直接读取稳定目录或引用模板，减少反复调用 list 工具。
+
+写入类工具（报警接手、质量异常创建/流转）默认不注册；需同时满足 `Mcp:AllowWrites=true` 且令牌带 `write` scope，并受角色与并发版本校验。PLC 写入、配置保存、用户管理、备份恢复始终不开放。
+
+安全边界：MCP 端点**不接受登录 Cookie**，只认 Bearer 令牌；Development 的自动登录对 `/mcp` 不生效；每次成功的工具调用写审计（`Source=MCP`），鉴权拒绝与参数错误由 ASP.NET Core 请求日志记录；按令牌限流。PLC 写入、配置保存、用户管理、备份恢复不开放。完整设计见 [MCP 接入方案](docs/MCP_INTEGRATION_PLAN.md)。
+
 ## 数据目录
 
 `data/config.db` 配置与用户  

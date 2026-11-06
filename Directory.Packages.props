@@ -41,6 +41,8 @@
     <PackageVersion Include="IoTClient" Version="1.0.48" />
     <PackageVersion Include="MudBlazor" Version="7.16.0" />
     <PackageVersion Include="Serilog.AspNetCore" Version="8.0.3" />
+    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.3.1" />
+    <PackageVersion Include="ModelContextProtocol.Core" Version="2.3.1" />
   </ItemGroup>
 
   <ItemGroup Label="测试">

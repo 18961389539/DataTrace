@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>DataTrace.Mcp</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="ModelContextProtocol.Core" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\DataTrace.Application\DataTrace.Application.csproj" />
+    <ProjectReference Include="..\DataTrace.Domain\DataTrace.Domain.csproj" />
+    <ProjectReference Include="..\DataTrace.Shared\DataTrace.Shared.csproj" />
+  </ItemGroup>
+</Project>
