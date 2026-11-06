@@ -37,7 +37,8 @@ public sealed class NavMenuBadgeTests : WebTestBase
 
         var cut = Context.Render<NavMenu>();
 
-        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll(".dt-nav-badge").Count));
+        // 诊断角标也可能同时出现，这里只钉报警与质量两枚待办角标。
+        cut.WaitForAssertion(() => Assert.Equal(2, cut.FindAll(".dt-nav-badge--alarm, .dt-nav-badge--quality").Count));
         var alarmBadge = cut.Find(".dt-nav-badge--alarm");
         Assert.Contains("待接手", alarmBadge.TextContent);
         Assert.Contains("2", alarmBadge.TextContent);

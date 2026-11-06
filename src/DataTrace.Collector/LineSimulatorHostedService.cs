@@ -20,6 +20,9 @@ public sealed class LineSimulatorStatus
     public int CompletedPallets { get; set; }
     public int CompletedStations { get; set; }
     public DateTime? LastTriggerTime { get; set; }
+
+    /// <summary>自动跑线被人工留证阻塞：开关仍是启用态，但循环已自行停下，需要先去诊断页处理。</summary>
+    public bool PausedByPendingWriteBack { get; set; }
 }
 
 public interface ILineSimulator
@@ -39,7 +42,8 @@ public interface ILineSimulator
 /// 一次走线的结果：<see cref="Completed"/> 为 false 时 <see cref="Message"/> 说明卡在哪、
 /// 以及该往哪个方向查（通常是采集是否停用、地址/扫描间隔是否配错）。
 /// </summary>
-public sealed record LineRunResult(bool Completed, string? StoppedAtStation, bool TimedOut, string Message);
+public sealed record LineRunResult(bool Completed, string? StoppedAtStation, bool TimedOut, string Message,
+    bool NeedsManualReview = false);
 
 public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulator
 {
@@ -68,6 +72,7 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
     {
         _running = running;
         Status.Running = running;
+        Status.PausedByPendingWriteBack = false;
         Status.LastMessage = running ? "自动仿真运行中" : "已停止";
         Changed?.Invoke();
     }
@@ -108,7 +113,9 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
                     if (_running)
                     {
                         _logger.LogWarning("自动仿真已暂停：{Message}", result.Message);
-                        SetRunning(false);
+                        _running = false;
+                        Status.Running = false;
+                        Status.PausedByPendingWriteBack = result.NeedsManualReview;
                         Status.LastMessage = $"自动仿真已暂停：{result.Message}";
                         Changed?.Invoke();
                     }
@@ -145,6 +152,7 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
         await _runLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            Status.PausedByPendingWriteBack = false;
             await using var scope = _scopeFactory.CreateAsyncScope();
             var snapshot = await scope.ServiceProvider.GetRequiredService<IConfigRepository>()
                 .GetSnapshotAsync(cancellationToken).ConfigureAwait(false);
@@ -206,9 +214,10 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
                 {
                     var message =
                         $"工站 {station.Code} 存在待人工核对的回写留证（{pending.SerialNo}），仿真已停止；请在诊断页解除留证后再开自动仿真";
+                    Status.PausedByPendingWriteBack = true;
                     Status.LastMessage = message;
                     Changed?.Invoke();
-                    return new LineRunResult(false, station.Code, false, message);
+                    return new LineRunResult(false, station.Code, false, message, NeedsManualReview: true);
                 }
             }
 
@@ -309,6 +318,7 @@ public sealed class LineSimulatorHostedService : BackgroundService, ILineSimulat
             if (completedAll)
             {
                 Status.CompletedPallets++;
+                Status.PausedByPendingWriteBack = false;
                 Status.LastMessage = $"托盘 {code} 已走完全线";
             }
 

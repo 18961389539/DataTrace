@@ -39,13 +39,6 @@
         <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
                    StartIcon="@(_busy ? Icons.Material.Filled.Sync : Icons.Material.Filled.Add)"
                    OnClick="AddDevice" Disabled="_busy">@(_busy ? "处理中…" : "新增工站")</MudButton>
-        @if (_current is not null)
-        {
-            <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
-                       OnClick="@(() => DeleteDevice(_current))" Disabled="_busy">
-                删除当前
-            </MudButton>
-        }
     </div>
     @if (_stations.Count > 0)
     {
@@ -87,7 +80,8 @@
             {
                 var selected = station.Id == _current?.Id;
                 <div class="@(selected ? "station-list-item active" : "station-list-item")">
-                    <button type="button" class="station-list-item-select" aria-pressed="@selected"
+                    <button type="button" class="station-list-item-select"
+                            aria-pressed="@(selected ? "true" : "false")"
                             @onclick="() => Select(station)">
                         <span class="station-list-item-code">@station.Code</span>
                         <span class="station-list-item-name">@station.Name</span>
@@ -95,11 +89,6 @@
                             @RoleLabel(station) · @PlcName(station.PlcConnectionId) · 点位 @station.Tags.Count · 曲线 @station.Curves.Count
                         </span>
                     </button>
-                    <MudTooltip Text="删除工站">
-                        <MudIconButton Icon="@Icons.Material.Filled.DeleteOutline" Color="Color.Error" Size="Size.Small"
-                                       aria-label="@($"删除工站 {station.Code}")"
-                                       Disabled="_busy" OnClick="@(() => DeleteDevice(station))" />
-                    </MudTooltip>
                 </div>
             }
         </MudPaper>
@@ -138,6 +127,13 @@
                                StartIcon="@(_busy ? Icons.Material.Filled.Sync : Icons.Material.Filled.Save)">
                         @(_busy ? "保存中…" : $"保存 {_current.Code}")
                     </MudButton>
+                    @* 删除只保留在编辑区一处：列表每行一个红图标会把选择态淹掉，
+                       也容易在滚动设备列表时误触。 *@
+                    <MudButton Variant="Variant.Text" Color="Color.Error"
+                               OnClick="@(() => DeleteDevice(_current))" Disabled="_busy"
+                               StartIcon="@Icons.Material.Filled.DeleteOutline">
+                        删除工站
+                    </MudButton>
                 </MudStack>
                 @if (_showValidationSummary && ValidationIssues.Count > 0)
                 {
@@ -167,6 +163,7 @@
                     </MudItem>
                     <MudItem xs="12" sm="6" md="3">
                         <MudSelect T="int" @bind-Value="_current.PlcConnectionId" @bind-Value:after="ValidateStation" Label="所属 PLC"
+                                   ToStringFunc="@PlcNameById"
                                    data-dt-validation="plc" Error="@(_plcError is not null)" ErrorText="@_plcError">
                             @foreach (var plc in _plcs)
                             {
@@ -200,7 +197,7 @@
                     <StationTrialResultsPanel Trial="trial" Station="trialStation" OccupiedAddress="@_trialOccupiedAddress"
                                               Stale="TrialStale" Close="ClearTrial" />
                 }
-                <MudTabs Elevation="0" Rounded="true" PanelClass="pt-4" AlwaysShowScrollButtons="true" @bind-ActivePanelIndex="_tab">
+                <MudTabs Elevation="0" Rounded="true" PanelClass="pt-4" @bind-ActivePanelIndex="_tab">
                     <MudTabPanel Text="握手">
                         @* 平铺九宫格看不出"哪几个是一件事"：这里按 握手 / 托盘码 / 取值来源 / 线体角色
                            分成四段，每段一句说明，用户不用猜某个字段属于哪部分。 *@
@@ -248,6 +245,7 @@
                             </MudItem>
                             <MudItem xs="6" md="3">
                                 <MudSelect T="PlcDataType" @bind-Value="_current.PalletCodeDataType" Label="托盘码类型"
+                                           ToStringFunc="@PalletCodeTypeText"
                                            HelperText="字符串最常见；数值型会把寄存器值转成托盘码">
                                     <MudSelectItem T="PlcDataType" Value="PlcDataType.String">字符串</MudSelectItem>
                                     <MudSelectItem T="PlcDataType" Value="PlcDataType.Int32">Int32</MudSelectItem>
@@ -1349,6 +1347,17 @@
         _tab = 0;
         Toast.Add("已新增工站", Severity.Success);
     });
+
+    /// <summary>MudSelect 找不到条目文本时会回退到 Value.ToString()，这里显式给出 PLC 名称。</summary>
+    private string PlcNameById(int plcId)
+        => _plcs.FirstOrDefault(plc => plc.Id == plcId)?.Name ?? plcId.ToString();
+
+    private static string PalletCodeTypeText(PlcDataType type) => type switch
+    {
+        PlcDataType.String => "字符串",
+        PlcDataType.Int32 => "Int32",
+        _ => type.ToString()
+    };
 
     private Task DeleteDevice(Station station) => Run("删除工站", async () =>
     {

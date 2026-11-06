@@ -90,6 +90,23 @@ public class SimulatePageTests : WebTestBase
     }
 
     [Fact]
+    public void StatusChipShowsPendingWriteBackBlockAndLinksToDiagnostics()
+    {
+        Simulator.Status = new LineSimulatorStatus
+        {
+            Running = false,
+            PausedByPendingWriteBack = true,
+            LastMessage = "自动仿真已暂停：工站 OP30 存在待人工核对的回写留证，请在诊断页解除留证后再开自动仿真"
+        };
+
+        var cut = Render(settings: new SystemSettings { SimulatorAutoRun = true });
+
+        Assert.Contains("已启用 · 等待解除留证", cut.Markup);
+        Assert.Contains("去诊断页解除留证", cut.Markup);
+        Assert.Contains("/diagnostics#diag-manual", cut.Markup);
+    }
+
+    [Fact]
     public void EmptyPalletCodeBlocksRunAndExplainsWhy()
     {
         var cut = Render();

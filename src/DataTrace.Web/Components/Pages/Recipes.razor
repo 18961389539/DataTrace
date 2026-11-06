@@ -68,8 +68,11 @@
             <MudTh>名称</MudTh>
             <MudTh Class="dt-nowrap">覆盖点位</MudTh>
             <MudTh Class="dt-nowrap">启用 <InfoHint Topic="HelpTexts.RecipeEnabled" /></MudTh>
-            <MudTh>当前</MudTh>
-            <MudTh>备注</MudTh>
+            @if (_active is not null)
+            {
+                <MudTh Class="dt-nowrap">当前</MudTh>
+            }
+            <MudTh Class="dt-nowrap">备注</MudTh>
             <MudTh></MudTh>
         </HeaderContent>
         <RowTemplate>
@@ -98,13 +101,16 @@
                 <MudSwitch T="bool" Value="context.Enabled" ValueChanged="v => ToggleEnabled(context, v)"
                            Color="Color.Primary" Size="Size.Small" Disabled="_saving" />
             </MudTd>
-            <MudTd DataLabel="当前">
-                @if (context.Id == _active?.Id)
-                {
-                    <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small"
-                             Color="Color.Success" aria-label="当前型号" />
-                }
-            </MudTd>
+            @if (_active is not null)
+            {
+                <MudTd DataLabel="当前">
+                    @if (context.Id == _active.Id)
+                    {
+                        <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small"
+                                 Color="Color.Success" aria-label="当前型号" />
+                    }
+                </MudTd>
+            }
             <MudTd DataLabel="备注">@context.Remark</MudTd>
             @* 操作列一律右对齐 + 可换行（.dt-actions）：五个按钮加一条说明，
                dt-nowrap 会把列宽硬性撑开，窄屏上整张表变得只能横向滚。 *@

@@ -12,7 +12,7 @@
                 OnClick="OnNavClick">实时看板</MudNavLink>
     <MudNavLink Href="/alarms" Icon="@Icons.Material.Filled.NotificationImportant" OnClick="OnNavClick">
         <span class="dt-nav-item">
-            <span>设备报警</span>
+            <span>报警中心</span>
             @if (AlarmBadge is { } alarms)
             {
                 <span class="@AlarmBadgeClass" title="@($"待接手 {alarms}")"

@@ -13,31 +13,16 @@
 @inject NavigationManager Nav
 @inject IDialogService Dialogs
 
-<PageHeader Title="设备报警" HelpRoute="alarms" Busy="@_refreshing"
+<PageHeader Title="报警中心" HelpRoute="alarms" Busy="@_refreshing"
             Description="工站配置的设备报警置顶优先处置；系统规则报警在下方。还没人接手的会一直留着并在顶部响铃。静音只关本机声音。">
     <ChildContent>
-        @if (_loadError is null)
+        @* 状态计数只在下方「按状态查看」出现一次；页头只保留更紧急的红色提醒，
+           否则同一待办数会在页头、分区与操作条上反复出现。 *@
+        @if (_loadError is null && UrgentOpenCount > 0)
         {
-            <MudChip T="string" Size="Size.Small" Variant="@(DeviceAttentionCount > 0 ? Variant.Filled : Variant.Outlined)"
-                     Class="@SummaryChipClass(device: true)"
-                     Color="@(DeviceAttentionCount > 0 ? Color.Error : Color.Default)"
-                     OnClick="@(() => FocusDevice())" title="只看工站配置的设备报警">
-                设备 @DeviceAttentionCount
+            <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled" Class="@SummaryChipClass(current: true, urgent: true)" OnClick="@(() => SetView(AlarmView.Current))" title="紧急仍在发生">
+                紧急 @UrgentOpenCount
             </MudChip>
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="@SummaryChipClass(needs: true)"
-                     Color="@(NeedsOwner.Count > 0 ? Color.Error : Color.Default)" OnClick="@(() => FocusNeeds())" title="切到待接手相关视图">
-                待接手 @NeedsOwner.Count
-            </MudChip>
-            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Class="@SummaryChipClass(current: true)"
-                     Color="@(CurrentCount > 0 ? Color.Warning : Color.Default)" OnClick="@(() => SetView(AlarmView.Current))" title="只看仍在发生">
-                当前 @CurrentCount
-            </MudChip>
-            @if (UrgentOpenCount > 0)
-            {
-                <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled" Class="@SummaryChipClass(current: true, urgent: true)" OnClick="@(() => SetView(AlarmView.Current))" title="紧急仍在发生">
-                    紧急 @UrgentOpenCount
-                </MudChip>
-            }
         }
     </ChildContent>
 </PageHeader>
@@ -63,7 +48,8 @@ else
 <MudPaper Class="dt-filter-card dt-alarms-filters pa-3 mb-2" Elevation="0" Outlined="true">
 <MudGrid Spacing="2">
     <MudItem xs="12" sm="4">
-        <MudSelect T="int?" @bind-Value="_stationFilter" @bind-Value:after="OnFiltersChanged" Label="报警工站" Clearable="true" Dense="true">
+        <MudSelect T="int?" @bind-Value="_stationFilter" @bind-Value:after="OnFiltersChanged"
+                   ToStringFunc="@StationFilterText" Label="报警工站" Clearable="true" Dense="true">
             <MudSelectItem T="int?" Value="@((int?)0)">全线／会话报警</MudSelectItem>
             @foreach (var station in StationOptions)
             {
@@ -72,7 +58,8 @@ else
         </MudSelect>
     </MudItem>
     <MudItem xs="12" sm="4">
-        <MudSelect T="LineAlarmKind?" @bind-Value="_kindFilter" @bind-Value:after="OnFiltersChanged" Label="报警类型" Clearable="true" Dense="true">
+        <MudSelect T="LineAlarmKind?" @bind-Value="_kindFilter" @bind-Value:after="OnFiltersChanged"
+                   ToStringFunc="@KindFilterText" Label="报警类型" Clearable="true" Dense="true">
             @foreach (var kind in KindOptions)
             {
                 <MudSelectItem T="LineAlarmKind?" Value="@((LineAlarmKind?)kind)">@KindText(kind)</MudSelectItem>
@@ -163,21 +150,30 @@ else
     @* 设备报警（工站配置 CustomDevice）置顶主导；系统规则报警在次级区。 *@
     @if (ShowDeviceRegion)
     {
-    <div class="dt-alarms-region dt-alarms-region--device mb-3" aria-label="工站配置设备报警">
+    <div class="dt-alarms-region dt-alarms-region--device @(DeviceAttentionCount == 0 ? "dt-alarms-region--empty" : null) mb-3" aria-label="工站配置设备报警">
         <header class="dt-alarms-region-head">
             <div class="dt-alarms-region-titles">
                 <MudText Typo="Typo.h6" Class="dt-alarms-region-title mb-0">设备报警</MudText>
                 <MudText Typo="Typo.caption" Class="dt-alarms-region-sub">工站配置限值 · 优先处置</MudText>
             </div>
-            <div class="dt-alarms-region-chips">
-                <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@(DeviceNeedsOwner.Count > 0 ? Color.Error : Color.Default)">待接手 @DeviceNeedsOwner.Count</MudChip>
-                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@(DeviceAcknowledgedOpen.Count > 0 ? Color.Info : Color.Default)">已接手 @DeviceAcknowledgedOpen.Count</MudChip>
-                @if (_kindFilter != LineAlarmKind.CustomDevice)
-                {
-                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary" Class="dt-alarms-region-filter"
-                               StartIcon="@Icons.Material.Filled.FilterAlt" OnClick="FocusDevice">只看设备</MudButton>
-                }
-            </div>
+            @if (DeviceAttentionCount > 0)
+            {
+                <div class="dt-alarms-region-chips">
+                    @if (DeviceNeedsOwner.Count > 0)
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="Color.Error">待接手 @DeviceNeedsOwner.Count</MudChip>
+                    }
+                    @if (DeviceAcknowledgedOpen.Count > 0)
+                    {
+                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">已接手 @DeviceAcknowledgedOpen.Count</MudChip>
+                    }
+                    @if (_kindFilter != LineAlarmKind.CustomDevice)
+                    {
+                        <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary" Class="dt-alarms-region-filter"
+                                   StartIcon="@Icons.Material.Filled.FilterAlt" OnClick="FocusDevice">只看设备</MudButton>
+                    }
+                </div>
+            }
         </header>
 
         @if (DeviceNeedsOwner.Count > 0)
@@ -187,7 +183,7 @@ else
                 @if (_canTake)
                 {
                     <div class="dt-alarms-action-callout dt-alarms-action-callout--device mb-2" role="status">
-                        <span>有 <strong>@DeviceNeedsOwner.Count</strong> 条设备报警等人接手；可单条接手，或批量接手本区当前筛选结果。</span>
+                        <span>设备报警等待接手；可单条接手，或批量接手本区当前筛选结果。</span>
                         @if (OldestDeviceNeedsAgeText is { } age)
                         {
                             <span class="dt-alarms-action-callout-age">最早一条已持续 @age</span>
@@ -338,12 +334,11 @@ else
             </div>
         }
 
-        @if (DeviceNeedsOwner.Count == 0 && DeviceAcknowledgedOpen.Count == 0)
+        @if (DeviceAttentionCount == 0)
         {
-            <MudAlert Severity="Severity.Success" Dense="true" Variant="Variant.Outlined" Class="mb-1">
-                当前没有工站配置触发的设备报警。
-            </MudAlert>
-            <MudText Typo="Typo.caption" Class="dt-muted mb-1">可在工站配置「报警」页添加限值；触发后会优先出现在本区。</MudText>
+            <MudText Typo="Typo.caption" Class="dt-muted mb-1">
+                当前没有工站配置触发的设备报警；可在工站配置「报警」页添加限值，触发后会优先出现在本区。
+            </MudText>
         }
     </div>
     }
@@ -383,7 +378,7 @@ else
                 @if (_canTake && SystemNeedsOwner.Count > 0)
                 {
                     <div class="dt-alarms-action-callout mb-2" role="status">
-                        <span>有 <strong>@SystemNeedsOwner.Count</strong> 条系统规则报警等人接手；可单条接手，或批量接手本区当前筛选结果。</span>
+                        <span>系统规则报警等待接手；可单条接手，或批量接手本区当前筛选结果。</span>
                         @if (OldestSystemNeedsAgeText is { } age)
                         {
                             <span class="dt-alarms-action-callout-age">最早一条已持续 @age</span>
@@ -759,6 +754,33 @@ else
     private IEnumerable<(int Id, string Label)> StationOptions => _stations.Select(station => (station.Id, $"{station.Code} {station.Name}"))
         .Concat(_attention.Concat(_recent).Select(StationOf).Where(id => id > 0).Distinct()
             .Where(id => _stations.All(station => station.Id != id)).Select(id => (id, $"历史工站 #{id}")));
+
+    /// <summary>MudSelect 找不到条目文本时会回退到 Value.ToString()，这里显式给出中文标签。</summary>
+    private string StationFilterText(int? id)
+    {
+        if (id is null)
+        {
+            return string.Empty;
+        }
+
+        if (id == 0)
+        {
+            return "全线／会话报警";
+        }
+
+        foreach (var option in StationOptions)
+        {
+            if (option.Id == id)
+            {
+                return option.Label;
+            }
+        }
+
+        return $"历史工站 #{id}";
+    }
+
+    private string KindFilterText(LineAlarmKind? kind)
+        => kind is null ? string.Empty : KindText(kind.Value);
 
     private static int StationOf(AlarmIncidentDraft item)
         => LineAlarmStation.IdOf(item.Key, item.Kind);
@@ -1303,13 +1325,6 @@ else
         if (age.TotalDays < 1) return $"{(int)age.TotalHours} 小时前";
         if (age.TotalDays < 7) return $"{(int)age.TotalDays} 天前";
         return When(time);
-    }
-
-    private void FocusNeeds()
-    {
-        // 摘要「待接手」：从已接手/已解除视图拉回待办总览。
-        _kindFilter = null;
-        SetView(AlarmView.All);
     }
 
     private void FocusDevice()

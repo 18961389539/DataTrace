@@ -1,4 +1,5 @@
 using System.Text;
+using DataTrace.Application.Quality;
 using DataTrace.Application.Runtime;
 using DataTrace.Domain.Entities;
 using DataTrace.Domain.Enums;
@@ -42,6 +43,7 @@ public sealed class RecordDetailUnitTests : WebTestBase
         Context.Services.AddSingleton(store.Object);
         Context.Services.AddSingleton(Mock.Of<ICurveFileStore>());
         Context.Services.AddSingleton(Mock.Of<ICollectArchiveStore>());
+        Context.Services.AddSingleton(Mock.Of<IQualityIncidentService>());
         RenderPopoverHost();
 
         var cut = Context.Render<RecordDetail>(parameters => parameters
@@ -85,6 +87,7 @@ public sealed class RecordDetailUnitTests : WebTestBase
         Context.Services.AddSingleton(store.Object);
         Context.Services.AddSingleton(Mock.Of<ICurveFileStore>());
         Context.Services.AddSingleton(Mock.Of<ICollectArchiveStore>());
+        Context.Services.AddSingleton(Mock.Of<IQualityIncidentService>());
         RenderPopoverHost();
 
         var cut = Context.Render<RecordDetail>(parameters => parameters

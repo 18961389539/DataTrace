@@ -95,9 +95,12 @@
             <MudTh>名称</MudTh>
             <MudTh Class="dt-nowrap">计划数量</MudTh>
             <MudTh Class="dt-nowrap">状态</MudTh>
-            <MudTh>当前</MudTh>
+            @if (CurrentOrder is not null)
+            {
+                <MudTh Class="dt-nowrap">当前</MudTh>
+            }
             <MudTh Class="dt-nowrap">计划起止</MudTh>
-            <MudTh>备注</MudTh>
+            <MudTh Class="dt-nowrap">备注</MudTh>
             <MudTh></MudTh>
         </HeaderContent>
         <RowTemplate>
@@ -132,13 +135,16 @@
                     @DisplayLabels.WorkOrderStatusText(context.Status)
                 </MudChip>
             </MudTd>
-            <MudTd DataLabel="当前">
-                @if (context.IsCurrent)
-                {
-                    <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small"
-                             Color="Color.Success" aria-label="当前工单" />
-                }
-            </MudTd>
+            @if (CurrentOrder is not null)
+            {
+                <MudTd DataLabel="当前">
+                    @if (context.IsCurrent)
+                    {
+                        <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Size="Size.Small"
+                                 Color="Color.Success" aria-label="当前工单" />
+                    }
+                </MudTd>
+            }
             <MudTd DataLabel="计划起止" Class="dt-nowrap">@DateRange(context)</MudTd>
             <MudTd DataLabel="备注">
                 @if (string.IsNullOrWhiteSpace(context.Remark))

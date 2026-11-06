@@ -1,5 +1,6 @@
 @page "/quality/incidents"
 @attribute [Authorize]
+@implements IDisposable
 @using DataTrace.Application.Configuration
 @using DataTrace.Application.Quality
 @using DataTrace.Domain.Constants
@@ -63,7 +64,9 @@
 <MudPaper Class="dt-filter-card mb-0" Elevation="0" Outlined="true">
     <MudGrid Class="dt-filters">
         <MudItem xs="12" sm="6" md="3">
-            <MudSelect T="QualityIncidentStatus?" @bind-Value="_status" Label="状态" HelperText="可用快捷队列聚焦待办" Clearable="true" Dense="true">
+            <MudSelect T="QualityIncidentStatus?" @bind-Value="_status" @bind-Value:after="OnFilterChanged"
+                       ToStringFunc="@StatusFilterText"
+                       Label="状态" HelperText="可用快捷队列聚焦待办" Clearable="true" Dense="true">
                 @foreach (var status in Enum.GetValues<QualityIncidentStatus>())
                 {
                     <MudSelectItem T="QualityIncidentStatus?" Value="@((QualityIncidentStatus?)status)">@StatusText(status)</MudSelectItem>
@@ -71,7 +74,9 @@
             </MudSelect>
         </MudItem>
         <MudItem xs="12" sm="6" md="3">
-            <MudSelect T="int?" @bind-Value="_stationId" Label="工站" Clearable="true" Dense="true">
+            <MudSelect T="int?" @bind-Value="_stationId" @bind-Value:after="OnFilterChanged"
+                       ToStringFunc="@StationFilterText"
+                       Label="工站" Clearable="true" Dense="true">
                 @foreach (var station in _stations)
                 {
                     <MudSelectItem T="int?" Value="@((int?)station.Id)">@station.Code @station.Name</MudSelectItem>
@@ -79,10 +84,12 @@
             </MudSelect>
         </MudItem>
         <MudItem xs="12" sm="6" md="3">
-            <MudTextField T="string" @bind-Value="_owner" Label="负责人" Clearable="true" Immediate="true" />
+            <MudTextField T="string" @bind-Value="_owner" @bind-Value:after="OnFilterChanged"
+                          Label="负责人" Clearable="true" Immediate="true" />
         </MudItem>
         <MudItem xs="12" sm="6" md="3">
-            <MudTextField T="string" @bind-Value="_keyword" Label="单号或关键字" Clearable="true" Immediate="true"
+            <MudTextField T="string" @bind-Value="_keyword" @bind-Value:after="OnFilterChanged"
+                          Label="单号或关键字" Clearable="true" Immediate="true"
                           OnKeyDown="OnSearchKeyDown" />
         </MudItem>
     </MudGrid>
@@ -94,7 +101,7 @@
         <MudText Typo="Typo.caption" Class="dt-muted align-self-center">共 @_total 张</MudText>
     </MudStack>
     <MudText Typo="Typo.caption" Class="dt-muted mt-1">
-        状态、工站、负责人和关键词在点击“查询”后生效；上方工作队列切换后立即刷新。
+        状态、工站、负责人和关键词变更后自动查询（输入停顿约 0.4 秒）；点「查询」立即执行。上方工作队列切换后立即刷新。
     </MudText>
 </MudPaper>
 </div>
@@ -208,6 +215,8 @@ else
     private bool _canExport;
     private bool _hasAnyIncidents;
     private string? _error;
+    private int _filterVersion;
+    private bool _disposed;
     private string? _diagnosticDetails;
     private int PageCount => Math.Max(1, (int)Math.Ceiling(_total / (double)_pageSize));
 
@@ -224,6 +233,14 @@ else
     [SupplyParameterFromQuery(Name = "page")] public int? PageQuery { get; set; }
 
     [SupplyParameterFromQuery(Name = "size")] public int? SizeQuery { get; set; }
+    private string StatusFilterText(QualityIncidentStatus? status)
+        => status is null ? string.Empty : StatusText(status.Value);
+
+    private string StationFilterText(int? stationId)
+        => stationId is { } id && _stations.FirstOrDefault(station => station.Id == id) is { } station
+            ? $"{station.Code} {station.Name}"
+            : stationId?.ToString() ?? string.Empty;
+
     private string FilteredEmptyMessage
     {
         get
@@ -396,8 +413,59 @@ else
         }
     }
 
+    /// <summary>筛选变更后防抖自动查询；「查询」按钮仍保留为立即执行。</summary>
+    private void OnFilterChanged()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        var version = ++_filterVersion;
+        _ = AutoSearchAfterDelayAsync(version);
+    }
+
+    private async Task AutoSearchAfterDelayAsync(int version)
+    {
+        try
+        {
+            await Task.Delay(400);
+            if (_disposed || version != _filterVersion)
+            {
+                return;
+            }
+
+            await InvokeAsync(async () =>
+            {
+                // 上一轮查询还没结束时等它收尾，避免最后一次输入被 _loading 守卫吞掉。
+                for (var i = 0; i < 40 && _loading && !_disposed; i++)
+                {
+                    await Task.Delay(50);
+                }
+
+                if (_disposed || version != _filterVersion)
+                {
+                    return;
+                }
+
+                await SearchAsync();
+            });
+        }
+        catch (Exception)
+        {
+            // 电路在防抖窗口内断开时，不再更新已经释放的组件。
+        }
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _filterVersion++;
+    }
+
     private async Task LoadAsync()
     {
+        _filterVersion++;
         if (_loading)
         {
             return;

@@ -45,7 +45,7 @@
         <MudGrid Class="dt-filters">
             <MudItem xs="12" sm="6" md="4" lg="3">
                 <MudSelect T="int?" Value="_stationId" ValueChanged="OnStationChanged" Label="工站" Clearable="true"
-                           Disabled="_loading" HelperText="不选表示全部工站">
+                           ToStringFunc="@StationFilterText" Disabled="_loading" HelperText="不选表示全部工站">
                     @foreach (var s in _stations)
                     {
                         <MudSelectItem T="int?" Value="@s.Id">@s.Code @s.Name</MudSelectItem>
@@ -113,13 +113,14 @@
     </div>
 }
 
-<MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-3"
-         AlwaysShowScrollButtons="true">
+<MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-3">
     <MudTabPanel Text="直通率">
-        @* 栅格是流式 12 栏：两块 md=6 之间夹一个 xs=12，后一块就被挤到下一行的左半边，
-           右半边整块空掉。所以两张半宽卡必须挨着，整行的卡排在它们后面。 *@
+        @* 栅格是流式 12 栏：两块卡之间夹一个 xs=12，后一块就被挤到下一行的左半边，
+           右半边整块空掉。所以两张宽屏卡必须挨着，整行的卡排在它们后面。
+           1366/1440 笔电上 8 列会挤成竖排表头并出现横向滚动，因此并排只在 1920 起生效；
+           直通率表列更多，按 7/5 分而不是对半，给「班次/少做」留出换行余量。 *@
         <MudGrid>
-            <MudItem xs="12" md="6">
+            <MudItem xs="12" xl="7">
                 <MudPaper Class="pa-4 dt-fill">
                     <MudText Typo="Typo.h6" Class="mb-1">直通率</MudText>
                     <MudText Typo="Typo.caption" Class="dt-muted mb-2">
@@ -138,15 +139,22 @@
                             }
                             @if (_pieceFirstNg is not null)
                             {
-                                <MudText Typo="Typo.body2" Class="dt-muted">@_pieceFirstNg.Text <InfoHint Topic="HelpTexts.FirstNgStation" /></MudText>
+                                <div class="dt-report-note dt-muted">
+                                    <span>@_pieceFirstNg.Text</span>
+                                    <InfoHint Topic="HelpTexts.FirstNgStation" />
+                                </div>
                             }
                             @if (_pieceClearance is not null)
                             {
-                                <MudText Typo="Typo.body2" Class="dt-muted">@_pieceClearance.Text <InfoHint Topic="HelpTexts.SpecClearance" /></MudText>
+                                <div class="dt-report-note dt-muted">
+                                    <span>@_pieceClearance.Text</span>
+                                    <InfoHint Topic="HelpTexts.SpecClearance" />
+                                </div>
                             }
                         </div>
                     }
-                    <MudTable Items="_fpy" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading">
+                    <MudTable Items="_fpy" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Loading="_loading"
+                              Class="dt-fpy-table">
                         <HeaderContent>
                             <MudTh>班次</MudTh>
                             <MudTh Class="dt-num">总数（件）</MudTh>
@@ -301,7 +309,7 @@
                 </MudPaper>
             </MudItem>
 
-            <MudItem xs="12" md="6">
+            <MudItem xs="12" xl="5">
                 <MudPaper Class="pa-4 dt-fill">
                     <MudText Typo="Typo.h6" Class="mb-2">不良 Top N <InfoHint Topic="HelpTexts.IssueShare" /></MudText>
                     <IssueTopTable Items="_defects.Items" Loading="_loading" Share="DefectShare"
@@ -846,6 +854,11 @@ private IssueTopReport _defects = new();
                       ?? _tags.FirstOrDefault())?.Id ?? 0;
         }
     }
+private string StationFilterText(int? stationId)
+        => stationId is { } id && _stations.FirstOrDefault(station => station.Id == id) is { } station
+            ? $"{station.Code} {station.Name}"
+            : stationId?.ToString() ?? string.Empty;
+
 private async Task OnStationChanged(int? stationId)
     {
         _stationId = stationId;

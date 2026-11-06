@@ -33,6 +33,33 @@ public class AlarmsPageTests : WebTestBase
     }
 
     [Fact]
+    public void Empty_device_region_is_quiet_when_only_system_alarms_exist()
+    {
+        var incidents = new FakeAlarmIncidents
+        {
+            Attention =
+            [
+                new AlarmIncidentDraft
+                {
+                    Id = 3,
+                    Key = "ng:23",
+                    Kind = LineAlarmKind.ConsecutiveNg,
+                    Message = "连续不合格",
+                    RaisedAt = new DateTime(2026, 9, 28, 16, 0, 0)
+                }
+            ]
+        };
+        Context.Services.AddSingleton<IAlarmIncidents>(incidents);
+        Context.Services.AddSingleton<ILineAlarmBoard>(new LineAlarmBoard());
+
+        var cut = RenderAlarms();
+
+        var deviceRegion = cut.Find(".dt-alarms-region--device");
+        Assert.Contains("dt-alarms-region--empty", deviceRegion.ClassName);
+        Assert.Contains("当前没有工站配置触发的设备报警", deviceRegion.TextContent);
+    }
+
+    [Fact]
     public void Taking_an_alarm_records_the_current_user_and_stops_asking()
     {
         var incidents = new FakeAlarmIncidents

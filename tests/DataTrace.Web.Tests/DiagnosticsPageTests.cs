@@ -67,14 +67,12 @@ public class DiagnosticsPageTests : WebTestBase
 
 
     [Fact]
-    public void Sticky_ops_bar_exposes_short_pause_and_copy_without_duplicating_header_verbs()
+    public void Sticky_ops_bar_owns_pause_and_copy_controls()
     {
         var (cut, _, _) = Render(new FakeSpool());
 
         Assert.Contains("dt-diag-ops", cut.Markup);
-        Assert.Contains(">暂停<", cut.Markup);
-        Assert.Contains(">复制<", cut.Markup);
-        // 页头仍保留完整文案，供原有用例 Single() 定位。
+        // 暂停/复制只在吸顶工具条出现一次，页头不再重复同一组操作与更新时间。
         Assert.Equal(1, cut.FindAll("button").Count(button => button.TextContent.Contains("暂停刷新")));
         Assert.Equal(1, cut.FindAll("button").Count(button => button.TextContent.Contains("复制诊断摘要")));
     }

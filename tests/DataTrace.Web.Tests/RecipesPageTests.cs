@@ -38,6 +38,7 @@ public class RecipesPageTests : WebTestBase
 
         Assert.Contains("与当前型号不一致", cut.Markup);
         Assert.Contains("WO-1", cut.Markup);
+        Assert.Contains(cut.FindAll("th"), header => header.TextContent.Trim() == "当前");
     }
 
     [Fact]
@@ -48,6 +49,7 @@ public class RecipesPageTests : WebTestBase
         Assert.Contains("A100", cut.Markup);
         Assert.Contains("演示型号", cut.Markup);
         Assert.DoesNotContain("SYS-XYZ", cut.Markup);
+        Assert.DoesNotContain(cut.FindAll("th"), header => header.TextContent.Trim() == "当前");
     }
 
     [Fact]

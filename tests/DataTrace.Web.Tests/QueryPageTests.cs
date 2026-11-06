@@ -490,6 +490,7 @@ public class QueryPageTests : WebTestBase
         Context.Services.AddSingleton(_store.Object);
         Context.Services.AddSingleton(new Mock<ICurveFileStore>().Object);
         Context.Services.AddSingleton(new Mock<ICollectArchiveStore>().Object);
+        Context.Services.AddSingleton<IQualityIncidentService>(_quality.Object);
         RenderPopoverHost();
         Context.Services.GetRequiredService<NavigationManager>().NavigateTo("/query/202610/22?back=query%3Fstation%3D23%26sort%3Dpallet%26dir%3Dasc&position=19");
 
@@ -707,6 +708,7 @@ public class QueryPageTests : WebTestBase
         Context.Services.AddSingleton(_store.Object);
         Context.Services.AddSingleton(new Mock<ICurveFileStore>().Object);
         Context.Services.AddSingleton(new Mock<ICollectArchiveStore>().Object);
+        Context.Services.AddSingleton<IQualityIncidentService>(_quality.Object);
         RenderPopoverHost();
 
         var cut = Context.Render<RecordDetail>(parameters => parameters.Add(page => page.MonthKey, "202610").Add(page => page.RecordId, 22));

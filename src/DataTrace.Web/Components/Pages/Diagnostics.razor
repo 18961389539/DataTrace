@@ -62,12 +62,8 @@
         }
     </ChildContent>
     <Actions>
-        <MudText Typo="Typo.caption" Class="dt-muted">@RefreshCaption</MudText>
-        <MudButton Size="Size.Small" Variant="Variant.Text"
-                   StartIcon="@(_paused ? Icons.Material.Filled.PlayArrow : Icons.Material.Filled.Pause)"
-                   OnClick="TogglePauseAsync">@(_paused ? "继续刷新" : "暂停刷新")</MudButton>
-        <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ContentCopy"
-                   OnClick="CopyDigestAsync">复制诊断摘要</MudButton>
+        @* 暂停/刷新/复制与更新时间只留在下面那条吸顶工具条上：
+           两处同时出现时，首屏会重复整套操作，1366 下还会把「本页说明」挤到单独一行。 *@
         <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.History"
                    Href="/logs">审计日志</MudButton>
     </Actions>
@@ -164,11 +160,11 @@ else if (_onlyIssues && _loadError is null)
                    StartIcon="@(_paused ? Icons.Material.Filled.PlayArrow : Icons.Material.Filled.Pause)"
                    title="@(_paused ? "继续自动刷新" : "暂停自动刷新")"
                    aria-label="@(_paused ? "继续自动刷新" : "暂停自动刷新")"
-                   OnClick="TogglePauseAsync">@(_paused ? "继续" : "暂停")</MudButton>
+                   OnClick="TogglePauseAsync">@(_paused ? "继续刷新" : "暂停刷新")</MudButton>
         <MudButton Size="Size.Small" Variant="Variant.Text" Class="dt-diag-ops-btn"
                    StartIcon="@Icons.Material.Filled.ContentCopy"
                    title="复制诊断摘要到剪贴板" aria-label="复制诊断摘要到剪贴板"
-                   OnClick="CopyDigestAsync">复制</MudButton>
+                   OnClick="CopyDigestAsync">复制诊断摘要</MudButton>
     </div>
 </div>
 
@@ -350,7 +346,7 @@ else
         <MudButton Size="Size.Small" Variant="Variant.Text" Disabled="@(DisconnectedPlcCount == 0)"
                    OnClick="ExpandIssuePlc">展开异常</MudButton>
         <MudButton Size="Size.Small" Variant="Variant.Text" Href="/config/plc">PLC 配置</MudButton>
-        <MudButton Size="Size.Small" Variant="Variant.Text" Href="/alarms">设备报警</MudButton>
+        <MudButton Size="Size.Small" Variant="Variant.Text" Href="/alarms">报警中心</MudButton>
     </div>
 @if (FocusedTraffic.Count == 0)
 {

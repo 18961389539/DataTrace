@@ -38,6 +38,12 @@
                以前启动时强制写回 false，等于把界面上的开关变成了摆设。 *@
             <MudSwitch T="bool" Value="_auto" ValueChanged="OnAutoChanged" Label="自动跑线" Color="Color.Primary" />
             <InfoHint Topic="HelpTexts.SimAutoRun" />
+            @if (BlockedByPendingWriteBack)
+            {
+                <MudText Typo="Typo.caption" Class="dt-text-warning">
+                    开关仍是启用态，但已被回写留证阻塞；解除留证后需重新开启自动跑线。
+                </MudText>
+            }
             <MudNumericField @bind-Value="_interval" @bind-Value:after="() => _intervalError = null" Immediate="true"
                              Label="托盘间隔(ms)" Min="@SettingsLimits.MinSimulatorIntervalMs" Max="@SettingsLimits.MaxSimulatorIntervalMs"
                              Error="@(_intervalError is not null)" ErrorText="@_intervalError" />
@@ -61,9 +67,8 @@
         <MudPaper Class="pa-4">
             <MudStack Row="true" AlignItems="AlignItems.Center" Class="mb-3">
                 <MudText Typo="Typo.subtitle1">状态</MudText>
-                <MudChip T="string" Size="Size.Small" Variant="Variant.Filled"
-                         Color="@(_status.Running ? Color.Success : Color.Default)">
-                    @(_status.Running ? "自动跑线中" : "已停止")
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@StatusColor">
+                    @StatusText
                 </MudChip>
                 <MudSpacer />
                 <MudText Typo="Typo.caption" Class="dt-muted">
@@ -97,7 +102,23 @@
                     </div>
                 </MudItem>
             </MudGrid>
-            <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-2">@_status.LastMessage</MudText>
+            @if (BlockedByPendingWriteBack)
+            {
+                <MudAlert Severity="Severity.Warning" Dense="true" Variant="Variant.Outlined" Class="mt-2" role="status">
+                    <MudText Typo="Typo.body2">@_status.LastMessage</MudText>
+                    <MudText Typo="Typo.caption" Class="dt-muted mb-2">
+                        阻塞期间自动跑线不会自行恢复；解除留证后请重新开启开关。
+                    </MudText>
+                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Warning"
+                               StartIcon="@Icons.Material.Filled.MonitorHeart" Href="/diagnostics#diag-manual">
+                        去诊断页解除留证
+                    </MudButton>
+                </MudAlert>
+            }
+            else
+            {
+                <MudText Typo="Typo.body2" Color="Color.Secondary" Class="mt-2">@_status.LastMessage</MudText>
+            }
 
             <MudDivider Class="my-3" />
 
@@ -172,6 +193,16 @@
     /// <summary>参数改了但没点「保存参数」：提示 + 拦一下离开本页。</summary>
     private bool Dirty
         => _interval != _loadedInterval || _ng != _loadedNg || _pool != _loadedPool;
+
+    /// <summary>配置开关仍开着，但运行时被人工留证挡下：状态不能只写「已停止」。</summary>
+    private bool BlockedByPendingWriteBack
+        => _auto && !_status.Running && _status.PausedByPendingWriteBack;
+
+    private Color StatusColor
+        => _status.Running ? Color.Success : BlockedByPendingWriteBack ? Color.Warning : Color.Default;
+
+    private string StatusText
+        => _status.Running ? "自动跑线中" : BlockedByPendingWriteBack ? "已启用 · 等待解除留证" : "已停止";
 
     /// <summary>三个动作共用同一条模拟产线，任一在跑时全部按钮都锁住，避免交错触发把状态机搅乱。</summary>
     private bool _busy => _saving || _running || _triggering is not null;

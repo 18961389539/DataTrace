@@ -221,7 +221,7 @@
         </MudTh>
         <MudTh>用户</MudTh>
         <MudTh>动作</MudTh>
-        <MudTh>对象</MudTh>
+        <MudTh Class="dt-nowrap dt-log-object">对象</MudTh>
         <MudTh>键 <InfoHint Topic="HelpTexts.LogEntityKey" /></MudTh>
         <MudTh>结果 / 来源</MudTh>
         <MudTh>变更 <InfoHint Topic="HelpTexts.LogChange" /></MudTh>
@@ -236,7 +236,7 @@
                 </MudChip>
             </MudTooltip>
         </MudTd>
-        <MudTd DataLabel="对象">@DisplayLabels.EntityType(item.EntityType)</MudTd>
+        <MudTd DataLabel="对象" Class="dt-log-object">@DisplayLabels.EntityType(item.EntityType)</MudTd>
         <MudTd DataLabel="键">@item.EntityKey</MudTd>
         <MudTd DataLabel="结果 / 来源" Class="dt-audit-origin">
             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">

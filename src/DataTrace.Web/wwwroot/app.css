@@ -675,6 +675,12 @@ html.dt-theme-dark .mud-navmenu .mud-nav-link.active:hover {
 
 /* 变更列：整段 JSON 铺在格子里会把列宽撑爆，这里截断 + 点开看全的。
    摘要在 C# 侧已截到 90 字，CSS 再兜一层窄屏。 */
+/* 对象列只放短标签（工站/报警/数据库备份），给一个最小宽度，
+   否则 1366 下会被变更列挤成每行一个字。 */
+.dt-log-object {
+    min-width: 88px;
+}
+
 .dt-change-cell {
     display: flex;
     align-items: center;
@@ -946,6 +952,12 @@ html.dt-theme-dark .mud-navmenu .mud-nav-link.active:hover {
     flex-wrap: wrap;
     gap: 8px;
     margin-top: 6px;
+}
+
+.dt-range-dates {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
 }
 
 .dt-range-date {
@@ -1881,6 +1893,9 @@ html.dt-theme-dark .mud-navmenu .mud-nav-link.active:hover {
 }
 
 .station-list-item-select {
+    /* 显式声明块级布局：原生 button 在部分 Chromium 内核里默认 inline-flex，
+       会把里面的三行文字排成一行并压成单字宽。 */
+    display: block;
     flex: 1;
     min-width: 0;
     padding: 0;
@@ -2894,11 +2909,14 @@ html.dt-theme-dark .mud-navmenu .mud-nav-link.active:hover {
     scroll-margin-top: calc(var(--mud-appbar-height, 64px) + 12px);
 }
 
-@media (max-width: 960px) {
+/* 1366 笔电上四列会把「客户约定上限未超出」拆成孤字，提前降到两列。 */
+@media (max-width: 1400px) {
     .dt-settings-health {
         grid-template-columns: 1fr 1fr;
     }
+}
 
+@media (max-width: 960px) {
     .dt-settings-layout {
         grid-template-columns: 1fr;
     }
@@ -2942,7 +2960,8 @@ body.dt-shopfloor .mud-appbar {
 }
 body.dt-shopfloor .mud-main-content {
     margin-left: 0 !important;
-    padding: 12px 16px 24px !important;
+    /* 右下角「退出大屏」按钮固定在视口上，底部多留一段，滚到页尾时不会压住最后一行内容。 */
+    padding: 12px 16px 72px !important;
 }
 body.dt-shopfloor .dt-alarm-bar {
     top: 0;
@@ -3543,6 +3562,23 @@ html.dt-theme-dark button.dt-settings-nav-btn.active {
     .dt-trace-summary {
         gap: 2px 12px;
     }
+}
+
+/* 直通率表：表头不折行，避免「未判定/直通率/少做」被拆成竖排；
+   1366/1440 下卡片改为整行后 8 列仍能容纳，1920 起才与不良 Top N 并排。 */
+.dt-fpy-table th {
+    white-space: nowrap;
+}
+
+/* ⓘ 是按钮/浮层根节点（block），不能直接塞进 MudText 的 <p>：
+   浏览器会提前闭合段落，图标被挤到下一行。用 flex 行容器承载文字与图标。 */
+.dt-report-note {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px;
+    margin-bottom: 4px;
+    font-size: .875rem;
 }
 
 /* ---------- 波形基线分析 ---------- */
@@ -4530,6 +4566,23 @@ body:has(.dt-alarm-bar) .dt-diag-toolbar {
     border: 2px solid color-mix(in srgb, var(--mud-palette-error) 55%, transparent);
     background: color-mix(in srgb, var(--mud-palette-error) 6%, var(--mud-palette-surface));
     box-shadow: 0 1px 0 color-mix(in srgb, var(--mud-palette-error) 18%, transparent);
+}
+
+/* 空设备区只是"本区没有东西"，不该继续用故障红框和红标题；
+   降成一条中性说明，避免满页红色把真正待处理的系统规则报警淹没。 */
+.dt-alarms-region--device.dt-alarms-region--empty {
+    border: 1px solid var(--mud-palette-lines-default);
+    background: var(--mud-palette-surface);
+    box-shadow: none;
+}
+
+.dt-alarms-region--empty .dt-alarms-region-title {
+    color: var(--mud-palette-text-primary);
+    font-size: 1rem;
+}
+
+.dt-alarms-region--empty .dt-alarms-region-head {
+    margin-bottom: 4px;
 }
 
 .dt-alarms-region--system {

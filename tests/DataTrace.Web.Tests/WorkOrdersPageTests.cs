@@ -59,6 +59,7 @@ public class WorkOrdersPageTests : WebTestBase
         Assert.Contains("生产中", cut.Markup);
         Assert.Contains("2026-10-28 ~ 2026-10-30", cut.Markup);
         Assert.Contains("设为当前", cut.Markup);
+        Assert.DoesNotContain(cut.FindAll("th"), header => header.TextContent.Trim() == "当前");
     }
 
     [Fact]
@@ -68,6 +69,7 @@ public class WorkOrdersPageTests : WebTestBase
 
         Assert.Contains("取消选择", cut.Markup);
         Assert.Contains("当前工单", cut.Markup);
+        Assert.Contains(cut.FindAll("th"), header => header.TextContent.Trim() == "当前");
         Assert.DoesNotContain(cut.FindAll("button"), button => button.TextContent.Trim() == "设为当前");
     }
 
