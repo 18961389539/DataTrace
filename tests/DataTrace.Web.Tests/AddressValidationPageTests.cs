@@ -317,5 +317,21 @@ public class AddressValidationPageTests : WebTestBase
         Assert.Equal("新增 PLC 连接", title);
         Assert.Equal("", parameters.Get<string>("HeartbeatAddress"));
     }
+
+    [Fact]
+    public void Read_test_opens_for_the_saved_connection()
+    {
+        var plc = Mitsubishi();
+        plc.Heartbeat = new HeartbeatSettings { Address = "D10", Enabled = true, IntervalMs = 1000 };
+        Config.Snapshot = new AppConfigurationSnapshot { PlcConnections = [plc] };
+        Context.Render<MudBlazor.MudPopoverProvider>();
+        var cut = Context.Render<PlcConfig>();
+
+        ClickButton(cut, "读取测试");
+
+        var (title, parameters) = Assert.Single(Dialogs.Shown);
+        Assert.Equal("读取测试", title);
+        Assert.Same(plc, parameters.Get<PlcConnection>("Connection"));
+    }
 }
 

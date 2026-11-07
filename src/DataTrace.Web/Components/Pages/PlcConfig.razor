@@ -85,6 +85,9 @@
         <MudTd DataLabel="工站">@StationCount(context.Id)</MudTd>
         <MudTd DataLabel="操作" Class="dt-right">
             <span class="dt-actions">
+                <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Visibility"
+                           Disabled="_saving" aria-label="@($"读取测试 {context.Name}")"
+                           OnClick="@(() => Probe(context))">读取测试</MudButton>
                 <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Edit"
                            Disabled="_saving" OnClick="@(() => Edit(context))">编辑</MudButton>
                 <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Error"
@@ -142,6 +145,13 @@
         PlcBrand.OmronFins => "欧姆龙 FINS",
         _ => brand.ToString()
     };
+
+    private async Task Probe(PlcConnection item)
+    {
+        var parameters = new DialogParameters { ["Connection"] = item };
+        await DialogService.ShowAsync<PlcReadTestDialog>("读取测试", parameters,
+            new DialogOptions { MaxWidth = MaxWidth.Small, FullWidth = true, CloseOnEscapeKey = true });
+    }
 
     private async Task NewItem()
     {

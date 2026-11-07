@@ -36,6 +36,10 @@
     <ProductVersion>$(InformationalVersion)</ProductVersion>
   </PropertyGroup>
   <ItemGroup>
+    <!-- 托盘图标从程序集里取，不依赖输出目录里有没有 wwwroot（dotnet run 的内容根是 bin）。 -->
+    <EmbeddedResource Include="wwwroot\icons\datatrace.ico" LogicalName="DataTrace.Web.datatrace.ico" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\DataTrace.Application\DataTrace.Application.csproj" />
     <ProjectReference Include="..\DataTrace.Collector\DataTrace.Collector.csproj" />
     <ProjectReference Include="..\DataTrace.Infrastructure\DataTrace.Infrastructure.csproj" />

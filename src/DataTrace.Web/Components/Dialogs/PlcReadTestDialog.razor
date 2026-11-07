@@ -1,0 +1,170 @@
+@implements IDisposable
+@using DataTrace.Application.Configuration
+@using DataTrace.Collector
+@inject IPlcConnectionProbe Probe
+@inject IAuditLogger Audit
+@inject AuthenticationStateProvider Auth
+@inject DtToast Toast
+
+<MudDialog>
+    <TitleContent>
+        <MudText Typo="Typo.h6">读取测试 · @Connection.Name</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="dt-muted mb-3">
+            只读一个字地址，不写 PLC、不改这条连接。采集器已经连着它时走现有连接，否则临时连一次。
+        </MudText>
+        <form @onsubmit="Read" @onsubmit:preventDefault="true">
+            <MudGrid>
+                <MudItem xs="12" md="7">
+                    <MudTextField @bind-Value="_address" Label="地址" Immediate="true" Disabled="_busy"
+                                  HelperText="@AddressHint" />
+                </MudItem>
+                <MudItem xs="12" md="5">
+                    <MudSelect T="PlcDataType" @bind-Value="_dataType" Label="类型" Disabled="_busy">
+                        @foreach (var type in Enum.GetValues<PlcDataType>())
+                        {
+                            <MudSelectItem T="PlcDataType" Value="type">@DisplayLabels.DataType(type)</MudSelectItem>
+                        }
+                    </MudSelect>
+                </MudItem>
+                @if (_dataType == PlcDataType.String)
+                {
+                    <MudItem xs="12" md="5">
+                        <MudNumericField T="int" @bind-Value="_stringLength" Label="字符串长度" Min="1" Max="64" Disabled="_busy" />
+                    </MudItem>
+                }
+            </MudGrid>
+        </form>
+        @if (_result is { } result)
+        {
+            <MudAlert Severity="@(result.Ok ? Severity.Success : Severity.Error)" Dense="true" Variant="Variant.Outlined" Class="mt-3">
+                @if (result.Error is { } error)
+                {
+                    <div>@error</div>
+                }
+                else
+                {
+                    <div>值：@result.Display</div>
+                    <div>原始字：@result.RawText</div>
+                }
+                <div class="dt-muted">
+                    @result.ElapsedMs ms
+                    @if (result.UsedCollectorQueue is { } usedQueue)
+                    {
+                        <span> · @(usedQueue ? "采集器现有连接" : "临时连接")</span>
+                    }
+                </div>
+            </MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Close" Disabled="_busy">关闭</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Read" Disabled="_busy"
+                   StartIcon="@(_busy ? Icons.Material.Filled.Sync : Icons.Material.Filled.Visibility)">
+            @(_busy ? "读取中…" : "读取")
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private MudDialogInstance? MudDialog { get; set; }
+
+    [Parameter] public PlcConnection Connection { get; set; } = null!;
+
+    private string _address = "";
+    private PlcDataType _dataType = PlcDataType.Int16;
+    private int _stringLength = 8;
+    private bool _busy;
+    private bool _alive = true;
+    private int _version;
+    private PlcProbeResult? _result;
+
+    protected override void OnInitialized()
+    {
+        var heartbeat = Connection.Heartbeat?.Address?.Trim();
+        if (!string.IsNullOrEmpty(heartbeat))
+        {
+            _address = heartbeat;
+        }
+    }
+
+    private string AddressHint => Connection.Brand switch
+    {
+        PlcBrand.SiemensS7 => "字地址，如 DB1.DBW0、MW10",
+        PlcBrand.ModbusTcp => "保持寄存器，如 40001",
+        PlcBrand.OmronFins => "字地址，如 D100",
+        _ => "字地址，如 D100。位地址不能读"
+    };
+
+    private async Task Read()
+    {
+        if (_busy || Connection is null)
+        {
+            return;
+        }
+
+        var version = ++_version;
+        _busy = true;
+        try
+        {
+            var result = await Probe.ReadAsync(Connection, _address, _dataType, _stringLength);
+            if (!_alive || version != _version)
+            {
+                return;
+            }
+
+            _result = result;
+            await AuditReadAsync(result);
+        }
+        catch (Exception ex)
+        {
+            if (_alive && version == _version)
+            {
+                Toast.Add($"读取失败：{ex.Message}", Severity.Error);
+            }
+        }
+        finally
+        {
+            if (_alive && version == _version)
+            {
+                _busy = false;
+            }
+        }
+    }
+
+    /// <summary>留痕只记地址和成败。读数本身不进审计，避免把工艺值写进配置库。</summary>
+    private async Task AuditReadAsync(PlcProbeResult result)
+    {
+        try
+        {
+            var user = (await Auth.GetAuthenticationStateAsync()).User.Identity?.Name ?? "";
+            var summary = result.Error is { } error
+                ? $"{result.Address} 读取失败：{error}"
+                : $"{result.Address} · {DisplayLabels.DataType(result.DataType)}";
+            await Audit.WriteAsync(
+                user,
+                "Trial",
+                "PlcConnection",
+                Connection.Name,
+                null,
+                summary,
+                outcome: result.Ok ? "Success" : "Failure");
+        }
+        catch (Exception ex)
+        {
+            if (_alive)
+            {
+                Toast.Add($"审计记录失败：{ex.Message}", Severity.Warning);
+            }
+        }
+    }
+
+    private void Close()
+    {
+        _version++;
+        MudDialog?.Close();
+    }
+
+    public void Dispose() => _alive = false;
+}

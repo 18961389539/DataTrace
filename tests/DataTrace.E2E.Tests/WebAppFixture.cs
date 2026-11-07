@@ -77,6 +77,8 @@ public abstract class WebAppHost : IDisposable
         startInfo.Environment["ASPNETCORE_ENVIRONMENT"] = EnvironmentName;
         startInfo.Environment["Kestrel__Endpoints__Http__Url"] = BaseUrl;
         startInfo.Environment["DataRoot"] = _dataRoot;
+        // 托盘要挂进当前桌面会话。测试最后是杀掉进程，图标会变成残留，CI 上也不该弹通知。
+        startInfo.Environment["Tray__Enabled"] = "false";
         if (SeedDemoUsers)
         {
             startInfo.Environment["Seed__DemoUsers"] = "true";

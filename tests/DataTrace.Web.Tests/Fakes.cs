@@ -466,6 +466,22 @@ public sealed class DialogSpy
                 return Task.FromResult(PromptResult);
             });
 
+        Mock.Setup(d => d.ShowAsync<PlcReadTestDialog>(
+                It.IsAny<string>(),
+                It.IsAny<DialogParameters>(),
+                It.IsAny<DialogOptions>()))
+            .Returns((string title, DialogParameters parameters, DialogOptions _) =>
+            {
+                lock (Shown)
+                {
+                    Shown.Add((title, parameters));
+                }
+
+                var reference = new Mock<IDialogReference>();
+                reference.SetupGet(r => r.Result).Returns(() => Task.FromResult(DialogResult));
+                return Task.FromResult(reference.Object);
+            });
+
         Mock.Setup(d => d.ShowAsync<PlcEditDialog>(
                 It.IsAny<string>(),
                 It.IsAny<DialogParameters>(),
@@ -619,4 +635,27 @@ public sealed class FakeStationTrialReader : IStationTrialReader
         [],
         [],
         null);
+}
+
+/// <summary>PLC 连接读取测试替身。页面测试只确认按钮把连接交出去，不真的连 PLC。</summary>
+public sealed class FakePlcConnectionProbe : IPlcConnectionProbe
+{
+    public PlcProbeResult? Result { get; set; }
+
+    public int CallCount { get; private set; }
+
+    public string? LastAddress { get; private set; }
+
+    public Task<PlcProbeResult> ReadAsync(
+        PlcConnection connection,
+        string? address,
+        PlcDataType dataType,
+        int stringLength,
+        CancellationToken cancellationToken = default)
+    {
+        CallCount++;
+        LastAddress = address;
+        return Task.FromResult(Result ?? new PlcProbeResult(
+            DateTime.Now, 1, address?.Trim() ?? "", dataType, "0001", "1", false, null));
+    }
 }

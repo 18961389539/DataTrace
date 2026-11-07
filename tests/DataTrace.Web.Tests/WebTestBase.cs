@@ -44,6 +44,9 @@ public abstract class WebTestBase : IAsyncLifetime
     /// <summary>工站试读替身。页面新增依赖后，任何渲染工站配置页的测试都要有它。</summary>
     protected FakeStationTrialReader Trial { get; } = new();
 
+    /// <summary>PLC 连接读取测试替身。对话框渲染时从这里取结果。</summary>
+    protected FakePlcConnectionProbe PlcProbe { get; } = new();
+
     /// <summary>popover 宿主只渲染一次：重复渲染会让同一批浮层挂到两个 provider 上。</summary>
     private bool _popoverHostRendered;
 
@@ -98,6 +101,7 @@ public abstract class WebTestBase : IAsyncLifetime
         Context.Services.AddSingleton<IDialogService>(Dialogs.Mock.Object);
         Context.Services.AddSingleton<IJsonFileDialog>(FileDialog);
         Context.Services.AddSingleton<IStationTrialReader>(Trial);
+        Context.Services.AddSingleton<IPlcConnectionProbe>(PlcProbe);
         Context.Services.AddSingleton(Branding);
         Context.Services.AddSingleton(Audit.Object);
         Context.Services.AddSingleton(Backup.Object);

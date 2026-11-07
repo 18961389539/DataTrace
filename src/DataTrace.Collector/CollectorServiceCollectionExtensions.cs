@@ -38,6 +38,8 @@ public static class CollectorServiceCollectionExtensions
         // 工站试读：只读读一次该工站的数据，复用采集队列与同一套读取/解码件。
         services.AddSingleton<IPlcQueueAccess>(sp => sp.GetRequiredService<CollectionHostedService>());
         services.AddSingleton<IStationTrialReader, StationTrialReader>();
+        // 连接页读取测试：有队列就复用，没有才临时连一次。与工站试读共用队列出口。
+        services.AddSingleton<IPlcConnectionProbe, PlcConnectionProbe>();
         // 补传重放：后台循环与手动补传必须共用同一个执行器，否则同一条缓存会被并发写两遍。
         services.AddSingleton<SpoolReplayRunner>();
         services.AddHostedService<SpoolReplayService>();

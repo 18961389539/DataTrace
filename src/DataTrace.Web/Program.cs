@@ -21,6 +21,7 @@ using DataTrace.Shared;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting.WindowsServices;
 using Microsoft.Extensions.Options;
 using ModelContextProtocol.AspNetCore;
 using MudBlazor;
@@ -271,6 +272,7 @@ if (instanceGuard is null)
         + "请先停掉它（服务：sc stop DataTrace；控制台：deploy\\stop.ps1）后重试。",
         dataRoot,
         holder is { } pid ? pid.ToString() : "未知");
+    DuplicateInstancePrompt.Show(dataRoot, holder);
     Environment.ExitCode = 1;
     return;
 }
@@ -687,5 +689,15 @@ if (OperatingSystem.IsWindows()
         }
     });
 }
+
+// 服务进程在 Session 0，没有通知区域。交互式进程（控制台、隐藏窗口的 start.ps1）才挂图标，
+// 让现场能看见"程序在跑"，并从这个图标打开页面或退出。挂不上也不拦启动。
+using var tray = TrayIconHost.ShouldShow(
+    OperatingSystem.IsWindows(),
+    Environment.UserInteractive,
+    OperatingSystem.IsWindows() && WindowsServiceHelpers.IsWindowsService(),
+    app.Configuration.GetValue("Tray:Enabled", true))
+    ? TrayIconHost.TryStart(browserUrl, app.Lifetime, app.Logger)
+    : null;
 
 app.Run();
