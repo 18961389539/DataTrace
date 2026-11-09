@@ -8,7 +8,7 @@
 @inject IJSRuntime Js
 @inject DtToast Toast
 
-<PageHeader Title="MCP 令牌"
+<PageHeader Title="MCP 令牌" HelpRoute="config/mcp-tokens"
             Description="为 AI 客户端签发访问令牌。令牌只在创建时显示一次，请立即复制并通过安全渠道保存；绑定用户的角色、锁定状态变化会立即生效。"
             Busy="@_loading">
     <ChildContent>
@@ -46,7 +46,11 @@
 }
 
 <MudPaper Outlined="true" Elevation="0" Class="pa-4 mb-4">
-    <MudText Typo="Typo.subtitle1" Class="mb-3">创建令牌</MudText>
+    <div class="dt-hint-title">
+        <MudText Typo="Typo.subtitle1" Class="mb-3">创建令牌</MudText>
+        <InfoHint Topic="HelpTexts.McpTokenAccess" />
+        <InfoHint Topic="HelpTexts.McpTokenLifetime" />
+    </div>
     <MudGrid Spacing="2">
         <MudItem xs="12" md="4">
             <MudTextField T="string" @bind-Value="_name" Label="用途" Placeholder="例如：夜班交接助手"
@@ -82,7 +86,10 @@
 </MudPaper>
 
 <MudPaper Outlined="true" Elevation="0" Class="pa-4">
-    <MudText Typo="Typo.subtitle1" Class="mb-3">已签发的令牌</MudText>
+    <div class="dt-hint-title">
+        <MudText Typo="Typo.subtitle1" Class="mb-3">已签发的令牌</MudText>
+        <InfoHint Topic="HelpTexts.McpTokenLifetime" />
+    </div>
     <MudTable Items="_tokens" Dense="true" Hover="true" Breakpoint="Breakpoint.Md"
               Loading="_loading" LoadingProgressColor="Color.Info">
         <HeaderContent>

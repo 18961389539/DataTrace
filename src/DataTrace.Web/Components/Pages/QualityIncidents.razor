@@ -44,6 +44,7 @@
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap dt-view-toggle"
                   role="group" aria-label="质量异常工作队列">
             <MudText Typo="Typo.subtitle2">工作队列</MudText>
+            <InfoHint Topic="HelpTexts.IncidentQueue" />
             <MudButton Size="Size.Small" Variant="@QueueVariant("all")" aria-pressed="@(_queue == "all" ? "true" : "false")"
                        OnClick="@(() => SelectQueueAsync("all"))">全部异常</MudButton>
             <MudButton Size="Size.Small" Variant="@QueueVariant("mine")" aria-pressed="@(_queue == "mine" ? "true" : "false")"
@@ -130,11 +131,11 @@ else
         <HeaderContent>
             <MudTh>单号</MudTh>
             <MudTh>异常</MudTh>
-            <MudTh>等级</MudTh>
+            <MudTh>等级 <InfoHint Topic="HelpTexts.IncidentSeverity" /></MudTh>
             <MudTh>工站 / 型号</MudTh>
             <MudTh>负责人</MudTh>
             <MudTh>处置状态</MudTh>
-            <MudTh>证据</MudTh>
+            <MudTh>证据 <InfoHint Topic="HelpTexts.IncidentEvidence" /></MudTh>
             <MudTh>最近更新</MudTh>
         </HeaderContent>
         <RowTemplate>

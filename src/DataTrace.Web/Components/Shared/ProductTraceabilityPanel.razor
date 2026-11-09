@@ -175,7 +175,10 @@ else if (_traces.Count > 0 && SelectedTrace is { } trace)
 
     <MudPaper Class="pa-3 mb-3 dt-trace-history">
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mb-2 flex-wrap">
-            <MudText Typo="Typo.subtitle2">工站履历</MudText>
+            <div class="dt-hint-title">
+                <MudText Typo="Typo.subtitle2">工站履历</MudText>
+                <InfoHint Topic="HelpTexts.PalletTransit" />
+            </div>
             @if (MissingStationCount(trace) > 0)
             {
                 <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning">

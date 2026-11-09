@@ -19,7 +19,7 @@
 
 <NavigationLock ConfirmExternalNavigation="@Dirty" OnBeforeInternalNavigation="OnBeforeInternalNavigation" />
 
-<PageHeader Title="新建质量异常单">
+<PageHeader Title="新建质量异常单" HelpRoute="quality/incidents">
     <Actions>
         <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack"
                    Href="/quality/incidents">返回处置台</MudButton>
@@ -62,7 +62,10 @@ else if (_source is null)
         </MudAlert>
     }
     <MudPaper Class="pa-4">
-        <MudText Typo="Typo.subtitle1" Class="mb-1">第一步：选择源采集记录</MudText>
+        <div class="dt-hint-title">
+            <MudText Typo="Typo.subtitle1" Class="mb-1">第一步：选择源采集记录</MudText>
+            <InfoHint Topic="HelpTexts.IncidentSourceRecord" />
+        </div>
         <MudText Typo="Typo.caption" Class="dt-muted mb-3">无需输入月份或内部记录 ID；按流水号、托盘码、工站和采集时间查找。</MudText>
         <MudGrid Class="dt-filters">
             <MudItem xs="12" sm="6" md="3">
@@ -139,7 +142,10 @@ else
     <MudGrid>
         <MudItem xs="12" lg="7">
             <MudPaper Class="pa-4">
-                <MudText Typo="Typo.subtitle1" Class="mb-3">异常信息</MudText>
+                <div class="dt-hint-title">
+                    <MudText Typo="Typo.subtitle1" Class="mb-3">异常信息</MudText>
+                    <InfoHint Topic="HelpTexts.IncidentSeverity" />
+                </div>
                 <form @onsubmit="() => SubmitAsync()" @onsubmit:preventDefault="true">
                     <MudGrid Class="dt-filters">
                         <MudItem xs="12" sm="8">
@@ -189,7 +195,10 @@ else
 
         <MudItem xs="12" lg="5">
             <MudPaper Class="pa-4">
-                <MudText Typo="Typo.subtitle1" Class="mb-3">源证据</MudText>
+                <div class="dt-hint-title">
+                    <MudText Typo="Typo.subtitle1" Class="mb-3">源证据</MudText>
+                    <InfoHint Topic="HelpTexts.IncidentEvidence" />
+                </div>
                 <MudGrid>
                     <MudItem xs="6">
                         <MudText Typo="Typo.caption" Class="dt-muted">工站</MudText>

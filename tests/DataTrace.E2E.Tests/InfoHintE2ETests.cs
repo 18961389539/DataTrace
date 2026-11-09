@@ -78,7 +78,9 @@ public sealed class InfoHintE2ETests : E2ETestBase
                  {
                      "/", "/query", "/reports", "/curve-baseline", "/logs",
                      "/config/plc", "/config/stations", "/config/recipes",
-                     "/config/settings", "/simulate", "/users"
+                     "/config/settings", "/simulate", "/users",
+                     "/alarms", "/quality/incidents", "/config/workorders",
+                     "/config/mcp-tokens", "/diagnostics"
                  })
         {
             await OpenAsync(path);

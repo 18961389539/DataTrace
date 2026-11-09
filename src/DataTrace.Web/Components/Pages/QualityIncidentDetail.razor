@@ -24,12 +24,12 @@
 
 @if (_loading)
 {
-    <PageHeader Title="质量异常详情" />
+    <PageHeader Title="质量异常详情" HelpRoute="quality/incidents" />
     <MudSkeleton SkeletonType="SkeletonType.Rectangle" Height="220px" />
 }
 else if (_loadError is not null)
 {
-    <PageHeader Title="质量异常详情">
+    <PageHeader Title="质量异常详情" HelpRoute="quality/incidents">
         <Actions>
             <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Href="/quality/incidents">返回处置台</MudButton>
         </Actions>
@@ -51,7 +51,7 @@ else if (_loadError is not null)
 }
 else if (_details is null)
 {
-    <PageHeader Title="质量异常详情">
+    <PageHeader Title="质量异常详情" HelpRoute="quality/incidents">
         <Actions>
             <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.ArrowBack" Href="/quality/incidents">返回处置台</MudButton>
         </Actions>
@@ -60,7 +60,8 @@ else if (_details is null)
 }
 else
 {
-    <PageHeader Title="@_details.Incident.IncidentNumber" Description="质量异常的证据、处理过程与复核结论。">
+    <PageHeader Title="@_details.Incident.IncidentNumber" Description="质量异常的证据、处理过程与复核结论。"
+                HelpRoute="quality/incidents">
         <ChildContent>
             <MudChip T="string" Size="Size.Small" Color="@StatusColor(_details.Incident.Status)" Variant="Variant.Outlined">
                 @StatusText(_details.Incident.Status)
@@ -144,7 +145,10 @@ else
 
     <MudPaper Class="pa-4 mb-3">
         <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="flex-wrap mb-2">
-            <MudText Typo="Typo.subtitle1">关联证据</MudText>
+            <div class="dt-hint-title">
+                <MudText Typo="Typo.subtitle1">关联证据</MudText>
+                <InfoHint Topic="HelpTexts.IncidentEvidence" />
+            </div>
             <MudChip T="string" Size="Size.Small" Variant="Variant.Text">@_details.Evidence.Count 条记录</MudChip>
             <MudText Typo="Typo.caption" Class="dt-muted">每条快照保留采集当时的判定和限值，不随配置修改重算。</MudText>
         </MudStack>
@@ -398,7 +402,10 @@ else
     @if (_canManage && _details.Incident.Status == QualityIncidentStatus.PendingReview)
     {
         <MudPaper Class="pa-4 mb-3">
+            <div class="dt-hint-title">
             <MudText Typo="Typo.subtitle1" Class="mb-2">复核结论</MudText>
+            <InfoHint Topic="HelpTexts.IncidentReview" />
+        </div>
             <MudTextField T="string" @bind-Value="_reviewComment" Label="复核意见或退回原因" Lines="2" MaxLength="2000" Immediate="true" />
             <MudStack Row="true" Spacing="2" Class="mt-2 flex-wrap">
                 <MudButton Variant="Variant.Filled" Color="Color.Success" StartIcon="@Icons.Material.Filled.CheckCircle"

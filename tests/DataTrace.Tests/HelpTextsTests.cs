@@ -143,9 +143,9 @@ public class HelpTextsTests
         Assert.Equal("型号口径", HelpTexts.RecipeScope.Title);
 
         var count = Enumerate().Count();
-        // 上限随页面增加而上移：这条断言防的是"文案库被塞进一堆一次性条目"，
-        // 不是精确配额，所以只在真的新增页面时调。
-        Assert.True(count is >= 40 and <= 85, $"文案条目数 {count} 超出预期区间（40~85）");
+        // 上限随页面与页面概念增加而上移：这条断言防的是"文案库被塞进一堆一次性条目"，
+        // 不是精确配额，所以只在真的补齐页面概念时调。
+        Assert.True(count is >= 40 and <= 90, $"文案条目数 {count} 超出预期区间（40~90）");
     }
 
     [Theory]
@@ -157,13 +157,15 @@ public class HelpTextsTests
     [InlineData("config/plc", 4)]
     [InlineData("config/stations", 4)]
     [InlineData("config/recipes", 8)]
-    [InlineData("config/workorders", 2)]
+    [InlineData("config/workorders", 3)]
     [InlineData("config/settings", 8)]
     [InlineData("simulate", 5)]
     [InlineData("users", 5)]
-    [InlineData("record", 7)]
-    [InlineData("alarms", 1)]
+    [InlineData("record", 8)]
+    [InlineData("alarms", 3)]
     [InlineData("diagnostics", 3)]
+    [InlineData("quality/incidents", 6)]
+    [InlineData("config/mcp-tokens", 2)]
     public void Every_page_mapping_lists_topics_that_exist(string route, int expected)
     {
         // 页头「本页说明」按这份映射取条目；写错路由会让整页入口凭空消失，且没有任何别的检查能发现。

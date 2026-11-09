@@ -98,7 +98,7 @@ public static class HelpTexts
     public static readonly HelpTopic ExportLimit = new(
         "导出上限",
         $"一次最多导出前 {SystemDefaults.ExportRowLimit:N0} 条（按当前筛选与排序取）。",
-        $"命中更多时请用「按月分包导出」，或缩小区间分次导。宽表 CSV 会把点位值展开成列；查询方案保存在服务器，按登录账号共用。");
+        $"命中更多时请用「按月分包导出」，或缩小区间分次导。宽表 CSV 会把点位值展开成列；查询方案保存在服务器，按账号共用。");
 
     public static readonly HelpTopic ResultCode = new(
         "结果码",
@@ -206,6 +206,16 @@ public static class HelpTexts
         $"心跳、故障、磁盘不足、补传、连续 {SystemDefaults.ConsecutiveNgAlarmCount} 件预警或不合格、漂移、在制超时都会响铃，直到有人接手。",
         $"待接手前会响并重复通知；接手后停铃。托盘被盖掉同样要接手。数据盘剩余不足 {SystemDefaults.MinDiskFreeMegabytes} MB 也会呼叫。");
 
+    public static readonly HelpTopic AlarmLifecycle = new(
+        "报警状态",
+        "待接手 → 已接手未解除 → 已解除；条件恢复但仍无人接手时显示「已恢复，待接手」。",
+        "接手只停铃和停外呼，不等于异常已经好了；未解除记录会继续留在列表。");
+
+    public static readonly HelpTopic AlarmScope = new(
+        "报警分区",
+        "设备报警来自工站配置的限值；系统规则报警来自会话抢占、连续失败、故障与漂移。",
+        "设备报警优先处置；系统规则报警是次级区，可与设备报警并行接手。");
+
     // ---------- 诊断页 ----------
     public static readonly HelpTopic CollectorLoop = new(
         "采集循环",
@@ -283,6 +293,38 @@ public static class HelpTexts
         "工单完成估算",
         "从设为当前的时刻起，统计该工单型号走出末站的件数，并拆分 OK 与 NG。",
         "未判定计入完成但不进 OK/NG；换型号或重新设为当前会重新计时，属于估算。");
+
+    // ---------- 质量异常 ----------
+
+    public static readonly HelpTopic IncidentQueue = new(
+        "异常工作队列",
+        "我的待办 = 负责人是当前账号且未关闭；未接手 = 无负责人；待复核 = 已提交复核。",
+        "队列切换立即刷新；状态、工站、负责人和关键词变更后会防抖自动查询。");
+
+    public static readonly HelpTopic IncidentSeverity = new(
+        "异常严重度",
+        "严重度用于交接和排序，分为提示、一般、严重、停线；不改变原始采集判定。",
+        "严重度只在异常单流转中使用，历史采集记录与报表仍按原始判定统计。");
+
+    public static readonly HelpTopic IncidentSourceRecord = new(
+        "源记录",
+        "异常单从一条采集记录或托盘建立，保留原始流水号、工站、判定与点位证据。",
+        "建立单据不会改写原始采集记录；源记录仍是追溯和复核的基准。");
+
+    public static readonly HelpTopic IncidentEvidence = new(
+        "异常证据",
+        "源证据指向触发问题的记录；验证证据用于证明处置有效，复核时一并保存。",
+        "证据可以来自多次查询；删除异常单不会删除原始采集记录。");
+
+    public static readonly HelpTopic IncidentReview = new(
+        "复核关闭",
+        "记录处置措施后提交复核；复核通过即关闭，退回则回到处理中继续补充。",
+        "关闭后仍会进入结案报表；重新打开会新增一条处置记录。");
+
+    public static readonly HelpTopic IncidentClosedReport = new(
+        "结案报表",
+        "按结案时间和原因分类汇总已关闭异常单，包含措施、复核人和关闭时长。",
+        "报表只读，不改单据状态；统计口径与处置台的在办列表不同。");
 
     // ---------- 产品型号 ----------
 
@@ -431,6 +473,18 @@ public static class HelpTexts
         "面积与上升/保压斜率都按采样序号轴算，不是按时间或位移。",
         "改采样点数或扫描周期后，同一波形的数值会变，历史阈值需要重新标定。");
 
+    // ---------- MCP 令牌 ----------
+
+    public static readonly HelpTopic McpTokenAccess = new(
+        "令牌权限",
+        "令牌绑定现有账号并继承其角色；写入还要求令牌勾选写入且服务端允许写入。",
+        "账号锁定、角色变化或令牌撤销会立即生效；客户端下次请求即被拒。");
+
+    public static readonly HelpTopic McpTokenLifetime = new(
+        "令牌有效期",
+        "有效天数从创建时起算；令牌明文只在创建时显示一次，之后只能看到摘要。",
+        "过期或撤销后需要重新签发；明文无法找回，请通过安全渠道保存。");
+
     // ---------- 编辑用户 ----------
 
     public static readonly HelpTopic DisplayName = new(
@@ -458,13 +512,15 @@ public static class HelpTexts
             "config/plc" => [Heartbeat, PlcEnabled, MergeGap, SimulatorBrand],
             "config/stations" => [TriggerValue, TagDataSource, BoolAddress, FirstLastStation],
             "config/recipes" => [RecipeCode, RecipeModel, RecipeEnabled, RecipeCopy, LimitMergeRule, TargetValue, LimitEffect, CoverablePoints],
-            "config/workorders" => [WorkOrderScope, WorkOrderProgress],
+            "config/workorders" => [WorkOrderScope, WorkOrderProgress, RecipeMismatch],
             "config/settings" => [SaveToDispatch, ScanInterval, WriteRetry, ShiftWindow, ConfigSource, Retention, MesOutbox, AlarmCall],
-            "alarms" => [AlarmCall],
+            "alarms" => [AlarmCall, AlarmLifecycle, AlarmScope],
             "diagnostics" => [CollectorLoop, PlcTraffic, SpoolQueue],
             "simulate" => [SimAutoRun, SimPalletInterval, SimNgPercent, SimRunLine, SimLastWriteBack],
             "users" => [Lockout, RoleScope, DeleteUser, UserNameImmutable, DisplayName],
-            "record" => [LimitThreeTiers, JudgementThreeState, LimitColumns, OverTolerance, CurvePointCount, DeviationThresholds, RecipeScope],
+            "record" => [LimitThreeTiers, JudgementThreeState, LimitColumns, OverTolerance, CurvePointCount, DeviationThresholds, RecipeScope, PalletTransit],
+            "quality/incidents" => [IncidentQueue, IncidentSeverity, IncidentSourceRecord, IncidentEvidence, IncidentReview, IncidentClosedReport],
+            "config/mcp-tokens" => [McpTokenAccess, McpTokenLifetime],
             _ => []
         };
     }
@@ -704,6 +760,36 @@ public static class HelpTexts
                 Section("操作结果与审计",
                     "用户创建、角色调整、密码重置、解锁和删除会分别执行并记录审计；创建账号与分配角色是分步操作，界面提示部分失败时要回列表核对实际账号状态。",
                     "审计日志记录操作者、对象和操作结果，不保存明文密码。权限调整后可让用户重新登录，再按实际页面入口确认授权范围。")
+            ],
+            "quality/incidents" =>
+            [
+                Section("页面用途与工作队列",
+                    "异常处置台把质量异常从发现、调查、处置到复核关闭串成一张单据；它记录的是人对异常的处理过程，不替代采集记录。列表默认显示全部异常，「我的待办」只看负责人是当前账号且未关闭的单据，「未接手」只看没有负责人的待处理单据；切换队列立即刷新，状态、工站、负责人和关键词变更后会自动查询。",
+                    "严重度用于交接和排序，不改变原始采集判定；处置状态表示单据走到哪一步，证据列表示关联了多少条源记录或验证记录。"),
+                Section("证据与关联记录",
+                    "新建异常单时先按流水号、托盘码、工站和采集时间选择源采集记录；源证据指向触发问题的记录，验证证据用于证明处置有效。同一张单据可以关联多条证据，但每条证据都保留自己的流水号、工站和判定快照。",
+                    "创建和流转异常单都不会改写原始采集记录；复核和报表仍以采集库中的原始判定为准。排查范围只影响详情页的候选记录检索，不会把候选记录自动变成证据。"),
+                Section("处置与复核",
+                    "处置措施会追加到时间线，可以选择暂存或提交复核；提交复核前需要至少一条验证证据。管理员或工程师复核通过后单据关闭，退回则回到处理中，需要补充措施或证据。",
+                    "关闭不等于删除：结案报表仍可查询；重新打开会新增一条处置记录，并保留此前的措施与复核意见。"),
+                Section("统计与导出",
+                    "结案报表按结案时间和原因分类汇总已关闭单据，包含处置措施、复核人、关闭时长和证据数；处置台列表与结案报表的统计口径不同。",
+                    "导出前先确认当前筛选条件和时间范围；导出内容包含敏感的质量信息，请按现场的数据管理要求保存和传递。")
+            ],
+            "config/mcp-tokens" =>
+            [
+                Section("页面用途与安全边界",
+                    "MCP 令牌页为 AI 客户端签发访问令牌。令牌绑定现有账号，客户端使用 Authorization: Bearer 访问 MCP 端点；该端点不接受登录 Cookie，撤销令牌后客户端立即失去访问。",
+                    "页面只负责签发和撤销令牌，不开放 PLC 写入、配置保存、用户管理或备份恢复；这些边界由服务端授权策略保证。"),
+                Section("创建与绑定用户",
+                    "创建时选择绑定用户和有效天数，说明用途便于交接。令牌明文只在创建成功时显示一次，请立即复制到密码管理器或其他安全渠道；页面之后只能看到摘要和前缘。",
+                    "令牌继承绑定用户的角色：读取权限始终包含，写入还要求令牌勾选写入且服务端允许写入；账号锁定、角色变化或用户删除会立即影响令牌。"),
+                Section("有效期与撤销",
+                    "有效天数从创建时起算，过期后客户端请求被拒；不再使用的令牌应立即撤销，不要等到过期。重新签发会得到新的明文和新的前缘，旧明文无法找回。",
+                    "接管或换班时先核对令牌用途和绑定用户，再决定是否撤销；审计日志会记录签发、撤销和使用来源，便于追溯。"),
+                Section("故障与排障",
+                    "客户端连不上时先确认服务端已启用 MCP、地址和路径正确、令牌未过期未撤销，再核对 Authorization 请求头是否带在每次请求上。",
+                    "权限不足时检查绑定用户的角色和令牌是否具备写入 scope；不要通过共享令牌或使用管理员账号绕过角色边界。")
             ],
             "alarms" =>
             [

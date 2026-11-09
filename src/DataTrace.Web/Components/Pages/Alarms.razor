@@ -121,6 +121,7 @@ else
                    aria-pressed="@ViewPressed(AlarmView.AcknowledgedOrResolved)" OnClick="@(() => SetView(AlarmView.AcknowledgedOrResolved))">
             已接手／已解除 (@AcknowledgedOrResolvedCount)
         </MudButton>
+        <InfoHint Topic="HelpTexts.AlarmLifecycle" />
     </div>
     <MudText Typo="Typo.caption" Class="dt-muted mt-1">
         @_viewDescription；设备报警与系统规则分两区显示。工站、类型和“我的已接手”筛选会同步作用于计数与列表。最近已解除只查询最新 30 条。
@@ -153,7 +154,10 @@ else
     <div class="dt-alarms-region dt-alarms-region--device @(DeviceAttentionCount == 0 ? "dt-alarms-region--empty" : null) mb-3" aria-label="工站配置设备报警">
         <header class="dt-alarms-region-head">
             <div class="dt-alarms-region-titles">
-                <MudText Typo="Typo.h6" Class="dt-alarms-region-title mb-0">设备报警</MudText>
+                <div class="dt-hint-title">
+                    <MudText Typo="Typo.h6" Class="dt-alarms-region-title mb-0">设备报警</MudText>
+                    <InfoHint Topic="HelpTexts.AlarmScope" />
+                </div>
                 <MudText Typo="Typo.caption" Class="dt-alarms-region-sub">工站配置限值 · 优先处置</MudText>
             </div>
             @if (DeviceAttentionCount > 0)

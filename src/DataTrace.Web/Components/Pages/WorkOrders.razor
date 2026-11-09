@@ -14,6 +14,7 @@
             Busy="@_saving">
     <ChildContent>
         <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@_orders.Count 张</MudChip>
+        <InfoHint Topic="HelpTexts.WorkOrderScope" />
         @if (CurrentOrder is { } current)
         {
             <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled" title="当前工单">
@@ -54,6 +55,7 @@
                     <text>该型号已停用或不存在，请先到「产品型号」处理。</text>
                 }
             </span>
+            <InfoHint Topic="HelpTexts.RecipeMismatch" />
             @if (CanSyncModel)
             {
                 <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Warning"

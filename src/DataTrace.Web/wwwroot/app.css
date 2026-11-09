@@ -287,6 +287,14 @@
     font-variant-numeric: tabular-nums;
 }
 
+/* 标题 + ⓘ 行：MudText 渲染成 <p>，不能直接把浮层根节点塞进段落里。 */
+.dt-hint-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px;
+}
+
 /* ---------- 页头与卡片 ---------- */
 
 .dt-skip-link {

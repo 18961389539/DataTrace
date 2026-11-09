@@ -95,7 +95,8 @@
     @* 时间区间与数据查询页共用同一套组件与自然日口径。审计最常圈定的是「某一天」，
        只有下界的「近 N 天」做不到；而且滚动 168 小时和自然日不是一回事，
        同一个「近 7 天」在两页查出不同条数，比没有这个功能更糟。 *@
-    <DateRangeFilter @bind-From="_from" @bind-To="_to" OnRangeChanged="OnFilterChanged" />
+    <DateRangeFilter @bind-From="_from" @bind-To="_to" OnRangeChanged="OnFilterChanged"
+                     Hint="HelpTexts.LogTimeRange" />
 
     <MudStack Row="true" Spacing="2" Class="pb-3 dt-log-filter-actions">
         <MudButton Variant="Variant.Text" Size="Size.Small"
